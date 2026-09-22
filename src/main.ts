@@ -54,6 +54,11 @@ const combat = new Combat(world.scene, world.colliders, {
 })
 
 hud.onFire((def, pushed) => {
+  // snap the body to match, or the swing plays sideways out of his shoulder
+  if (def.shape === 'arc') {
+    const snap = combat.nearestTarget(still.pos, def.range + 1.2)
+    if (snap) still.facing = Math.atan2(snap.x - still.pos.x, snap.z - still.pos.z)
+  }
   combat.useAbility(def, still.pos, still.facing, hud.moveX, hud.moveZ)
   still.group.scale.setScalar(pushed ? 1.16 : 1.08)
   shake = Math.max(shake, pushed ? 0.34 : 0.16)
@@ -78,6 +83,9 @@ function simulate(dt: number) {
     still.pos.z = (still.pos.z / d) * limit
   }
   pushOutOfColliders(still.pos, BODY_RADIUS, world.colliders)
+
+  const target = combat.nearestTarget(still.pos, 9.5)
+  still.aim = target ? Math.atan2(target.x - still.pos.x, target.z - still.pos.z) : null
 
   combat.update(dt, still.pos)
   hud.integrity = combat.hp / 100

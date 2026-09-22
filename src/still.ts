@@ -20,6 +20,8 @@ export class Still {
   readonly pos = new THREE.Vector3(0, 0, 0)
   facing = 0
   speed = 7.4
+  /** Where to look when the stick is idle. Null means hold the last heading. */
+  aim: number | null = null
 
   private bob = 0
   private legL!: THREE.Mesh
@@ -76,15 +78,11 @@ export class Still {
       this.pos.x += moveX * this.speed * dt
       this.pos.z += moveZ * this.speed * dt
 
-      // turn toward travel, shortest way round
-      const target = Math.atan2(moveX, moveZ)
-      let delta = target - this.facing
-      while (delta > Math.PI) delta -= Math.PI * 2
-      while (delta < -Math.PI) delta += Math.PI * 2
-      this.facing += delta * Math.min(1, dt * 16)
+      this.turnToward(Math.atan2(moveX, moveZ), dt * 16)
 
       this.bob += dt * mag * 13
     } else {
+      if (this.aim !== null) this.turnToward(this.aim, dt * 9)
       this.bob += (0 - (this.bob % (Math.PI * 2))) * Math.min(1, dt * 8)
     }
 
@@ -94,6 +92,14 @@ export class Still {
 
     this.group.position.set(this.pos.x, Math.abs(Math.sin(this.bob)) * 0.05 * mag, this.pos.z)
     this.group.rotation.y = this.facing
+  }
+
+  /** Shortest way round. */
+  private turnToward(target: number, rate: number) {
+    let delta = target - this.facing
+    while (delta > Math.PI) delta -= Math.PI * 2
+    while (delta < -Math.PI) delta += Math.PI * 2
+    this.facing += delta * Math.min(1, rate)
   }
 
   private buildLegs(): THREE.Object3D {

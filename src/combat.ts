@@ -131,6 +131,11 @@ export class Combat {
     }
   }
 
+  /** Where Still should be looking. Null when nothing is in range. */
+  nearestTarget(from: THREE.Vector3, range = AUTO_RANGE): THREE.Vector3 | null {
+    return this.nearest(from, range)?.pos ?? null
+  }
+
   reset() {
     this.hp = PLAYER_MAX_HP
     for (const e of this.enemies) e.dispose(this.scene)
@@ -198,8 +203,11 @@ export class Combat {
       }
 
       case 'arc': {
-        const fx = Math.sin(facing)
-        const fz = Math.cos(facing)
+        // A melee swing never needs aiming — snap to whatever is closest in reach.
+        const snap = this.nearest(origin, def.range + 1.2)
+        const aimed = snap ? Math.atan2(snap.pos.x - origin.x, snap.pos.z - origin.z) : facing
+        const fx = Math.sin(aimed)
+        const fz = Math.cos(aimed)
         for (const e of this.enemies) {
           const dx = e.pos.x - origin.x
           const dz = e.pos.z - origin.z
@@ -210,7 +218,7 @@ export class Combat {
           e.hit(def.damage)
           this.events.onHit()
         }
-        this.sweep(origin, facing, def.range, 0xffe0b0)
+        this.sweep(origin, aimed, def.range, 0xffe0b0)
         break
       }
 
