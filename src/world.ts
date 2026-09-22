@@ -12,17 +12,34 @@ const CAM_DIST = 40
 
 export const ARENA_RADIUS = 13
 
+/** Circles on a plane. No physics engine, per Q12. */
+export interface Collider { x: number; z: number; r: number }
+
 /** Everything the grade sliders can touch, in one place. */
+/** Shared by Still and the enemies — push a circle out of the static debris. */
+export function pushOutOfColliders(pos: { x: number; z: number }, radius: number, colliders: Collider[]) {
+  for (const c of colliders) {
+    const dx = pos.x - c.x
+    const dz = pos.z - c.z
+    const min = c.r + radius
+    const dist = Math.hypot(dx, dz)
+    if (dist > 0.0001 && dist < min) {
+      pos.x = c.x + (dx / dist) * min
+      pos.z = c.z + (dz / dist) * min
+    }
+  }
+}
+
 export const grade = {
-  exposure: 0.95,
-  fogNear: 16,
-  fogFar: 52,
-  bloomStrength: 0.42,
+  exposure: 1.3,
+  fogNear: 58,
+  fogFar: 135,
+  bloomStrength: 0.5,
   bloomThreshold: 0.72,
   bloomRadius: 0.6,
-  vignette: 1.05,
-  saturation: 0.62,
-  graceLight: 3.4,
+  vignette: 0.8,
+  saturation: 0.78,
+  graceLight: 400,
   viewHeight: 17,
 }
 
@@ -72,6 +89,7 @@ export interface World {
   fog: THREE.Fog
   bloom: UnrealBloomPass
   gradePass: ShaderPass
+  colliders: Collider[]
   resize: () => void
   render: () => void
 }
@@ -93,20 +111,20 @@ export function createWorld(canvas: HTMLCanvasElement): World {
   camera.lookAt(0, 0, 0)
 
   // --- lights: one warm source (Grace), everything else cold ---
-  scene.add(new THREE.HemisphereLight(0x2a3d57, 0x05080c, 0.55))
+  scene.add(new THREE.HemisphereLight(0x53749c, 0x0b1119, 1.6))
 
-  const key = new THREE.DirectionalLight(0x6f92c4, 0.7)
+  const key = new THREE.DirectionalLight(0x8fb0da, 1.15)
   key.position.set(-8, 14, -6)
   scene.add(key)
 
-  const graceLight = new THREE.PointLight(0xffb26b, grade.graceLight, 22, 1.8)
-  graceLight.position.set(0, 1.6, 0)
+  const graceLight = new THREE.PointLight(0xffb26b, grade.graceLight, 34, 1.6)
+  graceLight.position.set(0, 4.6, 0)
   scene.add(graceLight)
 
   // --- floor ---
   const floor = new THREE.Mesh(
-    new THREE.CircleGeometry(ARENA_RADIUS + 2, 64),
-    new THREE.MeshStandardMaterial({ color: 0x151d28, roughness: 0.95, metalness: 0 }),
+    new THREE.CircleGeometry(ARENA_RADIUS + 34, 72),
+    new THREE.MeshStandardMaterial({ color: 0x24303f, roughness: 0.95, metalness: 0 }),
   )
   floor.rotation.x = -Math.PI / 2
   scene.add(floor)
@@ -117,7 +135,8 @@ export function createWorld(canvas: HTMLCanvasElement): World {
   grid.position.y = 0.01
   scene.add(grid)
 
-  scene.add(buildArena())
+  const arena = buildArena()
+  scene.add(arena.group)
 
   // --- post ---
   const composer = new EffectComposer(renderer)
@@ -152,14 +171,16 @@ export function createWorld(canvas: HTMLCanvasElement): World {
 
   return {
     scene, camera, renderer, composer, graceLight, fog, bloom, gradePass,
+    colliders: arena.colliders,
     resize,
     render: () => composer.render(),
   }
 }
 
 /** Waist-height walls and scattered debris — open-topped, so nothing occludes the camera. */
-function buildArena(): THREE.Group {
+function buildArena(): { group: THREE.Group; colliders: Collider[] } {
   const g = new THREE.Group()
+  const colliders: Collider[] = []
   const wallMat = new THREE.MeshStandardMaterial({ color: 0x1b2531, roughness: 0.9 })
   const debrisMat = new THREE.MeshStandardMaterial({ color: 0x202b39, roughness: 0.85 })
 
@@ -173,16 +194,34 @@ function buildArena(): THREE.Group {
     g.add(block)
   }
 
-  // interior reference objects — movement is unreadable without them
-  for (let i = 0; i < 22; i++) {
+  // Waist-high walls never occlude the camera, but you always see over them —
+  // so the world has to continue past the arena or the edge reads as void.
+  const outerMat = new THREE.MeshStandardMaterial({ color: 0x18222e, roughness: 0.95 })
+  for (let i = 0; i < 46; i++) {
     const a = Math.random() * Math.PI * 2
-    const r = 2.5 + Math.random() * (ARENA_RADIUS - 4)
-    const h = 0.4 + Math.random() * 0.9
-    const d = new THREE.Mesh(new THREE.BoxGeometry(0.6 + Math.random(), h, 0.6 + Math.random()), debrisMat)
+    const r = ARENA_RADIUS + 3 + Math.random() * 27
+    const h = 0.5 + Math.random() * 2.6
+    const d = new THREE.Mesh(new THREE.BoxGeometry(0.8 + Math.random() * 2.4, h, 0.8 + Math.random() * 2.4), outerMat)
     d.position.set(Math.cos(a) * r, h / 2, Math.sin(a) * r)
     d.rotation.y = Math.random() * Math.PI
     g.add(d)
   }
 
-  return g
+  // interior reference objects — movement is unreadable without them
+  for (let i = 0; i < 22; i++) {
+    const a = Math.random() * Math.PI * 2
+    const r = 2.5 + Math.random() * (ARENA_RADIUS - 4)
+    const h = 0.4 + Math.random() * 0.9
+    const w = 0.6 + Math.random()
+    const dp = 0.6 + Math.random()
+    const d = new THREE.Mesh(new THREE.BoxGeometry(w, h, dp), debrisMat)
+    const x = Math.cos(a) * r
+    const z = Math.sin(a) * r
+    d.position.set(x, h / 2, z)
+    d.rotation.y = Math.random() * Math.PI
+    g.add(d)
+    colliders.push({ x, z, r: Math.max(w, dp) * 0.5 })
+  }
+
+  return { group: g, colliders }
 }

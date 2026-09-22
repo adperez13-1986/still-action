@@ -12,25 +12,44 @@ const SLIDERS: Slider[] = [
   { key: 'exposure', label: 'exposure', min: 0.3, max: 2, step: 0.01 },
   { key: 'saturation', label: 'saturation', min: 0, max: 1.4, step: 0.01 },
   { key: 'vignette', label: 'vignette', min: 0, max: 2.5, step: 0.01 },
-  { key: 'fogNear', label: 'fog near', min: 0, max: 40, step: 0.5 },
-  { key: 'fogFar', label: 'fog far', min: 10, max: 120, step: 1 },
+  { key: 'fogNear', label: 'fog near', min: 0, max: 100, step: 1 },
+  { key: 'fogFar', label: 'fog far', min: 20, max: 220, step: 1 },
   { key: 'bloomStrength', label: 'bloom strength', min: 0, max: 1.6, step: 0.01 },
   { key: 'bloomThreshold', label: 'bloom threshold', min: 0, max: 1, step: 0.01 },
   { key: 'bloomRadius', label: 'bloom radius', min: 0, max: 1.5, step: 0.01 },
-  { key: 'graceLight', label: "Grace's light", min: 0, max: 12, step: 0.1 },
+  { key: 'graceLight', label: "Grace's light", min: 0, max: 900, step: 5 },
   { key: 'viewHeight', label: 'camera zoom', min: 8, max: 34, step: 0.5 },
 ]
 
 /** Live grade tuning. The look gets decided on the phone, in motion — not in a mock. */
 export function createGradePanel(root: HTMLElement, world: World) {
+  const bar = document.createElement('div')
+  bar.id = 'topRight'
+
+  const full = document.createElement('button')
+  full.className = 'chip'
+  full.textContent = 'full'
+  full.addEventListener('click', () => {
+    if (document.fullscreenElement) void document.exitFullscreen?.()
+    else void document.documentElement.requestFullscreen?.()
+  })
+  document.addEventListener('fullscreenchange', () => {
+    full.classList.toggle('on', Boolean(document.fullscreenElement))
+  })
+
   const toggle = document.createElement('button')
-  toggle.id = 'gradeToggle'
+  toggle.className = 'chip'
   toggle.textContent = 'grade'
 
   const panel = document.createElement('div')
   panel.id = 'grade'
 
-  toggle.addEventListener('click', () => panel.classList.toggle('open'))
+  toggle.addEventListener('click', () => {
+    panel.classList.toggle('open')
+    toggle.classList.toggle('on', panel.classList.contains('open'))
+  })
+
+  bar.append(full, toggle)
 
   for (const s of SLIDERS) {
     const label = document.createElement('label')
@@ -55,21 +74,21 @@ export function createGradePanel(root: HTMLElement, world: World) {
     panel.appendChild(label)
   }
 
-  const copy = document.createElement('button')
-  copy.textContent = 'copy values'
-  copy.addEventListener('click', async () => {
-    const text = JSON.stringify(grade, null, 2)
+  const save = document.createElement('button')
+  save.textContent = 'save values'
+  save.addEventListener('click', async () => {
+    save.textContent = 'saving...'
     try {
-      await navigator.clipboard.writeText(text)
-      copy.textContent = 'copied'
+      const res = await fetch('/__grade', { method: 'POST', body: JSON.stringify(grade, null, 2) })
+      save.textContent = res.ok ? 'saved to grade.json' : 'failed'
     } catch {
-      copy.textContent = text
+      save.textContent = 'failed'
     }
-    setTimeout(() => (copy.textContent = 'copy values'), 1400)
+    setTimeout(() => (save.textContent = 'save values'), 2000)
   })
-  panel.appendChild(copy)
+  panel.appendChild(save)
 
-  root.append(toggle, panel)
+  root.append(bar, panel)
   apply(world)
 }
 

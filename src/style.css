@@ -67,13 +67,16 @@ html, body {
 #strain i { background: linear-gradient(90deg, #8a6a2f, var(--strain)); }
 
 /* --- grade panel --- */
-#gradeToggle {
-  position: absolute; pointer-events: auto;
+#topRight {
+  position: absolute; pointer-events: auto; display: flex; gap: 6px;
   top: calc(env(safe-area-inset-top, 0px) + 8px); right: calc(env(safe-area-inset-right, 0px) + 10px);
+}
+.chip {
   appearance: none; border: 1px solid #22303f; background: rgba(16, 23, 34, .85);
   color: #8fa3b8; padding: 7px 11px; border-radius: 8px;
   font: 600 12px/1 ui-sans-serif, system-ui, sans-serif;
 }
+.chip.on { background: #223247; color: #dceaff; border-color: #3d5d86; }
 #grade {
   position: absolute; pointer-events: auto; display: none;
   top: calc(env(safe-area-inset-top, 0px) + 44px); right: calc(env(safe-area-inset-right, 0px) + 10px);

@@ -33,6 +33,7 @@ export interface Hud {
   readonly moveX: number
   readonly moveZ: number
   strain: number
+  integrity: number
   update: (now: number) => void
   onFire: (cb: (slot: SlotButton, pushed: boolean) => void) => void
 }
@@ -49,6 +50,7 @@ export function createHud(root: HTMLElement): Hud {
   const base = root.querySelector<HTMLElement>('#stickBase')!
   const knob = root.querySelector<HTMLElement>('#stickKnob')!
   const strainFill = root.querySelector<HTMLElement>('#strain i')!
+  const hpFill = root.querySelector<HTMLElement>('#hp i')!
 
   const buttons: ButtonState[] = SLOTS.map((def, i) => {
     const el = document.createElement('div')
@@ -62,7 +64,7 @@ export function createHud(root: HTMLElement): Hud {
   })
 
   const listeners: ((slot: SlotButton, pushed: boolean) => void)[] = []
-  const state = { moveX: 0, moveZ: 0, strain: 3 }
+  const state = { moveX: 0, moveZ: 0, strain: 3, integrity: 1 }
 
   // --- stick ---
   let stickPointer: number | null = null
@@ -153,6 +155,8 @@ export function createHud(root: HTMLElement): Hud {
     get moveZ() { return state.moveZ },
     get strain() { return state.strain },
     set strain(v: number) { state.strain = v },
+    get integrity() { return state.integrity },
+    set integrity(v: number) { state.integrity = v },
 
     update(now: number) {
       for (const b of buttons) {
@@ -169,6 +173,7 @@ export function createHud(root: HTMLElement): Hud {
         }
       }
       strainFill.style.width = `${Math.min(100, (state.strain / 20) * 100)}%`
+      hpFill.style.width = `${Math.max(0, state.integrity * 100)}%`
     },
 
     onFire(cb) { listeners.push(cb) },
