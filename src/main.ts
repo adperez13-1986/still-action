@@ -8,6 +8,15 @@ import { Combat } from './combat'
 
 const canvas = document.querySelector<HTMLCanvasElement>('#view')!
 const hudRoot = document.querySelector<HTMLElement>('#hud')!
+const rotateEl = document.querySelector<HTMLElement>('#rotate')!
+
+/** The orientation media query is unreliable in fullscreen on Android; measure instead. */
+function checkOrientation() {
+  rotateEl.classList.toggle('show', window.innerHeight > window.innerWidth)
+}
+checkOrientation()
+window.addEventListener('resize', checkOrientation)
+window.addEventListener('orientationchange', checkOrientation)
 
 const world = createWorld(canvas)
 const hud = createHud(hudRoot)

@@ -141,7 +141,7 @@ export class Combat {
       const z = Math.sin(a) * r
       if (Math.hypot(x - player.x, z - player.z) < 7) continue
       const e = new Chaser(x, z)
-      this.scene.add(e.group)
+      this.scene.add(e.group, e.tellGroup)
       this.enemies.push(e)
       return
     }

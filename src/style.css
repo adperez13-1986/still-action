@@ -98,4 +98,4 @@ html, body {
   position: fixed; inset: 0; z-index: 90; display: none; place-items: center;
   background: #070a0e; color: #7f93a8; font-size: 15px; text-align: center; padding: 30px;
 }
-@media (orientation: portrait) { #rotate { display: grid; } }
+#rotate.show { display: grid; }

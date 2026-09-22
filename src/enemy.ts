@@ -33,8 +33,11 @@ export class Chaser {
   private bob = Math.random() * 10
   private readonly mat: THREE.MeshStandardMaterial
   private readonly core: THREE.Mesh
-  private readonly tell: THREE.Mesh
-  private readonly tellMat: THREE.MeshBasicMaterial
+  /** Lives in world space, NOT under the body — the lunge must not scale the tell. */
+  readonly tellGroup = new THREE.Group()
+  private readonly disc: THREE.Mesh
+  private readonly ringMat: THREE.MeshBasicMaterial
+  private readonly discMat: THREE.MeshBasicMaterial
 
   constructor(x: number, z: number) {
     this.pos.set(x, 0, z)
@@ -50,12 +53,21 @@ export class Chaser {
     )
     this.core.position.y = 0.95
 
-    this.tellMat = new THREE.MeshBasicMaterial({ color: CORE, transparent: true, opacity: 0, depthWrite: false })
-    this.tell = new THREE.Mesh(new THREE.RingGeometry(CHASER.strikeRadius - 0.14, CHASER.strikeRadius, 40), this.tellMat)
-    this.tell.rotation.x = -Math.PI / 2
-    this.tell.position.y = 0.03
+    // Outer ring is fixed at the real strike radius so the danger zone never moves.
+    // The inner disc fills it over the windup, so growth reads as a clock.
+    this.ringMat = new THREE.MeshBasicMaterial({ color: CORE, transparent: true, opacity: 0, depthWrite: false })
+    const ring = new THREE.Mesh(new THREE.RingGeometry(CHASER.strikeRadius - 0.1, CHASER.strikeRadius, 48), this.ringMat)
+    ring.rotation.x = -Math.PI / 2
 
-    this.group.add(body, this.core, this.tell)
+    this.discMat = new THREE.MeshBasicMaterial({ color: CORE, transparent: true, opacity: 0, depthWrite: false })
+    this.disc = new THREE.Mesh(new THREE.CircleGeometry(CHASER.strikeRadius, 48), this.discMat)
+    this.disc.rotation.x = -Math.PI / 2
+    this.disc.scale.setScalar(0.001)
+
+    this.tellGroup.position.y = 0.03
+    this.tellGroup.add(ring, this.disc)
+
+    this.group.add(body, this.core)
   }
 
   hit(damage: number): boolean {
@@ -116,9 +128,22 @@ export class Chaser {
 
     // --- presentation ---
     const winding = this.phase === 'windup'
-    const t = winding ? 1 - this.timer / CHASER.windupMs : 0
-    this.tellMat.opacity = winding ? 0.15 + t * 0.6 : this.phase === 'strike' ? 0.85 : 0
-    this.tell.scale.setScalar(winding ? 0.55 + t * 0.45 : 1)
+    const t = winding ? Math.min(1, Math.max(0, 1 - this.timer / CHASER.windupMs)) : 0
+
+    if (winding) {
+      this.ringMat.opacity = 0.42
+      this.discMat.opacity = 0.3
+      this.disc.scale.setScalar(Math.max(0.001, t))
+    } else if (this.phase === 'strike') {
+      this.ringMat.opacity = 0.95
+      this.discMat.opacity = 0.8
+      this.disc.scale.setScalar(1)
+    } else {
+      // fade out rather than snapping off
+      this.ringMat.opacity = Math.max(0, this.ringMat.opacity - dt * 4)
+      this.discMat.opacity = Math.max(0, this.discMat.opacity - dt * 4)
+    }
+    this.tellGroup.position.set(this.pos.x, 0.03, this.pos.z)
 
     const lunge = this.phase === 'strike' ? 1.22 : winding ? 1 - t * 0.14 : 1
     this.group.scale.setScalar(lunge + this.flash * 0.15)
@@ -134,7 +159,9 @@ export class Chaser {
 
   dispose(scene: THREE.Scene) {
     scene.remove(this.group)
+    scene.remove(this.tellGroup)
     this.mat.dispose()
-    this.tellMat.dispose()
+    this.ringMat.dispose()
+    this.discMat.dispose()
   }
 }
