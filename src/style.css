@@ -1,0 +1,98 @@
+:root {
+  --cold: #4a6fa5;
+  --warm: #ffb26b;
+  --ink: #cbd7e6;
+  --strain: #c8452f;
+  --hp: #9fd8c4;
+  --btn: 62px;
+}
+
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+html, body {
+  margin: 0; height: 100%; overflow: hidden; background: #070a0e;
+  color: var(--ink); font: 500 13px/1.3 ui-sans-serif, system-ui, -apple-system, sans-serif;
+  touch-action: none; user-select: none; -webkit-user-select: none; overscroll-behavior: none;
+}
+
+#view { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+#hud { position: fixed; inset: 0; z-index: 10; pointer-events: none; }
+
+/* --- stick (variant A: fixed) --- */
+#stickBase {
+  position: absolute; width: 124px; height: 124px; margin: -62px 0 0 -62px;
+  left: 108px; top: calc(100% - 104px - env(safe-area-inset-bottom, 0px));
+  border-radius: 50%; border: 2px solid rgba(74, 111, 165, .3);
+  background: rgba(12, 18, 26, .3); pointer-events: none;
+}
+#stickKnob {
+  position: absolute; left: 50%; top: 50%;
+  width: 54px; height: 54px; margin: -27px 0 0 -27px; border-radius: 50%;
+  background: rgba(74, 111, 165, .3); border: 2px solid rgba(155, 190, 232, .6);
+}
+#stickZone { position: absolute; left: 0; top: 0; bottom: 0; width: 46%; pointer-events: auto; }
+
+/* --- ability buttons --- */
+.btn {
+  position: absolute; pointer-events: auto;
+  width: var(--btn); height: var(--btn); border-radius: 50%;
+  display: grid; place-items: center;
+  background: #111a25; border: 2px solid #2d4460; color: #9fb6d0;
+  font: 700 15px/1 ui-sans-serif, system-ui, sans-serif;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, .5);
+}
+.btn .cd {
+  position: absolute; inset: -2px; border-radius: 50%;
+  background: conic-gradient(rgba(6, 10, 15, .78) var(--sweep, 0deg), transparent 0deg);
+}
+.btn .lbl { position: relative; z-index: 2; }
+.btn.ready { border-color: #6f9bd0; color: #e6f0fb; box-shadow: 0 0 14px rgba(111, 155, 208, .28), 0 4px 12px rgba(0, 0, 0, .5); }
+.btn.press { transform: scale(.93); }
+.btn.pushable { border-color: var(--strain); color: #ffd0c4; box-shadow: 0 0 18px rgba(200, 69, 47, .5); }
+
+/* --- meters --- */
+.meter {
+  position: absolute; height: 7px; border-radius: 4px; overflow: hidden;
+  background: rgba(8, 12, 18, .7); border: 1px solid #1d2937;
+}
+.meter i { display: block; height: 100%; transition: width .18s; }
+.meter b {
+  position: absolute; inset: 0; display: grid; place-items: center;
+  font: 700 8px/1 ui-sans-serif, system-ui, sans-serif; letter-spacing: .14em;
+  color: rgba(255, 255, 255, .66); text-shadow: 0 1px 2px #000;
+}
+#hp { left: 50%; bottom: calc(env(safe-area-inset-bottom, 0px) + 14px); width: 168px; margin-left: -84px; }
+#hp i { background: var(--hp); }
+#strain { left: 50%; top: calc(env(safe-area-inset-top, 0px) + 12px); width: 210px; margin-left: -105px; }
+#strain i { background: linear-gradient(90deg, #8a6a2f, var(--strain)); }
+
+/* --- grade panel --- */
+#gradeToggle {
+  position: absolute; pointer-events: auto;
+  top: calc(env(safe-area-inset-top, 0px) + 8px); right: calc(env(safe-area-inset-right, 0px) + 10px);
+  appearance: none; border: 1px solid #22303f; background: rgba(16, 23, 34, .85);
+  color: #8fa3b8; padding: 7px 11px; border-radius: 8px;
+  font: 600 12px/1 ui-sans-serif, system-ui, sans-serif;
+}
+#grade {
+  position: absolute; pointer-events: auto; display: none;
+  top: calc(env(safe-area-inset-top, 0px) + 44px); right: calc(env(safe-area-inset-right, 0px) + 10px);
+  width: 250px; max-height: 74vh; overflow-y: auto;
+  padding: 12px; border-radius: 11px;
+  background: rgba(10, 14, 20, .93); border: 1px solid #1c2838; backdrop-filter: blur(8px);
+}
+#grade.open { display: block; }
+#grade label { display: block; margin: 0 0 9px; font-size: 11px; color: #7f93a8; }
+#grade label span { float: right; color: #cbd7e6; font-variant-numeric: tabular-nums; }
+#grade input { width: 100%; margin-top: 4px; accent-color: #6f9bd0; }
+#grade button {
+  width: 100%; margin-top: 4px; appearance: none; border: 1px solid #2d4460;
+  background: #16202d; color: #cbd7e6; padding: 8px; border-radius: 7px;
+  font: 600 12px/1 ui-sans-serif, system-ui, sans-serif;
+}
+
+#rotate {
+  position: fixed; inset: 0; z-index: 90; display: none; place-items: center;
+  background: #070a0e; color: #7f93a8; font-size: 15px; text-align: center; padding: 30px;
+}
+@media (orientation: portrait) { #rotate { display: grid; } }

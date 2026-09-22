@@ -1,0 +1,407 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no" />
+<meta name="theme-color" content="#0a0d12" />
+<title>Still — HUD reach test</title>
+<style>
+  :root {
+    --bg: #0a0d12;
+    --cold: #4a6fa5;
+    --cold-dim: #223247;
+    --warm: #ffb26b;
+    --ink: #cbd7e6;
+    --strain: #c8452f;
+    --hp: #9fd8c4;
+
+    /* tuned per variant */
+    --btn: 62px;
+    --arc-r: 96px;
+    --pad: 22px;
+  }
+
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    margin: 0; height: 100%; overflow: hidden;
+    background: var(--bg); color: var(--ink);
+    font: 500 13px/1.3 ui-sans-serif, system-ui, -apple-system, sans-serif;
+    touch-action: none; user-select: none; -webkit-user-select: none;
+    overscroll-behavior: none;
+  }
+
+  #stage { position: fixed; inset: 0; }
+
+  /* --- fake world, just enough to judge contrast against --- */
+  #world {
+    position: absolute; inset: 0;
+    background:
+      radial-gradient(120% 90% at 50% 40%, #16202e 0%, #0c1119 55%, #070a0e 100%);
+  }
+  #world::after {
+    content: ""; position: absolute; inset: 0;
+    background: radial-gradient(70% 55% at 50% 48%, transparent 40%, rgba(0,0,0,.72) 100%);
+  }
+  #floor {
+    position: absolute; left: 50%; top: 52%;
+    width: 150vmin; height: 150vmin; margin: -75vmin 0 0 -75vmin;
+    transform: rotateX(60deg) rotateZ(45deg);
+    background-image:
+      linear-gradient(rgba(74,111,165,.12) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(74,111,165,.12) 1px, transparent 1px);
+    background-size: 44px 44px;
+    mask-image: radial-gradient(closest-side, #000 25%, transparent 78%);
+  }
+  #still {
+    position: absolute; left: 50%; top: 50%; width: 30px; height: 46px;
+    margin: -30px 0 0 -15px; border-radius: 4px;
+    background: linear-gradient(#37475c, #1d2836);
+    box-shadow: 0 0 44px 14px rgba(255,178,107,.16), 0 10px 18px rgba(0,0,0,.6);
+    transition: transform .08s linear;
+  }
+  #still::before {
+    content: ""; position: absolute; left: 50%; top: 9px;
+    width: 7px; height: 7px; margin-left: -3.5px; border-radius: 50%;
+    background: var(--warm); box-shadow: 0 0 10px var(--warm);
+  }
+
+  /* --- top bar: deliberately out of both thumb arcs --- */
+  #bar {
+    position: absolute; z-index: 30;
+    top: calc(env(safe-area-inset-top, 0px) + 6px); left: 50%;
+    transform: translateX(-50%);
+    display: flex; gap: 6px; align-items: center;
+    padding: 5px; border-radius: 11px;
+    background: rgba(10,14,20,.82); border: 1px solid #1c2838;
+    backdrop-filter: blur(6px);
+  }
+  #bar button {
+    appearance: none; border: 1px solid #22303f; background: #101722;
+    color: #8fa3b8; padding: 6px 11px; border-radius: 7px;
+    font: 600 12px/1 ui-sans-serif, system-ui, sans-serif;
+  }
+  #bar button.on { background: var(--cold-dim); color: #dceaff; border-color: #3d5d86; }
+  #bar .sep { width: 1px; height: 20px; background: #1e2a38; }
+
+  #note {
+    position: absolute; z-index: 30; left: 50%;
+    top: calc(env(safe-area-inset-top, 0px) + 46px);
+    transform: translateX(-50%);
+    font-size: 11px; color: #5f7386; white-space: nowrap;
+    text-align: center; pointer-events: none;
+  }
+
+  /* --- HUD --- */
+  #hud { position: absolute; inset: 0; z-index: 20; }
+
+  #stickZone {
+    position: absolute; left: 0; top: 0; bottom: 0; width: 46%;
+  }
+  #stickBase {
+    position: absolute; width: 124px; height: 124px; margin: -62px 0 0 -62px;
+    border-radius: 50%; border: 2px solid rgba(74,111,165,.34);
+    background: rgba(12,18,26,.34);
+    opacity: 0; transition: opacity .12s;
+  }
+  #stickBase.live { opacity: 1; }
+  #stickKnob {
+    position: absolute; left: 50%; top: 50%;
+    width: 54px; height: 54px; margin: -27px 0 0 -27px; border-radius: 50%;
+    background: rgba(74,111,165,.30); border: 2px solid rgba(155,190,232,.6);
+  }
+
+  #buttons { position: absolute; inset: 0; pointer-events: none; }
+  .btn {
+    position: absolute; pointer-events: auto;
+    width: var(--btn); height: var(--btn); border-radius: 50%;
+    display: grid; place-items: center;
+    background: #111a25; border: 2px solid #2d4460;
+    color: #9fb6d0; font: 700 15px/1 ui-sans-serif, system-ui, sans-serif;
+    box-shadow: 0 4px 12px rgba(0,0,0,.5);
+  }
+  .btn .cd {
+    position: absolute; inset: -2px; border-radius: 50%;
+    background: conic-gradient(rgba(6,10,15,.78) var(--sweep, 0deg), transparent 0deg);
+    pointer-events: none;
+  }
+  .btn.ready { border-color: #6f9bd0; color: #e6f0fb; box-shadow: 0 0 14px rgba(111,155,208,.28), 0 4px 12px rgba(0,0,0,.5); }
+  .btn.press { transform: scale(.93); }
+  .btn.pushable { border-color: var(--strain); color: #ffd0c4; box-shadow: 0 0 18px rgba(200,69,47,.5); }
+  .btn .lbl { position: relative; z-index: 2; }
+
+  .meter {
+    position: absolute; border-radius: 4px; overflow: hidden;
+    background: rgba(8,12,18,.7); border: 1px solid #1d2937;
+  }
+  .meter i { display: block; height: 100%; transition: width .18s; }
+  #hp  { height: 7px; } #hp i  { background: var(--hp); }
+  #str { height: 7px; } #str i { background: linear-gradient(90deg, #8a6a2f, var(--strain)); }
+  .meter b {
+    position: absolute; inset: 0; display: grid; place-items: center;
+    font: 700 8px/1 ui-sans-serif, system-ui, sans-serif; letter-spacing: .14em;
+    color: rgba(255,255,255,.66); text-shadow: 0 1px 2px #000;
+  }
+
+  /* ---------- VARIANT A — tight arc, fixed stick (Immortal-like) ---------- */
+  .v-a { --btn: 62px; --arc-r: 96px; }
+  .v-a #stickBase.fixed { opacity: 1; }
+  .v-a #hp  { left: 50%; bottom: calc(env(safe-area-inset-bottom,0px) + 14px); width: 168px; margin-left: -84px; }
+  .v-a #str { left: 50%; top: calc(env(safe-area-inset-top,0px) + 74px); width: 210px; margin-left: -105px; }
+
+  /* ---------- VARIANT B — wide arc, floating stick ---------- */
+  .v-b { --btn: 58px; --arc-r: 118px; }
+  .v-b #hp  { left: 50%; bottom: calc(env(safe-area-inset-bottom,0px) + 24px); width: 190px; margin-left: -95px; }
+  .v-b #str { left: 50%; bottom: calc(env(safe-area-inset-bottom,0px) + 12px); width: 190px; margin-left: -95px; }
+
+  /* ---------- VARIANT C — 2x2 grid, floating stick ---------- */
+  .v-c { --btn: 60px; }
+  .v-c #hp  { left: 50%; bottom: calc(env(safe-area-inset-bottom,0px) + 14px); width: 168px; margin-left: -84px; }
+  .v-c #str {
+    right: calc(env(safe-area-inset-right,0px) + 8px);
+    top: 50%; width: 7px; height: 150px; margin-top: -75px;
+  }
+  .v-c #str i { width: 100% !important; height: var(--fill, 0%); align-self: end; }
+  .v-c #str { display: flex; align-items: flex-end; }
+  .v-c #str b { writing-mode: vertical-rl; }
+
+  #trail { position: absolute; inset: 0; z-index: 25; pointer-events: none; }
+  .dot {
+    position: absolute; width: 30px; height: 30px; margin: -15px 0 0 -15px;
+    border-radius: 50%; border: 2px solid rgba(255,178,107,.85);
+    animation: fade 2.6s forwards;
+  }
+  @keyframes fade { from { opacity: .9; transform: scale(.55); } to { opacity: 0; transform: scale(1.5); } }
+
+  #rotate {
+    position: fixed; inset: 0; z-index: 90; display: none;
+    place-items: center; background: var(--bg); text-align: center; padding: 30px;
+    color: #7f93a8; font-size: 15px; line-height: 1.6;
+  }
+  @media (orientation: portrait) { #rotate { display: grid; } }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="world"><div id="floor"></div><div id="still"></div></div>
+
+  <div id="hud">
+    <div id="stickZone"><div id="stickBase"><div id="stickKnob"></div></div></div>
+    <div id="buttons"></div>
+    <div class="meter" id="hp"><i style="width:82%"></i><b>INTEGRITY</b></div>
+    <div class="meter" id="str"><i style="width:15%"></i><b>STRAIN</b></div>
+  </div>
+
+  <div id="trail"></div>
+
+  <div id="bar">
+    <button data-v="a" class="on">A · arc</button>
+    <button data-v="b">B · wide</button>
+    <button data-v="c">C · grid</button>
+    <span class="sep"></span>
+    <button id="tr">trail</button>
+    <button id="fs">full</button>
+  </div>
+  <div id="note"></div>
+</div>
+
+<div id="rotate">Turn the phone sideways.<br />Twin-stick needs two thumbs.</div>
+
+<script>
+const SLOTS = [
+  { k: 'H', name: 'Head',  cd: 4000 },
+  { k: 'T', name: 'Torso', cd: 6000 },
+  { k: 'A', name: 'Arms',  cd: 2500 },
+  { k: 'L', name: 'Legs',  cd: 8000 },
+];
+
+const NOTES = {
+  a: 'A — fixed stick, tight arc (r96). Familiar. Does the top button need a grip shift?',
+  b: 'B — floating stick, wide arc (r118). More separation, further reach.',
+  c: 'C — floating stick, 2×2 grid. Can you hit the right one without looking?',
+};
+
+const stage = document.getElementById('stage');
+const btnWrap = document.getElementById('buttons');
+const note = document.getElementById('note');
+const base = document.getElementById('stickBase');
+const knob = document.getElementById('stickKnob');
+const still = document.getElementById('still');
+const trail = document.getElementById('trail');
+const strFill = document.querySelector('#str i');
+const strEl = document.getElementById('str');
+
+let variant = 'a';
+let strain = 3;                 // of 20
+let showTrail = false;
+const btns = [];
+
+/* ---------- build buttons ---------- */
+SLOTS.forEach((s, i) => {
+  const b = document.createElement('div');
+  b.className = 'btn ready';
+  b.innerHTML = '<div class="cd"></div><span class="lbl">' + s.k + '</span>';
+  b.dataset.i = i;
+  btnWrap.appendChild(b);
+  btns.push({ el: b, cdEl: b.querySelector('.cd'), def: s, until: 0, downAt: 0, pid: null, pushed: false });
+});
+
+/* ---------- variant layout ---------- */
+function layout() {
+  stage.className = 'v-' + variant;
+  note.textContent = NOTES[variant];
+  const css = getComputedStyle(stage);
+  const size = parseFloat(css.getPropertyValue('--btn'));
+  const r = parseFloat(css.getPropertyValue('--arc-r')) || 0;
+  const padX = 20, padY = 20;
+
+  btns.forEach((b, i) => {
+    const e = b.el;
+    e.style.left = e.style.top = e.style.right = e.style.bottom = '';
+    if (variant === 'c') {
+      const col = i % 2, row = (i / 2) | 0;          // H T / A L
+      e.style.right  = 'calc(env(safe-area-inset-right,0px) + ' + (padX + (1 - col) * (size + 10)) + 'px)';
+      e.style.bottom = 'calc(env(safe-area-inset-bottom,0px) + ' + (padY + (1 - row) * (size + 10)) + 'px)';
+    } else {
+      // polar sweep up from the bottom-right corner
+      const th = (variant === 'a' ? [8, 34, 60, 86] : [5, 32, 59, 86])[i] * Math.PI / 180;
+      e.style.right  = 'calc(env(safe-area-inset-right,0px) + ' + (padX + r * Math.cos(th) - size / 2) + 'px)';
+      e.style.bottom = 'calc(env(safe-area-inset-bottom,0px) + ' + (padY + r * Math.sin(th) - size / 2) + 'px)';
+    }
+  });
+
+  // fixed stick only in variant A
+  if (variant === 'a') {
+    base.classList.add('fixed', 'live');
+    base.style.left = '108px';
+    base.style.top  = 'calc(100% - 104px - env(safe-area-inset-bottom,0px))';
+  } else {
+    base.classList.remove('fixed', 'live');
+  }
+  drawStrain();
+}
+
+document.querySelectorAll('#bar [data-v]').forEach(b => {
+  b.addEventListener('click', () => {
+    document.querySelectorAll('#bar [data-v]').forEach(x => x.classList.remove('on'));
+    b.classList.add('on');
+    variant = b.dataset.v;
+    layout();
+  });
+});
+document.getElementById('tr').addEventListener('click', e => {
+  showTrail = !showTrail; e.target.classList.toggle('on', showTrail);
+});
+document.getElementById('fs').addEventListener('click', () => {
+  if (!document.fullscreenElement) document.documentElement.requestFullscreen?.();
+  else document.exitFullscreen?.();
+});
+
+/* ---------- strain ---------- */
+function drawStrain() {
+  const pct = Math.min(100, strain / 20 * 100);
+  if (variant === 'c') { strEl.style.setProperty('--fill', pct + '%'); strFill.style.width = '100%'; }
+  else { strFill.style.width = pct + '%'; strFill.style.height = ''; }
+}
+
+/* ---------- stick ---------- */
+let stickPid = null, sx = 0, sy = 0, vx = 0, vy = 0;
+const zone = document.getElementById('stickZone');
+
+zone.addEventListener('pointerdown', e => {
+  if (stickPid !== null) return;
+  stickPid = e.pointerId;
+  zone.setPointerCapture(e.pointerId);
+  if (variant === 'a') {
+    const r = base.getBoundingClientRect();
+    sx = r.left + r.width / 2; sy = r.top + r.height / 2;
+  } else {
+    sx = e.clientX; sy = e.clientY;
+    base.style.left = sx + 'px'; base.style.top = sy + 'px';
+  }
+  base.classList.add('live');
+  mark(e.clientX, e.clientY);
+  moveStick(e.clientX, e.clientY);
+});
+zone.addEventListener('pointermove', e => { if (e.pointerId === stickPid) moveStick(e.clientX, e.clientY); });
+['pointerup', 'pointercancel'].forEach(t => zone.addEventListener(t, e => {
+  if (e.pointerId !== stickPid) return;
+  stickPid = null; vx = vy = 0;
+  knob.style.transform = '';
+  if (variant !== 'a') base.classList.remove('live');
+}));
+
+function moveStick(x, y) {
+  let dx = x - sx, dy = y - sy;
+  const d = Math.hypot(dx, dy), max = 46;
+  if (d > max) { dx = dx / d * max; dy = dy / d * max; }
+  knob.style.transform = 'translate(' + dx + 'px,' + dy + 'px)';
+  vx = dx / max; vy = dy / max;
+}
+
+/* ---------- buttons: tap = fire, hold while cooling = push ---------- */
+const PUSH_HOLD = 180;
+
+btnWrap.addEventListener('pointerdown', e => {
+  const el = e.target.closest('.btn'); if (!el) return;
+  const b = btns[+el.dataset.i];
+  el.setPointerCapture(e.pointerId);
+  b.pid = e.pointerId; b.downAt = performance.now(); b.pushed = false;
+  el.classList.add('press');
+  mark(e.clientX, e.clientY);
+});
+['pointerup', 'pointercancel'].forEach(t => btnWrap.addEventListener(t, e => {
+  const el = e.target.closest('.btn'); if (!el) return;
+  const b = btns[+el.dataset.i]; if (b.pid !== e.pointerId) return;
+  b.pid = null; el.classList.remove('press');
+  const now = performance.now();
+  if (b.pushed) return;
+  if (now >= b.until) fire(b, false);
+}));
+
+function fire(b, pushed) {
+  b.until = performance.now() + b.def.cd;
+  if (pushed) { strain = Math.min(20, strain + 2); drawStrain(); navigator.vibrate?.([14, 26, 14]); }
+  else navigator.vibrate?.(12);
+  still.style.transform = 'scale(1.12)';
+  setTimeout(() => (still.style.transform = ''), 80);
+}
+
+/* ---------- touch trail ---------- */
+function mark(x, y) {
+  if (!showTrail) return;
+  const d = document.createElement('div');
+  d.className = 'dot'; d.style.left = x + 'px'; d.style.top = y + 'px';
+  trail.appendChild(d);
+  setTimeout(() => d.remove(), 2600);
+}
+
+/* ---------- loop ---------- */
+let last = performance.now();
+function tick(now) {
+  const dt = Math.min(64, now - last); last = now;
+
+  // nudge the box so movement has something to read against
+  const cur = still.style.left ? parseFloat(still.style.left) : 50;
+  still.style.left = Math.max(12, Math.min(88, cur + vx * dt * 0.022)) + '%';
+  const curT = still.style.top ? parseFloat(still.style.top) : 50;
+  still.style.top = Math.max(18, Math.min(86, curT + vy * dt * 0.030)) + '%';
+
+  btns.forEach(b => {
+    const left = b.until - now;
+    const ready = left <= 0;
+    b.el.classList.toggle('ready', ready);
+    b.cdEl.style.setProperty('--sweep', ready ? '0deg' : (left / b.def.cd * 360) + 'deg');
+
+    const holding = b.pid !== null && (now - b.downAt) >= PUSH_HOLD;
+    b.el.classList.toggle('pushable', !ready && holding);
+    if (!ready && holding && !b.pushed) { b.pushed = true; fire(b, true); }
+  });
+
+  requestAnimationFrame(tick);
+}
+
+layout();
+requestAnimationFrame(tick);
+</script>
+</body>
+</html>
