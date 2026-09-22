@@ -25,6 +25,11 @@ export class Still {
   private legL!: THREE.Mesh
   private legR!: THREE.Mesh
 
+  private dashT = 0
+  private dashDur = 0
+  private readonly dashFrom = new THREE.Vector3()
+  private readonly dashTo = new THREE.Vector3()
+
   constructor() {
     this.setPart('legs', this.buildLegs())
     this.setPart('torso', this.buildTorso())
@@ -40,7 +45,31 @@ export class Still {
     this.group.add(mesh)
   }
 
+  get dashing(): boolean {
+    return this.dashT > 0
+  }
+
+  startDash(x: number, z: number, ms: number) {
+    this.dashFrom.set(this.pos.x, 0, this.pos.z)
+    this.dashTo.set(x, 0, z)
+    this.dashDur = ms / 1000
+    this.dashT = this.dashDur
+    this.facing = Math.atan2(x - this.pos.x, z - this.pos.z)
+  }
+
   update(dt: number, moveX: number, moveZ: number) {
+    if (this.dashT > 0) {
+      this.dashT = Math.max(0, this.dashT - dt)
+      const k = 1 - this.dashT / this.dashDur
+      const eased = 1 - (1 - k) * (1 - k)
+      this.pos.x = this.dashFrom.x + (this.dashTo.x - this.dashFrom.x) * eased
+      this.pos.z = this.dashFrom.z + (this.dashTo.z - this.dashFrom.z) * eased
+      this.bob += dt * 22
+      this.group.position.set(this.pos.x, 0.12, this.pos.z)
+      this.group.rotation.y = this.facing
+      return
+    }
+
     const mag = Math.hypot(moveX, moveZ)
 
     if (mag > 0.08) {

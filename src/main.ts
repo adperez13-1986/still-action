@@ -47,12 +47,17 @@ const combat = new Combat(world.scene, world.colliders, {
     hitstop = Math.max(hitstop, 0.08)
     shake = Math.max(shake, 0.28)
   },
+  onDash: (x, z, ms) => {
+    still.startDash(x, z, ms)
+    shake = Math.max(shake, 0.18)
+  },
 })
 
-hud.onFire((slot, pushed) => {
-  // Session three wires these to real actions. For now the press is its own tell.
-  console.log(`${slot.name}${pushed ? ' (pushed)' : ''}`)
-  still.group.scale.setScalar(pushed ? 1.14 : 1.07)
+hud.onFire((def, pushed) => {
+  combat.useAbility(def, still.pos, still.facing, hud.moveX, hud.moveZ)
+  still.group.scale.setScalar(pushed ? 1.16 : 1.08)
+  shake = Math.max(shake, pushed ? 0.34 : 0.16)
+  hitstop = Math.max(hitstop, pushed ? 0.06 : 0.035)
 })
 
 let accumulator = 0

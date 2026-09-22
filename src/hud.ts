@@ -1,3 +1,5 @@
+import { ABILITIES, type AbilityDef } from './abilities'
+
 /** Variant A, locked after the reach test: fixed stick, tight arc (r96, 62px). */
 const ARC_R = 96
 const BTN = 62
@@ -5,23 +7,11 @@ const ARC_DEG = [8, 34, 60, 86]
 const PAD = 20
 const PUSH_HOLD_MS = 180
 
-export interface SlotButton {
-  key: string
-  name: string
-  cooldownMs: number
-}
-
-const SLOTS: SlotButton[] = [
-  { key: 'H', name: 'Head', cooldownMs: 4000 },
-  { key: 'T', name: 'Torso', cooldownMs: 6000 },
-  { key: 'A', name: 'Arms', cooldownMs: 2500 },
-  { key: 'L', name: 'Legs', cooldownMs: 8000 },
-]
 
 interface ButtonState {
   el: HTMLElement
   cdEl: HTMLElement
-  def: SlotButton
+  def: AbilityDef
   readyAt: number
   pointerId: number | null
   downAt: number
@@ -35,7 +25,7 @@ export interface Hud {
   strain: number
   integrity: number
   update: (now: number) => void
-  onFire: (cb: (slot: SlotButton, pushed: boolean) => void) => void
+  onFire: (cb: (def: AbilityDef, pushed: boolean) => void) => void
 }
 
 export function createHud(root: HTMLElement): Hud {
@@ -52,7 +42,7 @@ export function createHud(root: HTMLElement): Hud {
   const strainFill = root.querySelector<HTMLElement>('#strain i')!
   const hpFill = root.querySelector<HTMLElement>('#hp i')!
 
-  const buttons: ButtonState[] = SLOTS.map((def, i) => {
+  const buttons: ButtonState[] = ABILITIES.map((def, i) => {
     const el = document.createElement('div')
     el.className = 'btn ready'
     el.innerHTML = `<div class="cd"></div><span class="lbl">${def.key}</span>`
@@ -63,7 +53,7 @@ export function createHud(root: HTMLElement): Hud {
     return { el, cdEl: el.querySelector<HTMLElement>('.cd')!, def, readyAt: 0, pointerId: null, downAt: 0, pushed: false }
   })
 
-  const listeners: ((slot: SlotButton, pushed: boolean) => void)[] = []
+  const listeners: ((def: AbilityDef, pushed: boolean) => void)[] = []
   const state = { moveX: 0, moveZ: 0, strain: 3, integrity: 1 }
 
   // --- stick ---
