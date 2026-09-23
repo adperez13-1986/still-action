@@ -11,10 +11,11 @@ export const mix = {
   hits: 0.8,
   enemy: 0.7,
   abilities: 0.8,
+  music: 0.45,
 }
 
-type Bus = 'auto' | 'hits' | 'enemy' | 'abilities'
-const BUSES: Bus[] = ['auto', 'hits', 'enemy', 'abilities']
+type Bus = 'auto' | 'hits' | 'enemy' | 'abilities' | 'music'
+const BUSES: Bus[] = ['auto', 'hits', 'enemy', 'abilities', 'music']
 
 let ctx: AudioContext | null = null
 let master!: GainNode
@@ -71,6 +72,14 @@ export function unlockAudio() {
   for (const ev of ['pointerdown', 'pointerup', 'touchend', 'click', 'keydown']) {
     window.addEventListener(ev, unlock, { capture: true, passive: true })
   }
+
+  // The game loop stops with the screen, but an AudioContext doesn't: the drone
+  // would hum on in your pocket. Suspend with the page, resume when it's back.
+  document.addEventListener('visibilitychange', () => {
+    if (!ctx) return
+    if (document.hidden) void ctx.suspend()
+    else void ctx.resume()
+  })
 }
 
 export function applyMix() {
@@ -445,9 +454,20 @@ export function windDown(seconds: number) {
 }
 
 /** A new run: undo whatever an ending did to the mix. */
-export function restore() {
+export function restore(fadeSeconds = 0) {
   if (!ctx) return
   const t = ctx.currentTime
   duck.gain.cancelScheduledValues(t)
-  duck.gain.setValueAtTime(1, t)
+  if (fadeSeconds <= 0) {
+    duck.gain.setValueAtTime(1, t)
+  } else {
+    duck.gain.setValueAtTime(Math.max(0.0001, duck.gain.value), t)
+    duck.gain.exponentialRampToValueAtTime(1, t + fadeSeconds)
+  }
+}
+
+/** For the music: the running context, and its bus. Null until audio is unlocked. */
+export function musicContext(): { ctx: AudioContext; out: AudioNode } | null {
+  const c = live()
+  return c ? { ctx: c, out: buses.music } : null
 }

@@ -10,6 +10,7 @@ import type { Enemy } from './enemy'
 import { RANGED } from './ranged'
 import * as sfx from './audio'
 import { createCameraRig } from './camera'
+import { updateMusic } from './music'
 import { createOverlay, type EndingKind } from './ending'
 
 const canvas = document.querySelector<HTMLCanvasElement>('#view')!
@@ -145,6 +146,8 @@ function startRun() {
 function end(kind: EndingKind) {
   run.phase = 'over'
   overlay.show(kind, run.cleared, startRun)
+  // the silence after the ending is held a moment, then the bell comes back under the words
+  sfx.restore(3)
 }
 
 function stopAllWindups() {
@@ -313,6 +316,11 @@ function frame(nowMs: number) {
   }
   world.camera.lookAt(camTarget)
 
+  updateMusic({
+    fighting: run.phase === 'fight',
+    calm: run.phase === 'breather' || run.phase === 'over',
+    strain: run.strain / 20,
+  })
   hud.update(nowMs)
   world.render()
   requestAnimationFrame(frame)
