@@ -1,5 +1,6 @@
 import { grade, type World } from './world'
 import { mix, applyMix, setMuted } from './audio'
+import { ZOOM } from './camera'
 
 interface Slider {
   obj: Record<string, number>
@@ -20,7 +21,11 @@ const SLIDERS: Slider[] = [
   { obj: grade, key: 'bloomThreshold', label: 'bloom threshold', min: 0, max: 1, step: 0.01 },
   { obj: grade, key: 'bloomRadius', label: 'bloom radius', min: 0, max: 1.5, step: 0.01 },
   { obj: grade, key: 'graceLight', label: "Grace's light", min: 0, max: 900, step: 5 },
-  { obj: grade, key: 'viewHeight', label: 'camera zoom', min: 8, max: 34, step: 0.5 },
+  { obj: grade, key: 'viewHeight', label: 'view size', min: 8, max: 34, step: 0.5 },
+  { obj: ZOOM, key: 'min', label: 'zoom: furthest out', min: 0.4, max: 1, step: 0.01 },
+  { obj: ZOOM, key: 'calm', label: 'zoom: between fights', min: 0.8, max: 1.4, step: 0.01 },
+  { obj: ZOOM, key: 'marginY', label: 'zoom: vertical margin', min: 0.4, max: 1, step: 0.01 },
+  { obj: ZOOM, key: 'outRate', label: 'zoom: pull-back speed', min: 0.5, max: 10, step: 0.1 },
   { obj: mix, key: 'master', label: 'sound: master', min: 0, max: 1.5, step: 0.01 },
   { obj: mix, key: 'auto', label: 'sound: auto attack', min: 0, max: 1.5, step: 0.01 },
   { obj: mix, key: 'hits', label: 'sound: hits', min: 0, max: 1.5, step: 0.01 },
@@ -95,11 +100,12 @@ export function createGradePanel(root: HTMLElement, world: World) {
   save.addEventListener('click', async () => {
     save.textContent = 'saving...'
     try {
-      const [g, m] = await Promise.all([
+      const res = await Promise.all([
         fetch('/__save/grade', { method: 'POST', body: JSON.stringify(grade, null, 2) }),
         fetch('/__save/mix', { method: 'POST', body: JSON.stringify(mix, null, 2) }),
+        fetch('/__save/zoom', { method: 'POST', body: JSON.stringify(ZOOM, null, 2) }),
       ])
-      save.textContent = g.ok && m.ok ? 'saved to grade.json + mix.json' : 'failed'
+      save.textContent = res.every((r) => r.ok) ? 'saved grade, mix, zoom .json' : 'failed'
     } catch {
       save.textContent = 'failed'
     }

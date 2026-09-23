@@ -1,11 +1,11 @@
 import { writeFileSync } from 'node:fs'
 import { defineConfig, type Plugin } from 'vite'
 
-const SINKS = new Set(['grade', 'mix'])
+const SINKS = new Set(['grade', 'mix', 'zoom'])
 
 /**
  * The phone is on plain http over LAN, so the clipboard API is unavailable.
- * The tuning panel POSTs here instead and the values land in grade.json / mix.json.
+ * The tuning panel POSTs here instead and the values land in grade.json / mix.json / zoom.json.
  */
 function gradeSink(): Plugin {
   return {

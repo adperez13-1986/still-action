@@ -9,6 +9,7 @@ import type { AbilityDef } from './abilities'
 import type { Enemy } from './enemy'
 import { RANGED } from './ranged'
 import * as sfx from './audio'
+import { createCameraRig } from './camera'
 import { createOverlay, type EndingKind } from './ending'
 
 const canvas = document.querySelector<HTMLCanvasElement>('#view')!
@@ -27,6 +28,7 @@ const world = createWorld(canvas)
 const hud = createHud(hudRoot)
 createGradePanel(hudRoot, world)
 const overlay = createOverlay(hudRoot)
+const rig = createCameraRig(world)
 
 const still = new Still()
 world.scene.add(still.group)
@@ -59,16 +61,19 @@ const combat = new Combat(world.scene, world.colliders, {
     sfx.hurt()
     hitstop = Math.max(hitstop, 0.09)
     shake = Math.max(shake, 0.5)
+    rig.punch(-0.03)
     navigator.vibrate?.(30)
   },
   onKill: (at) => {
     sfx.kill(panOf(at))
     hitstop = Math.max(hitstop, 0.08)
     shake = Math.max(shake, 0.28)
+    rig.punch(0.035)
   },
   onDash: (x, z, ms) => {
     still.startDash(x, z, ms)
     shake = Math.max(shake, 0.18)
+    rig.punch(0.03)
   },
   onShot: () => sfx.shot(0),
   onWindup: (e, ms) => {
@@ -90,7 +95,7 @@ const combat = new Combat(world.scene, world.colliders, {
 })
 
 /** Dev only: lets a headless browser read the fight without guessing from pixels. */
-if (import.meta.env.DEV) Object.assign(window, { __combat: combat })
+if (import.meta.env.DEV) Object.assign(window, { __combat: combat, __world: world })
 
 // --- the run: fights, breathers between them, and the two ways it ends ---
 
@@ -129,8 +134,7 @@ function startRun() {
   prev.set(0, 0, 0)
   Object.assign(run, { phase: 'fight', fight: 1, cleared: 0, strain: 0, t: 0 })
   combat.startFight(roster(1))
-  world.camera.zoom = 1
-  world.camera.updateProjectionMatrix()
+  rig.reset()
   world.gradePass.uniforms.uSaturation!.value = grade.saturation
   hud.enabled = true
   overlay.hide()
@@ -159,6 +163,7 @@ function breakApart() {
   navigator.vibrate?.(120)
   hitstop = 0.16
   shake = 1.1
+  rig.punch(0.1)
 }
 
 function beginStopping() {
@@ -191,6 +196,7 @@ function cast(def: AbilityDef, pushed: boolean) {
   still.group.scale.setScalar(pushed ? 1.16 : 1.08)
   shake = Math.max(shake, pushed ? 0.34 : 0.16)
   hitstop = Math.max(hitstop, pushed ? 0.06 : 0.035)
+  rig.punch(pushed ? 0.06 : 0.02)
 }
 
 let accumulator = 0
@@ -221,8 +227,7 @@ function simulate(realDt: number) {
     const ease = k * k * (3 - 2 * k)
     dt = realDt * (1 - ease)
     still.setSlowdown(ease)
-    world.camera.zoom = 1 + ease * 0.45
-    world.camera.updateProjectionMatrix()
+    rig.hold = 1 + ease * 0.45
     world.gradePass.uniforms.uSaturation!.value = grade.saturation * (1 - ease * 0.8)
     if (run.t >= STOP_SECONDS + 0.5) {
       end('stopped')
@@ -298,6 +303,7 @@ function frame(nowMs: number) {
 
   shake = Math.max(0, shake - elapsed * 3.2)
   camTarget.set(x, 0, z)
+  rig.update(elapsed, camTarget, combat.enemies.map((e) => e.pos), run.phase === 'breather')
   world.camera.position.copy(camTarget).add(camOffset)
   if (shake > 0) {
     const k = shake * shake * 0.9

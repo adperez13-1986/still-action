@@ -94,6 +94,9 @@ button again. Second criterion, equally binding: is building it still fun.
   "OK for now" on the phone. Levels tune live in the grade panel and save to
   `mix.json`. The windup tone is panned and cuts at the strike — it is meant to be
   a second telegraph, not decoration.
+- **Dynamic zoom built** (`src/camera.ts`): frames every threat, never below 0.7,
+  drifts in to 1.1 between fights, small punches on impact. Dials live in the grade
+  panel and save to `zoom.json`.
 - **Grade defaults are guesses.** Tune live in-app, hit save, values land in
   `grade.json`.
 
