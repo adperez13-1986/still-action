@@ -8,6 +8,8 @@ import { Combat, MELEE_PAD } from './combat'
 import type { AbilityDef } from './abilities'
 import type { Chaser } from './enemy'
 import * as sfx from './audio'
+import { createOverlay, type EndingKind } from './ending'
+import { grade } from './world'
 
 const canvas = document.querySelector<HTMLCanvasElement>('#view')!
 const hudRoot = document.querySelector<HTMLElement>('#hud')!
@@ -24,6 +26,7 @@ window.addEventListener('orientationchange', checkOrientation)
 const world = createWorld(canvas)
 const hud = createHud(hudRoot)
 createGradePanel(hudRoot, world)
+const overlay = createOverlay(hudRoot)
 
 const still = new Still()
 world.scene.add(still.group)
@@ -68,7 +71,10 @@ const combat = new Combat(world.scene, world.colliders, {
     shake = Math.max(shake, 0.18)
   },
   onShot: () => sfx.shot(0),
-  onWindup: (e, ms) => windups.set(e, sfx.windup(ms, panOf(e.pos))),
+  onWindup: (e, ms) => {
+    // once Still is stopping, the world is slowing with him; a real-time tell would lie
+    if (run.phase === 'fight' || run.phase === 'breather') windups.set(e, sfx.windup(ms, panOf(e.pos)))
+  },
   onStrike: (e) => {
     windups.delete(e)
     sfx.strike(panOf(e.pos))
@@ -79,7 +85,81 @@ const combat = new Combat(world.scene, world.colliders, {
   },
 })
 
-hud.onFire((def, pushed) => cast(def, pushed))
+// --- the run: fights, breathers between them, and the two ways it ends ---
+
+const STRAIN_MAX = 20
+const STRAIN_PER_PUSH = 2
+const STRAIN_DECAY_PER_FIGHT = 4
+const BREATHER = 2.6
+/** How long Still takes to stop. The sound, the zoom and the colour all run on this. */
+const STOP_SECONDS = 3.4
+/** How long the broken parts tumble before the cut. Short on purpose. */
+const BREAK_SECONDS = 0.85
+
+type Phase = 'fight' | 'breather' | 'broken' | 'stopping' | 'over'
+
+const run = { phase: 'fight' as Phase, fight: 1, cleared: 0, strain: 0, t: 0 }
+
+function fightSize(n: number) {
+  return 3 + n
+}
+
+function startRun() {
+  combat.reset()
+  still.reassemble()
+  still.pos.set(0, 0, 0)
+  prev.set(0, 0, 0)
+  Object.assign(run, { phase: 'fight', fight: 1, cleared: 0, strain: 0, t: 0 })
+  combat.startFight(fightSize(1))
+  world.camera.zoom = 1
+  world.camera.updateProjectionMatrix()
+  world.gradePass.uniforms.uSaturation!.value = grade.saturation
+  hud.enabled = true
+  overlay.hide()
+  sfx.restore()
+  overlay.banner('Fight 1')
+}
+
+function end(kind: EndingKind) {
+  run.phase = 'over'
+  overlay.show(kind, run.cleared, startRun)
+}
+
+function stopAllWindups() {
+  for (const stop of windups.values()) stop()
+  windups.clear()
+}
+
+function breakApart() {
+  run.phase = 'broken'
+  run.t = 0
+  hud.enabled = false
+  stopAllWindups()
+  const from = combat.nearestTarget(still.pos, 99) ?? new THREE.Vector3(still.pos.x, 0, still.pos.z - 1)
+  still.breakApart(from.x, from.z)
+  sfx.shatter()
+  navigator.vibrate?.(120)
+  hitstop = 0.16
+  shake = 1.1
+}
+
+function beginStopping() {
+  run.phase = 'stopping'
+  run.t = 0
+  hud.enabled = false
+  stopAllWindups()
+  sfx.windDown(STOP_SECONDS)
+}
+
+hud.onFire((def, pushed) => {
+  if (run.phase !== 'fight' && run.phase !== 'breather') return
+  cast(def, pushed)
+  if (pushed) {
+    run.strain = Math.min(STRAIN_MAX, run.strain + STRAIN_PER_PUSH)
+    // the push that crosses the line still lands at full power; then he stops
+    if (run.strain >= STRAIN_MAX) beginStopping()
+  }
+})
 
 function cast(def: AbilityDef, pushed: boolean) {
   // Snap the body to the target, or the swing plays sideways out of his shoulder.
@@ -102,8 +182,36 @@ const prev = new THREE.Vector3()
 const camTarget = new THREE.Vector3()
 const camOffset = world.camera.position.clone()
 
-function simulate(dt: number) {
+function simulate(realDt: number) {
   prev.copy(still.pos)
+
+  if (run.phase === 'over') return
+
+  if (run.phase === 'broken') {
+    run.t += realDt
+    still.updateBroken(realDt)
+    if (run.t >= BREAK_SECONDS) end('broken')
+    return
+  }
+
+  // Stopping: Still and the world run down together, the eye goes out, the view
+  // closes in and the colour drains. Grace's light is left alone.
+  let dt = realDt
+  if (run.phase === 'stopping') {
+    run.t += realDt
+    const k = Math.min(1, run.t / STOP_SECONDS)
+    const ease = k * k * (3 - 2 * k)
+    dt = realDt * (1 - ease)
+    still.setSlowdown(ease)
+    world.camera.zoom = 1 + ease * 0.45
+    world.camera.updateProjectionMatrix()
+    world.gradePass.uniforms.uSaturation!.value = grade.saturation * (1 - ease * 0.8)
+    if (run.t >= STOP_SECONDS + 0.5) {
+      end('stopped')
+      return
+    }
+  }
+
   still.update(dt, hud.moveX, hud.moveZ)
 
   const d = Math.hypot(still.pos.x, still.pos.z)
@@ -114,18 +222,34 @@ function simulate(dt: number) {
   }
   pushOutOfColliders(still.pos, BODY_RADIUS, world.colliders)
 
-
   const target = combat.nearestTarget(still.pos, 9.5)
   still.aim = target ? Math.atan2(target.x - still.pos.x, target.z - still.pos.z) : null
 
   combat.update(dt, still.pos)
   hud.integrity = combat.hp / 100
+  hud.strain = run.strain
 
-  if (combat.hp <= 0) {
-    sfx.down()
-    combat.reset()
-    still.pos.set(0, 0, 0)
-    shake = 0.9
+  if (combat.hp <= 0 && run.phase !== 'stopping') {
+    breakApart()
+    return
+  }
+
+  if (run.phase === 'fight' && combat.cleared) {
+    run.cleared++
+    run.strain = Math.max(0, run.strain - STRAIN_DECAY_PER_FIGHT)
+    run.phase = 'breather'
+    run.t = 0
+    sfx.cleared()
+    overlay.banner(`Fight ${run.fight} cleared \u00b7 strain \u2212${STRAIN_DECAY_PER_FIGHT}`)
+  } else if (run.phase === 'breather') {
+    run.t += dt
+    if (run.t >= BREATHER) {
+      run.fight++
+      run.phase = 'fight'
+      combat.startFight(fightSize(run.fight))
+      hud.integrity = 1
+      overlay.banner(`Fight ${run.fight}`)
+    }
   }
 
   still.group.scale.lerp(new THREE.Vector3(1, 1, 1), Math.min(1, dt * 9))
@@ -170,4 +294,5 @@ function frame(nowMs: number) {
   requestAnimationFrame(frame)
 }
 
+startRun()
 requestAnimationFrame(frame)

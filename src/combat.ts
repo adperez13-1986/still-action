@@ -50,6 +50,8 @@ export class Combat {
   private autoTimer = 0
   private spawnTimer = 1.2
   private hurtCooldown = 0
+  /** Chasers this fight still has to send. The fight is cleared when these and the living are both gone. */
+  private toSpawn = 0
 
   private readonly boltGeo = new THREE.BoxGeometry(0.16, 0.16, 0.7)
   private readonly boltMat = new THREE.MeshBasicMaterial({ color: 0xffd39b })
@@ -65,9 +67,9 @@ export class Combat {
     this.hurtCooldown = Math.max(0, this.hurtCooldown - dt)
 
     this.spawnTimer -= dt
-    if (this.spawnTimer <= 0 && this.enemies.length < MAX_ENEMIES) {
+    if (this.toSpawn > 0 && this.spawnTimer <= 0 && this.enemies.length < MAX_ENEMIES) {
       this.spawnTimer = SPAWN_INTERVAL
-      this.spawn(player)
+      if (this.spawn(player)) this.toSpawn--
     }
 
     // --- enemies ---
@@ -149,8 +151,20 @@ export class Combat {
     return this.nearest(from, range)?.pos ?? null
   }
 
+  get cleared(): boolean {
+    return this.toSpawn === 0 && this.enemies.length === 0
+  }
+
+  /** HP is the fight: every fight starts whole. Strain is what carries over. */
+  startFight(size: number) {
+    this.hp = PLAYER_MAX_HP
+    this.toSpawn = size
+    this.spawnTimer = 1.2
+  }
+
   reset() {
     this.hp = PLAYER_MAX_HP
+    this.toSpawn = 0
     for (const e of this.enemies) {
       e.dispose(this.scene)
       this.events.onGone(e)
@@ -303,7 +317,7 @@ export class Combat {
     this.fx.push({ mesh, mat, life: 0.22, max: 0.22, from: 1, to: 1.15 })
   }
 
-  private spawn(player: THREE.Vector3) {
+  private spawn(player: THREE.Vector3): boolean {
     // always arrive from the rim, never on top of you
     for (let attempt = 0; attempt < 12; attempt++) {
       const a = Math.random() * Math.PI * 2
@@ -314,7 +328,8 @@ export class Combat {
       const e = new Chaser(x, z)
       this.scene.add(e.group, e.tellGroup)
       this.enemies.push(e)
-      return
+      return true
     }
+    return false
   }
 }

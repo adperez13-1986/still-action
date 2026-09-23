@@ -82,6 +82,10 @@ button again. Second criterion, equally binding: is building it still fun.
 - **Hold means two things.** Hold-to-aim and hold-to-push are the same gesture.
   Currently resolved by state — hold on a *ready* button would aim, hold on a
   *cooling* button pushes. Only the cooling half is built. Unsettled.
+- **Endings copy is draft.** Both endings work; the words in `src/ending.ts` are
+  placeholders to be rewritten by hand.
+- **No win condition.** Fights escalate (3 + n chasers) until one of the two endings.
+  Strain decay (−4/fight) may make two pushes per fight free forever — watch it.
 - **Ranged archetype** unbuilt. Charger and swarm are out of spike scope.
 - **Audio is first-pass.** All synthesised in `src/audio.ts` (Web Audio, no files).
   "OK for now" on the phone. Levels tune live in the grade panel and save to

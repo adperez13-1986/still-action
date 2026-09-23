@@ -22,8 +22,11 @@ export interface Hud {
   /** -1..1 on each axis, already deadzoned. */
   readonly moveX: number
   readonly moveZ: number
+  /** 0..20, owned by the run. */
   strain: number
   integrity: number
+  /** Off once an ending starts: the stick and buttons stop answering. */
+  enabled: boolean
   update: (now: number) => void
   onFire: (cb: (def: AbilityDef, pushed: boolean) => void) => void
 }
@@ -32,14 +35,15 @@ export function createHud(root: HTMLElement): Hud {
   root.innerHTML = `
     <div id="stickZone"></div>
     <div id="stickBase"><div id="stickKnob"></div></div>
-    <div class="meter" id="strain"><i style="width:15%"></i><b>STRAIN</b></div>
+    <div class="meter" id="strain"><i style="width:0%"></i><b>STRAIN</b></div>
     <div class="meter" id="hp"><i style="width:100%"></i><b>INTEGRITY</b></div>
   `
 
   const zone = root.querySelector<HTMLElement>('#stickZone')!
   const base = root.querySelector<HTMLElement>('#stickBase')!
   const knob = root.querySelector<HTMLElement>('#stickKnob')!
-  const strainFill = root.querySelector<HTMLElement>('#strain i')!
+  const strainMeter = root.querySelector<HTMLElement>('#strain')!
+  const strainFill = strainMeter.querySelector<HTMLElement>('i')!
   const hpFill = root.querySelector<HTMLElement>('#hp i')!
 
   const buttons: ButtonState[] = ABILITIES.map((def, i) => {
@@ -54,7 +58,7 @@ export function createHud(root: HTMLElement): Hud {
   })
 
   const listeners: ((def: AbilityDef, pushed: boolean) => void)[] = []
-  const state = { moveX: 0, moveZ: 0, strain: 3, integrity: 1 }
+  const state = { moveX: 0, moveZ: 0, strain: 0, integrity: 1, enabled: true }
 
   // --- stick ---
   let stickPointer: number | null = null
@@ -94,6 +98,7 @@ export function createHud(root: HTMLElement): Hud {
     }
     knob.style.transform = `translate(${dx}px, ${dy}px)`
 
+    if (!state.enabled) return
     const nx = dx / MAX_THROW
     const ny = dy / MAX_THROW
     const mag = Math.hypot(nx, ny)
@@ -130,9 +135,9 @@ export function createHud(root: HTMLElement): Hud {
   }
 
   function fire(b: ButtonState, pushed: boolean) {
+    if (!state.enabled) return
     b.readyAt = performance.now() + b.def.cooldownMs
     if (pushed) {
-      state.strain = Math.min(20, state.strain + 2)
       navigator.vibrate?.([14, 26, 14])
     } else {
       navigator.vibrate?.(12)
@@ -147,6 +152,15 @@ export function createHud(root: HTMLElement): Hud {
     set strain(v: number) { state.strain = v },
     get integrity() { return state.integrity },
     set integrity(v: number) { state.integrity = v },
+    get enabled() { return state.enabled },
+    set enabled(v: boolean) {
+      state.enabled = v
+      if (!v) {
+        state.moveX = 0
+        state.moveZ = 0
+        knob.style.transform = ''
+      }
+    },
 
     update(now: number) {
       for (const b of buttons) {
@@ -163,6 +177,7 @@ export function createHud(root: HTMLElement): Hud {
         }
       }
       strainFill.style.width = `${Math.min(100, (state.strain / 20) * 100)}%`
+      strainMeter.classList.toggle('high', state.strain >= 14)
       hpFill.style.width = `${Math.max(0, state.integrity * 100)}%`
     },
 

@@ -10,7 +10,11 @@ export const SLOT_NAMES: readonly SlotName[] = ['head', 'torso', 'arms', 'legs']
 
 const SHELL = new THREE.MeshStandardMaterial({ color: 0x3a4b61, roughness: 0.55, metalness: 0.35 })
 const SHELL_DARK = new THREE.MeshStandardMaterial({ color: 0x27333f, roughness: 0.7, metalness: 0.3 })
-const EYE = new THREE.MeshBasicMaterial({ color: 0xffb26b })
+const EYE_ON = new THREE.Color(0xffb26b)
+const EYE_OFF = new THREE.Color(0x14100c)
+const EYE = new THREE.MeshBasicMaterial({ color: EYE_ON })
+
+interface Debris { part: THREE.Object3D; vel: THREE.Vector3; spin: THREE.Vector3; floor: number }
 
 export class Still {
   readonly group = new THREE.Group()
@@ -27,6 +31,9 @@ export class Still {
   private legL!: THREE.Mesh
   private legR!: THREE.Mesh
 
+  private readonly home = new Map<THREE.Object3D, THREE.Vector3>()
+  private debris: Debris[] = []
+
   private dashT = 0
   private dashDur = 0
   private readonly dashFrom = new THREE.Vector3()
@@ -37,6 +44,61 @@ export class Still {
     this.setPart('torso', this.buildTorso())
     this.setPart('arms', this.buildArms())
     this.setPart('head', this.buildHead())
+    for (const p of Object.values(this.parts)) this.home.set(p, p.position.clone())
+  }
+
+  /** 0 is running, 1 is stopped: the eye goes out and the head drops. */
+  setSlowdown(k: number) {
+    EYE.color.copy(EYE_ON).lerp(EYE_OFF, k)
+    this.parts.head.rotation.x = k * 0.42
+    this.parts.arms.rotation.x = k * 0.12
+  }
+
+  /** HP death. The four parts were always separate meshes; now they come apart. */
+  breakApart(fromX: number, fromZ: number) {
+    this.dashT = 0
+    const away = Math.atan2(this.pos.x - fromX, this.pos.z - fromZ)
+    this.group.updateMatrixWorld(true)
+    const box = new THREE.Box3()
+    this.debris = Object.values(this.parts).map((part) => {
+      // each part rests where its own centre meets the floor, not where its origin does
+      const centreY = box.setFromObject(part).getCenter(new THREE.Vector3()).y - this.group.position.y
+      const floor = part.position.y - centreY + 0.14
+      const a = away + (Math.random() - 0.5) * 2.2
+      const v = 2.5 + Math.random() * 3
+      return {
+        part,
+        vel: new THREE.Vector3(Math.sin(a - this.facing) * v, 3 + Math.random() * 3.5, Math.cos(a - this.facing) * v),
+        spin: new THREE.Vector3(Math.random() * 12 - 6, Math.random() * 12 - 6, Math.random() * 12 - 6),
+        floor,
+      }
+    })
+  }
+
+  updateBroken(dt: number) {
+    for (const d of this.debris) {
+      d.vel.y -= 22 * dt
+      d.part.position.addScaledVector(d.vel, dt)
+      if (d.part.position.y < d.floor) {
+        d.part.position.y = d.floor
+        d.vel.multiplyScalar(0.35)
+        d.vel.y = Math.abs(d.vel.y) * 0.3
+        d.spin.multiplyScalar(0.5)
+      }
+      d.part.rotation.x += d.spin.x * dt
+      d.part.rotation.y += d.spin.y * dt
+      d.part.rotation.z += d.spin.z * dt
+    }
+  }
+
+  reassemble() {
+    this.debris = []
+    this.dashT = 0
+    for (const p of Object.values(this.parts)) {
+      p.position.copy(this.home.get(p) ?? new THREE.Vector3())
+      p.rotation.set(0, 0, 0)
+    }
+    this.setSlowdown(0)
   }
 
   /** The seam that makes visible loot free later. */
@@ -134,11 +196,13 @@ export class Still {
   }
 
   private buildHead(): THREE.Object3D {
+    // pivots at the neck, so the head can drop when Still stops
     const g = new THREE.Group()
+    g.position.y = 1.6
     const skull = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.38, 0.38), SHELL)
-    skull.position.y = 1.79
+    skull.position.y = 0.19
     const eye = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.06, 0.02), EYE)
-    eye.position.set(0, 1.82, 0.2)
+    eye.position.set(0, 0.22, 0.2)
     g.add(skull, eye)
     return g
   }

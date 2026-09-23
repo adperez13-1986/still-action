@@ -315,17 +315,75 @@ export function ability(shape: AbilityShape, pushed: boolean) {
   if (pushed) grind(c, d, t)
 }
 
-/** HP gone. Not an ending yet — just the sound of everything running down. */
-export function down() {
+/** A fight cleared: the one warm sound in the game, and short. */
+export function cleared() {
   const c = live()
   if (!c) return
   const t = c.currentTime
-  const d = out(c, 'hits', 0)
-  tone(c, d, 'sine', t, 320, 28, 1.4, 0.8)
+  const d = out(c, 'abilities', 0)
+  tone(c, d, 'triangle', t, 392, 390, 0.5, 0.22, 0.02)
+  tone(c, d, 'triangle', t + 0.14, 587, 585, 0.7, 0.2, 0.02)
+  tone(c, d, 'sine', t + 0.14, 1174, 1170, 0.5, 0.05, 0.02)
+}
+
+/** HP ending. Sudden: one crash, then nothing. */
+export function shatter() {
+  const c = live()
+  if (!c) return
+  const t = c.currentTime
+  const g = c.createGain()
+  g.gain.value = mix.hits
+  g.connect(master)
+  tone(c, distorted(c, g), 'sine', t, 130, 30, 0.5, 1, 0.002)
+  hiss(c, g, t, 0.45, 1, 'lowpass', 6000, 250, 0.7)
+  for (const f of [520, 780, 1130, 1490]) tone(c, g, 'triangle', t + Math.random() * 0.06, vary(f, 0.08), f * 0.9, 0.5, 0.1)
+
+  // everything else is cut, not faded
+  duck.gain.cancelScheduledValues(t)
+  duck.gain.setValueAtTime(0, t)
+}
+
+/**
+ * Strain ending. Still running down: a motor losing pitch over the whole stop,
+ * so the sound and the slowdown finish together.
+ */
+export function windDown(seconds: number) {
+  const c = live()
+  if (!c) return
+  const t = c.currentTime
+  // bypasses the duck: this is the one sound left while the world goes quiet
+  const d = c.createGain()
+  d.gain.value = mix.abilities
+  d.connect(master)
+
   const lp = c.createBiquadFilter()
   lp.type = 'lowpass'
-  lp.frequency.value = 1400
+  lp.frequency.setValueAtTime(1600, t)
+  lp.frequency.exponentialRampToValueAtTime(90, t + seconds)
   lp.connect(d)
-  tone(c, lp, 'sawtooth', t, 900, 60, 1.2, 0.25)
-  hiss(c, d, t, 1.2, 0.4, 'lowpass', 2000, 120, 0.7)
+
+  const o = c.createOscillator()
+  o.type = 'sawtooth'
+  o.frequency.setValueAtTime(180, t)
+  o.frequency.exponentialRampToValueAtTime(18, t + seconds)
+  const g = c.createGain()
+  g.gain.setValueAtTime(0.0001, t)
+  g.gain.linearRampToValueAtTime(0.28, t + 0.3)
+  g.gain.exponentialRampToValueAtTime(0.0001, t + seconds)
+  o.connect(g).connect(lp)
+  o.start(t)
+  o.stop(t + seconds + 0.05)
+
+  // the rest of the world goes quiet along with him
+  duck.gain.cancelScheduledValues(t)
+  duck.gain.setValueAtTime(1, t)
+  duck.gain.linearRampToValueAtTime(0.0001, t + seconds)
+}
+
+/** A new run: undo whatever an ending did to the mix. */
+export function restore() {
+  if (!ctx) return
+  const t = ctx.currentTime
+  duck.gain.cancelScheduledValues(t)
+  duck.gain.setValueAtTime(1, t)
 }
