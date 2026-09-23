@@ -266,6 +266,70 @@ export function strike(pan: number) {
   tone(c, d, 'sine', t, 110, 45, 0.15, 0.8)
 }
 
+/**
+ * The ranged tell. Thinner and higher than the chaser's so the two never blur:
+ * a whistle that climbs while it tracks you, and a hard click when the line
+ * freezes — the moment to move. Returns a stop, like windup().
+ */
+export function aim(ms: number, lockAt: number, pan: number): () => void {
+  const c = live()
+  if (!c) return () => {}
+  const t = c.currentTime
+  const dur = ms / 1000
+  const lock = t + dur * lockAt
+  const d = out(c, 'enemy', pan)
+
+  const o = c.createOscillator()
+  o.type = 'sine'
+  o.frequency.setValueAtTime(700, t)
+  o.frequency.exponentialRampToValueAtTime(1250, lock)
+  // locked: the pitch jumps and holds, like the line freezing
+  o.frequency.setValueAtTime(1500, lock)
+
+  const g = c.createGain()
+  g.gain.setValueAtTime(0.0001, t)
+  g.gain.exponentialRampToValueAtTime(0.1, lock)
+  g.gain.setValueAtTime(0.2, lock)
+  g.gain.setValueAtTime(0.2, t + dur)
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur + 0.02)
+  o.connect(g).connect(d)
+  o.start(t)
+  o.stop(t + dur + 0.05)
+
+  const click = c.createGain()
+  click.connect(d)
+  hiss(c, click, lock, 0.018, 0.9, 'highpass', 3500, 3500, 0.8, 0.001)
+  tone(c, click, 'square', lock, 2400, 1800, 0.02, 0.25, 0.001)
+
+  return () => {
+    const now = c.currentTime
+    if (now >= t + dur) return
+    g.gain.cancelScheduledValues(now)
+    g.gain.setTargetAtTime(0.0001, now, 0.01)
+    o.stop(now + 0.06)
+    // a click that hasn't happened yet must not happen
+    if (now < lock) click.gain.value = 0
+  }
+}
+
+export function fire(pan: number) {
+  const c = live()
+  if (!c) return
+  const t = c.currentTime
+  const d = out(c, 'enemy', pan)
+  tone(c, d, 'square', t, 520, 140, 0.12, 0.3)
+  hiss(c, d, t, 0.08, 0.4, 'bandpass', 2600, 700, 1.5)
+}
+
+export function blocked(pan: number) {
+  const c = live()
+  if (!c) return
+  const t = c.currentTime
+  const d = out(c, 'hits', pan)
+  tone(c, d, 'sine', t, 240, 90, 0.08, 0.4)
+  hiss(c, d, t, 0.06, 0.35, 'bandpass', 1400, 600, 1)
+}
+
 /** Pushing should sound like it costs something: the body grinding against itself. */
 function grind(c: AudioContext, d: AudioNode, t: number) {
   const f = c.createBiquadFilter()

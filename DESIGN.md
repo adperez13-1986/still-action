@@ -86,7 +86,10 @@ button again. Second criterion, equally binding: is building it still fun.
   placeholders to be rewritten by hand.
 - **No win condition.** Fights escalate (3 + n chasers) until one of the two endings.
   Strain decay (−4/fight) may make two pushes per fight free forever — watch it.
-- **Ranged archetype** unbuilt. Charger and swarm are out of spike scope.
+- **Ranged archetype built** (`src/ranged.ts`). Holds 6–10 units, just past auto
+  reach; aim line tracks for 60% of a 760ms windup, then freezes and clicks. Walls
+  block projectiles from both sides, and the auto attack only takes clear shots.
+  Charger and swarm are out of spike scope; both slot into the `Enemy` interface.
 - **Audio is first-pass.** All synthesised in `src/audio.ts` (Web Audio, no files).
   "OK for now" on the phone. Levels tune live in the grade panel and save to
   `mix.json`. The windup tone is panned and cuts at the strike — it is meant to be

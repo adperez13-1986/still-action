@@ -1,5 +1,6 @@
 import * as THREE from 'three'
-import { Chaser, CHASER } from './enemy'
+import { Chaser, type Enemy } from './enemy'
+import { Ranged } from './ranged'
 import { ARENA_RADIUS, type Collider } from './world'
 import type { AbilityDef } from './abilities'
 
@@ -10,6 +11,9 @@ const BOLT_SPEED = 26
 const MAX_ENEMIES = 4
 const SPAWN_INTERVAL = 2.4
 const PLAYER_MAX_HP = 100
+const PLAYER_RADIUS = 0.42
+const SHOT_SPEED = 15
+const SHOT_RADIUS = 0.3
 /** A swing connects with anything whose body reaches the blade, not just its centre. */
 export const MELEE_PAD = 0.6
 
@@ -20,6 +24,16 @@ interface Bolt {
   damage: number
   radius: number
 }
+
+/** An enemy projectile. Slower than yours, and waist-high walls stop it. */
+interface Shot {
+  mesh: THREE.Mesh
+  dir: THREE.Vector3
+  life: number
+  damage: number
+}
+
+export type Archetype = Enemy['kind']
 
 interface Fx {
   mesh: THREE.Mesh
@@ -36,26 +50,30 @@ export interface CombatEvents {
   onKill: (at: THREE.Vector3) => void
   onDash: (x: number, z: number, ms: number) => void
   onShot: () => void
-  onWindup: (e: Chaser, ms: number) => void
-  onStrike: (e: Chaser) => void
-  onGone: (e: Chaser) => void
+  onWindup: (e: Enemy, ms: number) => void
+  onStrike: (e: Enemy) => void
+  onGone: (e: Enemy) => void
+  onShotBlocked: (at: THREE.Vector3) => void
 }
 
 export class Combat {
   hp = PLAYER_MAX_HP
-  readonly enemies: Chaser[] = []
+  readonly enemies: Enemy[] = []
 
   private bolts: Bolt[] = []
+  private shots: Shot[] = []
   private fx: Fx[] = []
   private autoTimer = 0
   private spawnTimer = 1.2
   private hurtCooldown = 0
-  /** Chasers this fight still has to send. The fight is cleared when these and the living are both gone. */
-  private toSpawn = 0
+  /** Who this fight still has to send, in order. Cleared when this and the living are both empty. */
+  private roster: Archetype[] = []
 
   private readonly boltGeo = new THREE.BoxGeometry(0.16, 0.16, 0.7)
   private readonly boltMat = new THREE.MeshBasicMaterial({ color: 0xffd39b })
   private readonly abilityBoltMat = new THREE.MeshBasicMaterial({ color: 0xfff0d0 })
+  private readonly shotGeo = new THREE.SphereGeometry(SHOT_RADIUS, 10, 8)
+  private readonly shotMat = new THREE.MeshBasicMaterial({ color: 0xff7a55 })
 
   constructor(
     private readonly scene: THREE.Scene,
@@ -67,25 +85,23 @@ export class Combat {
     this.hurtCooldown = Math.max(0, this.hurtCooldown - dt)
 
     this.spawnTimer -= dt
-    if (this.toSpawn > 0 && this.spawnTimer <= 0 && this.enemies.length < MAX_ENEMIES) {
+    const next = this.roster[0]
+    if (next && this.spawnTimer <= 0 && this.enemies.length < MAX_ENEMIES) {
       this.spawnTimer = SPAWN_INTERVAL
-      if (this.spawn(player)) this.toSpawn--
+      if (this.spawn(player, next)) this.roster.shift()
     }
 
     // --- enemies ---
     for (let i = this.enemies.length - 1; i >= 0; i--) {
       const e = this.enemies[i]!
       const before = e.phase
-      const dmg = e.update(dt, player, this.colliders)
+      const action = e.update(dt, player, this.colliders)
       if (e.phase !== before) {
-        if (e.phase === 'windup') this.events.onWindup(e, CHASER.windupMs)
+        if (e.phase === 'windup') this.events.onWindup(e, e.windupMs)
         if (e.phase === 'strike') this.events.onStrike(e)
       }
-      if (dmg > 0 && this.hurtCooldown <= 0) {
-        this.hp = Math.max(0, this.hp - dmg)
-        this.hurtCooldown = 0.35
-        this.events.onPlayerHurt(dmg)
-      }
+      if (action?.kind === 'melee') this.hurtPlayer(action.damage)
+      if (action?.kind === 'shot') this.fireShot(e.pos, action.dir, action.damage)
       if (e.dead) {
         e.dispose(this.scene)
         this.enemies.splice(i, 1)
@@ -97,7 +113,8 @@ export class Combat {
     // --- auto attack: nearest enemy in range, no aiming required ---
     this.autoTimer -= dt
     if (this.autoTimer <= 0) {
-      const target = this.nearest(player)
+      // the auto attack doesn't waste itself on a wall: nearest enemy you can actually hit
+      const target = this.nearest(player, AUTO_RANGE, true)
       if (target) {
         this.autoTimer = AUTO_INTERVAL
         this.shoot(player, target.pos)
@@ -112,6 +129,13 @@ export class Combat {
       b.life -= dt
 
       let spent = b.life <= 0
+      // same rule as enemy shots: waist-high walls stop yours too
+      const wall = spent ? null : this.wallAt(b.mesh.position)
+      if (wall) {
+        this.events.onShotBlocked(b.mesh.position)
+        this.ring(b.mesh.position, 0.2, 0.8, 0.18, 0xffd39b)
+        spent = true
+      }
       if (!spent) {
         for (const e of this.enemies) {
           const dx = b.mesh.position.x - e.pos.x
@@ -127,6 +151,29 @@ export class Combat {
       if (spent) {
         this.scene.remove(b.mesh)
         this.bolts.splice(i, 1)
+      }
+    }
+
+    // --- enemy shots ---
+    for (let i = this.shots.length - 1; i >= 0; i--) {
+      const s = this.shots[i]!
+      s.mesh.position.addScaledVector(s.dir, SHOT_SPEED * dt)
+      s.life -= dt
+      const p = s.mesh.position
+
+      let spent = s.life <= 0 || Math.hypot(p.x, p.z) > ARENA_RADIUS
+      if (!spent && Math.hypot(p.x - player.x, p.z - player.z) < SHOT_RADIUS + PLAYER_RADIUS) {
+        this.hurtPlayer(s.damage)
+        spent = true
+      }
+      if (!spent && this.wallAt(p)) {
+        this.events.onShotBlocked(p)
+        this.ring(p, 0.2, 0.9, 0.2, 0xff7a55)
+        spent = true
+      }
+      if (spent) {
+        this.scene.remove(s.mesh)
+        this.shots.splice(i, 1)
       }
     }
 
@@ -152,19 +199,19 @@ export class Combat {
   }
 
   get cleared(): boolean {
-    return this.toSpawn === 0 && this.enemies.length === 0
+    return this.roster.length === 0 && this.enemies.length === 0
   }
 
   /** HP is the fight: every fight starts whole. Strain is what carries over. */
-  startFight(size: number) {
+  startFight(roster: Archetype[]) {
     this.hp = PLAYER_MAX_HP
-    this.toSpawn = size
+    this.roster = [...roster]
     this.spawnTimer = 1.2
   }
 
   reset() {
     this.hp = PLAYER_MAX_HP
-    this.toSpawn = 0
+    this.roster = []
     for (const e of this.enemies) {
       e.dispose(this.scene)
       this.events.onGone(e)
@@ -172,17 +219,49 @@ export class Combat {
     this.enemies.length = 0
     for (const b of this.bolts) this.scene.remove(b.mesh)
     this.bolts.length = 0
+    for (const s of this.shots) this.scene.remove(s.mesh)
+    this.shots.length = 0
     for (const f of this.fx) this.scene.remove(f.mesh)
     this.fx.length = 0
     this.spawnTimer = 1.5
   }
 
-  private nearest(from: THREE.Vector3, range = AUTO_RANGE): Chaser | null {
-    let best: Chaser | null = null
+  private hurtPlayer(damage: number) {
+    if (this.hurtCooldown > 0) return
+    this.hp = Math.max(0, this.hp - damage)
+    this.hurtCooldown = 0.35
+    this.events.onPlayerHurt(damage)
+  }
+
+  private fireShot(from: THREE.Vector3, dir: THREE.Vector3, damage: number) {
+    const mesh = new THREE.Mesh(this.shotGeo, this.shotMat)
+    // leaves from the barrel, not the feet
+    mesh.position.set(from.x + dir.x * 0.7, 1.45, from.z + dir.z * 0.7)
+    this.scene.add(mesh)
+    this.shots.push({ mesh, dir, life: 20 / SHOT_SPEED, damage })
+  }
+
+  /** Projectiles of either side stop here. Slightly generous so a graze counts. */
+  private wallAt(p: THREE.Vector3): Collider | null {
+    for (const c of this.colliders) {
+      if (Math.hypot(p.x - c.x, p.z - c.z) < c.r + 0.15) return c
+    }
+    return null
+  }
+
+  private clearShot(from: THREE.Vector3, to: THREE.Vector3): boolean {
+    for (const c of this.colliders) {
+      if (this.distToSegment(c.x, c.z, from.x, from.z, to.x, to.z) < c.r + 0.15) return false
+    }
+    return true
+  }
+
+  private nearest(from: THREE.Vector3, range = AUTO_RANGE, needsClearShot = false): Enemy | null {
+    let best: Enemy | null = null
     let bestDist = range
     for (const e of this.enemies) {
       const d = Math.hypot(e.pos.x - from.x, e.pos.z - from.z)
-      if (d < bestDist) {
+      if (d < bestDist && (!needsClearShot || this.clearShot(from, e.pos))) {
         bestDist = d
         best = e
       }
@@ -317,7 +396,7 @@ export class Combat {
     this.fx.push({ mesh, mat, life: 0.22, max: 0.22, from: 1, to: 1.15 })
   }
 
-  private spawn(player: THREE.Vector3): boolean {
+  private spawn(player: THREE.Vector3, kind: Archetype): boolean {
     // always arrive from the rim, never on top of you
     for (let attempt = 0; attempt < 12; attempt++) {
       const a = Math.random() * Math.PI * 2
@@ -325,7 +404,7 @@ export class Combat {
       const x = Math.cos(a) * r
       const z = Math.sin(a) * r
       if (Math.hypot(x - player.x, z - player.z) < 7) continue
-      const e = new Chaser(x, z)
+      const e = kind === 'ranged' ? new Ranged(x, z) : new Chaser(x, z)
       this.scene.add(e.group, e.tellGroup)
       this.enemies.push(e)
       return true

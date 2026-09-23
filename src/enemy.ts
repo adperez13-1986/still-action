@@ -2,10 +2,30 @@ import * as THREE from 'three'
 import { pushOutOfColliders, type Collider } from './world'
 
 /**
- * One archetype: the chaser. Closes, telegraphs, strikes, recovers.
+ * Every archetype is the same machine: approach, windup, strike, recover.
  * The windup is the game — everything else is scaffolding around it.
  */
-export type ChaserPhase = 'approach' | 'windup' | 'strike' | 'recover'
+export type EnemyPhase = 'approach' | 'windup' | 'strike' | 'recover'
+
+/** What an enemy does to the world on the tick it strikes. Combat resolves it. */
+export type EnemyAction =
+  | { kind: 'melee'; damage: number }
+  | { kind: 'shot'; dir: THREE.Vector3; damage: number }
+
+export interface Enemy {
+  readonly kind: 'chaser' | 'ranged'
+  readonly group: THREE.Group
+  /** Telegraphs live in world space, not under the body, so a lunge can't scale them. */
+  readonly tellGroup: THREE.Group
+  readonly pos: THREE.Vector3
+  readonly windupMs: number
+  hp: number
+  phase: EnemyPhase
+  dead: boolean
+  hit: (damage: number) => boolean
+  update: (dt: number, target: THREE.Vector3, colliders: Collider[]) => EnemyAction | null
+  dispose: (scene: THREE.Scene) => void
+}
 
 const BODY = 0x8c2f28
 const CORE = 0xff5a3c
@@ -21,11 +41,14 @@ export const CHASER = {
   recoverMs: 760,
 }
 
-export class Chaser {
+/** Closes, telegraphs a ring, strikes where the ring is. */
+export class Chaser implements Enemy {
+  readonly kind = 'chaser'
+  readonly windupMs = CHASER.windupMs
   readonly group = new THREE.Group()
   readonly pos = new THREE.Vector3()
   hp = CHASER.hp
-  phase: ChaserPhase = 'approach'
+  phase: EnemyPhase = 'approach'
   dead = false
 
   private timer = 0
@@ -80,8 +103,7 @@ export class Chaser {
     return false
   }
 
-  /** Returns damage to deal to the player this tick, or 0. */
-  update(dt: number, target: THREE.Vector3, colliders: Collider[]): number {
+  update(dt: number, target: THREE.Vector3, colliders: Collider[]): EnemyAction | null {
     this.timer -= dt * 1000
     this.bob += dt * 5
     this.flash = Math.max(0, this.flash - dt * 6)
@@ -89,7 +111,7 @@ export class Chaser {
     const dx = target.x - this.pos.x
     const dz = target.z - this.pos.z
     const dist = Math.hypot(dx, dz)
-    let damage = 0
+    let action: EnemyAction | null = null
 
     switch (this.phase) {
       case 'approach': {
@@ -106,7 +128,7 @@ export class Chaser {
         if (this.timer <= 0) {
           this.phase = 'strike'
           // committed: the strike lands where the ring is, whether you left or not
-          if (dist <= CHASER.strikeRadius) damage = CHASER.damage
+          if (dist <= CHASER.strikeRadius) action = { kind: 'melee', damage: CHASER.damage }
           this.timer = 90
         }
         break
@@ -154,7 +176,7 @@ export class Chaser {
     this.group.rotation.y = Math.atan2(dx, dz)
     this.core.rotation.y += dt * 3
 
-    return damage
+    return action
   }
 
   dispose(scene: THREE.Scene) {

@@ -1,15 +1,15 @@
 import './style.css'
 import * as THREE from 'three'
-import { createWorld, pushOutOfColliders, ARENA_RADIUS } from './world'
+import { createWorld, pushOutOfColliders, ARENA_RADIUS, grade } from './world'
 import { Still } from './still'
 import { createHud } from './hud'
 import { createGradePanel } from './grade'
-import { Combat, MELEE_PAD } from './combat'
+import { Combat, MELEE_PAD, type Archetype } from './combat'
 import type { AbilityDef } from './abilities'
-import type { Chaser } from './enemy'
+import type { Enemy } from './enemy'
+import { RANGED } from './ranged'
 import * as sfx from './audio'
 import { createOverlay, type EndingKind } from './ending'
-import { grade } from './world'
 
 const canvas = document.querySelector<HTMLCanvasElement>('#view')!
 const hudRoot = document.querySelector<HTMLElement>('#hud')!
@@ -39,7 +39,7 @@ function panOf(at: THREE.Vector3) {
   return Math.max(-1, Math.min(1, screenX / 9)) * 0.7
 }
 
-const windups = new Map<Chaser, () => void>()
+const windups = new Map<Enemy, () => void>()
 
 const BODY_RADIUS = 0.42
 const STEP = 1 / 60
@@ -73,17 +73,24 @@ const combat = new Combat(world.scene, world.colliders, {
   onShot: () => sfx.shot(0),
   onWindup: (e, ms) => {
     // once Still is stopping, the world is slowing with him; a real-time tell would lie
-    if (run.phase === 'fight' || run.phase === 'breather') windups.set(e, sfx.windup(ms, panOf(e.pos)))
+    if (run.phase !== 'fight' && run.phase !== 'breather') return
+    const stop = e.kind === 'ranged' ? sfx.aim(ms, RANGED.lockAt, panOf(e.pos)) : sfx.windup(ms, panOf(e.pos))
+    windups.set(e, stop)
   },
   onStrike: (e) => {
     windups.delete(e)
-    sfx.strike(panOf(e.pos))
+    if (e.kind === 'ranged') sfx.fire(panOf(e.pos))
+    else sfx.strike(panOf(e.pos))
   },
+  onShotBlocked: (at) => sfx.blocked(panOf(at)),
   onGone: (e) => {
     windups.get(e)?.()
     windups.delete(e)
   },
 })
+
+/** Dev only: lets a headless browser read the fight without guessing from pixels. */
+if (import.meta.env.DEV) Object.assign(window, { __combat: combat })
 
 // --- the run: fights, breathers between them, and the two ways it ends ---
 
@@ -100,8 +107,19 @@ type Phase = 'fight' | 'breather' | 'broken' | 'stopping' | 'over'
 
 const run = { phase: 'fight' as Phase, fight: 1, cleared: 0, strain: 0, t: 0 }
 
-function fightSize(n: number) {
-  return 3 + n
+/**
+ * 3 + n enemies. One ranged from the start, two from fight 3; never the first
+ * to arrive, so every fight opens on the chaser you already know.
+ */
+function roster(n: number): Archetype[] {
+  const size = 3 + n
+  const ranged = n >= 3 ? 2 : 1
+  const rest: Archetype[] = Array.from({ length: size - 1 }, (_, i) => (i < ranged ? 'ranged' : 'chaser'))
+  for (let i = rest.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1))
+    ;[rest[i], rest[j]] = [rest[j]!, rest[i]!]
+  }
+  return ['chaser', ...rest]
 }
 
 function startRun() {
@@ -110,7 +128,7 @@ function startRun() {
   still.pos.set(0, 0, 0)
   prev.set(0, 0, 0)
   Object.assign(run, { phase: 'fight', fight: 1, cleared: 0, strain: 0, t: 0 })
-  combat.startFight(fightSize(1))
+  combat.startFight(roster(1))
   world.camera.zoom = 1
   world.camera.updateProjectionMatrix()
   world.gradePass.uniforms.uSaturation!.value = grade.saturation
@@ -246,7 +264,7 @@ function simulate(realDt: number) {
     if (run.t >= BREATHER) {
       run.fight++
       run.phase = 'fight'
-      combat.startFight(fightSize(run.fight))
+      combat.startFight(roster(run.fight))
       hud.integrity = 1
       overlay.banner(`Fight ${run.fight}`)
     }
