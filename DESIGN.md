@@ -83,7 +83,10 @@ button again. Second criterion, equally binding: is building it still fun.
   Currently resolved by state — hold on a *ready* button would aim, hold on a
   *cooling* button pushes. Only the cooling half is built. Unsettled.
 - **Ranged archetype** unbuilt. Charger and swarm are out of spike scope.
-- **No audio at all yet.** Roughly 40% of hit feel; the most undervalued item left.
+- **Audio is first-pass.** All synthesised in `src/audio.ts` (Web Audio, no files).
+  "OK for now" on the phone. Levels tune live in the grade panel and save to
+  `mix.json`. The windup tone is panned and cuts at the strike — it is meant to be
+  a second telegraph, not decoration.
 - **Grade defaults are guesses.** Tune live in-app, hit save, values land in
   `grade.json`.
 

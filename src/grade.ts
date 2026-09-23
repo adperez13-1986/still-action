@@ -1,7 +1,9 @@
 import { grade, type World } from './world'
+import { mix, applyMix, setMuted } from './audio'
 
 interface Slider {
-  key: keyof typeof grade
+  obj: Record<string, number>
+  key: string
   label: string
   min: number
   max: number
@@ -9,16 +11,21 @@ interface Slider {
 }
 
 const SLIDERS: Slider[] = [
-  { key: 'exposure', label: 'exposure', min: 0.3, max: 2, step: 0.01 },
-  { key: 'saturation', label: 'saturation', min: 0, max: 1.4, step: 0.01 },
-  { key: 'vignette', label: 'vignette', min: 0, max: 2.5, step: 0.01 },
-  { key: 'fogNear', label: 'fog near', min: 0, max: 100, step: 1 },
-  { key: 'fogFar', label: 'fog far', min: 20, max: 220, step: 1 },
-  { key: 'bloomStrength', label: 'bloom strength', min: 0, max: 1.6, step: 0.01 },
-  { key: 'bloomThreshold', label: 'bloom threshold', min: 0, max: 1, step: 0.01 },
-  { key: 'bloomRadius', label: 'bloom radius', min: 0, max: 1.5, step: 0.01 },
-  { key: 'graceLight', label: "Grace's light", min: 0, max: 900, step: 5 },
-  { key: 'viewHeight', label: 'camera zoom', min: 8, max: 34, step: 0.5 },
+  { obj: grade, key: 'exposure', label: 'exposure', min: 0.3, max: 2, step: 0.01 },
+  { obj: grade, key: 'saturation', label: 'saturation', min: 0, max: 1.4, step: 0.01 },
+  { obj: grade, key: 'vignette', label: 'vignette', min: 0, max: 2.5, step: 0.01 },
+  { obj: grade, key: 'fogNear', label: 'fog near', min: 0, max: 100, step: 1 },
+  { obj: grade, key: 'fogFar', label: 'fog far', min: 20, max: 220, step: 1 },
+  { obj: grade, key: 'bloomStrength', label: 'bloom strength', min: 0, max: 1.6, step: 0.01 },
+  { obj: grade, key: 'bloomThreshold', label: 'bloom threshold', min: 0, max: 1, step: 0.01 },
+  { obj: grade, key: 'bloomRadius', label: 'bloom radius', min: 0, max: 1.5, step: 0.01 },
+  { obj: grade, key: 'graceLight', label: "Grace's light", min: 0, max: 900, step: 5 },
+  { obj: grade, key: 'viewHeight', label: 'camera zoom', min: 8, max: 34, step: 0.5 },
+  { obj: mix, key: 'master', label: 'sound: master', min: 0, max: 1.5, step: 0.01 },
+  { obj: mix, key: 'auto', label: 'sound: auto attack', min: 0, max: 1.5, step: 0.01 },
+  { obj: mix, key: 'hits', label: 'sound: hits', min: 0, max: 1.5, step: 0.01 },
+  { obj: mix, key: 'enemy', label: 'sound: telegraph', min: 0, max: 1.5, step: 0.01 },
+  { obj: mix, key: 'abilities', label: 'sound: abilities', min: 0, max: 1.5, step: 0.01 },
 ]
 
 /** Live grade tuning. The look gets decided on the phone, in motion — not in a mock. */
@@ -49,25 +56,34 @@ export function createGradePanel(root: HTMLElement, world: World) {
     toggle.classList.toggle('on', panel.classList.contains('open'))
   })
 
-  bar.append(full, toggle)
+  const mute = document.createElement('button')
+  mute.className = 'chip on'
+  mute.textContent = 'sound'
+  mute.addEventListener('click', () => {
+    const off = mute.classList.toggle('on') === false
+    setMuted(off)
+  })
+
+  bar.append(mute, full, toggle)
 
   for (const s of SLIDERS) {
     const label = document.createElement('label')
     const value = document.createElement('span')
     const input = document.createElement('input')
 
-    value.textContent = String(grade[s.key])
+    value.textContent = String(s.obj[s.key])
     label.append(s.label, value)
 
     input.type = 'range'
     input.min = String(s.min)
     input.max = String(s.max)
     input.step = String(s.step)
-    input.value = String(grade[s.key])
+    input.value = String(s.obj[s.key])
     input.addEventListener('input', () => {
-      grade[s.key] = Number(input.value)
+      s.obj[s.key] = Number(input.value)
       value.textContent = input.value
-      apply(world)
+      if (s.obj === mix) applyMix()
+      else apply(world)
     })
 
     label.appendChild(input)
@@ -79,8 +95,11 @@ export function createGradePanel(root: HTMLElement, world: World) {
   save.addEventListener('click', async () => {
     save.textContent = 'saving...'
     try {
-      const res = await fetch('/__grade', { method: 'POST', body: JSON.stringify(grade, null, 2) })
-      save.textContent = res.ok ? 'saved to grade.json' : 'failed'
+      const [g, m] = await Promise.all([
+        fetch('/__save/grade', { method: 'POST', body: JSON.stringify(grade, null, 2) }),
+        fetch('/__save/mix', { method: 'POST', body: JSON.stringify(mix, null, 2) }),
+      ])
+      save.textContent = g.ok && m.ok ? 'saved to grade.json + mix.json' : 'failed'
     } catch {
       save.textContent = 'failed'
     }

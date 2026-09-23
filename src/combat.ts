@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { Chaser } from './enemy'
+import { Chaser, CHASER } from './enemy'
 import { ARENA_RADIUS, type Collider } from './world'
 import type { AbilityDef } from './abilities'
 
@@ -10,6 +10,8 @@ const BOLT_SPEED = 26
 const MAX_ENEMIES = 4
 const SPAWN_INTERVAL = 2.4
 const PLAYER_MAX_HP = 100
+/** A swing connects with anything whose body reaches the blade, not just its centre. */
+export const MELEE_PAD = 0.6
 
 interface Bolt {
   mesh: THREE.Mesh
@@ -29,10 +31,14 @@ interface Fx {
 }
 
 export interface CombatEvents {
-  onHit: () => void
+  onHit: (at: THREE.Vector3) => void
   onPlayerHurt: (amount: number) => void
-  onKill: () => void
+  onKill: (at: THREE.Vector3) => void
   onDash: (x: number, z: number, ms: number) => void
+  onShot: () => void
+  onWindup: (e: Chaser, ms: number) => void
+  onStrike: (e: Chaser) => void
+  onGone: (e: Chaser) => void
 }
 
 export class Combat {
@@ -67,7 +73,12 @@ export class Combat {
     // --- enemies ---
     for (let i = this.enemies.length - 1; i >= 0; i--) {
       const e = this.enemies[i]!
+      const before = e.phase
       const dmg = e.update(dt, player, this.colliders)
+      if (e.phase !== before) {
+        if (e.phase === 'windup') this.events.onWindup(e, CHASER.windupMs)
+        if (e.phase === 'strike') this.events.onStrike(e)
+      }
       if (dmg > 0 && this.hurtCooldown <= 0) {
         this.hp = Math.max(0, this.hp - dmg)
         this.hurtCooldown = 0.35
@@ -76,7 +87,8 @@ export class Combat {
       if (e.dead) {
         e.dispose(this.scene)
         this.enemies.splice(i, 1)
-        this.events.onKill()
+        this.events.onKill(e.pos)
+        this.events.onGone(e)
       }
     }
 
@@ -87,6 +99,7 @@ export class Combat {
       if (target) {
         this.autoTimer = AUTO_INTERVAL
         this.shoot(player, target.pos)
+        this.events.onShot()
       }
     }
 
@@ -103,7 +116,7 @@ export class Combat {
           const dz = b.mesh.position.z - e.pos.z
           if (Math.hypot(dx, dz) < b.radius + 0.5) {
             e.hit(b.damage)
-            this.events.onHit()
+            this.events.onHit(e.pos)
             spent = true
             break
           }
@@ -138,7 +151,10 @@ export class Combat {
 
   reset() {
     this.hp = PLAYER_MAX_HP
-    for (const e of this.enemies) e.dispose(this.scene)
+    for (const e of this.enemies) {
+      e.dispose(this.scene)
+      this.events.onGone(e)
+    }
     this.enemies.length = 0
     for (const b of this.bolts) this.scene.remove(b.mesh)
     this.bolts.length = 0
@@ -195,7 +211,7 @@ export class Combat {
             const k = 2.4 / Math.max(0.4, d)
             e.pos.x += (e.pos.x - origin.x) * k * 0.35
             e.pos.z += (e.pos.z - origin.z) * k * 0.35
-            this.events.onHit()
+            this.events.onHit(e.pos)
           }
         }
         this.ring(origin, 0.3, def.radius, 0.45, 0xffd39b)
@@ -204,7 +220,8 @@ export class Combat {
 
       case 'arc': {
         // A melee swing never needs aiming — snap to whatever is closest in reach.
-        const snap = this.nearest(origin, def.range + 1.2)
+        // Snap reach must equal hit reach, or the blade turns toward things it can't touch.
+        const snap = this.nearest(origin, def.range + MELEE_PAD)
         const aimed = snap ? Math.atan2(snap.pos.x - origin.x, snap.pos.z - origin.z) : facing
         const fx = Math.sin(aimed)
         const fz = Math.cos(aimed)
@@ -212,11 +229,11 @@ export class Combat {
           const dx = e.pos.x - origin.x
           const dz = e.pos.z - origin.z
           const d = Math.hypot(dx, dz)
-          if (d > def.range + 0.6) continue
+          if (d > def.range + MELEE_PAD) continue
           // 120-degree sweep in front
           if ((dx / d) * fx + (dz / d) * fz < 0.5) continue
           e.hit(def.damage)
-          this.events.onHit()
+          this.events.onHit(e.pos)
         }
         this.sweep(origin, aimed, def.range, 0xffe0b0)
         break
@@ -246,7 +263,7 @@ export class Combat {
         for (const e of this.enemies) {
           if (this.distToSegment(e.pos.x, e.pos.z, origin.x, origin.z, ex, ez) <= def.radius + 0.6) {
             e.hit(def.damage)
-            this.events.onHit()
+            this.events.onHit(e.pos)
           }
         }
         this.ring(origin, 0.3, 1.6, 0.3, 0xbcd6ff)
@@ -277,8 +294,10 @@ export class Combat {
   private sweep(at: THREE.Vector3, facing: number, range: number, color: number) {
     const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.6, depthWrite: false })
     const mesh = new THREE.Mesh(new THREE.CircleGeometry(range, 24, -Math.PI / 3, (Math.PI * 2) / 3), mat)
+    // The circle's rotation.z is applied before the tilt flat, so it maps to the
+    // floor with z mirrored. -facing + PI/2 looked right on the x axis only.
     mesh.rotation.x = -Math.PI / 2
-    mesh.rotation.z = -facing + Math.PI / 2
+    mesh.rotation.z = facing - Math.PI / 2
     mesh.position.set(at.x, 0.07, at.z)
     this.scene.add(mesh)
     this.fx.push({ mesh, mat, life: 0.22, max: 0.22, from: 1, to: 1.15 })
