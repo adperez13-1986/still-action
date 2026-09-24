@@ -1,11 +1,38 @@
 import type { AbilityDef } from './abilities'
 import { SLOT_NAMES, type SlotName } from './still'
 
-/** Variant A, locked after the reach test: fixed stick, tight arc (r96, 62px). */
-const ARC_R = 96
-const BTN = 62
-const ARC_DEG = [8, 34, 60, 86]
-const PAD = 20
+/**
+ * The ability arc. Variant A's r96 packed 62px buttons only ~43px apart, so they
+ * overlapped; the reach test found a bigger arc felt the same to the thumb. Now
+ * r132 with 60px buttons over a clean quarter circle: ~8px between buttons. The
+ * arc's centre sits in from the corner so the end buttons stay on screen.
+ */
+const ARC_R = 132
+const BTN = 60
+const ARC_DEG = [0, 30, 60, 90]
+const PAD = 34
+
+/**
+ * Line icons, one per ability shape, drawn in the tier colour. An empty slot shows
+ * the outline of the body part Still is missing instead.
+ */
+const svg = (d: string) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`
+const SHAPE_ICON: Record<AbilityDef['shape'], string> = {
+  // a lens, and the beam leaving it
+  bolt: svg('<circle cx="7" cy="12" r="3.5"/><path d="M11.5 12H21"/><path d="M17 8.5 21 12l-4 3.5"/>'),
+  // a burst of rays around a small core
+  nova: svg('<circle cx="12" cy="12" r="2.5"/><path d="M12 2.5v4M12 17.5v4M2.5 12h4M17.5 12h4M5.3 5.3l2.8 2.8M15.9 15.9l2.8 2.8M18.7 5.3l-2.8 2.8M8.1 15.9l-2.8 2.8"/>'),
+  // a crescent slash
+  arc: svg('<path d="M4 19C6 10 12 5 20 4"/><path d="M8 20.5c2.5-6 6.5-9.5 12-10.5" opacity=".55"/>'),
+  // double chevrons
+  dash: svg('<path d="M4 6l6 6-6 6"/><path d="M12 6l6 6-6 6"/>'),
+}
+const SLOT_ICON: Record<SlotName, string> = {
+  head: svg('<circle cx="12" cy="9" r="5"/><circle cx="12" cy="9" r="2"/><path d="M12 14v6"/>'),
+  torso: svg('<path d="M7 5h10M7 19h10"/><path d="M8 5l-1 14M12 5v14M16 5l1 14"/>'),
+  arms: svg('<path d="M9 3v9a4 4 0 0 0 8 0v-2"/><path d="M14 10l3 0"/>'),
+  legs: svg('<path d="M9 3l3 8-4 9"/><path d="M8 20h3"/><path d="M15 3l-1 8 3 9"/><path d="M16 20h3"/>'),
+}
 const PUSH_HOLD_MS = 180
 
 
@@ -130,10 +157,11 @@ export function createHud(root: HTMLElement): Hud {
   const KEYS: Record<SlotName, string> = { head: 'H', torso: 'T', arms: 'A', legs: 'L' }
   const paint = (b: ButtonState) => {
     b.el.className = b.def ? `btn tier-${b.def.tier}` : 'btn empty'
+    b.el.querySelector('.lbl')!.innerHTML = b.def ? SHAPE_ICON[b.def.shape] : SLOT_ICON[b.slot]
   }
   const buttons: ButtonState[] = SLOT_NAMES.map((slot, i) => {
     const el = document.createElement('div')
-    el.innerHTML = `<div class="cd"></div><span class="lbl">${KEYS[slot]}</span>`
+    el.innerHTML = `<div class="cd"></div><span class="lbl" aria-label="${KEYS[slot]}"></span>`
     const th = (ARC_DEG[i] ?? 0) * (Math.PI / 180)
     el.style.right = `calc(env(safe-area-inset-right, 0px) + ${PAD + ARC_R * Math.cos(th) - BTN / 2}px)`
     el.style.bottom = `calc(env(safe-area-inset-bottom, 0px) + ${PAD + ARC_R * Math.sin(th) - BTN / 2}px)`

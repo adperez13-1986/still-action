@@ -10,7 +10,7 @@ import type { AbilityDef } from './abilities'
 
 const AUTO_RANGE = 7.6
 const AUTO_INTERVAL = 0.62
-const AUTO_DAMAGE = 7
+const AUTO_DAMAGE = 5
 const BOLT_SPEED = 26
 const PLAYER_MAX_HP = 100
 const PLAYER_RADIUS = 0.42

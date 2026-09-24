@@ -1,0 +1,2 @@
+Cinzel, Barlow Semi Condensed, Cormorant Garamond: SIL Open Font License 1.1 (via Google Fonts).
+Latin subsets, self-hosted so the game works offline.
