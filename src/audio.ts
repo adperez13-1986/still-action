@@ -370,6 +370,39 @@ export function shrine() {
   hiss(c, d, t, 1.2, 0.12, 'bandpass', 900, 400, 3, 0.2)
 }
 
+/** The boss going down: a long collapse of metal, then a low bell. */
+export function bossDown() {
+  const c = live()
+  if (!c) return
+  const t = c.currentTime
+  const d = out(c, 'hits', 0)
+  tone(c, distorted(c, d), 'sine', t, 110, 24, 1.2, 1, 0.004)
+  hiss(c, d, t, 1.4, 0.9, 'lowpass', 5000, 160, 0.7)
+  for (let i = 0; i < 7; i++) tone(c, d, 'triangle', t + 0.1 + i * 0.13, vary(500 + i * 90, 0.2), vary(420, 0.2), 0.5, 0.08)
+  tone(c, out(c, 'abilities', 0), 'sine', t + 1.2, 196, 195, 2.4, 0.18, 0.02)
+}
+
+/** It overloads: a rising roar, everything else ducking under it. */
+export function roar() {
+  const c = live()
+  if (!c) return
+  const t = c.currentTime
+  const d = out(c, 'enemy', 0)
+  tone(c, distorted(c, d), 'sawtooth', t, 70, 160, 0.9, 0.6, 0.1)
+  hiss(c, d, t, 0.9, 0.5, 'bandpass', 300, 1400, 1.5, 0.1)
+}
+
+/** The charge meets a wall: a big clang, and the grill swings open. */
+export function clang(pan: number) {
+  const c = live()
+  if (!c) return
+  const t = c.currentTime
+  const d = out(c, 'hits', pan)
+  tone(c, d, 'sine', t, 160, 60, 0.3, 0.9)
+  for (const f of [620, 930, 1390]) tone(c, d, 'triangle', t, f, f * 0.98, 0.9, 0.12)
+  hiss(c, d, t, 0.2, 0.6, 'bandpass', 2500, 900, 1)
+}
+
 /** A pack noticing you: two sharp rising notes, so you know you've pulled them even off screen. */
 export function alert(pan: number) {
   const c = live()

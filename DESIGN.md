@@ -111,6 +111,13 @@ triplanar, plus grime and contact darkening. Only the pieces used are vendored.
   Quick / Plated / Many / Warden. Always drops, 60% blue, 25% gold.
 - **Crates and barrels** break to any hit, either side's; 10% hold a part, 30%
   repair scrap (+20 HP). This replaces "no extra healing".
+- **The Assembler** closes every third depth: a 28x28 arena, six moves in two
+  phases (sweep, shockwave with safe lanes, barrage, charge that stuns on a wall;
+  overloaded at 55% adds assemble and magnet). Numbers in `BOSS`, `src/boss.ts`.
+  `?depth=3` starts there with all four plain parts.
+- **Effects** (`src/vfx.ts`): particles and animated textured telegraphs. Still's
+  effects are cold steel-blue, the enemies' are embers. Floor decals sit at
+  `DECAL_Y`, above the kit's tiles.
 - **Shrines**, most levels: Rest (−6 strain, wakes the nearest pack) or Plenty (a
   good part for +4 strain, which can end the run).
 

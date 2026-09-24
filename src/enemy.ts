@@ -1,4 +1,6 @@
 import * as THREE from 'three'
+import { DECAL_Y } from './world'
+import { tellMaterial, releaseTell } from './vfx'
 import type { Terrain } from './terrain'
 
 /**
@@ -11,6 +13,14 @@ export type EnemyPhase = 'approach' | 'windup' | 'strike' | 'recover'
 export type EnemyAction =
   | { kind: 'melee'; damage: number }
   | { kind: 'shot'; dir: THREE.Vector3; damage: number }
+  /** A fan of shots from one point (the boss's cannon). */
+  | { kind: 'shots'; from: THREE.Vector3; dirs: THREE.Vector3[]; damage: number }
+  /** A ring rolling outward with gaps to stand in. Angles in radians, world space. */
+  | { kind: 'wave'; center: THREE.Vector3; gaps: number[]; damage: number }
+  /** Scrap piles that become small hulks. */
+  | { kind: 'summon'; points: THREE.Vector3[] }
+  /** Drag Still toward a point for a while. */
+  | { kind: 'pull'; center: THREE.Vector3; strength: number; seconds: number }
 
 /** A shove is a velocity that bleeds off, not a teleport: slide distance = speed / decay. */
 export const KNOCK_DECAY = 9
@@ -31,7 +41,9 @@ export function shoveVelocity(dx: number, dz: number, distance: number): THREE.V
 }
 
 export interface Enemy {
-  readonly kind: 'chaser' | 'ranged'
+  readonly kind: 'chaser' | 'ranged' | 'boss'
+  /** Body radius for every hit check: the boss is far bigger than a hulk. */
+  readonly radius: number
   readonly group: THREE.Group
   /** Telegraphs live in world space, not under the body, so a lunge can't scale them. */
   readonly tellGroup: THREE.Group
@@ -86,6 +98,7 @@ export const CHASER = {
 /** Closes, telegraphs a ring, strikes where the ring is. */
 export class Chaser implements Enemy {
   readonly kind = 'chaser'
+  readonly radius = CHASER.bodyRadius
   readonly windupMs = CHASER.windupMs
   readonly knock = new THREE.Vector3()
   readonly group = new THREE.Group()
@@ -116,8 +129,8 @@ export class Chaser implements Enemy {
   /** Lives in world space, NOT under the body — the lunge must not scale the tell. */
   readonly tellGroup = new THREE.Group()
   private readonly disc: THREE.Mesh
-  private readonly ringMat: THREE.MeshBasicMaterial
-  private readonly discMat: THREE.MeshBasicMaterial
+  private readonly ringMat: THREE.ShaderMaterial
+  private readonly discMat: THREE.ShaderMaterial
 
   constructor(x: number, z: number) {
     this.pos.set(x, 0, z)
@@ -160,16 +173,16 @@ export class Chaser implements Enemy {
 
     // Outer ring is fixed at the real strike radius so the danger zone never moves.
     // The inner disc fills it over the windup, so growth reads as a clock.
-    this.ringMat = new THREE.MeshBasicMaterial({ color: CORE, transparent: true, opacity: 0, depthWrite: false })
+    this.ringMat = tellMaterial('radial', CHASER.strikeRadius)
     const ring = new THREE.Mesh(new THREE.RingGeometry(CHASER.strikeRadius - 0.1, CHASER.strikeRadius, 48), this.ringMat)
     ring.rotation.x = -Math.PI / 2
 
-    this.discMat = new THREE.MeshBasicMaterial({ color: CORE, transparent: true, opacity: 0, depthWrite: false })
+    this.discMat = tellMaterial('radial', CHASER.strikeRadius)
     this.disc = new THREE.Mesh(new THREE.CircleGeometry(CHASER.strikeRadius, 48), this.discMat)
     this.disc.rotation.x = -Math.PI / 2
     this.disc.scale.setScalar(0.001)
 
-    this.tellGroup.position.y = 0.03
+    this.tellGroup.position.y = DECAL_Y
     this.tellGroup.add(ring, this.disc)
 
     this.group.add(this.legL, this.legR, this.torso)
@@ -275,7 +288,7 @@ export class Chaser implements Enemy {
       this.ringMat.opacity = Math.max(0, this.ringMat.opacity - dt * 4)
       this.discMat.opacity = Math.max(0, this.discMat.opacity - dt * 4)
     }
-    this.tellGroup.position.set(this.pos.x, 0.03, this.pos.z)
+    this.tellGroup.position.set(this.pos.x, DECAL_Y, this.pos.z)
 
     // winding: rear back and raise both fists. strike: slam them into the floor.
     if (winding) this.strikePose(dt, { lean: -0.32 * t, arms: -2.5 * t, squash: 1 + 0.06 * t })
@@ -301,7 +314,7 @@ export class Chaser implements Enemy {
     this.flash = Math.max(0, this.flash - dt * 6)
     this.ringMat.opacity = Math.max(0, this.ringMat.opacity - dt * 4)
     this.discMat.opacity = Math.max(0, this.discMat.opacity - dt * 4)
-    this.tellGroup.position.set(this.pos.x, 0.03, this.pos.z)
+    this.tellGroup.position.set(this.pos.x, DECAL_Y, this.pos.z)
     this.group.position.set(this.pos.x, Math.sin(this.bob) * (this.asleep ? 0.02 : 0.06), this.pos.z)
     this.group.rotation.y = Math.atan2(face.x - this.pos.x, face.z - this.pos.z)
     this.group.scale.setScalar(this.size * (1 + this.flash * 0.1))
@@ -327,7 +340,7 @@ export class Chaser implements Enemy {
     this.mat.dispose()
     this.jointMat.dispose()
     this.coreMat.dispose()
-    this.ringMat.dispose()
-    this.discMat.dispose()
+    releaseTell(this.ringMat)
+    releaseTell(this.discMat)
   }
 }

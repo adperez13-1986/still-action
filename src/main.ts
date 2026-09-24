@@ -8,6 +8,7 @@ import { Combat, MELEE_PAD, ELITE_LINE, type Archetype, type Pack } from './comb
 import { STARTING, PARTS, type AbilityDef } from './abilities'
 import { SLOT_NAMES } from './still'
 import type { Enemy } from './enemy'
+import type { Assembler } from './boss'
 import { RANGED } from './ranged'
 import * as sfx from './audio'
 import { createCameraRig } from './camera'
@@ -18,6 +19,7 @@ import { createOverlay, type EndingKind } from './ending'
 import { loadKit } from './kit'
 import { generateLevel, type Level, type Shrine } from './dungeon'
 import type { Terrain } from './terrain'
+import { Vfx, syncTells, COLD, COLD_DEEP, EMBER } from './vfx'
 
 const canvas = document.querySelector<HTMLCanvasElement>('#view')!
 const hudRoot = document.querySelector<HTMLElement>('#hud')!
@@ -38,6 +40,14 @@ const overlay = createOverlay(hudRoot)
 const rig = createCameraRig(world)
 const loot = new Loot(world.scene)
 const pause = createPauseScreen(hudRoot)
+const vfx = new Vfx(world.scene)
+
+/** Effect helpers: a point at a height, and the colours things break into. */
+const at3 = (p: { x: number; z: number }, y: number) => new THREE.Vector3(p.x, y, p.z)
+const RUST = new THREE.Color(0x5b3b35)
+const STEEL = new THREE.Color(0x7a8592)
+const STONE = new THREE.Color(0x5a5550)
+const WOOD = new THREE.Color(0x6b4a30)
 
 const still = new Still()
 world.scene.add(still.group)
@@ -76,34 +86,57 @@ let shake = 0
 const combat = new Combat(world.scene, OPEN, {
   onHit: (at) => {
     sfx.hit(panOf(at))
+    // cold sparks off the metal, thrown away from Still
+    const away = new THREE.Vector3(at.x - still.pos.x, 0, at.z - still.pos.z)
+    vfx.sparks(at3(at, 1.0), COLD, 8, 6.5, away, 0.9)
+    vfx.flash(at3(at, 1.0), COLD_DEEP, 0.35)
     hitstop = Math.max(hitstop, 0.045)
     shake = Math.max(shake, 0.1)
   },
   onPlayerHurt: () => {
     sfx.hurt()
+    vfx.sparks(at3(still.pos, 1.2), EMBER, 12, 5)
+    vfx.flash(at3(still.pos, 1.2), EMBER, 0.6)
     hitstop = Math.max(hitstop, 0.09)
     shake = Math.max(shake, 0.5)
     rig.punch(-0.03)
     navigator.vibrate?.(30)
   },
   onKill: (at, kind, pack, wasElite) => {
+    if (kind === 'boss') {
+      bossDown(at)
+      return
+    }
     sfx.kill(panOf(at))
+    // it comes apart: chunks of its own metal, a burst of embers, a puff of grit
+    vfx.chunks(at3(at, 0.8), 12, kind === 'ranged' ? STEEL : RUST, 5.5, 0.18)
+    vfx.sparks(at3(at, 0.9), EMBER, 16, 6)
+    vfx.flash(at3(at, 0.9), EMBER, 0.9)
+    vfx.dust(at, 8, 0.8)
     maybeDrop(at, kind, pack, wasElite)
     hitstop = Math.max(hitstop, 0.08)
     shake = Math.max(shake, 0.28)
     rig.punch(0.035)
   },
   onDash: (x, z, ms) => {
+    vfx.dust(still.pos, 10, 0.6, undefined, 4)
+    vfx.sparks(at3(still.pos, 0.4), COLD, 8, 4)
     still.startDash(x, z, ms)
     shake = Math.max(shake, 0.18)
     rig.punch(0.03)
   },
-  onShot: () => sfx.shot(0),
+  onShot: () => {
+    sfx.shot(0)
+    still.attack('shot')
+    vfx.flash(still.lensPoint(new THREE.Vector3()), COLD_DEEP, 0.25)
+  },
   onSmash: (b) => {
     level?.smash(b)
     const at = new THREE.Vector3(b.x, 0, b.z)
     combat.burst(at, 0xb89a7a)
     sfx.smash(panOf(at))
+    vfx.chunks(at3(at, 0.5), 14, WOOD, 4.5, 0.16)
+    vfx.dust(at, 10, 0.7, new THREE.Color(0x6a5a48))
     shake = Math.max(shake, 0.12)
     const roll = Math.random()
     if (roll < LOOT.crateParts) {
@@ -117,13 +150,28 @@ const combat = new Combat(world.scene, OPEN, {
       loot.dropScrap(at)
     }
   },
+  onVolley: (at) => {
+    sfx.fire(panOf(at))
+    const muzzle = at3(at, 2.2)
+    vfx.flash(muzzle, EMBER, 1.1)
+    vfx.sparks(muzzle, EMBER, 14, 7)
+    vfx.smokePuff(muzzle, 3)
+  },
   onWake: (at) => {
+    vfx.embers(at3(at, 0.8), 14, 1.2)
     sfx.alert(panOf(at))
     rig.punch(-0.02)
   },
   onWindup: (e, ms) => {
     // once Still is stopping, the world is slowing with him; a real-time tell would lie
     if (run.phase !== 'crawl') return
+    if (e.kind === 'boss') {
+      // aimed moves whistle and click like the sentinel; heavy ones rise like the hulk
+      const b = e as Assembler
+      const aimed = b.move === 'barrage' || b.move === 'charge'
+      windups.set(e, aimed ? sfx.aim(ms, 0.55, panOf(e.pos)) : sfx.windup(ms, panOf(e.pos)))
+      return
+    }
     const stop = e.kind === 'ranged' ? sfx.aim(ms, RANGED.lockAt, panOf(e.pos)) : sfx.windup(ms, panOf(e.pos))
     windups.set(e, stop)
   },
@@ -131,13 +179,44 @@ const combat = new Combat(world.scene, OPEN, {
     windups.delete(e)
     if (e.kind === 'ranged') sfx.fire(panOf(e.pos))
     else sfx.strike(panOf(e.pos))
+    strikeFx(e)
   },
-  onShotBlocked: (at) => sfx.blocked(panOf(at)),
+  onShotBlocked: (at) => {
+    sfx.blocked(panOf(at))
+    vfx.sparks(at3(at, 1.1), STONE.clone().lerp(new THREE.Color(1, 0.9, 0.7), 0.5), 6, 4)
+  },
   onGone: (e) => {
     windups.get(e)?.()
     windups.delete(e)
   },
 })
+
+/** What each enemy's strike throws up: grit and dust for slams, a muzzle flash for shots. */
+function strikeFx(e: Enemy) {
+  if (e.kind === 'chaser') {
+    // both fists into the floor
+    vfx.dust(e.pos, 16 * e.size, 2.2 * e.size, undefined, 5)
+    vfx.chunks(at3(e.pos, 0.3), 6, STONE, 4, 0.12)
+    vfx.flash(at3(e.pos, 0.3), EMBER, 0.8 * e.size)
+    vfx.sparks(at3(e.pos, 0.4), EMBER, 10, 5)
+  } else if (e.kind === 'ranged') {
+    const dir = new THREE.Vector3(still.pos.x - e.pos.x, 0, still.pos.z - e.pos.z).normalize()
+    const muzzle = at3(e.pos, 1.45).addScaledVector(dir, 0.95)
+    vfx.flash(muzzle, EMBER, 0.7)
+    vfx.sparks(muzzle, EMBER, 9, 7, dir, 0.4)
+    vfx.smokePuff(muzzle, 2)
+  } else {
+    const b = e as Assembler
+    if (b.move === 'sweep') {
+      vfx.dust(b.pos, 22, 4.5, undefined, 6)
+      vfx.sparks(at3(b.pos, 0.8), EMBER, 18, 8)
+    } else if (b.move === 'wave' || b.move === 'magnet') {
+      vfx.dust(b.pos, 30, 3.5, undefined, 7)
+      vfx.chunks(at3(b.pos, 0.3), 14, STONE, 6, 0.18)
+      vfx.flash(at3(b.pos, 0.5), EMBER, 2.2)
+    }
+  }
+}
 
 /** Dev only: lets a headless browser read the fight without guessing from pixels. */
 if (import.meta.env.DEV) Object.assign(window, { __combat: combat, __world: world, __loot: loot, __hud: hud, __still: still, __level: () => level })
@@ -229,6 +308,7 @@ hud.onPrompt(() => {
   const at = new THREE.Vector3(sh.x, 0, sh.z)
   combat.burst(at, sh.kind === 'rest' ? 0x8fd0ff : 0xc7b8ff)
   sfx.shrine()
+  vfx.embers(at3(at, 0.5), 30, 1.2, sh.kind === 'rest' ? COLD : new THREE.Color(0xc7b8ff))
   if (sh.kind === 'rest') {
     run.strain = Math.max(0, run.strain - 6)
     overlay.banner('rested \u00b7 strain \u22126')
@@ -271,6 +351,7 @@ function drawEliteLabels() {
 
 /** It went quiet: half of what's missing comes back, and a little strain lets go. */
 function quiet() {
+  vfx.embers(at3(still.pos, 0.4), 18, 0.9, COLD)
   run.fought = false
   run.quietT = 0
   const before = combat.hp
@@ -362,34 +443,66 @@ document.addEventListener('visibilitychange', () => {
   }
 })
 
+let bossWasStunned = false
+const BOSS_HP = 900
+
+/** The Assembler falls: the exit opens, and it leaves the best of what it was made from. */
+function bossDown(at: THREE.Vector3) {
+  combat.boss = null
+  hud.bossBar(null)
+  level?.openExit()
+  sfx.bossDown()
+  shake = 1.2
+  hitstop = 0.25
+  rig.punch(0.12)
+  navigator.vibrate?.([60, 40, 120])
+  const taken = [...hud.loadout, ...loot.ground.map((g) => g.def)]
+  for (let i = 0; i < 2; i++) {
+    const def = rollPart('boss', [...taken, ...loot.ground.map((g) => g.def)], LOOT.eliteOdds)
+    if (def) loot.drop(def, at, still.pos)
+  }
+  loot.dropScrap(new THREE.Vector3(at.x + 1.2, 0, at.z))
+  loot.dropScrap(new THREE.Vector3(at.x - 1.2, 0, at.z))
+  overlay.banner(`area ${run.depth / BOSS_EVERY} cleared`)
+}
+
+/** Every third depth closes an area with the Assembler. */
+const BOSS_EVERY = 3
+
 /** Build a level and put Still at its entrance. HP is whole again; strain carries. */
 function enterLevel(depth: number) {
   level?.dispose()
   loot.clear()
   combat.reset()
-  level = generateLevel(depth)
+  level = generateLevel(depth, undefined, { boss: depth % BOSS_EVERY === 0 })
   world.scene.add(level.group)
   combat.terrain = level.terrain
   loot.terrain = level.terrain
   for (const p of level.packs) combat.addPack(p.members, p.room.kind === 'side', p.elite)
   combat.breakables = level.breakables
+  if (level.boss) combat.addBoss(level.boss.x, level.boss.z, level.boss.face)
   run.fought = false
   run.quietT = 0
   still.pos.copy(level.entrance)
   prev.copy(still.pos)
   run.depth = depth
-  overlay.banner(`Depth ${depth}`)
+  overlay.banner(level.boss ? `Depth ${depth} \u00b7 something is waiting` : `Depth ${depth}`)
 }
+
+/** `?depth=3` starts a run there: the fastest way to the boss while tuning it. */
+const START_DEPTH = Math.max(1, Number(new URLSearchParams(location.search).get('depth')) || 1)
 
 function startRun() {
   still.reassemble()
   Object.assign(run, { phase: 'crawl', strain: 0, t: 0, swapped: false })
   loot.clear()
-  // Still begins with one random plain part; the rest he finds
-  const start = STARTING[Math.floor(Math.random() * STARTING.length)]!
-  hud.resetLoadout([start])
-  for (const slot of SLOT_NAMES) still.setEquipped(slot, slot === start.slot)
-  enterLevel(1)
+  // Still begins with one random plain part; the rest he finds. Starting deeper
+  // (?depth=) skips the levels where he'd have found them, so he gets all four.
+  const start = START_DEPTH > 1 ? STARTING : [STARTING[Math.floor(Math.random() * STARTING.length)]!]
+  hud.resetLoadout(start)
+  for (const slot of SLOT_NAMES) still.setEquipped(slot, start.some((p) => p.slot === slot))
+  enterLevel(START_DEPTH)
+  hud.bossBar(null)
   rig.reset()
   world.gradePass.uniforms.uSaturation!.value = grade.saturation
   hud.enabled = true
@@ -464,11 +577,42 @@ function cast(def: AbilityDef, pushed: boolean) {
   }
   combat.useAbility(def, still.pos, still.facing, hud.moveX, hud.moveZ)
   sfx.ability(def.shape, pushed)
+  still.attack(def.shape, pushed)
+  castFx(def, pushed)
   still.group.scale.setScalar(pushed ? 1.16 : 1.08)
   shake = Math.max(shake, pushed ? 0.34 : 0.16)
   // no freeze on a dash: a pause right before the move is what made it look like a teleport
   if (def.shape !== 'dash') hitstop = Math.max(hitstop, pushed ? 0.06 : 0.035)
   rig.punch(pushed ? 0.06 : 0.02)
+}
+
+/** Still's attacks are cold light. A pushed one also throws embers off his own joints: it costs him. */
+function castFx(def: AbilityDef, pushed: boolean) {
+  const lens = still.lensPoint(new THREE.Vector3())
+  const fwd = new THREE.Vector3(Math.sin(still.facing), 0, Math.cos(still.facing))
+  switch (def.shape) {
+    case 'bolt':
+      vfx.flash(lens, COLD, 0.8)
+      vfx.sparks(lens, COLD, 10, 7, fwd, 0.5)
+      break
+    case 'nova':
+      vfx.flash(at3(still.pos, 1.2), COLD_DEEP, 0.9)
+      vfx.sparks(at3(still.pos, 1.0), COLD, 26, 9)
+      vfx.dust(still.pos, 14, def.radius * 0.6, new THREE.Color(0x55606c), 7)
+      break
+    case 'arc': {
+      // sparks along the swing's arc
+      for (let i = 0; i < 7; i++) {
+        const a = still.facing + (i / 6 - 0.5) * 2
+        const p = at3(still.pos, 1.0).add(new THREE.Vector3(Math.sin(a) * def.range * 0.8, 0, Math.cos(a) * def.range * 0.8))
+        vfx.sparks(p, COLD, 2, 3, new THREE.Vector3(Math.sin(a), 0, Math.cos(a)), 0.3)
+      }
+      break
+    }
+    case 'dash':
+      break
+  }
+  if (pushed) vfx.sparks(at3(still.pos, 1.2), EMBER, 14, 4)
 }
 
 let accumulator = 0
@@ -538,6 +682,7 @@ function simulate(realDt: number) {
   updateShrinePrompt()
   const scrap = loot.collectScrap(still.pos)
   if (scrap > 0) {
+    vfx.embers(at3(still.pos, 0.5), 10, 0.5, new THREE.Color(0x9fd8c4))
     combat.hp = Math.min(100, combat.hp + scrap * LOOT.scrapHeal)
     hud.healing()
     sfx.repair()
@@ -558,13 +703,57 @@ function simulate(realDt: number) {
     if (run.quietT >= QUIET_SECONDS) quiet()
   }
 
-  // the exit is always open, even with something on your heels
-  if (run.phase === 'crawl' && level && Math.hypot(still.pos.x - level.exit.x, still.pos.z - level.exit.z) < EXIT_RADIUS) {
+  // the boss: its bar, its overload, and the clang of a charge into a wall
+  const boss = combat.boss
+  if (boss && !boss.dead) {
+    const awakeBoss = combat.awake.includes(boss)
+    hud.bossBar(awakeBoss ? { name: 'The Assembler', frac: boss.hp / BOSS_HP, overloaded: boss.overloaded, stunned: boss.stunned } : null)
+    if (boss.justOverloaded) {
+      overlay.banner('the Assembler overloads')
+      sfx.roar()
+      shake = Math.max(shake, 0.8)
+      rig.punch(-0.06)
+    }
+    if (boss.stunned && !bossWasStunned) {
+      sfx.clang(panOf(boss.pos))
+      shake = Math.max(shake, 0.6)
+      hitstop = Math.max(hitstop, 0.12)
+    }
+    bossWasStunned = boss.stunned
+  }
+
+  // the exit is open once there's no boss standing, even with something on your heels
+  if (run.phase === 'crawl' && level && level.exitOpen && Math.hypot(still.pos.x - level.exit.x, still.pos.z - level.exit.z) < EXIT_RADIUS) {
     descend()
     return
   }
 
   still.group.scale.lerp(new THREE.Vector3(1, 1, 1), Math.min(1, dt * 9))
+}
+
+/** Continuous effects: the boss smoking and sparking, hulks glowing as they wind up. */
+let ambientT = 0
+const stackA = new THREE.Vector3()
+const stackB = new THREE.Vector3()
+function ambientFx(dt: number) {
+  ambientT -= dt
+  const tick = ambientT <= 0
+  if (tick) ambientT = 0.09
+  const b = combat.boss
+  if (b && !b.dead && tick) {
+    // the stacks smoke; overloaded, the core sheds embers; stunned, the open grill sparks
+    b.group.localToWorld(stackA.set(-0.45, 3.8, -0.55))
+    b.group.localToWorld(stackB.set(0.4, 3.5, -0.55))
+    vfx.smokePuff(Math.random() < 0.5 ? stackA : stackB, 1, b.overloaded ? new THREE.Color(0x3a2a24) : undefined)
+    if (b.overloaded) vfx.embers(at3(b.pos, 1.8), 2, 1.2)
+    if (b.stunned) vfx.sparks(b.group.localToWorld(new THREE.Vector3(0, 1.75, 1.1)), EMBER, 3, 4)
+    if (b.move === 'charge' && b.phase === 'strike') vfx.dust(b.pos, 3, 1.5, undefined, 2)
+  }
+  if (tick) {
+    for (const e of combat.awake) {
+      if (e.kind === 'chaser' && e.phase === 'windup') vfx.embers(at3(e.pos, 1.0 * e.size), 1, 0.3)
+    }
+  }
 }
 
 function frame(nowMs: number) {
@@ -623,6 +812,11 @@ function frame(nowMs: number) {
   if (!paused) clock += elapsed * 1000
   drawEliteLabels()
   hud.update(clock)
+  if (!paused) {
+    vfx.update(elapsed, world.camera, world.renderer.domElement.height)
+    ambientFx(elapsed)
+  }
+  syncTells()
   world.render()
   requestAnimationFrame(frame)
 }

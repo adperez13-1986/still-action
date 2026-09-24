@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { DECAL_Y } from './world'
 import { buildInstanced, pieceData, skin, type Piece, type Placement } from './kit'
 import type { Terrain } from './terrain'
 import type { Archetype, EliteMod } from './combat'
@@ -16,7 +17,7 @@ export const CELL = 4
  * dash and the vent all need room). Side rooms stay 3x3 — a dead end you chose
  * should feel tight. Now and then a 5x3 hall, laid along the direction of travel.
  */
-const SIZE = { big: [2, 2], small: [1, 1], hall: [2, 1] } as const
+const SIZE = { big: [2, 2], small: [1, 1], hall: [2, 1], arena: [3, 3] } as const
 const MAIN_ROOMS = 6
 const WALL_HALF = 0.3
 const COLUMN_R = 0.45
@@ -62,6 +63,10 @@ export interface Level {
   shrines: Shrine[]
   /** Break a crate: it stops being solid and its mesh goes. */
   smash: (b: Breakable) => void
+  /** Boss levels: where the boss stands and what it faces. The exit stays shut until it falls. */
+  boss?: { x: number; z: number; face: THREE.Vector3 }
+  exitOpen: boolean
+  openExit: () => void
   group: THREE.Group
   terrain: Terrain
   rooms: Room[]
@@ -136,6 +141,16 @@ function tryAttach(
   const room: Room = { kind, ci, cj, rx, rz, center: new THREE.Vector3(ci * CELL, 0, cj * CELL) }
   layout.rooms.push(room)
   return room
+}
+
+/** A boss level: the entrance, a short walk, and one big arena. Nothing else. */
+function generateBossLayout(rand: () => number): Layout {
+  const layout: Layout = { floor: new Set(), rooms: [], corridors: new Set() }
+  const first: Room = { kind: 'entrance', ci: 0, cj: 0, rx: 1, rz: 1, center: new THREE.Vector3() }
+  for (const [i, j] of roomCells(0, 0, 1, 1)) layout.floor.add(key(i, j))
+  layout.rooms.push(first)
+  tryAttach(layout, first, DIRS[Math.floor(rand() * 4)]!, 2, 'exit', SIZE.arena)
+  return layout
 }
 
 function generateLayout(rand: () => number, sideRooms: number): Layout {
@@ -346,9 +361,9 @@ function makeTerrain(floor: Set<string>, boxes: Box[], circles: Circle[]): Terra
 
 // --- building ---------------------------------------------------------------
 
-export function generateLevel(depth: number, seed = Math.floor(Math.random() * 1e9)): Level {
+export function generateLevel(depth: number, seed = Math.floor(Math.random() * 1e9), opts: { boss?: boolean } = {}): Level {
   const rand = rng(seed)
-  const layout = generateLayout(rand, 2 + Math.floor(rand() * 2))
+  const layout = opts.boss ? generateBossLayout(rand) : generateLayout(rand, 2 + Math.floor(rand() * 2))
   const { floor } = layout
   const placements: Placement[] = []
   const boxes: Box[] = []
@@ -447,6 +462,39 @@ export function generateLevel(depth: number, seed = Math.floor(Math.random() * 1
         placements.push({ piece, x, z, rotY, scale })
       }
     }
+  }
+
+  // --- the boss arena: four low cover walls to hide behind and to charge into, and crates ---
+  let bossSpot: Level['boss']
+  if (opts.boss) {
+    const arena = layout.rooms.find((r) => r.kind === 'exit')!
+    const entrance = layout.rooms.find((r) => r.kind === 'entrance')!
+    const c = arena.center
+    for (const [ox, oz, along] of [[-6.5, 0, 'z'], [6.5, 0, 'z'], [0, -6.5, 'x'], [0, 6.5, 'x']] as const) {
+      const x = c.x + ox
+      const z = c.z + oz
+      placements.push({ piece: 'barrier_column', x, z, rotY: along === 'z' ? Math.PI / 2 : 0 })
+      boxes.push(along === 'z'
+        ? { minX: x - 0.35, maxX: x + 0.35, minZ: z - 2, maxZ: z + 2 }
+        : { minX: x - 2, maxX: x + 2, minZ: z - 0.35, maxZ: z + 0.35 })
+    }
+    for (const [ox, oz] of [[-9.5, -9.5], [9.5, -9.5], [-9.5, 9.5], [9.5, 9.5], [-3.5, 10], [3.5, -10]] as const) {
+      const x = c.x + ox
+      const z = c.z + oz
+      const piece: Piece = rand() < 0.5 ? 'barrel_large' : 'box_large'
+      const scale = piece === 'barrel_large' ? 0.7 : 0.8
+      const { geometry, material } = pieceData(piece)
+      const mesh = new THREE.Mesh(geometry, material)
+      mesh.position.set(x, 0, z)
+      mesh.rotation.y = rand() * 6.3
+      mesh.scale.setScalar(scale)
+      const circle: Circle = { x, z, r: pieceData(piece).radius * scale * 0.8 }
+      circles.push(circle)
+      breakables.push({ mesh, x, z, r: circle.r, circle, broken: false })
+    }
+    // it waits at the far side, facing the way you come in
+    const away = new THREE.Vector3(c.x - entrance.center.x, 0, c.z - entrance.center.z).normalize()
+    bossSpot = { x: c.x + away.x * 4, z: c.z + away.z * 4, face: entrance.center.clone() }
   }
 
   // --- the beyond ---
@@ -559,7 +607,7 @@ export function generateLevel(depth: number, seed = Math.floor(Math.random() * 1
       glyph.name = 'glyph'
       const pool = new THREE.Mesh(new THREE.RingGeometry(0.9, 1.25, 32), rune)
       pool.rotation.x = -Math.PI / 2
-      pool.position.set(x, 0.06, z)
+      pool.position.set(x, DECAL_Y, z)
       shrineParts.push(stone, glyph, pool)
       circles.push({ x, z, r: 0.45 })
       shrines.push({ kind, x, z, used: false, rune })
@@ -607,13 +655,21 @@ export function generateLevel(depth: number, seed = Math.floor(Math.random() * 1
   const padMat = new THREE.MeshBasicMaterial({ color: 0xcfe0ff, transparent: true, opacity: 0.25, depthWrite: false })
   const pad = new THREE.Mesh(new THREE.RingGeometry(1.2, 1.6, 40), padMat)
   pad.rotation.x = -Math.PI / 2
-  pad.position.set(exitRoom.center.x, 0.07, exitRoom.center.z)
+  pad.position.set(exitRoom.center.x, DECAL_Y, exitRoom.center.z)
   group.add(beam, core, pad)
+  // a boss level's exit stays dark until the boss is down
+  if (opts.boss) beam.visible = core.visible = pad.visible = false
 
   return {
     depth,
     group,
     terrain: makeTerrainNow,
+    boss: bossSpot,
+    exitOpen: !opts.boss,
+    openExit() {
+      this.exitOpen = true
+      beam.visible = core.visible = pad.visible = true
+    },
     packs,
     breakables,
     shrines,

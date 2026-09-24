@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import type { AbilityShape } from './abilities'
 
 /**
  * Q16: architecture yes, content no.
@@ -67,6 +68,10 @@ export class Still {
   private debris: Debris[] = []
 
   private ghosts: Ghost[] = []
+  /** The attack being played: which shape, and how far through it (seconds). */
+  private anim: { shape: AbilityShape | 'shot'; t: number; dur: number; pushed: boolean } | null = null
+  private eyeFlash = 0
+  private slowdown = 0
   private ghostTimer = 0
 
   private dashT = 0
@@ -92,7 +97,24 @@ export class Still {
   }
 
   /** 0 is running, 1 is stopped: the eye goes out and the head drops. */
+  /**
+   * Play an attack. Each part's ability has a body to go with it: the cleaver
+   * winds back and swings across, the lens recoils, the vent bursts the cage
+   * open, the dash leans in. Pushed casts play bigger.
+   */
+  attack(shape: AbilityShape | 'shot', pushed = false) {
+    const dur = { shot: 0.14, bolt: 0.3, nova: 0.42, arc: 0.34, dash: 0.3 }[shape]
+    // the auto attack never interrupts a real attack
+    if (shape === 'shot' && this.anim && this.anim.shape !== 'shot') {
+      this.eyeFlash = Math.max(this.eyeFlash, 0.5)
+      return
+    }
+    this.anim = { shape, t: 0, dur, pushed }
+    this.eyeFlash = shape === 'shot' ? 0.5 : 1
+  }
+
   setSlowdown(k: number) {
+    this.slowdown = k
     EYE.color.copy(EYE_ON).lerp(EYE_OFF, k)
     this.parts.head.rotation.x = k * 0.42
     this.parts.arms.rotation.x = k * 0.12
@@ -183,6 +205,12 @@ export class Still {
       this.bob += dt * 22
       this.group.position.set(this.pos.x, 0.12, this.pos.z)
       this.group.rotation.y = this.facing
+      // leaning into the dash, legs tucked
+      this.parts.torso.rotation.x = 0.16 + 0.4
+      this.parts.head.rotation.x = 0.3
+      this.legL.rotation.x = -0.7
+      this.legR.rotation.x = 0.5
+      this.animate(dt)
       return
     }
 
@@ -205,6 +233,8 @@ export class Still {
     this.legR.rotation.x = -swing
     this.armL.rotation.x = -swing * 0.5
     this.armR.rotation.x = swing * 0.5
+    this.parts.torso.rotation.x = 0.16
+    this.animate(dt)
 
     this.group.position.set(this.pos.x, Math.abs(Math.sin(this.bob)) * 0.05 * mag, this.pos.z)
     this.group.rotation.y = this.facing
@@ -235,6 +265,74 @@ export class Still {
         this.ghosts.splice(i, 1)
       }
     }
+  }
+
+  /** Layer the current attack over the walk. Resets every part it touched each frame. */
+  private animate(dt: number) {
+    const torso = this.parts.torso
+    const head = this.parts.head
+    torso.rotation.y = 0
+    torso.scale.setScalar(1)
+    this.armL.rotation.z = 0
+    this.armR.rotation.z = 0
+    this.armL.rotation.y = 0
+    if (this.slowdown <= 0) head.rotation.x = 0
+    head.position.z = 0.1
+
+    this.eyeFlash = Math.max(0, this.eyeFlash - dt * 5)
+    if (this.slowdown <= 0) EYE.color.copy(EYE_ON).lerp(new THREE.Color(0xffffff), this.eyeFlash)
+
+    const a = this.anim
+    if (!a) return
+    a.t += dt
+    const k = Math.min(1, a.t / a.dur)
+    const big = a.pushed ? 1.35 : 1
+    // a quick wind-up then a fast release reads as weight
+    const wind = Math.min(1, k / 0.3)
+    const release = k < 0.3 ? 0 : (k - 0.3) / 0.7
+    const settle = 1 - release
+
+    switch (a.shape) {
+      case 'arc': {
+        // clamp arm winds back and up, the cage twists, then it all whips across
+        const yaw = k < 0.3 ? 0.75 * wind : 0.75 - 1.75 * Math.sin((release * Math.PI) / 2)
+        torso.rotation.y = yaw * big * (k < 0.3 ? 1 : settle + 0.3)
+        this.armL.rotation.x = (k < 0.3 ? -1.7 * wind : -1.7 + 1.5 * release) * big
+        this.armL.rotation.z = (k < 0.3 ? -0.5 * wind : -0.5 + 1.1 * release) * big
+        this.armR.rotation.x = -0.4 * (1 - k)
+        break
+      }
+      case 'bolt': {
+        // the lens kicks back and up with the shot, the body rocks after it
+        const kick = Math.pow(1 - k, 2)
+        head.rotation.x = -0.45 * kick * big
+        head.position.z = 0.1 - 0.12 * kick * big
+        torso.rotation.x = 0.16 - 0.18 * kick * big
+        break
+      }
+      case 'nova': {
+        // crouch into the cage, then burst it open with the arms flung wide
+        const burst = k < 0.25 ? -0.12 * (k / 0.25) : Math.sin(((k - 0.25) / 0.75) * Math.PI) * 0.4 * big
+        torso.scale.setScalar(1 + burst)
+        this.armL.rotation.z = -Math.max(0, burst) * 3
+        this.armR.rotation.z = Math.max(0, burst) * 3
+        torso.rotation.x = 0.16 + (k < 0.25 ? 0.2 * (k / 0.25) : 0.2 * (1 - k))
+        break
+      }
+      case 'dash':
+        this.armL.rotation.x = 0.9 * (1 - k)
+        this.armR.rotation.x = 0.9 * (1 - k)
+        break
+      case 'shot':
+        head.position.z = 0.1 - 0.05 * (1 - k)
+        break
+    }
+    if (k >= 1) this.anim = null
+  }
+
+  /** The lens, in world space: where Still's bolts leave from. */
+  lensPoint(out: THREE.Vector3) {
+    return this.parts.head.getWorldPosition(out).add(new THREE.Vector3(Math.sin(this.facing) * 0.25, 0.32, Math.cos(this.facing) * 0.25))
   }
 
   /** Shortest way round. */

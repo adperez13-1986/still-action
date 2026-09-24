@@ -1,6 +1,9 @@
 import * as THREE from 'three'
+import { DECAL_Y } from './world'
+import { tellMaterial, releaseTell, COLD, EMBER, type Vfx } from './vfx'
 import { Chaser, shoveVelocity, type Enemy } from './enemy'
 import { Ranged } from './ranged'
+import { Assembler, BOSS } from './boss'
 import type { Terrain } from './terrain'
 import type { Breakable } from './dungeon'
 import type { AbilityDef } from './abilities'
@@ -78,11 +81,27 @@ export interface Pack {
   gaze: Map<Enemy, THREE.Vector3>
   /** Summed HP, to notice a sleeping pack being shot at. */
   hpSeen: number
+  /** Overrides for the boss: it wakes from further off and never gives up. */
+  wakeRadius?: number
+  leash?: number
 }
+
+/** A shockwave rolling out from a slam. Gaps are safe lanes; walls don't stop it. */
+interface Wave {
+  center: THREE.Vector3
+  r: number
+  gaps: number[]
+  damage: number
+  hit: boolean
+  segs: THREE.Mesh[]
+}
+const WAVE_SPEED = 9
+const WAVE_MAX = 16
+const WAVE_SEGS = 72
 
 interface Fx {
   mesh: THREE.Mesh
-  mat: THREE.MeshBasicMaterial
+  mat: THREE.ShaderMaterial
   life: number
   max: number
   from: number
@@ -95,6 +114,8 @@ export interface CombatEvents {
   onKill: (at: THREE.Vector3, kind: Archetype, pack: Pack, wasElite: boolean) => void
   onWake: (at: THREE.Vector3) => void
   onSmash: (b: Breakable) => void
+  /** A boss volley leaving the cannon. */
+  onVolley: (at: THREE.Vector3) => void
   onDash: (x: number, z: number, ms: number) => void
   onShot: () => void
   onWindup: (e: Enemy, ms: number) => void
@@ -109,6 +130,14 @@ export class Combat {
   readonly packs: Pack[] = []
   /** This level's crates and barrels. Anything that hits one breaks it, whoever fired. */
   breakables: Breakable[] = []
+  /** The boss, while one is alive. */
+  boss: Assembler | null = null
+  private waves: Wave[] = []
+  private readonly waveGeo = new THREE.BoxGeometry(0.5, 0.35, 0.28)
+  private readonly waveMat = new THREE.MeshBasicMaterial({ color: 0xff8a50, transparent: true, opacity: 0.85, depthWrite: false, blending: THREE.AdditiveBlending })
+  /** Sparks, trails and embers. Set by the run once the scene exists. */
+  vfx: Vfx | null = null
+  private pull: { center: THREE.Vector3; strength: number; t: number } | null = null
   private readonly packOf = new Map<Enemy, Pack>()
 
   private bolts: Bolt[] = []
@@ -119,11 +148,12 @@ export class Combat {
   private autoTimer = 0
   private hurtCooldown = 0
 
-  private readonly boltGeo = new THREE.BoxGeometry(0.16, 0.16, 0.7)
-  private readonly boltMat = new THREE.MeshBasicMaterial({ color: 0xffd39b })
-  private readonly abilityBoltMat = new THREE.MeshBasicMaterial({ color: 0xfff0d0 })
+  // Still's bolts are cold light; enemy shots are embers. Both leave trails.
+  private readonly boltGeo = new THREE.BoxGeometry(0.1, 0.1, 0.8)
+  private readonly boltMat = new THREE.MeshBasicMaterial({ color: 0x8fb8e8, blending: THREE.AdditiveBlending, transparent: true })
+  private readonly abilityBoltMat = new THREE.MeshBasicMaterial({ color: 0xeef6ff, blending: THREE.AdditiveBlending, transparent: true })
   private readonly shotGeo = new THREE.SphereGeometry(SHOT_RADIUS, 10, 8)
-  private readonly shotMat = new THREE.MeshBasicMaterial({ color: 0xff7a55 })
+  private readonly shotMat = new THREE.MeshBasicMaterial({ color: 0xff8a50, blending: THREE.AdditiveBlending, transparent: true })
 
   constructor(
     private readonly scene: THREE.Scene,
@@ -158,6 +188,13 @@ export class Combat {
       }
       if (action?.kind === 'melee') this.hurtPlayer(action.damage)
       if (action?.kind === 'shot') this.fireShot(e.pos, action.dir, action.damage)
+      if (action?.kind === 'shots') {
+        for (const d of action.dirs) this.fireShot(action.from, d, action.damage)
+        this.events.onVolley(action.from)
+      }
+      if (action?.kind === 'wave') this.startWave(action.center, action.gaps, action.damage)
+      if (action?.kind === 'summon' && pack) this.summon(pack, action.points)
+      if (action?.kind === 'pull') this.pull = { center: action.center, strength: action.strength, t: action.seconds }
       if (e.dead) {
         e.dispose(this.scene)
         this.enemies.splice(i, 1)
@@ -195,13 +232,14 @@ export class Combat {
       const b = this.bolts[i]!
       b.mesh.position.addScaledVector(b.dir, BOLT_SPEED * dt)
       b.life -= dt
+      this.vfx?.trail(b.mesh.position, COLD, b.radius > 0.5 ? 0.34 : 0.18)
 
       let spent = b.life <= 0
       // same rule as enemy shots: waist-high walls stop yours too
       if (!spent && this.terrain.blocked(b.mesh.position.x, b.mesh.position.z, 0.15)) {
         this.smashNear(b.mesh.position.x, b.mesh.position.z, 0.4)
         this.events.onShotBlocked(b.mesh.position)
-        this.ring(b.mesh.position, 0.2, 0.8, 0.18, 0xffd39b)
+        this.ring(b.mesh.position, 0.2, 0.8, 0.18, 0x8fb8e8)
         spent = true
       }
       if (!spent) {
@@ -209,7 +247,7 @@ export class Combat {
           if (b.pierced?.has(e)) continue
           const dx = b.mesh.position.x - e.pos.x
           const dz = b.mesh.position.z - e.pos.z
-          if (Math.hypot(dx, dz) < b.radius + 0.5) {
+          if (Math.hypot(dx, dz) < b.radius + e.radius) {
             e.hit(b.damage)
             this.events.onHit(e.pos)
             if (b.pierced) {
@@ -227,6 +265,54 @@ export class Combat {
       }
     }
 
+    // --- the magnet: Still is dragged toward the boss while it winds up ---
+    // (player is Still's own position vector; moving it here is the pull)
+    if (this.pull) {
+      this.pull.t -= dt
+      const dx = this.pull.center.x - player.x
+      const dz = this.pull.center.z - player.z
+      const d = Math.hypot(dx, dz)
+      if (d > 1.8) {
+        player.x += (dx / d) * this.pull.strength * dt
+        player.z += (dz / d) * this.pull.strength * dt
+      }
+      if (this.pull.t <= 0 || !this.boss || this.boss.dead) this.pull = null
+    }
+
+    // --- shockwaves ---
+    for (let i = this.waves.length - 1; i >= 0; i--) {
+      const w = this.waves[i]!
+      w.r += WAVE_SPEED * dt
+      const gapHalf = BOSS.wave.gapWidth / 2
+      const inGap = (a: number) => w.gaps.some((g) => {
+        let d = a - g
+        while (d > Math.PI) d -= Math.PI * 2
+        while (d < -Math.PI) d += Math.PI * 2
+        return Math.abs(d) < gapHalf
+      })
+      w.segs.forEach((m, k) => {
+        const a = (k / WAVE_SEGS) * Math.PI * 2
+        m.visible = !inGap(a)
+        m.position.set(w.center.x + Math.sin(a) * w.r, 0.2, w.center.z + Math.cos(a) * w.r)
+        m.rotation.y = a
+      })
+      this.waveMat.opacity = 0.85 * (1 - w.r / WAVE_MAX) + 0.15
+      // embers thrown up along the front
+      for (let e = 0; e < 3; e++) {
+        const m = w.segs[Math.floor(Math.random() * w.segs.length)]!
+        if (m.visible) this.vfx?.embers(m.position, 1, 0.2)
+      }
+      const pd = Math.hypot(player.x - w.center.x, player.z - w.center.z)
+      if (!w.hit && Math.abs(pd - w.r) < 0.55 && !inGap(Math.atan2(player.x - w.center.x, player.z - w.center.z))) {
+        w.hit = true
+        this.hurtPlayer(w.damage)
+      }
+      if (w.r > WAVE_MAX) {
+        for (const m of w.segs) this.scene.remove(m)
+        this.waves.splice(i, 1)
+      }
+    }
+
     for (let i = this.later.length - 1; i >= 0; i--) {
       const l = this.later[i]!
       l.t -= dt
@@ -241,6 +327,8 @@ export class Combat {
       const s = this.shots[i]!
       s.mesh.position.addScaledVector(s.dir, SHOT_SPEED * dt)
       s.life -= dt
+      this.vfx?.trail(s.mesh.position, EMBER, 0.3)
+      s.mesh.scale.setScalar(0.85 + Math.random() * 0.3)
       const p = s.mesh.position
 
       let spent = s.life <= 0
@@ -266,11 +354,11 @@ export class Combat {
       f.life -= dt
       const k = 1 - Math.max(0, f.life) / f.max
       f.mesh.scale.setScalar(f.from + (f.to - f.from) * k)
-      f.mat.opacity = (1 - k) * 0.85
+      f.mat.opacity = (1 - k) * 0.95
       if (f.life <= 0) {
         this.scene.remove(f.mesh)
         f.mesh.geometry.dispose()
-        f.mat.dispose()
+        releaseTell(f.mat)
         this.fx.splice(i, 1)
       }
     }
@@ -303,6 +391,10 @@ export class Combat {
     this.packOf.clear()
     for (const b of this.bolts) this.scene.remove(b.mesh)
     this.bolts.length = 0
+    for (const w of this.waves) for (const m of w.segs) this.scene.remove(m)
+    this.waves.length = 0
+    this.pull = null
+    this.boss = null
     for (const s of this.shots) this.scene.remove(s.mesh)
     this.shots.length = 0
     this.later.length = 0
@@ -407,7 +499,7 @@ export class Combat {
       case 'nova': {
         for (const e of this.enemies) {
           const d = Math.hypot(e.pos.x - origin.x, e.pos.z - origin.z)
-          if (d <= def.radius) {
+          if (d <= def.radius + e.radius - 0.5) {
             e.hit(def.damage)
             const ox = e.pos.x - origin.x
             const oz = e.pos.z - origin.z
@@ -426,7 +518,7 @@ export class Combat {
           if (!b.broken && Math.hypot(b.x - origin.x, b.z - origin.z) <= def.radius + b.r) this.events.onSmash(b)
         }
         if (def.mod === 'pull') this.ring(origin, def.radius, 0.3, 0.45, 0xbcd6ff)
-        else this.ring(origin, 0.3, def.radius, 0.45, 0xffd39b)
+        else this.ring(origin, 0.3, def.radius, 0.45, 0x8fb8e8)
         break
       }
 
@@ -443,7 +535,7 @@ export class Combat {
           const dx = e.pos.x - origin.x
           const dz = e.pos.z - origin.z
           const d = Math.hypot(dx, dz)
-          if (d > def.range + MELEE_PAD) continue
+          if (d > def.range + MELEE_PAD + e.radius - 0.55) continue
           // 120-degree sweep in front
           if ((dx / d) * fx + (dz / d) * fz < cone) continue
           e.hit(def.damage)
@@ -457,7 +549,7 @@ export class Combat {
           const bd = Math.hypot(bx, bz)
           if (bd <= def.range + b.r && (bx / bd) * fx + (bz / bd) * fz >= cone) this.events.onSmash(b)
         }
-        this.sweep(origin, aimed, def.range, 0xffe0b0, Math.acos(cone) * 2)
+        this.sweep(origin, aimed, def.range, 0x8fb8e8, Math.acos(cone) * 2)
         break
       }
 
@@ -482,7 +574,7 @@ export class Combat {
         const sz = origin.z
         const lenSq = (ex - sx) ** 2 + (ez - sz) ** 2
         for (const e of this.enemies) {
-          if (this.distToSegment(e.pos.x, e.pos.z, sx, sz, ex, ez) > def.radius + 0.6) continue
+          if (this.distToSegment(e.pos.x, e.pos.z, sx, sz, ex, ez) > def.radius + e.radius) continue
           const along = lenSq > 0 ? Math.max(0, Math.min(1, ((e.pos.x - sx) * (ex - sx) + (e.pos.z - sz) * (ez - sz)) / lenSq)) : 0
           // the dash eases out, so the time to reach a point isn't linear in distance
           const reachT = 1 - Math.sqrt(1 - along)
@@ -512,7 +604,7 @@ export class Combat {
                   this.events.onHit(e.pos)
                 }
               }
-              this.ring(at, 0.3, 2.8, 0.35, 0xffd39b)
+              this.ring(at, 0.3, 2.8, 0.35, 0x8fb8e8)
             },
           })
         }
@@ -530,23 +622,27 @@ export class Combat {
   }
 
   private ring(at: THREE.Vector3, from: number, to: number, life: number, color: number) {
-    const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.85, depthWrite: false })
+    const hot = new THREE.Color(color)
+    const mat = tellMaterial('radial', 1, hot, hot.clone().multiplyScalar(0.3))
+    mat.opacity = 0.95
     const mesh = new THREE.Mesh(new THREE.RingGeometry(0.82, 1, 48), mat)
     mesh.rotation.x = -Math.PI / 2
-    mesh.position.set(at.x, 0.06, at.z)
+    mesh.position.set(at.x, DECAL_Y, at.z)
     mesh.scale.setScalar(from)
     this.scene.add(mesh)
     this.fx.push({ mesh, mat, life, max: life, from, to })
   }
 
   private sweep(at: THREE.Vector3, facing: number, range: number, color: number, spread = (Math.PI * 2) / 3) {
-    const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.6, depthWrite: false })
+    const hot = new THREE.Color(color)
+    const mat = tellMaterial('radial', range, hot, hot.clone().multiplyScalar(0.3))
+    mat.opacity = 0.9
     const mesh = new THREE.Mesh(new THREE.CircleGeometry(range, 24, -spread / 2, spread), mat)
     // The circle's rotation.z is applied before the tilt flat, so it maps to the
     // floor with z mirrored. -facing + PI/2 looked right on the x axis only.
     mesh.rotation.x = -Math.PI / 2
     mesh.rotation.z = facing - Math.PI / 2
-    mesh.position.set(at.x, 0.07, at.z)
+    mesh.position.set(at.x, DECAL_Y + 0.01, at.z)
     this.scene.add(mesh)
     this.fx.push({ mesh, mat, life: 0.22, max: 0.22, from: 1, to: 1.15 })
   }
@@ -571,6 +667,52 @@ export class Combat {
     pack.hpSeen = this.hpOf(pack)
     this.packs.push(pack)
     return pack
+  }
+
+  /** The area's boss: its own pack, woken by walking into the arena, never leashed. */
+  addBoss(x: number, z: number, face: THREE.Vector3): Assembler {
+    const b = new Assembler(x, z)
+    this.scene.add(b.group, b.tellGroup, b.pileGroup)
+    this.enemies.push(b)
+    b.setAsleep(true)
+    const pack: Pack = {
+      members: [b], state: 'asleep', side: false, dropped: false,
+      homes: new Map([[b as Enemy, new THREE.Vector3(x, 0, z)]]),
+      gaze: new Map([[b as Enemy, face.clone()]]),
+      hpSeen: b.hp, wakeRadius: 12.5, leash: Infinity,
+    }
+    this.packOf.set(b, pack)
+    this.packs.push(pack)
+    this.boss = b
+    b.idle(0, face)
+    return b
+  }
+
+  private startWave(center: THREE.Vector3, gaps: number[], damage: number) {
+    const segs = Array.from({ length: WAVE_SEGS }, () => {
+      const m = new THREE.Mesh(this.waveGeo, this.waveMat)
+      this.scene.add(m)
+      return m
+    })
+    this.waves.push({ center: center.clone(), r: 1.4, gaps, damage, hit: false, segs })
+  }
+
+  /** "Assemble": scrap piles become small awake hulks, up to a cap. */
+  private summon(pack: Pack, points: THREE.Vector3[]) {
+    const adds = pack.members.filter((e) => e.kind === 'chaser').length
+    for (const p of points.slice(0, Math.max(0, BOSS.summon.maxAdds - adds))) {
+      const c = new Chaser(p.x, p.z)
+      c.size = 0.78
+      c.hp = 18
+      this.scene.add(c.group, c.tellGroup)
+      this.enemies.push(c)
+      c.setAsleep(false)
+      pack.members.push(c)
+      pack.homes.set(c, p.clone())
+      pack.gaze.set(c, p.clone())
+      this.packOf.set(c, pack)
+      this.ring(p, 0.3, 1.8, 0.4, 0xff7a55)
+    }
   }
 
   private crown(pack: Pack, leader: Enemy, mod: EliteMod, name: string) {
@@ -623,7 +765,7 @@ export class Combat {
     for (const pack of this.packs) {
       const el = pack.elite
       if (el && !el.leader.dead) {
-        el.aura.position.set(el.leader.pos.x, 0.05, el.leader.pos.z)
+        el.aura.position.set(el.leader.pos.x, DECAL_Y, el.leader.pos.z)
         // the warden shields the rest of its pack while it stands
         if (el.mod === 'warding') for (const e of pack.members) e.armor = e === el.leader ? 1 : 0.35
       } else if (el?.mod === 'warding') {
@@ -634,8 +776,8 @@ export class Combat {
       const shot = hp < pack.hpSeen
       pack.hpSeen = hp
       if (pack.state !== 'awake') {
-        if (nearest < WAKE_RADIUS || shot) this.wake(pack)
-      } else if (nearest > LEASH_RADIUS) {
+        if (nearest < (pack.wakeRadius ?? WAKE_RADIUS) || shot) this.wake(pack)
+      } else if (nearest > (pack.leash ?? LEASH_RADIUS)) {
         // lost you: walk home and settle
         pack.state = 'returning'
         for (const e of pack.members) e.setAsleep(false)

@@ -12,6 +12,12 @@ const CAM_DIST = 40
 
 export const ARENA_RADIUS = 13
 
+/**
+ * Height for anything drawn flat on the floor: telegraphs, rings, auras, pads.
+ * The kit's floor tiles top out at +0.05, so anything lower is hidden under them.
+ */
+export const DECAL_Y = 0.1
+
 /** Circles on a plane. No physics engine, per Q12. */
 export interface Collider { x: number; z: number; r: number }
 

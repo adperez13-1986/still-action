@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { DECAL_Y } from './world'
 import { PARTS, type AbilityDef, type Tier } from './abilities'
 import type { SlotName } from './still'
 import type { Archetype } from './combat'
@@ -27,6 +28,7 @@ const TREASURE: Record<Archetype, Record<SlotName, number>> = {
   // chasers are all arms and torso; ranged ones are all eyes and legs
   chaser: { head: 1, torso: 3, arms: 3, legs: 1 },
   ranged: { head: 3, torso: 1, arms: 1, legs: 3 },
+  boss: { head: 1, torso: 1, arms: 1, legs: 1 },
 }
 
 export const TIER_COLOR: Record<Tier, number> = {
@@ -114,7 +116,7 @@ export class Loot {
       color, transparent: true, opacity: 0.3, depthWrite: false,
     }))
     disc.rotation.x = -Math.PI / 2
-    disc.position.y = 0.03
+    disc.position.y = DECAL_Y
 
     group.add(chunk, beam, disc)
 
