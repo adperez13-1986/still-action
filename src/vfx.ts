@@ -347,6 +347,20 @@ export class Vfx {
     })
   }
 
+  /** N4a frost: pale motes that fall instead of rising. Heat rises, cold falls (G4). */
+  frost(at: THREE.Vector3, count: number, radius = 0.5) {
+    for (let i = 0; i < count; i++) {
+      const a = rnd(0, Math.PI * 2)
+      const r = rnd(0, radius)
+      this.glow.spawn({
+        x: at.x + Math.sin(a) * r, y: at.y + rnd(0, 0.3), z: at.z + Math.cos(a) * r,
+        vx: rnd(-0.2, 0.2), vy: rnd(-1.0, -0.4), vz: rnd(-0.2, 0.2),
+        max: rnd(0.6, 1.1), size: rnd(0.05, 0.1), drag: 0.8,
+        r: COLD.r, g: COLD.g, b: COLD.b,
+      })
+    }
+  }
+
   /** The inverse of sparks: motes spawned on a ring that fly in to a point. Charge, suction, a rewind arriving. */
   gather(at: THREE.Vector3, count: number, radius: number, color = COLD, speed = 6) {
     const life = radius / speed

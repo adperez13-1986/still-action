@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import { DECAL_Y } from './world'
 import { tellMaterial, releaseTell, COLD, COLD_DEEP } from './vfx'
-import { slide, type Enemy, type EnemyAction, type EnemyPhase } from './enemy'
+import { slide, rimeTint, type Enemy, type EnemyAction, type EnemyPhase } from './enemy'
 import type { Terrain } from './terrain'
 
 /**
@@ -68,6 +68,8 @@ export class Assembler implements Enemy {
   speedMul = 1
   knockMul = 0.05
   size = 1
+  readonly height = 4.2
+  rime = 0
 
   /** What it's doing right now, for sounds and the HUD. */
   move: BossMove | null = null
@@ -231,6 +233,11 @@ export class Assembler implements Enemy {
     return this.piles
   }
 
+  /** Nothing breaks the Assembler's windups: a Parry lands its damage and nothing else. */
+  interrupt() {
+    return false
+  }
+
   hit(damage: number): boolean {
     // stunned, the open grill lets hits into the core
     this.hp -= damage * this.armor * (this.stunned ? 1.5 : 1)
@@ -283,7 +290,8 @@ export class Assembler implements Enemy {
             const sx = to.x - this.pos.x
             const sz = to.z - this.pos.z
             const sd = Math.hypot(sx, sz) || 1
-            const sp = BOSS.speed * (this.overloaded ? 1.25 : 1)
+            // a slow reaches the walk and nothing else: every windup, strike and the charge keep full speed
+            const sp = BOSS.speed * (this.overloaded ? 1.25 : 1) * this.speedMul
             this.pos.x += (sx / sd) * sp * dt
             this.pos.z += (sz / sd) * sp * dt
           }
@@ -599,6 +607,9 @@ export class Assembler implements Enemy {
     for (const [m, base] of [[this.mat, BODY], [this.jointMat, JOINT]] as const) {
       m.color.setHex(base)
       if (this.asleep) m.color.multiplyScalar(0.45)
+    }
+    rimeTint(this.jointMat, this.mat, this.rime)
+    for (const m of [this.mat, this.jointMat]) {
       m.color.lerp(new THREE.Color(0xffffff), this.flash * 0.6)
       m.emissive.setRGB(this.flash * 0.5 + (this.overloaded ? 0.08 : 0), this.flash * 0.2, this.flash * 0.15)
     }

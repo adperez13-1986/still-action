@@ -375,4 +375,6 @@ export const READY = new Set<string>([
   'piston', 'rusted-hook', 'frayed-cleaver', 'skitter', 'spring-heels', 'overrun', 'patient-lens', 'overclocked-coil', 'flare',
   // step 3: the windows
   'ward', 'mirror-ward', 'brace', 'anvil',
+  // step 4: statuses, the interrupt, the throw
+  'signal-flare', 'chill-vent', 'parry-clamp', 'clamp-toss',
 ])

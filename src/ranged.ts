@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import type { Terrain } from './terrain'
 import { DECAL_Y } from './world'
 import { tellMaterial, releaseTell } from './vfx'
-import { slide, type Enemy, type EnemyAction, type EnemyPhase } from './enemy'
+import { slide, rimeTint, type Enemy, type EnemyAction, type EnemyPhase } from './enemy'
 
 /**
  * Pale steel, lighter than anything else in the room so the silhouette reads on
@@ -61,6 +61,8 @@ export class Ranged implements Enemy {
   speedMul = 1
   knockMul = 1
   size = 1
+  readonly height = 2.0
+  rime = 0
 
   private timer = 0
   private reload = RANGED.reloadMs * 0.6
@@ -322,9 +324,25 @@ export class Ranged implements Enemy {
     for (const [m, base] of [[this.mat, BODY], [this.jointMat, JOINT]] as const) {
       m.color.setHex(base)
       if (this.asleep) m.color.multiplyScalar(0.4)
+    }
+    rimeTint(this.jointMat, this.mat, this.rime)
+    for (const m of [this.mat, this.jointMat]) {
       m.color.lerp(new THREE.Color(0xffffff), this.flash * 0.85)
       m.emissive.setRGB(this.flash * 0.6, this.flash * 0.25, this.flash * 0.2)
     }
+  }
+
+  interrupt() {
+    if (this.phase !== 'windup') return false
+    this.phase = 'approach'
+    this.timer = 0
+    this.locked = false
+    // otherwise it re-winds on the same tick
+    this.reload = RANGED.reloadMs
+    this.lineMat.opacity = 0
+    this.fillMat.opacity = 0
+    this.fill.scale.z = 0.001
+    return true
   }
 
   setAsleep(asleep: boolean) {

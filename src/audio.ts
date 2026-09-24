@@ -307,7 +307,7 @@ export function hurt() {
  * the slam over a low swell of pressure. Ends exactly at the strike, so you can
  * dodge a hulk you aren't looking at. Returns a stop for when it dies mid-windup.
  */
-export function windup(ms: number, pan: number): () => void {
+export function windup(ms: number, pan: number): (hard?: boolean) => void {
   const c = live()
   if (!c) return () => {}
   const t = c.currentTime
@@ -344,11 +344,13 @@ export function windup(ms: number, pan: number): () => void {
     at += 0.11 - k * 0.077
   }
 
-  return () => {
+  return (hard = false) => {
     const now = c.currentTime
     if (now >= t + dur) return
     g.gain.cancelScheduledValues(now)
-    g.gain.setTargetAtTime(0.0001, now, 0.01)
+    // a broken windup is cut dead, not faded: the silence is part of the parry
+    if (hard) g.gain.setValueAtTime(0, now)
+    else g.gain.setTargetAtTime(0.0001, now, 0.01)
   }
 }
 
@@ -369,7 +371,7 @@ export function strike(pan: number) {
  * recorded clack when the line freezes — the moment to move — and a short, quiet
  * capacitor whine up to the shot. Returns a stop, like windup().
  */
-export function aim(ms: number, lockAt: number, pan: number): () => void {
+export function aim(ms: number, lockAt: number, pan: number): (hard?: boolean) => void {
   const c = live()
   if (!c) return () => {}
   const t = c.currentTime
@@ -418,11 +420,13 @@ export function aim(ms: number, lockAt: number, pan: number): () => void {
   o.start(lock)
   o.stop(t + dur + 0.05)
 
-  return () => {
+  return (hard = false) => {
     const now = c.currentTime
     if (now >= t + dur) return
     g.gain.cancelScheduledValues(now)
-    g.gain.setTargetAtTime(0.0001, now, 0.01)
+    // a broken windup is cut dead, not faded: the silence is part of the parry
+    if (hard) g.gain.setValueAtTime(0, now)
+    else g.gain.setTargetAtTime(0.0001, now, 0.01)
   }
 }
 
@@ -590,6 +594,7 @@ export function ability(beat: BeatKey, pushed: boolean, power = 0) {
       tone(c, distorted(c, bp), 'square', t, 110, 98, 0.18, 0.15, 0.01)
       break
     }
+    case 'signal':
     case 'flare':
       // a hollow thoop that rises, because it goes up. No whistle in flight: windup tones must stay clear.
       tone(c, d, 'sine', t, 380 * r, 620 * r, 0.09, 0.45 * k)
@@ -599,6 +604,27 @@ export function ability(beat: BeatKey, pushed: boolean, power = 0) {
     case 'backdraft':
       tone(c, d, 'sine', t, 120 * r, 38 * r, 0.42, 1 * k)
       hiss(c, d, t, 0.5, 0.7 * k, 'lowpass', 5000 * r, 250, 0.7, 0.004)
+      break
+    case 'chill': {
+      // a softer nova, icy air, and a frost tinkle
+      tone(c, d, 'sine', t, 120 * r, 60 * r, 0.4, 0.6 * k)
+      hiss(c, d, t, 0.6, 0.4 * k, 'highpass', 6000, 2500, 0.7, 0.01)
+      for (let i = 0; i < 6; i++) {
+        const f = Math.random() < 0.5 ? 2349 : 3136
+        tone(c, d, 'triangle', t + 0.05 + i * 0.05, f, f, 0.04, 0.05)
+      }
+      break
+    }
+    case 'parry':
+      // a small plain snip; a cancel adds its own clang
+      tone(c, d, 'square', t, 1600 * r, 900 * r, 0.03, 0.18 * k, 0.001)
+      sample(c, 'metalLight', d, 0.5, 2.0)
+      break
+    case 'toss':
+      // the bite, then a long whoosh as it goes
+      sample(c, 'metalMedium', d, 0.5, 1.3)
+      tone(c, d, 'square', t, 200 * r, 140 * r, 0.04, 0.2 * k, 0.001)
+      hiss(c, d, t + 0.1, 0.25, 0.5 * k, 'bandpass', 400, 2000, 1.2, 0.02)
       break
     case 'ward':
       // a glassy close, with a shimmer over it
@@ -680,6 +706,60 @@ function smallGrind(c: AudioContext, d: AudioNode, t: number, gain: number) {
   bp.Q.value = 3
   bp.connect(d)
   tone(c, distorted(c, bp), 'square', t, 55, 49, 0.3, 0.5 * gain, 0.01)
+}
+
+/** Signal Flare lands: a chime rather than a thud. */
+export function signalLand(pan: number) {
+  const c = live()
+  if (!c) return
+  const t = c.currentTime
+  const d = out(c, 'abilities', pan)
+  tone(c, d, 'triangle', t, 1760, 1760, 0.25, 0.12)
+  tone(c, d, 'sine', t, 2637, 2637, 0.2, 0.1)
+  hiss(c, d, t, 0.05, 0.2, 'highpass', 5000, 5000, 0.7)
+}
+
+/** A mark used: a doubled hit, two strikes 60 ms apart. You hear "twice". */
+export function markConsumed(pan: number) {
+  const c = live()
+  if (!c) return
+  const t = c.currentTime
+  const d = out(c, 'hits', pan)
+  sample(c, 'metalLight', d, 0.6, 1.6)
+  sample(c, 'metalLight', d, 0.6, 1.6, 0.06)
+  tone(c, d, 'triangle', t, 1318, 1318, 0.08, 0.15)
+  tone(c, d, 'triangle', t + 0.06, 1976, 1976, 0.1, 0.15)
+}
+
+/** A slow ran out: the frost falls off with a tiny glass tick. */
+export function slowEnd(pan: number) {
+  const c = live()
+  if (!c) return
+  tone(c, out(c, 'hits', pan), 'triangle', c.currentTime, 3136, 2800, 0.03, 0.06)
+}
+
+/** A windup broken by a parry: the clang of an attack that didn't happen. */
+export function parryBreak(pan: number) {
+  const c = live()
+  if (!c) return
+  const t = c.currentTime
+  const d = out(c, 'abilities', pan)
+  sample(c, 'bell', d, 0.6, 1.6)
+  tone(c, d, 'triangle', t, 1976, 1318, 0.15, 0.3)
+}
+
+/** A thrown enemy comes down; against a wall, the stone answers too. */
+export function throwLand(pan: number, wall: boolean) {
+  const c = live()
+  if (!c) return
+  const t = c.currentTime
+  const d = out(c, 'hits', pan)
+  sample(c, 'softHeavy', d, 0.9, 0.9)
+  tone(c, d, 'sine', t, 110, 40, 0.2, 0.7)
+  if (wall) {
+    sample(c, 'mining', d, 0.7)
+    sample(c, 'plateHeavy', d, 0.5)
+  }
 }
 
 /** A shot destroyed on the Ward: a ting. */

@@ -66,6 +66,7 @@ type Pose =
   | 'arc' | 'spin' | 'piston' | 'hook'
   | 'dash' | 'step' | 'ram' | 'hop' | 'spring'
   | 'ward' | 'brace' | 'mirror' | 'anvil' | 'anvil-slam'
+  | 'signal' | 'chill' | 'parry' | 'toss'
 
 /**
  * Beat -> pose and duration. The ported parts borrow their shape's pose until
@@ -80,6 +81,10 @@ const POSES: Partial<Record<AttackSpec['beat'], { pose: Pose; dur: number; yaw?:
   patient: { pose: 'patient', dur: 0.26 },
   coil: { pose: 'coil', dur: 0.22 },
   flare: { pose: 'flare', dur: 0.34 },
+  signal: { pose: 'signal', dur: 0.3 },
+  chill: { pose: 'chill', dur: 0.42 },
+  parry: { pose: 'parry', dur: 0.26 },
+  toss: { pose: 'toss', dur: 0.4 },
   vent: { pose: 'nova', dur: 0.42 },
   backdraft: { pose: 'nova', dur: 0.42 },
   cleaver: { pose: 'arc', dur: 0.34 },
@@ -508,8 +513,11 @@ export class Still {
         if (a.t < 0.15) this.lens.rotation.z = 0.18 + 0.08 * Math.sin(a.t * Math.PI * 2 * 30)
         break
       }
-      case 'flare': {
+      case 'flare':
+      case 'signal': {
         // a lob lifts the lens where a bolt kicks it back: look up, crouch into the toss, release
+        // (Signal Flare adds a flick of the lens on the release: it signals)
+        if (a.pose === 'signal' && k >= 0.3) this.lens.rotation.z = 0.18 + 0.35 * Math.sin(Math.min(1, release * 2.5) * Math.PI)
         const up = k < 0.3 ? wind : settle
         head.rotation.x = -0.7 * up * big
         this.lift = -0.06 * (k < 0.3 ? wind : settle)
@@ -631,6 +639,38 @@ export class Still {
         torso.rotation.x = 0.16 + 0.4 * down * back
         this.lift = -0.08 * down * back
         torso.scale.setScalar(1 + 0.15 * down * back)
+        break
+      }
+      case 'chill': {
+        // the nova as an exhale: the cage swells and holds, the head tips back, the arms stay low
+        const swell = k < 0.25 ? k / 0.25 : k < 0.6 ? 1 : 1 - (k - 0.6) / 0.4
+        torso.scale.setScalar(1 + 0.25 * swell * big)
+        head.rotation.x = -0.25 * swell
+        this.armL.rotation.z = -0.6 * swell
+        this.armR.rotation.z = 0.6 * swell
+        break
+      }
+      case 'parry': {
+        // a bite: the clamp snaps out and the jaws slam shut, the cage turning into it
+        const snap = Math.min(1, a.t / 0.08)
+        const back = k < 0.5 ? 1 : 1 - (k - 0.5) / 0.5
+        this.armL.rotation.x = (-0.4 - 0.9 * snap) * back * big
+        torso.rotation.y = 0.3 * snap * back
+        const shut = JAW_OPEN * 0.9 * snap * back
+        this.jawL.position.x = JAW_X - JAW_OPEN + shut
+        this.jawR.position.x = JAW_X + JAW_OPEN - shut
+        break
+      }
+      case 'toss': {
+        // grab with the jaws shut, wind away from the throw, then up and over
+        const grab = Math.min(1, a.t / 0.12)
+        const toss = a.t < 0.12 ? 0 : Math.min(1, (a.t - 0.12) / 0.28)
+        const back = k > 0.85 ? (1 - k) / 0.15 : 1
+        this.armL.rotation.x = (-1.4 * grab - 1.0 * toss) * back * big
+        torso.rotation.y = (a.t < 0.12 ? -0.6 * grab : -0.6 + 1.8 * toss) * back
+        const shut = JAW_OPEN * 0.9 * grab * back
+        this.jawL.position.x = JAW_X - JAW_OPEN + shut
+        this.jawR.position.x = JAW_X + JAW_OPEN - shut
         break
       }
       case 'shot':

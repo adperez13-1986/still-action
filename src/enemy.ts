@@ -61,10 +61,23 @@ export interface Enemy {
   knockMul: number
   /** Overall scale; an elite leader stands bigger than its pack. */
   size: number
+  /** Where a status badge sits: the top of the body, unscaled (Combat multiplies by size). */
+  readonly height: number
+  /**
+   * Frost on the body, 0..1, set by Combat while it's slowed. Presentation only:
+   * each class's tint lerps toward RIME with it, joints first (legs first).
+   */
+  rime: number
   /** For footsteps: whether it's walking, and a phase that advances one PI per step. */
   readonly walking: boolean
   readonly gait: number
   hit: (damage: number) => boolean
+  /**
+   * Break a windup (Parry Clamp, a grab). True if one was broken: the tell goes,
+   * the strike never comes, and it goes back to closing in. Something that can't
+   * be interrupted (the Assembler) returns false and just takes the hit.
+   */
+  interrupt: () => boolean
   update: (dt: number, target: THREE.Vector3, terrain: Terrain) => EnemyAction | null
   /** Presentation only, no thinking: while asleep, or walking home. `face` is where to look. */
   idle: (dt: number, face: THREE.Vector3) => void
@@ -74,6 +87,21 @@ export interface Enemy {
 }
 
 const SLEEP_BODY = new THREE.Color(0.35, 0.35, 0.38)
+
+/** What frost does to iron: pale and cold. Still's colour, on their bodies (G5: statuses live on the body). */
+export const RIME = new THREE.Color(0x9fb4c8)
+/**
+ * How far full frost takes the colour. A status stays quiet (T §3: rime climbs to
+ * about a third), so the hit flash keeps its meaning.
+ */
+const RIME_DEPTH = 0.4
+
+/** Frost climbs the joints first, the shell half as much. Call after the base colour, before the hit flash. */
+export function rimeTint(joint: THREE.MeshStandardMaterial, shell: THREE.MeshStandardMaterial, rime: number) {
+  if (rime <= 0) return
+  joint.color.lerp(RIME, rime * RIME_DEPTH)
+  shell.color.lerp(RIME, rime * RIME_DEPTH * 0.5)
+}
 const CORE_ASLEEP = 0x2a1512
 
 /** Dark rusted iron. Red belongs to the enemies: their cores and their tells. */
@@ -113,10 +141,14 @@ export class Chaser implements Enemy {
   speedMul = 1
   knockMul = 1
   size = 1
+  readonly height = 1.7
+  rime = 0
   walking = false
   get gait() { return this.bob * 1.6 }
 
   private timer = 0
+  /** A broken windup: the core blinks dark for a moment. */
+  private blink = 0
   private flash = 0
   private bob = Math.random() * 10
   private readonly mat: THREE.MeshStandardMaterial
@@ -209,9 +241,26 @@ export class Chaser implements Enemy {
     for (const [m, base] of [[this.mat, BODY], [this.jointMat, JOINT]] as const) {
       m.color.setHex(base)
       if (this.asleep) m.color.multiply(SLEEP_BODY)
+    }
+    rimeTint(this.jointMat, this.mat, this.rime)
+    for (const m of [this.mat, this.jointMat]) {
       m.color.lerp(new THREE.Color(0xffffff), this.flash * 0.85)
       m.emissive.setRGB(this.flash * 0.6, this.flash * 0.25, this.flash * 0.2)
     }
+  }
+
+  interrupt() {
+    if (this.phase !== 'windup') return false
+    this.phase = 'approach'
+    this.timer = 0
+    // the ring goes at once: no fade, its heat broken
+    this.ringMat.opacity = 0
+    this.discMat.opacity = 0
+    this.disc.scale.setScalar(0.001)
+    this.core.scale.setScalar(1)
+    this.blink = 0.2
+    this.coreMat.color.setHex(CORE_ASLEEP)
+    return true
   }
 
   hit(damage: number): boolean {
@@ -227,6 +276,7 @@ export class Chaser implements Enemy {
   update(dt: number, target: THREE.Vector3, terrain: Terrain): EnemyAction | null {
     this.timer -= dt * 1000
     this.bob += dt * 5
+    if (this.blink > 0 && (this.blink -= dt) <= 0) this.coreMat.color.setHex(CORE)
     this.flash = Math.max(0, this.flash - dt * 6)
 
     const dx = target.x - this.pos.x

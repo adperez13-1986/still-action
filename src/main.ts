@@ -70,7 +70,8 @@ function panOf(at: THREE.Vector3) {
   return Math.max(-1, Math.min(1, screenX / 9)) * 0.7
 }
 
-const windups = new Map<Enemy, () => void>()
+/** Each enemy's live windup tone. `true` cuts it dead (a broken windup); otherwise it fades. */
+const windups = new Map<Enemy, (hard?: boolean) => void>()
 
 const BODY_RADIUS = 0.42
 /** Grace's light hangs high for a wide, soft pool on stone (settled in the look test). */
@@ -198,14 +199,29 @@ const combat = new Combat(world.scene, OPEN, {
         vfx.sparks(at3(still.pos, 1.0), COLD, 4, 2)
       }
     }
-    if (ev.kind === 'land') {
-      // the lob comes down: a small nova where it lands
-      vfx.flash(at3(ev.at, 0.4), COLD_DEEP, 1.2)
-      vfx.dust(ev.at, 10, 1.2)
-      vfx.sparks(at3(ev.at, 0.3), COLD, 16, 6)
-      sfx.lobLand(panOf(ev.at))
-      shake = Math.max(shake, 0.14)
+    if (ev.kind === 'land') landFx(ev.at, ev.what)
+    if (ev.kind === 'interrupt') {
+      // its heat broken by his cold: the tell shatters, the tone cuts dead, and the moment holds
+      windups.get(ev.enemy)?.(true)
+      windups.delete(ev.enemy)
+      tellBreak(ev.enemy)
+      sfx.parryBreak(panOf(ev.enemy.pos))
+      vfx.flash(at3(ev.enemy.pos, 1.0), COLD, 1.0)
+      vfx.sparks(at3(ev.enemy.pos, 1.0), COLD, 16, 7)
+      vfx.dust(ev.enemy.pos, 8, 0.6)
+      hitstop = Math.max(hitstop, 0.09)
+      rig.punch(0.05)
     }
+    if (ev.kind === 'mark' && ev.state === 'consumed') {
+      sfx.markConsumed(panOf(ev.enemy.pos))
+      hitstop = Math.max(hitstop, 0.06)
+    }
+    if (ev.kind === 'slow' && ev.state === 'off') {
+      // the frost falls off it: three pale chunks and a glass tick
+      vfx.chunks(at3(ev.enemy.pos, 0.6), 3, new THREE.Color(0x9fb4c8), 2, 0.08)
+      sfx.slowEnd(panOf(ev.enemy.pos))
+    }
+    if (ev.kind === 'throw') vfx.sparks(still.jawL.getWorldPosition(new THREE.Vector3()), COLD, 6, 4)
   },
   onShot: () => {
     sfx.shot(0)
@@ -273,7 +289,60 @@ const combat = new Combat(world.scene, OPEN, {
   },
 })
 
-const partFx = new PartFx(world.scene, vfx, still, combat.parts)
+const partFx = new PartFx(world.scene, vfx, still, combat.parts, combat)
+
+/** Something a part put in the air comes down. Each kind lands in its own voice. */
+function landFx(at: THREE.Vector3, what: 'flare' | 'signal' | 'throw' | 'wall') {
+  switch (what) {
+    case 'flare':
+      // the lob comes down: a small nova where it lands
+      vfx.flash(at3(at, 0.4), COLD_DEEP, 1.2)
+      vfx.dust(at, 10, 1.2)
+      vfx.sparks(at3(at, 0.3), COLD, 16, 6)
+      sfx.lobLand(panOf(at))
+      shake = Math.max(shake, 0.14)
+      break
+    case 'signal':
+      // bright, not heavy: no dust, a chime, and the marks it leaves
+      vfx.flash(at3(at, 0.4), COLD, 0.8)
+      vfx.sparks(at3(at, 0.3), COLD, 10, 5)
+      sfx.signalLand(panOf(at))
+      break
+    case 'throw':
+    case 'wall':
+      vfx.flash(at3(at, 0.5), COLD_DEEP, 0.8)
+      vfx.dust(at, 14, 1.0, undefined, 4)
+      vfx.chunks(at3(at, 0.4), 4, RUST, 4, 0.12)
+      if (what === 'wall') {
+        vfx.sparks(at3(at, 0.8), COLD, 16, 7)
+        vfx.chunks(at3(at, 0.6), 6, STONE, 5, 0.14)
+        rig.punch(0.04)
+      }
+      sfx.throwLand(panOf(at), what === 'wall')
+      shake = Math.max(shake, what === 'wall' ? 0.3 : 0.18)
+      break
+  }
+}
+
+/** N9: an enemy's live tell shatters into cold shards along its own outline. */
+function tellBreak(e: Enemy) {
+  if (e.kind === 'ranged') {
+    // along the aim line it was drawing
+    const a = e.group.rotation.y
+    for (let i = 0; i < 14; i++) {
+      const d = (i / 13) * 6
+      vfx.sparks(new THREE.Vector3(e.pos.x + Math.sin(a) * d, 0.2, e.pos.z + Math.cos(a) * d), COLD, 1, 3)
+    }
+  } else {
+    // round the ring it was filling
+    const r = 2.4 * e.size
+    for (let i = 0; i < 14; i++) {
+      const a = (i / 14) * Math.PI * 2
+      const dir = new THREE.Vector3(Math.sin(a), 0, Math.cos(a))
+      vfx.sparks(new THREE.Vector3(e.pos.x + dir.x * r, 0.2, e.pos.z + dir.z * r), COLD, 1, 3, dir, 0.3)
+    }
+  }
+}
 
 /** Off the mark: what a move throws up as it leaves. Read before Still starts moving. */
 function moveFx(to: THREE.Vector3, beat: BeatKey) {
@@ -757,8 +826,23 @@ function castFx(def: AbilityDef, r: CastResult, pushed: boolean) {
       vfx.embers(at3(still.pos, 1.6), 4, 0.15)
       break
     case 'flare':
+    case 'signal':
       vfx.flash(lens, COLD, 0.6)
       vfx.sparks(lens, COLD, 6, 4, new THREE.Vector3(fwd.x, 0, fwd.z), 0.6)
+      break
+    case 'chill':
+      // an exhale, not a shove: frost at the edge, and no dust because nothing is pushed
+      vfx.flash(still.core.getWorldPosition(new THREE.Vector3()), COLD, 0.6)
+      for (let i = 0; i < 20; i++) {
+        const a = (i / 20) * Math.PI * 2
+        vfx.frost(new THREE.Vector3(still.pos.x + Math.sin(a) * def.radius, 1.2, still.pos.z + Math.cos(a) * def.radius), 1, 0.3)
+      }
+      break
+    case 'parry':
+      // a small, plain snip; a cancel is loud, and comes with its own event
+      vfx.sparks(ahead(1.2), COLD, 4, 4, fwd, 0.4)
+      break
+    case 'toss':
       break
     case 'piston':
       // a long thin strike inside the narrow sweep: never mistaken for the Cleaver's fan

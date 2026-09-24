@@ -1,12 +1,34 @@
 import * as THREE from 'three'
 import { DECAL_Y } from './world'
 import { tellMaterial, releaseTell, COLD, COLD_DEEP, EMBER, VFX_TIME, type Vfx } from './vfx'
-import { PART, type PartEvent, type PartRuntime } from './parts'
+import { PART, type EnemyStatus, type PartEvent, type PartRuntime } from './parts'
 import type { Enemy } from './enemy'
 import type { Still } from './still'
 
-/** A lob in the air: the glob climbing over the wall, and the landing mark closing on its true size. */
-interface Lob { from: THREE.Vector3; to: THREE.Vector3; t: number; T: number; radius: number; glob: THREE.Mesh; ring: THREE.Mesh; mat: THREE.ShaderMaterial }
+/**
+ * Something in the air that will land: its mark on the floor closes on its true
+ * size over the flight. A lob also has its glob; a throw has the enemy itself, and
+ * a tick on the wall top when a wall will cut it short.
+ */
+interface Landing {
+  from: THREE.Vector3; to: THREE.Vector3; t: number; T: number; radius: number; wide: number
+  ring: THREE.Mesh; mat: THREE.ShaderMaterial
+  glob?: THREE.Mesh
+  /** Signal Flare's glob sputters a spark every 0.1 s. */
+  sputter: boolean
+  sputterT: number
+  enemy?: Enemy
+  tick?: THREE.Mesh
+}
+
+/** What PartFx may read of Combat's statuses. Nothing here writes. */
+export interface StatusReader {
+  statuses(): Iterable<[Enemy, Readonly<EnemyStatus>]>
+  statusOf(e: Enemy): Readonly<EnemyStatus> | undefined
+}
+
+/** N3: the mark's three brackets orbiting an enemy's head. */
+interface Badge { group: THREE.Group; mat: THREE.MeshBasicMaterial; spin: number; end: 'consumed' | 'expired' | null; endT: number; flash2: number }
 
 /** A flat cold strip that fades: a jab's line, a charge's wake. */
 interface Beam { mesh: THREE.Mesh; mat: THREE.ShaderMaterial; life: number; max: number; opacity: number }
@@ -16,6 +38,17 @@ interface Tether { enemy: Enemy; t: number; mesh: THREE.Mesh; mat: THREE.ShaderM
 
 /** A cold ring on the floor contracts from this much wider than its true size (G2: Still's marks close, enemies' fill). */
 const PREVIEW_WIDE = 1.3
+/** A throw's ring is smaller, so it closes less (1.4 to 1.2). */
+const THROW_WIDE = 1.4 / 1.2
+/** How long a mark lasts, for how far the brackets have closed. */
+const MARK_S = 4
+/** A consumed mark slams shut this fast; an expired one fades this slow. */
+const SLAM_S = 0.12
+const FADE_S = 0.25
+/** With more marked than this on screen, each badge drops to one steady bracket (the crowd rule). */
+const CROWD = 5
+/** Falling frost motes, at most this many a beat across every slowed enemy. */
+const MOTES_MAX = 12
 /** The glob leaves from about lens height. */
 const LOB_FROM_Y = 1.9
 const TETHER_Y = 1.0
@@ -76,7 +109,12 @@ function unitStrip() {
  * tick its blast does even through hitstop.
  */
 export class PartFx {
-  private lobs: Lob[] = []
+  private landings: Landing[] = []
+  private badges = new Map<Enemy, Badge>()
+  private motesT = 0
+  private readonly bracketGeo = new THREE.BoxGeometry(0.035, 0.035, 0.2)
+  private readonly tickGeo = new THREE.BoxGeometry(0.12, 0.3, 0.12)
+  private readonly tickMat = new THREE.MeshBasicMaterial({ color: 0xeef6ff, blending: THREE.AdditiveBlending, transparent: true })
   private beams: Beam[] = []
   private tethers: Tether[] = []
   private readonly stripGeo = unitStrip()
@@ -107,6 +145,8 @@ export class PartFx {
     private readonly still: Still,
     /** Combat's part runtime: windows, decoy, anchor. Read every frame, never written. */
     private readonly parts: Readonly<PartRuntime>,
+    /** Combat's marks and slows, read-only. */
+    private readonly status: StatusReader,
   ) {
     this.shell.visible = false
     this.anvilRing.rotation.x = -Math.PI / 2
@@ -118,35 +158,68 @@ export class PartFx {
   /** One instant from Combat's onPart. */
   event(ev: PartEvent) {
     if (ev.kind === 'lob') {
-      const mat = tellMaterial('radial', 1, COLD, COLD_DEEP, { cold: true })
-      mat.opacity = 0.85
-      const ring = new THREE.Mesh(this.ringGeo, mat)
-      ring.rotation.x = -Math.PI / 2
-      ring.position.set(ev.to.x, DECAL_Y + 0.015, ev.to.z)
-      ring.scale.setScalar(ev.radius * PREVIEW_WIDE)
       const glob = new THREE.Mesh(this.globGeo, this.globMat)
       glob.position.set(ev.from.x, LOB_FROM_Y, ev.from.z)
-      this.scene.add(ring, glob)
-      this.lobs.push({ from: ev.from.clone(), to: ev.to.clone(), t: 0, T: ev.ms / 1000, radius: ev.radius, glob, ring, mat })
+      this.scene.add(glob)
+      this.landings.push({ ...this.landingRing(ev.to, ev.radius, PREVIEW_WIDE), from: ev.from.clone(), t: 0, T: ev.ms / 1000, glob, sputter: ev.signal, sputterT: 0 })
+    } else if (ev.kind === 'throw') {
+      const radius = 1.2
+      const l: Landing = { ...this.landingRing(ev.to, radius, THROW_WIDE), from: ev.enemy.pos.clone(), t: 0, T: ev.ms / 1000, enemy: ev.enemy, sputter: false, sputterT: 0 }
+      if (ev.short) {
+        // it'll hit the wall: a bright cold tick on the wall top, just past where it stops
+        const dx = ev.to.x - l.from.x
+        const dz = ev.to.z - l.from.z
+        const d = Math.hypot(dx, dz) || 1
+        const reach = ev.enemy.radius + 0.2
+        l.tick = new THREE.Mesh(this.tickGeo, this.tickMat)
+        l.tick.position.set(ev.to.x + (dx / d) * reach, 0.9, ev.to.z + (dz / d) * reach)
+        this.scene.add(l.tick)
+      }
+      this.landings.push(l)
     } else if (ev.kind === 'land') {
-      const i = this.lobs.findIndex((l) => l.to.distanceToSquared(ev.at) < 1e-4)
-      if (i >= 0) this.dropLob(i)
+      const i = this.landings.findIndex((l) => l.to.distanceToSquared(ev.at) < 1e-4)
+      if (i >= 0) this.dropLanding(i)
+    } else if (ev.kind === 'mark') {
+      const b = this.badges.get(ev.enemy)
+      if (ev.state === 'on' && !b) this.badges.set(ev.enemy, this.makeBadge())
+      if (b && ev.state !== 'on') {
+        b.end = ev.state
+        b.endT = 0
+        // "twice": two flashes 60 ms apart as the brackets slam shut
+        if (ev.state === 'consumed') {
+          this.vfx.flash(this.badgeAt(ev.enemy), COLD, 0.6)
+          b.flash2 = 0.06
+        }
+      }
     }
   }
 
   update(dt: number) {
-    for (const l of this.lobs) {
+    for (const l of this.landings) {
       l.t = Math.min(l.T, l.t + dt)
       const k = l.t / l.T
-      // N12: a parabola over the flight, high enough to be seen clearing the wall
-      l.glob.position.set(
-        l.from.x + (l.to.x - l.from.x) * k,
-        LOB_FROM_Y + (0.2 - LOB_FROM_Y) * k + Math.sin(k * Math.PI) * PART.lobPeak,
-        l.from.z + (l.to.z - l.from.z) * k,
-      )
-      this.vfx.trail(l.glob.position, COLD, 0.26, 0.25)
-      l.ring.scale.setScalar(l.radius * (PREVIEW_WIDE + (1 - PREVIEW_WIDE) * k))
+      if (l.glob) {
+        // N12: a parabola over the flight, high enough to be seen clearing the wall
+        l.glob.position.set(
+          l.from.x + (l.to.x - l.from.x) * k,
+          LOB_FROM_Y + (0.2 - LOB_FROM_Y) * k + Math.sin(k * Math.PI) * PART.lobPeak,
+          l.from.z + (l.to.z - l.from.z) * k,
+        )
+        this.vfx.trail(l.glob.position, COLD, l.sputter ? 0.3 : 0.26, 0.25)
+        if (l.sputter && (l.sputterT -= dt) <= 0) {
+          l.sputterT = 0.1
+          this.vfx.sparks(l.glob.position, COLD, 1, 2)
+        }
+      }
+      // the thrown body trails cold while it's in the air
+      if (l.enemy && !l.enemy.dead) this.vfx.trail(new THREE.Vector3(l.enemy.pos.x, 0.8 + l.enemy.group.position.y, l.enemy.pos.z), COLD, 0.3)
+      l.ring.scale.setScalar(l.radius * (l.wide + (1 - l.wide) * k))
     }
+    // a thrown enemy that died in the air never lands: its mark goes with it
+    for (let i = this.landings.length - 1; i >= 0; i--) if (this.landings[i]!.enemy?.dead) this.dropLanding(i)
+
+    this.drawBadges(dt)
+    this.drawFrost(dt)
 
     for (let i = this.beams.length - 1; i >= 0; i--) {
       const b = this.beams[i]!
@@ -198,7 +271,8 @@ export class PartFx {
 
   /** A new level or a new run: everything drawn goes. */
   clear() {
-    while (this.lobs.length) this.dropLob(0)
+    while (this.landings.length) this.dropLanding(0)
+    for (const e of [...this.badges.keys()]) this.dropBadge(e)
     for (const b of this.beams) {
       this.scene.remove(b.mesh)
       releaseTell(b.mat)
@@ -245,11 +319,108 @@ export class PartFx {
     }
   }
 
-  private dropLob(i: number) {
-    const l = this.lobs[i]!
-    this.scene.remove(l.glob, l.ring)
+  /** The N1 cold ring where something will land, starting `wide` times its true size. */
+  private landingRing(to: THREE.Vector3, radius: number, wide: number) {
+    const mat = tellMaterial('radial', 1, COLD, COLD_DEEP, { cold: true })
+    mat.opacity = 0.85
+    const ring = new THREE.Mesh(this.ringGeo, mat)
+    ring.rotation.x = -Math.PI / 2
+    ring.position.set(to.x, DECAL_Y + 0.015, to.z)
+    ring.scale.setScalar(radius * wide)
+    this.scene.add(ring)
+    return { to: to.clone(), radius, wide, ring, mat }
+  }
+
+  private dropLanding(i: number) {
+    const l = this.landings[i]!
+    this.scene.remove(l.ring)
+    if (l.glob) this.scene.remove(l.glob)
+    if (l.tick) this.scene.remove(l.tick)
     releaseTell(l.mat)
-    this.lobs.splice(i, 1)
+    this.landings.splice(i, 1)
+  }
+
+  private makeBadge(): Badge {
+    const mat = new THREE.MeshBasicMaterial({ color: 0xdfeeff, blending: THREE.AdditiveBlending, transparent: true, depthWrite: false })
+    const group = new THREE.Group()
+    for (let i = 0; i < 3; i++) {
+      // a chevron pointing in at the head: two short bars meeting at the apex
+      const bracket = new THREE.Group()
+      for (const side of [-1, 1]) {
+        const bar = new THREE.Mesh(this.bracketGeo, mat)
+        bar.rotation.y = side * 0.75
+        bar.position.set(side * 0.065, 0, 0.07)
+        bracket.add(bar)
+      }
+      const a = (i / 3) * Math.PI * 2
+      bracket.userData.a = a
+      bracket.rotation.y = a + Math.PI
+      group.add(bracket)
+    }
+    this.scene.add(group)
+    return { group, mat, spin: Math.random() * 6, end: null, endT: 0, flash2: 0 }
+  }
+
+  private dropBadge(e: Enemy) {
+    const b = this.badges.get(e)
+    if (!b) return
+    this.scene.remove(b.group)
+    b.mat.dispose()
+    this.badges.delete(e)
+  }
+
+  private badgeAt(e: Enemy) {
+    return new THREE.Vector3(e.pos.x, e.height * e.size + 0.25 + e.group.position.y, e.pos.z)
+  }
+
+  /** N3: each marked enemy's brackets orbit its head and close in as the mark runs out. */
+  private drawBadges(dt: number) {
+    let marked = 0
+    for (const [, st] of this.status.statuses()) if (st.markT > 0) marked++
+    const crowd = marked > CROWD
+    for (const [e, b] of this.badges) {
+      if (e.dead) {
+        this.dropBadge(e)
+        continue
+      }
+      const markT = this.status.statusOf(e)?.markT ?? 0
+      const close = b.end ? 1 : 1 - Math.min(1, markT / MARK_S)
+      let r = Math.max(0.45, e.radius * e.size * 1.3) * (1 - 0.45 * close)
+      let opacity = 0.9
+      if (b.end) {
+        b.endT += dt
+        if (b.end === 'consumed') {
+          // slammed shut to a point
+          r *= Math.max(0, 1 - b.endT / SLAM_S)
+          if (b.flash2 > 0 && (b.flash2 -= dt) <= 0) this.vfx.flash(this.badgeAt(e), COLD, 0.6)
+          if (b.endT >= Math.max(SLAM_S, 0.07)) { this.dropBadge(e); continue }
+        } else {
+          opacity *= Math.max(0, 1 - b.endT / FADE_S)
+          if (b.endT >= FADE_S) { this.dropBadge(e); continue }
+        }
+      }
+      b.spin += dt * 1.2
+      b.group.position.copy(this.badgeAt(e))
+      b.group.rotation.y = b.spin
+      b.mat.opacity = opacity
+      b.group.children.forEach((c, i) => {
+        const a = c.userData.a as number
+        c.position.set(Math.sin(a) * r, 0, Math.cos(a) * r)
+        c.visible = !crowd || i === 0
+      })
+    }
+  }
+
+  /** N4a: slowed enemies shed falling cold motes, a few at a time across the whole screen. */
+  private drawFrost(dt: number) {
+    if ((this.motesT -= dt) > 0) return
+    this.motesT = 0.5
+    let n = 0
+    for (const [e, st] of this.status.statuses()) {
+      if (st.slowT <= 0 || e.dead || n >= MOTES_MAX) continue
+      this.vfx.frost(new THREE.Vector3(e.pos.x, 1.0 * e.size, e.pos.z), 1, e.radius)
+      n++
+    }
   }
 
   /** Lay a unit strip from a to b at height y. */
