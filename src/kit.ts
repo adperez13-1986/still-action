@@ -151,6 +151,12 @@ export async function loadKit(): Promise<void> {
     geometry.computeBoundingBox()
     const bb = geometry.boundingBox!
     const material = (m.material as THREE.MeshStandardMaterial).clone()
+    // Every KayKit file embeds its own copy of the colour atlas. The photo skin
+    // replaces it, so never upload it: 16 unused copies is ~90MB of GPU memory,
+    // which a phone doesn't have to spare.
+    material.map?.dispose()
+    material.map = null
+    ;(m.material as THREE.MeshStandardMaterial).map?.dispose()
     skin(material, surfaceOf(name))
     loaded.set(name, {
       geometry,

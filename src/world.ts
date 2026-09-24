@@ -190,7 +190,19 @@ export function createWorld(canvas: HTMLCanvasElement, opts: { arena?: boolean }
   }
 
   resize()
-  window.addEventListener('resize', resize)
+  // Turning the phone fires a burst of resizes; rebuilding every full-screen
+  // buffer for each one spikes GPU memory. Rebuild once, after it settles.
+  let resizeTimer = 0
+  window.addEventListener('resize', () => {
+    clearTimeout(resizeTimer)
+    resizeTimer = window.setTimeout(resize, 180)
+  })
+
+  // If the phone takes the GPU away anyway, come back rather than die blank.
+  canvas.addEventListener('webglcontextlost', (e) => {
+    e.preventDefault()
+    setTimeout(() => location.reload(), 400)
+  })
 
   return {
     scene, camera, renderer, composer, graceLight, fog, bloom, gradePass,
