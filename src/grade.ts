@@ -32,6 +32,7 @@ const SLIDERS: Slider[] = [
   { obj: mix, key: 'enemy', label: 'sound: telegraph', min: 0, max: 1.5, step: 0.01 },
   { obj: mix, key: 'abilities', label: 'sound: abilities', min: 0, max: 1.5, step: 0.01 },
   { obj: mix, key: 'music', label: 'sound: music', min: 0, max: 1.5, step: 0.01 },
+  { obj: mix, key: 'ambience', label: 'sound: ambience', min: 0, max: 1.5, step: 0.01 },
 ]
 
 /** Live grade tuning. The look gets decided on the phone, in motion — not in a mock. */

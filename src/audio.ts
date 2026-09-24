@@ -12,10 +12,11 @@ export const mix = {
   enemy: 0.7,
   abilities: 0.8,
   music: 0.45,
+  ambience: 0.6,
 }
 
-type Bus = 'auto' | 'hits' | 'enemy' | 'abilities' | 'music'
-const BUSES: Bus[] = ['auto', 'hits', 'enemy', 'abilities', 'music']
+type Bus = 'auto' | 'hits' | 'enemy' | 'abilities' | 'music' | 'ambience'
+const BUSES: Bus[] = ['auto', 'hits', 'enemy', 'abilities', 'music', 'ambience']
 
 let ctx: AudioContext | null = null
 let master!: GainNode
@@ -679,6 +680,17 @@ export function pauseDuck(on: boolean) {
   const t = ctx.currentTime
   duck.gain.cancelScheduledValues(t)
   duck.gain.setTargetAtTime(on ? 0.3 : 1, t, 0.12)
+}
+
+/** For the ambience: the context, its bus, the shared noise, and the recorded layers. */
+export function ambienceContext(): {
+  ctx: AudioContext
+  out: AudioNode
+  noise: AudioBuffer
+  play: (name: SampleName, dest: AudioNode, gain: number, rate?: number) => void
+} | null {
+  const c = live()
+  return c ? { ctx: c, out: buses.ambience, noise, play: (n, d, g, r = 1) => sample(c, n, d, g, r) } : null
 }
 
 /** For the music: the running context, and its bus. Null until audio is unlocked. */

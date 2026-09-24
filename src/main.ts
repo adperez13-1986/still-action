@@ -13,6 +13,7 @@ import { RANGED } from './ranged'
 import * as sfx from './audio'
 import { createCameraRig } from './camera'
 import { updateMusic } from './music'
+import { updateAmbience } from './ambience'
 import { Loot, LOOT, rollPart, type GroundPart } from './loot'
 import { createPauseScreen } from './pause'
 import { createOverlay, type EndingKind } from './ending'
@@ -825,6 +826,7 @@ function frame(nowMs: number) {
   }
   world.camera.lookAt(camTarget)
 
+  updateAmbience(level?.boss ? 'boss' : 'crawl')
   updateMusic({
     fighting,
     calm: !fighting,
