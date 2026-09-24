@@ -1,4 +1,5 @@
 import type { AbilityDef, AbilityShape } from './abilities'
+import type { SlotName } from './still'
 
 /**
  * The pause screen. Two modes, one layout language:
@@ -35,10 +36,19 @@ function card(d: AbilityDef, tag: string, other?: AbilityDef) {
     </div>`
 }
 
+function emptyCard(slot: SlotName, tag: string) {
+  return `
+    <div class="pcard empty">
+      <div class="tag">${tag}</div>
+      <div class="pname">nothing yet</div>
+      <p class="pline">Still hasn't found a ${SLOT_LABEL[slot].toLowerCase()} part. This button does nothing until it does.</p>
+    </div>`
+}
+
 export interface PauseScreen {
   readonly open: boolean
-  loadout: (parts: readonly AbilityDef[], onResume: () => void) => void
-  compare: (current: AbilityDef, incoming: AbilityDef, onTake: () => void, onLeave: () => void) => void
+  loadout: (slots: readonly { slot: SlotName; def: AbilityDef | null }[], onResume: () => void) => void
+  compare: (current: AbilityDef | null, incoming: AbilityDef, onTake: () => void, onLeave: () => void) => void
   hide: () => void
 }
 
@@ -58,9 +68,9 @@ export function createPauseScreen(root: HTMLElement): PauseScreen {
   return {
     get open() { return isOpen },
 
-    loadout(parts, onResume) {
+    loadout(slots, onResume) {
       show(
-        `<h2>Paused</h2><div class="row four">${parts.map((p) => card(p, SLOT_LABEL[p.slot])).join('')}</div>`,
+        `<h2>Paused</h2><div class="row four">${slots.map((s) => (s.def ? card(s.def, SLOT_LABEL[s.slot]) : emptyCard(s.slot, SLOT_LABEL[s.slot]))).join('')}</div>`,
         [['resume', 'resume', onResume]],
       )
     },
@@ -69,9 +79,9 @@ export function createPauseScreen(root: HTMLElement): PauseScreen {
       show(
         `<h2>${SLOT_LABEL[incoming.slot]} slot</h2>
          <div class="row two">
-           ${card(current, 'on Still now', incoming)}
+           ${current ? card(current, 'on Still now', incoming) : emptyCard(incoming.slot, 'on Still now')}
            <div class="arrow">&rarr;</div>
-           ${card(incoming, 'on the floor', current)}
+           ${card(incoming, 'on the floor', current ?? undefined)}
          </div>`,
         [['leave', 'leave it', onLeave], ['take', 'take it', onTake]],
       )

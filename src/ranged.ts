@@ -1,9 +1,18 @@
 import * as THREE from 'three'
-import { pushOutOfColliders, ARENA_RADIUS, type Collider } from './world'
+import type { Terrain } from './terrain'
 import { slide, type Enemy, type EnemyAction, type EnemyPhase } from './enemy'
 
-const BODY = 0x4e2438
+/** Blued gunmetal, colder than the hulk; the red lens is the only warm-ish thing on it. */
+const BODY = 0x363c46
+const JOINT = 0x1f232a
 const CORE = 0xff5a3c
+
+function rod(a: THREE.Vector3, b: THREE.Vector3, r: number, mat: THREE.Material) {
+  const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, a.distanceTo(b), 8), mat)
+  m.position.copy(a).add(b).multiplyScalar(0.5)
+  m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), b.clone().sub(a).normalize())
+  return m
+}
 
 export const RANGED = {
   hp: 20,
@@ -42,6 +51,10 @@ export class Ranged implements Enemy {
   hp = RANGED.hp
   phase: EnemyPhase = 'approach'
   dead = false
+  armor = 1
+  speedMul = 1
+  knockMul = 1
+  size = 1
 
   private timer = 0
   private reload = RANGED.reloadMs * 0.6
@@ -55,6 +68,11 @@ export class Ranged implements Enemy {
 
   private readonly mat: THREE.MeshStandardMaterial
   private readonly head: THREE.Group
+  private readonly jointMat: THREE.MeshStandardMaterial
+  private readonly orb: THREE.Mesh
+  private readonly barrel: THREE.Mesh
+  private readonly coreMat: THREE.MeshBasicMaterial
+  private asleep = false
   private readonly lineMat: THREE.MeshBasicMaterial
   private readonly fillMat: THREE.MeshBasicMaterial
   private readonly fill: THREE.Mesh
@@ -62,20 +80,42 @@ export class Ranged implements Enemy {
   constructor(x: number, z: number) {
     this.pos.set(x, 0, z)
 
-    this.mat = new THREE.MeshStandardMaterial({ color: BODY, roughness: 0.6, metalness: 0.25 })
-    const body = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.5, 1.1, 6), this.mat)
-    body.position.y = 0.55
+    // A tripod sentinel: three long jointed legs, a small hub, a barrel and a red lens.
+    // Reads as "points at you", not "runs at you".
+    this.mat = new THREE.MeshStandardMaterial({ color: BODY, roughness: 0.5, metalness: 0.6 })
+    this.jointMat = new THREE.MeshStandardMaterial({ color: JOINT, roughness: 0.6, metalness: 0.5 })
 
-    // floating head with a barrel: reads as "points at you", not "runs at you"
+    const legs = new THREE.Group()
+    for (let i = 0; i < 3; i++) {
+      const a = (i / 3) * Math.PI * 2 + Math.PI / 6
+      const hip = new THREE.Vector3(Math.sin(a) * 0.18, 1.1, Math.cos(a) * 0.18)
+      // knees high and out, like a spider's: the silhouette is all legs
+      const knee = new THREE.Vector3(Math.sin(a) * 0.55, 1.32, Math.cos(a) * 0.55)
+      const foot = new THREE.Vector3(Math.sin(a) * 0.78, 0.02, Math.cos(a) * 0.78)
+      const kneeBall = new THREE.Mesh(new THREE.SphereGeometry(0.065, 8, 6), this.jointMat)
+      kneeBall.position.copy(knee)
+      legs.add(rod(hip, knee, 0.05, this.mat), rod(knee, foot, 0.04, this.mat), kneeBall)
+    }
+    const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.26, 0.2, 0.3, 6), this.mat)
+    hub.position.y = 1.16
+    const skirt = new THREE.Mesh(new THREE.TorusGeometry(0.24, 0.035, 6, 12), this.jointMat)
+    skirt.rotation.x = Math.PI / 2
+    skirt.position.y = 1.03
+
     this.head = new THREE.Group()
     this.head.position.y = 1.45
-    const coreMat = new THREE.MeshBasicMaterial({ color: CORE })
-    const orb = new THREE.Mesh(new THREE.OctahedronGeometry(0.27), coreMat)
-    const barrel = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.13, 0.62), this.mat)
-    barrel.position.z = 0.36
-    this.head.add(orb, barrel)
+    this.coreMat = new THREE.MeshBasicMaterial({ color: CORE })
+    this.orb = new THREE.Mesh(new THREE.OctahedronGeometry(0.17), this.coreMat)
+    const housing = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.22, 0.26, 8), this.jointMat)
+    housing.rotation.x = Math.PI / 2
+    housing.position.z = -0.04
+    this.barrel = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.12, 0.8), this.mat)
+    this.barrel.position.z = 0.44
+    const muzzle = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.18, 0.1), this.jointMat)
+    muzzle.position.z = 0.84
+    this.head.add(housing, this.orb, this.barrel, muzzle)
 
-    this.group.add(body, this.head)
+    this.group.add(legs, hub, skirt, this.head)
 
     this.lineMat = new THREE.MeshBasicMaterial({ color: CORE, transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide })
     const line = new THREE.Mesh(strip(0.62, RANGED.aimLength), this.lineMat)
@@ -87,7 +127,7 @@ export class Ranged implements Enemy {
   }
 
   hit(damage: number): boolean {
-    this.hp -= damage
+    this.hp -= damage * this.armor
     this.flash = 1
     if (this.hp <= 0 && !this.dead) {
       this.dead = true
@@ -96,7 +136,7 @@ export class Ranged implements Enemy {
     return false
   }
 
-  update(dt: number, target: THREE.Vector3, colliders: Collider[]): EnemyAction | null {
+  update(dt: number, target: THREE.Vector3, terrain: Terrain): EnemyAction | null {
     this.timer -= dt * 1000
     this.reload -= dt * 1000
     this.bob += dt * 4
@@ -116,7 +156,14 @@ export class Ranged implements Enemy {
         if (staggered) break
         let mx = 0
         let mz = 0
-        if (dist > RANGED.preferMax) {
+        const sight = terrain.lineClear(this.pos.x, this.pos.z, target.x, target.z, 0.2)
+        if (!sight) {
+          // no shot from here: go round the wall until there is one
+          const to = terrain.nextStep(this.pos.x, this.pos.z, target.x, target.z, RANGED.bodyRadius)
+          const sd = Math.hypot(to.x - this.pos.x, to.z - this.pos.z) || 1
+          mx = (to.x - this.pos.x) / sd
+          mz = (to.z - this.pos.z) / sd
+        } else if (dist > RANGED.preferMax) {
           mx = dx / dist
           mz = dz / dist
         } else if (dist < RANGED.preferMin) {
@@ -132,10 +179,10 @@ export class Ranged implements Enemy {
           mx = (dz / dist) * this.strafe * 0.55
           mz = (-dx / dist) * this.strafe * 0.55
         }
-        this.pos.x += mx * RANGED.speed * dt
-        this.pos.z += mz * RANGED.speed * dt
+        this.pos.x += mx * RANGED.speed * this.speedMul * dt
+        this.pos.z += mz * RANGED.speed * this.speedMul * dt
 
-        if (this.reload <= 0 && dist <= RANGED.fireRange) {
+        if (this.reload <= 0 && dist <= RANGED.fireRange && sight) {
           this.phase = 'windup'
           this.timer = RANGED.windupMs
           this.locked = false
@@ -176,13 +223,7 @@ export class Ranged implements Enemy {
       }
     }
 
-    pushOutOfColliders(this.pos, RANGED.bodyRadius, colliders)
-    const r = Math.hypot(this.pos.x, this.pos.z)
-    const limit = ARENA_RADIUS - 1.5
-    if (r > limit) {
-      this.pos.x = (this.pos.x / r) * limit
-      this.pos.z = (this.pos.z / r) * limit
-    }
+    terrain.pushOut(this.pos, RANGED.bodyRadius)
 
     // --- presentation ---
     const winding = this.phase === 'windup'
@@ -203,9 +244,11 @@ export class Ranged implements Enemy {
     this.tellGroup.position.set(this.pos.x, 0.04, this.pos.z)
     this.tellGroup.rotation.y = this.aim
 
-    this.group.scale.setScalar(1 + this.flash * 0.15 - this.recoil * 0.08)
-    this.mat.color.setHex(BODY).lerp(new THREE.Color(0xffffff), this.flash * 0.85)
-    this.mat.emissive.setRGB(this.flash * 0.6, this.flash * 0.25, this.flash * 0.2)
+    this.group.scale.setScalar(this.size * (1 + this.flash * 0.1))
+    this.tint()
+    // the lens swells as it locks, and the barrel kicks back on the shot
+    this.orb.scale.setScalar(1 + (winding ? t * (this.locked ? 0.9 : 0.4) : 0))
+    this.barrel.position.z = 0.44 - this.recoil * 0.22
 
     const back = this.recoil * 0.25
     this.group.position.set(
@@ -215,13 +258,52 @@ export class Ranged implements Enemy {
     )
     this.group.rotation.y = this.aim
     this.head.position.y = 1.45 + Math.sin(this.bob * 1.3) * 0.07 + (winding ? t * 0.08 : 0)
+    this.head.rotation.x = 0
 
     return action
+  }
+
+  idle(dt: number, face: THREE.Vector3) {
+    this.bob += dt * (this.asleep ? 1.2 : 4)
+    this.flash = Math.max(0, this.flash - dt * 6)
+    this.lineMat.opacity = Math.max(0, this.lineMat.opacity - dt * 5)
+    this.fillMat.opacity = Math.max(0, this.fillMat.opacity - dt * 5)
+    this.aim = Math.atan2(face.x - this.pos.x, face.z - this.pos.z)
+    this.tellGroup.position.set(this.pos.x, 0.04, this.pos.z)
+    this.group.position.set(this.pos.x, Math.sin(this.bob) * 0.03, this.pos.z)
+    this.group.rotation.y = this.aim
+    this.group.scale.setScalar(this.size * (1 + this.flash * 0.1))
+    this.tint()
+    this.orb.scale.setScalar(1)
+    // asleep: the head sinks and the barrel droops
+    this.head.position.y = this.asleep ? 1.3 : 1.45 + Math.sin(this.bob * 1.3) * 0.07
+    this.head.rotation.x = this.asleep ? 0.45 : 0
+  }
+
+  private tint() {
+    for (const [m, base] of [[this.mat, BODY], [this.jointMat, JOINT]] as const) {
+      m.color.setHex(base)
+      if (this.asleep) m.color.multiplyScalar(0.4)
+      m.color.lerp(new THREE.Color(0xffffff), this.flash * 0.85)
+      m.emissive.setRGB(this.flash * 0.6, this.flash * 0.25, this.flash * 0.2)
+    }
+  }
+
+  setAsleep(asleep: boolean) {
+    this.asleep = asleep
+    this.coreMat.color.setHex(asleep ? 0x2a1512 : CORE)
+    if (!asleep) {
+      this.flash = 1
+      this.reload = RANGED.reloadMs * 0.8
+    }
+    this.phase = 'approach'
   }
 
   dispose(scene: THREE.Scene) {
     scene.remove(this.group)
     scene.remove(this.tellGroup)
+    this.coreMat.dispose()
+    this.jointMat.dispose()
     this.mat.dispose()
     this.lineMat.dispose()
     this.fillMat.dispose()

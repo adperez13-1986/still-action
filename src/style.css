@@ -51,6 +51,7 @@ html, body {
 .btn .lbl { position: relative; z-index: 2; }
 .btn.ready { border-color: #6f9bd0; color: #e6f0fb; box-shadow: 0 0 14px rgba(111, 155, 208, .28), 0 4px 12px rgba(0, 0, 0, .5); }
 .btn.press { transform: scale(.93); }
+.btn.empty { background: #0b1017; border: 2px dashed #253447; color: #3a4a5c; box-shadow: none; }
 .btn.tier-blue .lbl { color: var(--tier-blue); }
 .btn.tier-gold .lbl { color: var(--tier-gold); }
 .btn.swapped { animation: swapped .45s ease-out; }
@@ -76,25 +77,27 @@ html, body {
 @keyframes strain-pulse { 50% { box-shadow: 0 0 12px rgba(200, 69, 47, .55); } }
 
 /* --- pickup card: sits above the ability arc, inside right-thumb reach --- */
-#offer {
+#offer, #prompt {
   position: absolute; display: none; align-items: center; gap: 10px; pointer-events: auto;
   right: calc(env(safe-area-inset-right, 0px) + 14px); bottom: calc(env(safe-area-inset-bottom, 0px) + 168px);
   width: 250px; padding: 9px 9px 9px 12px; border-radius: 11px;
   background: rgba(10, 14, 20, .9); border: 1px solid #22303f; backdrop-filter: blur(6px);
 }
-#offer.show { display: flex; }
-#offer .info { flex: 1; min-width: 0; }
+#offer.show, #prompt.show { display: flex; }
+#offer .info, #prompt .info { flex: 1; min-width: 0; }
 #offer .head { display: flex; align-items: baseline; gap: 7px; }
 #offer .slot { font: 700 9px/1 ui-sans-serif, system-ui, sans-serif; letter-spacing: .14em; text-transform: uppercase; color: #6f8196; }
-#offer .name { font: 600 14px/1.2 ui-sans-serif, system-ui, sans-serif; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-#offer p { margin: 3px 0 0; font-size: 11px; color: #9fb2c6; }
+#offer .name, #prompt .name { font: 600 14px/1.2 ui-sans-serif, system-ui, sans-serif; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#offer p, #prompt p { margin: 3px 0 0; font-size: 11px; color: #9fb2c6; }
 #offer .replaces { color: #6f8196; }
-#offer .take {
+#offer .take, #prompt .take {
   appearance: none; flex: none; width: 58px; height: 58px; border-radius: 50%;
   border: 2px solid #6f9bd0; background: #16202d; color: #e6f0fb;
   font: 700 13px/1 ui-sans-serif, system-ui, sans-serif;
 }
 #offer .take:active, #offer .compare:active { transform: scale(.93); }
+#prompt .name { color: #cfe0ff; }
+#prompt .take { width: auto; height: auto; border-radius: 9px; padding: 12px 14px; }
 #offer .choices { display: flex; flex-direction: column; align-items: center; gap: 6px; }
 #offer .compare {
   appearance: none; border: 1px solid #2d4460; background: transparent; color: #9fb6d0;
@@ -103,16 +106,8 @@ html, body {
 .btn.target { animation: target-pulse .9s ease-in-out infinite; }
 @keyframes target-pulse { 50% { box-shadow: 0 0 0 5px rgba(223, 230, 238, .35), 0 4px 12px rgba(0, 0, 0, .5); } }
 
-/* --- breather: the next fight waits for you while there's loot on the floor --- */
-#readyBtn {
-  position: absolute; display: none; pointer-events: auto; appearance: none;
-  left: 50%; bottom: calc(env(safe-area-inset-bottom, 0px) + 34px); transform: translateX(-50%);
-  padding: 11px 22px; border-radius: 9px; border: 1px solid #6f9bd0;
-  background: rgba(17, 26, 37, .92); color: #e6f0fb;
-  font: 600 13px/1 ui-sans-serif, system-ui, sans-serif; letter-spacing: .04em;
-}
-#readyBtn.show { display: block; }
-#readyBtn:active { transform: translateX(-50%) scale(.95); }
+/* a quiet's refill fills slowly and glows, so it reads as a moment */
+#hp.healing i { transition: width 1s ease-out; box-shadow: 0 0 10px rgba(159, 216, 196, .7); }
 
 /* --- pause --- */
 #pauseBtn {
@@ -138,6 +133,8 @@ html, body {
   display: flex; flex-direction: column; padding: 11px 12px; border-radius: 11px;
   background: #0e151f; border: 1px solid #22303f; min-width: 0;
 }
+.pcard.empty { border-style: dashed; opacity: .75; }
+.pcard.empty .pname { color: #5f7388; }
 .pcard.tier-blue { border-color: #34457a; }
 .pcard.tier-gold { border-color: #6b5a36; }
 .pcard .tag { font: 700 9px/1 ui-sans-serif, system-ui, sans-serif; letter-spacing: .14em; text-transform: uppercase; color: #6f8196; }
@@ -171,6 +168,11 @@ html, body {
   color: var(--warm); text-shadow: 0 1px 3px #000; white-space: nowrap;
 }
 #banner.show { opacity: 1; transform: translate(-50%, 0); }
+
+/* --- elite names: cold blue like D2's champions, with what makes them dangerous --- */
+.elite { position: absolute; transform: translate(-50%, -100%); text-align: center; white-space: nowrap; text-shadow: 0 1px 3px #000, 0 0 6px #000; }
+.elite b { display: block; font: 700 12px/1.2 ui-sans-serif, system-ui, sans-serif; color: #9fb2ff; letter-spacing: .02em; }
+.elite span { display: block; font: 500 10px/1.2 ui-sans-serif, system-ui, sans-serif; color: #8193a6; }
 
 /* --- endings --- */
 #ending {

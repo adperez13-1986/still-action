@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import { PARTS, type AbilityDef, type Tier } from './abilities'
 import type { SlotName } from './still'
 import type { Archetype } from './combat'
-import { ARENA_RADIUS } from './world'
+import type { Terrain } from './terrain'
 
 /**
  * D2's structure, not D2's maths. Each archetype has a treasure class that
@@ -14,7 +14,13 @@ export const LOOT = {
   /** Per kill. Low on purpose: a phone screen buried in beams can't show telegraphs. */
   dropChance: 0.22,
   tierOdds: { white: 0.55, blue: 0.38, gold: 0.07 } as Record<Tier, number>,
+  /** An elite always drops, and leans toward the interesting tiers. */
+  eliteOdds: { white: 0.15, blue: 0.6, gold: 0.25 } as Record<Tier, number>,
   pickupRadius: 1.15,
+  /** A crate or barrel: sometimes a part, more often a scrap of repair. */
+  crateParts: 0.1,
+  crateScrap: 0.3,
+  scrapHeal: 20,
 }
 
 const TREASURE: Record<Archetype, Record<SlotName, number>> = {
@@ -41,13 +47,13 @@ function pickWeighted<T extends string>(weights: Record<T, number>): T {
 }
 
 /** Null when nothing is left to find at any tier. */
-export function rollPart(from: Archetype, equipped: readonly AbilityDef[]): AbilityDef | null {
+export function rollPart(from: Archetype, equipped: readonly AbilityDef[], odds = LOOT.tierOdds): AbilityDef | null {
   const on = new Set(equipped.map((p) => p.id))
   const pool = PARTS.filter((p) => !on.has(p.id))
   if (pool.length === 0) return null
 
   // tier first, then fall back through the others if that tier has nothing left
-  const first = pickWeighted(LOOT.tierOdds)
+  const first = pickWeighted(odds)
   for (const tier of [first, 'blue', 'white', 'gold'] as Tier[]) {
     const tierPool = pool.filter((p) => p.tier === tier)
     if (tierPool.length === 0) continue
@@ -74,9 +80,16 @@ const FLY = 0.42
 
 export class Loot {
   readonly ground: GroundPart[] = []
+  /** Repair scrap on the floor: walked over, not taken. */
+  private scraps: { mesh: THREE.Mesh; pos: THREE.Vector3; bob: number }[] = []
+  private readonly scrapGeo = new THREE.TorusGeometry(0.16, 0.06, 6, 10)
+  private readonly scrapMat = new THREE.MeshBasicMaterial({ color: 0x9fd8c4 })
   private readonly beamGeo = new THREE.CylinderGeometry(0.07, 0.16, 5, 8, 1, true)
   private readonly chunkGeo = new THREE.BoxGeometry(0.38, 0.3, 0.38)
   private readonly discGeo = new THREE.CircleGeometry(0.55, 24)
+
+  /** Swapped for each level, so drops never land on the far side of a wall. */
+  terrain: Terrain | null = null
 
   constructor(private readonly scene: THREE.Scene) {}
 
@@ -105,21 +118,50 @@ export class Loot {
 
     group.add(chunk, beam, disc)
 
-    // land a short hop away from where it fell, inside the arena
+    // land a short hop away from where it fell, never through a wall
     const a = toward
       ? Math.atan2(toward.x - at.x, toward.z - at.z) + (Math.random() - 0.5) * 1.6
       : Math.random() * Math.PI * 2
     const dist = 0.8 + Math.random() * 0.8
-    const pos = new THREE.Vector3(at.x + Math.sin(a) * dist, 0, at.z + Math.cos(a) * dist)
-    const r = Math.hypot(pos.x, pos.z)
-    if (r > ARENA_RADIUS - 1.5) pos.multiplyScalar((ARENA_RADIUS - 1.5) / r)
+    const tx = at.x + Math.sin(a) * dist
+    const tz = at.z + Math.cos(a) * dist
+    const land = this.terrain ? this.terrain.clampMove(at.x, at.z, tx, tz, 0.35) : { x: tx, z: tz }
+    const pos = new THREE.Vector3(land.x, 0, land.z)
 
     group.position.copy(at)
     this.scene.add(group)
     this.ground.push({ def, pos, group, fly: FLY, from: at.clone(), bob: Math.random() * 10 })
   }
 
+  dropScrap(at: THREE.Vector3) {
+    const mesh = new THREE.Mesh(this.scrapGeo, this.scrapMat)
+    const pos = new THREE.Vector3(at.x, 0, at.z)
+    mesh.position.set(pos.x, 0.4, pos.z)
+    this.scene.add(mesh)
+    this.scraps.push({ mesh, pos, bob: Math.random() * 6 })
+  }
+
+  /** Scrap Still is standing on is picked up at once. Returns how many. */
+  collectScrap(at: THREE.Vector3): number {
+    let n = 0
+    for (let i = this.scraps.length - 1; i >= 0; i--) {
+      const s = this.scraps[i]!
+      if (Math.hypot(s.pos.x - at.x, s.pos.z - at.z) < 0.95) {
+        this.scene.remove(s.mesh)
+        this.scraps.splice(i, 1)
+        n++
+      }
+    }
+    return n
+  }
+
   update(dt: number) {
+    for (const s of this.scraps) {
+      s.bob += dt * 3
+      s.mesh.position.y = 0.4 + Math.sin(s.bob) * 0.08
+      s.mesh.rotation.y += dt * 2
+      s.mesh.rotation.x = 0.6
+    }
     for (const g of this.ground) {
       g.bob += dt * 2.4
       const chunk = g.group.getObjectByName('chunk')!
@@ -161,6 +203,8 @@ export class Loot {
   clear() {
     for (const g of this.ground) this.dispose(g)
     this.ground.length = 0
+    for (const s of this.scraps) this.scene.remove(s.mesh)
+    this.scraps.length = 0
   }
 
   private dispose(g: GroundPart) {

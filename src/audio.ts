@@ -339,6 +339,48 @@ export function blocked(pan: number) {
   hiss(c, d, t, 0.06, 0.35, 'bandpass', 1400, 600, 1)
 }
 
+/** A crate or barrel giving way: dry wood, a rattle of what was in it. */
+export function smash(pan: number) {
+  const c = live()
+  if (!c) return
+  const t = c.currentTime
+  const d = out(c, 'hits', pan)
+  hiss(c, d, t, 0.16, 0.8, 'bandpass', 1600, 500, 1.4)
+  tone(c, d, 'square', t, 160, 70, 0.08, 0.2)
+  for (let i = 0; i < 3; i++) tone(c, d, 'triangle', t + 0.04 + i * 0.03, vary(700, 0.3), vary(500, 0.3), 0.08, 0.06)
+}
+
+/** Repair scrap taken: a soft rising two-note, green like the HP meter. */
+export function repair() {
+  const c = live()
+  if (!c) return
+  const t = c.currentTime
+  const d = out(c, 'abilities', 0)
+  tone(c, d, 'sine', t, 523, 522, 0.2, 0.16, 0.01)
+  tone(c, d, 'sine', t + 0.08, 784, 783, 0.3, 0.14, 0.01)
+}
+
+/** A shrine taken up on: low, hollow, and long. */
+export function shrine() {
+  const c = live()
+  if (!c) return
+  const t = c.currentTime
+  const d = out(c, 'abilities', 0)
+  for (const [i, f] of [196, 294, 392].entries()) tone(c, d, 'sine', t + i * 0.12, f, f, 1.6, 0.14, 0.05)
+  hiss(c, d, t, 1.2, 0.12, 'bandpass', 900, 400, 3, 0.2)
+}
+
+/** A pack noticing you: two sharp rising notes, so you know you've pulled them even off screen. */
+export function alert(pan: number) {
+  const c = live()
+  if (!c) return
+  const t = c.currentTime
+  const d = out(c, 'enemy', pan)
+  tone(c, d, 'sawtooth', t, 330, 360, 0.09, 0.22, 0.004)
+  tone(c, d, 'sawtooth', t + 0.09, 494, 540, 0.14, 0.26, 0.004)
+  hiss(c, d, t, 0.06, 0.2, 'bandpass', 2400, 1800, 2)
+}
+
 /** Pushing should sound like it costs something: the body grinding against itself. */
 function grind(c: AudioContext, d: AudioNode, t: number) {
   const f = c.createBiquadFilter()

@@ -32,14 +32,14 @@ export function pushOutOfColliders(pos: { x: number; z: number }, radius: number
 
 export const grade = {
   exposure: 1.3,
-  fogNear: 58,
-  fogFar: 135,
+  fogNear: 44,
+  fogFar: 72,
   bloomStrength: 0.5,
   bloomThreshold: 0.72,
   bloomRadius: 0.6,
   vignette: 0.8,
   saturation: 0.78,
-  graceLight: 400,
+  graceLight: 300,
   viewHeight: 17,
 }
 

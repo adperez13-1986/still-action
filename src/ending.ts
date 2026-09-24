@@ -22,7 +22,7 @@ const CLOSING = 'You showed up. That was enough.'
 
 export interface Overlay {
   banner: (text: string) => void
-  show: (kind: EndingKind, fightsCleared: number, onAgain: () => void) => void
+  show: (kind: EndingKind, depth: number, onAgain: () => void) => void
   hide: () => void
 }
 
@@ -61,11 +61,11 @@ export function createOverlay(root: HTMLElement): Overlay {
       bannerTimer = window.setTimeout(() => banner.classList.remove('show'), 1800)
     },
 
-    show(kind, fightsCleared, cb) {
+    show(kind, depth, cb) {
       onAgain = cb
       title.textContent = COPY[kind].title
       body.textContent = COPY[kind].body
-      count.textContent = fightsCleared === 1 ? '1 fight cleared' : `${fightsCleared} fights cleared`
+      count.textContent = `reached depth ${depth}`
       closing.textContent = CLOSING
       banner.classList.remove('show')
       end.className = kind

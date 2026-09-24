@@ -1,0 +1,645 @@
+import * as THREE from 'three'
+import { buildInstanced, pieceData, skin, type Piece, type Placement } from './kit'
+import type { Terrain } from './terrain'
+import type { Archetype, EliteMod } from './combat'
+
+/**
+ * A D2-style crawl level on a 4-unit grid (KayKit's floor tile). A main path of
+ * rooms from entrance to exit, 2–3 dead-end side rooms, corridors one cell wide,
+ * no doors. Walls are waist-high barriers on every floor edge that faces nothing.
+ * Outside the walls: ruins fading into the fog — never tall on the camera side.
+ */
+export const CELL = 4
+/**
+ * Room sizes, as half-extents in cells from the centre cell. Main-path rooms are
+ * 5x5 (20 units, close to the old arena's fighting space: the ranged band, the
+ * dash and the vent all need room). Side rooms stay 3x3 — a dead end you chose
+ * should feel tight. Now and then a 5x3 hall, laid along the direction of travel.
+ */
+const SIZE = { big: [2, 2], small: [1, 1], hall: [2, 1] } as const
+const MAIN_ROOMS = 6
+const WALL_HALF = 0.3
+const COLUMN_R = 0.45
+
+export type RoomKind = 'entrance' | 'main' | 'side' | 'exit'
+export interface Room {
+  kind: RoomKind
+  /** Centre cell. */
+  ci: number
+  cj: number
+  /** Half-extents in cells: the room spans ci-rx..ci+rx, cj-rz..cj+rz. */
+  rx: number
+  rz: number
+  center: THREE.Vector3
+}
+
+interface Box { minX: number; maxX: number; minZ: number; maxZ: number }
+interface Circle { x: number; z: number; r: number; /** Smashed: no longer solid. */ dead?: boolean }
+
+/** A crate or barrel that breaks when hit. Sometimes there's something inside. */
+export interface Breakable { mesh: THREE.Mesh; x: number; z: number; r: number; circle: Circle; broken: boolean }
+
+/**
+ * A shrine: one use, one bargain.
+ *   rest   — strain eases, but the nearest sleeping pack hears it
+ *   plenty — a good part, for a price in strain
+ */
+export type ShrineKind = 'rest' | 'plenty'
+export interface Shrine { kind: ShrineKind; x: number; z: number; used: boolean; rune: THREE.MeshBasicMaterial }
+
+/** A group of enemies placed together, asleep until you come near. */
+export interface PackSpec {
+  room: Room
+  members: { kind: Archetype; x: number; z: number }[]
+  /** The first member leads, named and with one modifier. */
+  elite?: { mod: EliteMod; name: string }
+}
+
+export interface Level {
+  depth: number
+  packs: PackSpec[]
+  breakables: Breakable[]
+  shrines: Shrine[]
+  /** Break a crate: it stops being solid and its mesh goes. */
+  smash: (b: Breakable) => void
+  group: THREE.Group
+  terrain: Terrain
+  rooms: Room[]
+  entrance: THREE.Vector3
+  exit: THREE.Vector3
+  update: (t: number) => void
+  dispose: () => void
+}
+
+const key = (i: number, j: number) => `${i},${j}`
+const DIRS: [number, number][] = [[1, 0], [0, 1], [-1, 0], [0, -1]]
+
+function rng(seed: number) {
+  let s = seed % 2147483647 || 1
+  return () => (s = (s * 16807) % 2147483647) / 2147483647
+}
+
+// --- layout -----------------------------------------------------------------
+
+interface Layout {
+  floor: Set<string>
+  rooms: Room[]
+  corridors: Set<string>
+}
+
+function roomCells(ci: number, cj: number, rx: number, rz: number): [number, number][] {
+  const out: [number, number][] = []
+  for (let i = -rx; i <= rx; i++) for (let j = -rz; j <= rz; j++) out.push([ci + i, cj + j])
+  return out
+}
+
+/** Half-extent of a room along a direction. */
+const halfAlong = (r: { rx: number; rz: number }, d: [number, number]) => (d[0] !== 0 ? r.rx : r.rz)
+
+/**
+ * Try to hang a room of the given size off `from` in direction d. A hall's long
+ * side is laid along d. Returns null if it would touch anything.
+ */
+function tryAttach(
+  layout: Layout, from: Room, d: [number, number], len: number, kind: RoomKind, size: readonly [number, number],
+): Room | null {
+  const [dx, dz] = d
+  const [long, short] = size
+  const rx = dx !== 0 ? long : short
+  const rz = dx !== 0 ? short : long
+  const reach = halfAlong(from, d) + len + halfAlong({ rx, rz }, d) + 1
+  const ci = from.ci + dx * reach
+  const cj = from.cj + dz * reach
+  const corridor: [number, number][] = []
+  const edge = halfAlong(from, d)
+  for (let k = 1; k <= len; k++) corridor.push([from.ci + dx * (edge + k), from.cj + dz * (edge + k)])
+
+  // the new room plus a one-cell margin must be empty, so rooms never merge
+  for (let i = -rx - 1; i <= rx + 1; i++) {
+    for (let j = -rz - 1; j <= rz + 1; j++) {
+      if (layout.floor.has(key(ci + i, cj + j))) return null
+    }
+  }
+  // corridor cells must not run alongside anything except where they join
+  for (const [i, j] of corridor) {
+    if (layout.floor.has(key(i, j))) return null
+    for (const [sx, sz] of [[dz, dx], [-dz, -dx]] as [number, number][]) {
+      if (layout.floor.has(key(i + sx, j + sz))) return null
+    }
+  }
+
+  for (const [i, j] of corridor) {
+    layout.floor.add(key(i, j))
+    layout.corridors.add(key(i, j))
+  }
+  for (const [i, j] of roomCells(ci, cj, rx, rz)) layout.floor.add(key(i, j))
+  const room: Room = { kind, ci, cj, rx, rz, center: new THREE.Vector3(ci * CELL, 0, cj * CELL) }
+  layout.rooms.push(room)
+  return room
+}
+
+function generateLayout(rand: () => number, sideRooms: number): Layout {
+  for (let attempt = 0; attempt < 80; attempt++) {
+    const layout: Layout = { floor: new Set(), rooms: [], corridors: new Set() }
+    // entrance and exit stay small: you arrive and leave through them, you don't fight in them
+    const first: Room = { kind: 'entrance', ci: 0, cj: 0, rx: 1, rz: 1, center: new THREE.Vector3() }
+    for (const [i, j] of roomCells(0, 0, 1, 1)) layout.floor.add(key(i, j))
+    layout.rooms.push(first)
+
+    // the spine wanders but mostly keeps a heading, so it reads as a journey
+    let prev = first
+    let heading = Math.floor(rand() * 4)
+    let ok = true
+    for (let n = 1; n < MAIN_ROOMS; n++) {
+      const kind: RoomKind = n === MAIN_ROOMS - 1 ? 'exit' : 'main'
+      const size = kind === 'exit' ? SIZE.small : rand() < 0.25 ? SIZE.hall : SIZE.big
+      const turns = rand() < 0.55 ? [0, 1, 3] : [1, 3, 0]
+      let placed: Room | null = null
+      for (const t of turns) {
+        const d = (heading + t) % 4
+        placed = tryAttach(layout, prev, DIRS[d]!, 1 + Math.floor(rand() * 2), kind, size)
+        if (placed) {
+          heading = d
+          break
+        }
+      }
+      if (!placed) {
+        ok = false
+        break
+      }
+      prev = placed
+    }
+    if (!ok) continue
+
+    // side rooms: dead ends off the middle of the spine, for loot and risk
+    const spine = layout.rooms.filter((r) => r.kind === 'main')
+    let added = 0
+    for (let tries = 0; tries < 30 && added < sideRooms; tries++) {
+      const host = spine[Math.floor(rand() * spine.length)]!
+      if (tryAttach(layout, host, DIRS[Math.floor(rand() * 4)]!, 1 + Math.floor(rand() * 2), 'side', SIZE.small)) added++
+    }
+    return layout
+  }
+  throw new Error('dungeon layout failed')
+}
+
+// --- terrain ----------------------------------------------------------------
+
+function makeTerrain(floor: Set<string>, boxes: Box[], circles: Circle[]): Terrain {
+  // bucket everything by cell, so a query only looks at its neighbourhood
+  const boxIndex = new Map<string, Box[]>()
+  const circleIndex = new Map<string, Circle[]>()
+  const cellOf = (v: number) => Math.round(v / CELL)
+  const bucket = <T>(index: Map<string, T[]>, item: T, minX: number, maxX: number, minZ: number, maxZ: number) => {
+    for (let i = cellOf(minX); i <= cellOf(maxX); i++) {
+      for (let j = cellOf(minZ); j <= cellOf(maxZ); j++) {
+        const k = key(i, j)
+        const list = index.get(k) ?? []
+        list.push(item)
+        index.set(k, list)
+      }
+    }
+  }
+  for (const b of boxes) bucket(boxIndex, b, b.minX, b.maxX, b.minZ, b.maxZ)
+  for (const c of circles) bucket(circleIndex, c, c.x - c.r, c.x + c.r, c.z - c.r, c.z + c.r)
+
+  const near = <T>(index: Map<string, T[]>, x: number, z: number): T[] => {
+    const ci = cellOf(x)
+    const cj = cellOf(z)
+    const out: T[] = []
+    for (let i = ci - 1; i <= ci + 1; i++) for (let j = cj - 1; j <= cj + 1; j++) out.push(...(index.get(key(i, j)) ?? []))
+    return out
+  }
+  const onFloor = (x: number, z: number) => floor.has(key(cellOf(x), cellOf(z)))
+
+  const hits = (x: number, z: number, r: number) => {
+    if (!onFloor(x, z)) return true
+    for (const b of near(boxIndex, x, z)) {
+      const cx = Math.max(b.minX, Math.min(x, b.maxX))
+      const cz = Math.max(b.minZ, Math.min(z, b.maxZ))
+      if ((x - cx) ** 2 + (z - cz) ** 2 < r * r) return true
+    }
+    for (const c of near(circleIndex, x, z)) {
+      if (!c.dead && (x - c.x) ** 2 + (z - c.z) ** 2 < (c.r + r) ** 2) return true
+    }
+    return false
+  }
+
+  // --- navigation: a breadth-first distance field per target cell, cached ---
+  const fields = new Map<string, Map<string, number>>()
+  const field = (ti: number, tj: number) => {
+    const k = key(ti, tj)
+    let f = fields.get(k)
+    if (f) return f
+    f = new Map<string, number>()
+    const queue: [number, number][] = [[ti, tj]]
+    f.set(k, 0)
+    while (queue.length) {
+      const [i, j] = queue.shift()!
+      const d = f.get(key(i, j))!
+      for (const [dx, dz] of DIRS) {
+        const nk = key(i + dx, j + dz)
+        if (floor.has(nk) && !f.has(nk)) {
+          f.set(nk, d + 1)
+          queue.push([i + dx, j + dz])
+        }
+      }
+    }
+    if (fields.size > 24) fields.delete(fields.keys().next().value!)
+    fields.set(k, f)
+    return f
+  }
+  const clear = (ax: number, az: number, bx: number, bz: number, r: number) => {
+    const len = Math.hypot(bx - ax, bz - az)
+    const steps = Math.max(1, Math.ceil(len / 0.35))
+    for (let s = 1; s < steps; s++) {
+      const t = s / steps
+      if (hits(ax + (bx - ax) * t, az + (bz - az) * t, r)) return false
+    }
+    return true
+  }
+
+  return {
+    nextStep(ax, az, bx, bz, radius) {
+      if (clear(ax, az, bx, bz, radius * 0.8)) return { x: bx, z: bz }
+      const f = field(cellOf(bx), cellOf(bz))
+      const ci = cellOf(ax)
+      const cj = cellOf(az)
+      let best = f.get(key(ci, cj)) ?? Infinity
+      let to = { x: bx, z: bz }
+      for (const [dx, dz] of DIRS) {
+        const d = f.get(key(ci + dx, cj + dz))
+        if (d !== undefined && d < best) {
+          best = d
+          to = { x: (ci + dx) * CELL, z: (cj + dz) * CELL }
+        }
+      }
+      return to
+    },
+
+    pushOut(pos, radius) {
+      for (const b of near(boxIndex, pos.x, pos.z)) {
+        const cx = Math.max(b.minX, Math.min(pos.x, b.maxX))
+        const cz = Math.max(b.minZ, Math.min(pos.z, b.maxZ))
+        const dx = pos.x - cx
+        const dz = pos.z - cz
+        const d = Math.hypot(dx, dz)
+        if (d < radius) {
+          if (d > 0.0001) {
+            pos.x = cx + (dx / d) * radius
+            pos.z = cz + (dz / d) * radius
+          } else {
+            // centre inside the box: leave by the nearest face
+            const faces = [pos.x - b.minX, b.maxX - pos.x, pos.z - b.minZ, b.maxZ - pos.z]
+            const m = Math.min(...faces)
+            if (m === faces[0]) pos.x = b.minX - radius
+            else if (m === faces[1]) pos.x = b.maxX + radius
+            else if (m === faces[2]) pos.z = b.minZ - radius
+            else pos.z = b.maxZ + radius
+          }
+        }
+      }
+      for (const c of near(circleIndex, pos.x, pos.z)) {
+        if (c.dead) continue
+        const dx = pos.x - c.x
+        const dz = pos.z - c.z
+        const d = Math.hypot(dx, dz)
+        const min = c.r + radius
+        if (d > 0.0001 && d < min) {
+          pos.x = c.x + (dx / d) * min
+          pos.z = c.z + (dz / d) * min
+        }
+      }
+    },
+
+    blocked(x, z, pad = 0) {
+      return hits(x, z, Math.max(0.001, pad))
+    },
+
+    lineClear(ax, az, bx, bz, pad = 0) {
+      const len = Math.hypot(bx - ax, bz - az)
+      const steps = Math.max(1, Math.ceil(len / 0.35))
+      for (let s = 1; s < steps; s++) {
+        const t = s / steps
+        if (hits(ax + (bx - ax) * t, az + (bz - az) * t, Math.max(0.001, pad))) return false
+      }
+      return true
+    },
+
+    clampMove(ax, az, bx, bz, radius) {
+      const len = Math.hypot(bx - ax, bz - az)
+      const steps = Math.max(1, Math.ceil(len / 0.2))
+      let x = ax
+      let z = az
+      for (let s = 1; s <= steps; s++) {
+        const t = s / steps
+        const nx = ax + (bx - ax) * t
+        const nz = az + (bz - az) * t
+        if (hits(nx, nz, radius)) break
+        x = nx
+        z = nz
+      }
+      return { x, z }
+    },
+  }
+}
+
+// --- building ---------------------------------------------------------------
+
+export function generateLevel(depth: number, seed = Math.floor(Math.random() * 1e9)): Level {
+  const rand = rng(seed)
+  const layout = generateLayout(rand, 2 + Math.floor(rand() * 2))
+  const { floor } = layout
+  const placements: Placement[] = []
+  const boxes: Box[] = []
+  const circles: Circle[] = []
+  const pick = <T>(list: readonly T[]) => list[Math.floor(rand() * list.length)]!
+  const quarter = () => Math.floor(rand() * 4) * (Math.PI / 2)
+
+  // --- floors ---
+  const cells = [...floor].map((k) => k.split(',').map(Number) as [number, number])
+  for (const [i, j] of cells) {
+    const corridor = layout.corridors.has(key(i, j))
+    const roll = rand()
+    const piece: Piece = corridor
+      ? roll < 0.35 ? 'floor_dirt_large' : 'floor_tile_large'
+      : roll < 0.14 ? 'floor_tile_large_rocks' : roll < 0.22 ? 'floor_dirt_large' : 'floor_tile_large'
+    placements.push({ piece, x: i * CELL, z: j * CELL, rotY: quarter() })
+  }
+
+  // --- walls: a barrier on every floor edge facing nothing ---
+  // vertices are grid corners; count wall edges meeting at each to place columns
+  const vx = new Map<string, { along: number; across: number }>()
+  const touch = (a: number, b: number, axis: 'along' | 'across') => {
+    const v = vx.get(key(a, b)) ?? { along: 0, across: 0 }
+    v[axis]++
+    vx.set(key(a, b), v)
+  }
+  const h = CELL / 2
+  for (const [i, j] of cells) {
+    const x = i * CELL
+    const z = j * CELL
+    if (!floor.has(key(i + 1, j))) {
+      placements.push({ piece: 'barrier', x: x + h, z, rotY: Math.PI / 2 })
+      boxes.push({ minX: x + h - WALL_HALF, maxX: x + h + WALL_HALF, minZ: z - h, maxZ: z + h })
+      touch(i + 1, j, 'across'); touch(i + 1, j + 1, 'across')
+    }
+    if (!floor.has(key(i - 1, j))) {
+      placements.push({ piece: 'barrier', x: x - h, z, rotY: Math.PI / 2 })
+      boxes.push({ minX: x - h - WALL_HALF, maxX: x - h + WALL_HALF, minZ: z - h, maxZ: z + h })
+      touch(i, j, 'across'); touch(i, j + 1, 'across')
+    }
+    if (!floor.has(key(i, j + 1))) {
+      placements.push({ piece: 'barrier', x, z: z + h })
+      boxes.push({ minX: x - h, maxX: x + h, minZ: z + h - WALL_HALF, maxZ: z + h + WALL_HALF })
+      touch(i, j + 1, 'along'); touch(i + 1, j + 1, 'along')
+    }
+    if (!floor.has(key(i, j - 1))) {
+      placements.push({ piece: 'barrier', x, z: z - h })
+      boxes.push({ minX: x - h, maxX: x + h, minZ: z - h - WALL_HALF, maxZ: z - h + WALL_HALF })
+      touch(i, j, 'along'); touch(i + 1, j, 'along')
+    }
+  }
+  // a column wherever a wall turns a corner or ends; straight runs stay plain
+  for (const [k, v] of vx) {
+    const [a, b] = k.split(',').map(Number) as [number, number]
+    if ((v.along > 0 && v.across > 0) || v.along + v.across === 1) {
+      const x = a * CELL - h
+      const z = b * CELL - h
+      placements.push({ piece: 'column', x, z })
+      circles.push({ x, z, r: COLUMN_R })
+    }
+  }
+
+  // --- cover: a few props per room, kept off the lines between doorways ---
+  const PROPS: [Piece, number][] = [['crates_stacked', 1], ['barrel_large', 0.7], ['box_large', 0.8], ['rubble_half', 0.42], ['box_stacked', 0.55], ['barrel_large', 0.7], ['box_large', 0.8]]
+  const BREAKABLE = new Set<Piece>(['barrel_large', 'box_large', 'box_stacked'])
+  const breakables: Breakable[] = []
+  for (const room of layout.rooms) {
+    if (room.kind === 'entrance' || room.kind === 'exit') continue
+    const cellsIn = (2 * room.rx + 1) * (2 * room.rz + 1)
+    const n = Math.round(cellsIn / 4) + Math.floor(rand() * 2)
+    const maxX = room.rx * CELL + CELL / 2 - 1.4
+    const maxZ = room.rz * CELL + CELL / 2 - 1.4
+    const used: [number, number][] = []
+    for (let tries = 0; tries < 40 && used.length < n; tries++) {
+      const ox = (rand() * 2 - 1) * maxX
+      const oz = (rand() * 2 - 1) * maxZ
+      // corridors enter on the centre row and column: keep those lanes open
+      if (Math.abs(ox) < 2.4 || Math.abs(oz) < 2.4) continue
+      if (used.some(([ux, uz]) => Math.hypot(ux - ox, uz - oz) < 3.2)) continue
+      used.push([ox, oz])
+      const [piece, scale] = pick(PROPS)
+      const x = room.center.x + ox
+      const z = room.center.z + oz
+      const rotY = rand() * Math.PI * 2
+      const circle: Circle = { x, z, r: pieceData(piece).radius * scale * 0.8 }
+      circles.push(circle)
+      if (BREAKABLE.has(piece)) {
+        // breakables are their own meshes, not instanced, so each can go on its own
+        const { geometry, material } = pieceData(piece)
+        const mesh = new THREE.Mesh(geometry, material)
+        mesh.position.set(x, 0, z)
+        mesh.rotation.y = rotY
+        mesh.scale.setScalar(scale)
+        breakables.push({ mesh, x, z, r: circle.r, circle, broken: false })
+      } else {
+        placements.push({ piece, x, z, rotY, scale })
+      }
+    }
+  }
+
+  // --- the beyond ---
+  let minI = Infinity, maxI = -Infinity, minJ = Infinity, maxJ = -Infinity
+  for (const [i, j] of cells) {
+    minI = Math.min(minI, i); maxI = Math.max(maxI, i); minJ = Math.min(minJ, j); maxJ = Math.max(maxJ, j)
+  }
+  const nearFloor = (x: number, z: number, cellsAway: number) => {
+    const ci = Math.round(x / CELL)
+    const cj = Math.round(z / CELL)
+    for (let i = ci - cellsAway; i <= ci + cellsAway; i++) for (let j = cj - cellsAway; j <= cj + cellsAway; j++) {
+      if (floor.has(key(i, j))) return true
+    }
+    return false
+  }
+  // The camera looks from +x,+z. A tall ruin hides whatever lies behind it along
+  // (-1,-1), so it's only allowed where that shadow falls on no floor.
+  const hidesFloor = (x: number, z: number) => {
+    for (let s = 0; s <= 7; s += 0.75) {
+      for (const side of [-1.8, 0, 1.8]) {
+        const px = x - s * Math.SQRT1_2 + side * Math.SQRT1_2
+        const pz = z - s * Math.SQRT1_2 - side * Math.SQRT1_2
+        if (floor.has(key(Math.round(px / CELL), Math.round(pz / CELL)))) return true
+      }
+    }
+    return false
+  }
+  const TALL: Piece[] = ['wall_broken', 'wall_broken', 'pillar', 'rubble_large', 'wall', 'barrier_column']
+  const spanX = (maxI - minI + 10) * CELL
+  const spanZ = (maxJ - minJ + 10) * CELL
+  const ruinCount = Math.floor((spanX * spanZ) / 90)
+  for (let n = 0; n < ruinCount; n++) {
+    const x = (minI - 5) * CELL + rand() * spanX
+    const z = (minJ - 5) * CELL + rand() * spanZ
+    if (nearFloor(x, z, 0) || (nearFloor(x, z, 1) && rand() < 0.7)) continue
+    if (hidesFloor(x, z)) {
+      placements.push({ piece: rand() < 0.5 ? 'rubble_half' : 'floor_dirt_large_rocky', x, z, rotY: rand() * 6.3, y: -2.4 - rand() * 0.6, scale: 0.8 + rand() * 0.4 })
+    } else {
+      placements.push({ piece: pick(TALL), x, z, rotY: rand() * 6.3, y: -rand() * 1.6, scale: 0.8 + rand() * 0.5 })
+    }
+  }
+  for (let n = 0; n < ruinCount / 3; n++) {
+    const x = (minI - 5) * CELL + rand() * spanX
+    const z = (minJ - 5) * CELL + rand() * spanZ
+    if (nearFloor(x, z, 0)) continue
+    placements.push({ piece: 'floor_dirt_large_rocky', x, z, rotY: rand() * 6.3, y: -0.08 })
+  }
+
+  // --- packs: one per main and side room, sized by depth, never in the entrance or exit ---
+  const makeTerrainNow = makeTerrain(floor, boxes, circles)
+  const packs: PackSpec[] = []
+  const packRooms = layout.rooms.filter((r) => r.kind === 'main' || r.kind === 'side')
+  // level 1: exactly one pack carries a ranged; deeper, more of them do
+  const rangedPack = Math.floor(rand() * packRooms.length)
+  packRooms.forEach((room, idx) => {
+    const big = room.rx >= 2 || room.rz >= 2
+    const size = 2 + Math.floor(rand() * 2) + Math.floor((depth - 1) / 2) + (big && depth > 2 ? 1 : 0)
+    const rangedCount = depth === 1
+      ? (idx === rangedPack ? 1 : 0)
+      : (rand() < Math.min(0.85, 0.3 * depth) ? 1 : 0) + (depth >= 4 && big && rand() < 0.5 ? 1 : 0)
+    // gather off-centre, so the corridor lanes through the room aren't where they sleep
+    const ox = (rand() < 0.5 ? -1 : 1) * (room.rx * CELL * 0.45)
+    const oz = (rand() < 0.5 ? -1 : 1) * (room.rz * CELL * 0.45)
+    const members: PackSpec['members'] = []
+    for (let n = 0; n < size; n++) {
+      for (let tries = 0; tries < 12; tries++) {
+        const a = rand() * Math.PI * 2
+        const r = 0.6 + rand() * 1.8
+        const x = room.center.x + ox + Math.cos(a) * r
+        const z = room.center.z + oz + Math.sin(a) * r
+        if (makeTerrainNow.blocked(x, z, 0.7)) continue
+        if (members.some((m) => Math.hypot(m.x - x, m.z - z) < 1.3)) continue
+        members.push({ kind: n < rangedCount ? 'ranged' : 'chaser', x, z })
+        break
+      }
+    }
+    if (members.length) packs.push({ room, members })
+  })
+
+  // --- elites: one per level at first, one more every two depths; never in side rooms ---
+  const FIRST = ['Rust', 'Hollow', 'Cinder', 'Grim', 'Ash', 'Pale', 'Iron', 'Gutter', 'Shard', 'Mourn']
+  const SECOND = ['jaw', 'maw', 'grip', 'wake', 'hook', 'coil', 'heart', 'knell']
+  const TITLES: Record<EliteMod, string> = { swift: 'the Quick', plated: 'the Plated', splitting: 'the Many', warding: 'the Warden' }
+  const mainPacks = packs.filter((p) => p.room.kind === 'main' && p.members.length >= 2)
+  const eliteCount = Math.min(mainPacks.length, 1 + Math.floor((depth - 1) / 2))
+  for (let n = 0; n < eliteCount; n++) {
+    const p = mainPacks.splice(Math.floor(rand() * mainPacks.length), 1)[0]!
+    const mods: EliteMod[] = p.members[0]!.kind === 'chaser' ? ['swift', 'plated', 'splitting', 'warding'] : ['swift', 'plated', 'warding']
+    const mod = pick(mods)
+    p.elite = { mod, name: `${pick(FIRST)}${pick(SECOND)} ${TITLES[mod]}` }
+  }
+
+  // --- a shrine, most levels: one bargain, in a main room ---
+  const shrines: Shrine[] = []
+  const shrineParts: THREE.Object3D[] = []
+  const hosts = layout.rooms.filter((r) => r.kind === 'main')
+  if (hosts.length && rand() < 0.75) {
+    const room = pick(hosts)
+    for (let tries = 0; tries < 12; tries++) {
+      const x = room.center.x + (rand() * 2 - 1) * (room.rx * CELL * 0.5)
+      const z = room.center.z + (rand() * 2 - 1) * (room.rz * CELL * 0.5)
+      if (makeTerrainNow.blocked(x, z, 1.2)) continue
+      const kind: ShrineKind = rand() < 0.5 ? 'rest' : 'plenty'
+      const stone = new THREE.Mesh(pieceData('pillar').geometry, pieceData('pillar').material)
+      stone.scale.set(0.5, 0.3, 0.5)
+      stone.position.set(x, 0, z)
+      const rune = new THREE.MeshBasicMaterial({ color: kind === 'rest' ? 0x8fd0ff : 0xc7b8ff, transparent: true, opacity: 0.9 })
+      const glyph = new THREE.Mesh(new THREE.OctahedronGeometry(0.22), rune)
+      glyph.position.set(x, 1.65, z)
+      glyph.name = 'glyph'
+      const pool = new THREE.Mesh(new THREE.RingGeometry(0.9, 1.25, 32), rune)
+      pool.rotation.x = -Math.PI / 2
+      pool.position.set(x, 0.06, z)
+      shrineParts.push(stone, glyph, pool)
+      circles.push({ x, z, r: 0.45 })
+      shrines.push({ kind, x, z, used: false, rune })
+      break
+    }
+  }
+
+  const group = buildInstanced(placements)
+  for (const b of breakables) group.add(b.mesh)
+  for (const o of shrineParts) group.add(o)
+
+  // ground under everything, so the ruins sit on something
+  const groundMat = new THREE.MeshStandardMaterial({ color: 0x151b24 })
+  skin(groundMat, 'ground')
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(spanX + 80, spanZ + 80), groundMat)
+  ground.rotation.x = -Math.PI / 2
+  ground.position.set(((minI + maxI) / 2) * CELL, -0.12, ((minJ + maxJ) / 2) * CELL)
+  group.add(ground)
+
+  // --- the exit: a cold beam that rises well over the walls and fades out as it climbs ---
+  // Tall enough to spot over waist-high barriers, short enough that it never paints a
+  // stripe across the room behind it (the locked camera looks from +x,+z).
+  const exitRoom = layout.rooms.find((r) => r.kind === 'exit')!
+  const entranceRoom = layout.rooms.find((r) => r.kind === 'entrance')!
+  const BEAM_H = 9
+  const fadeUp = (() => {
+    const data = new Uint8Array(64 * 4)
+    for (let i = 0; i < 64; i++) {
+      const v = Math.round(255 * Math.pow(1 - i / 63, 1.6))
+      data.set([v, v, v, 255], i * 4)
+    }
+    const t = new THREE.DataTexture(data, 1, 64)
+    t.needsUpdate = true
+    return t
+  })()
+  const beamMat = new THREE.MeshBasicMaterial({
+    color: 0xcfe0ff, map: fadeUp, transparent: true, opacity: 0.2, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending,
+  })
+  const coreMat = beamMat.clone()
+  coreMat.opacity = 0.35
+  const beam = new THREE.Mesh(new THREE.CylinderGeometry(1.1, 1.4, BEAM_H, 16, 1, true), beamMat)
+  beam.position.set(exitRoom.center.x, BEAM_H / 2, exitRoom.center.z)
+  const core = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.45, BEAM_H, 10, 1, true), coreMat)
+  core.position.copy(beam.position)
+  const padMat = new THREE.MeshBasicMaterial({ color: 0xcfe0ff, transparent: true, opacity: 0.25, depthWrite: false })
+  const pad = new THREE.Mesh(new THREE.RingGeometry(1.2, 1.6, 40), padMat)
+  pad.rotation.x = -Math.PI / 2
+  pad.position.set(exitRoom.center.x, 0.07, exitRoom.center.z)
+  group.add(beam, core, pad)
+
+  return {
+    depth,
+    group,
+    terrain: makeTerrainNow,
+    packs,
+    breakables,
+    shrines,
+    smash(b) {
+      b.broken = true
+      b.circle.dead = true
+      b.mesh.removeFromParent()
+    },
+    rooms: layout.rooms,
+    entrance: entranceRoom.center.clone(),
+    exit: exitRoom.center.clone(),
+    update(t) {
+      for (const o of shrineParts) if (o.name === 'glyph') o.rotation.y = t * 0.8
+      const breathe = 0.5 + 0.5 * Math.sin(t * 1.3)
+      beamMat.opacity = 0.14 + breathe * 0.08
+      coreMat.opacity = 0.28 + breathe * 0.12
+      padMat.opacity = 0.18 + breathe * 0.14
+    },
+    dispose() {
+      group.removeFromParent()
+      // kit geometry and materials are shared across levels; only this level's own things go
+      for (const o of [ground, beam, core, pad]) o.geometry.dispose()
+      for (const m of [groundMat, beamMat, coreMat, padMat]) m.dispose()
+      for (const sh of shrines) sh.rune.dispose()
+      fadeUp.dispose()
+      for (const o of group.children) if (o instanceof THREE.InstancedMesh) o.dispose()
+    },
+  }
+}

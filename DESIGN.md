@@ -66,9 +66,11 @@ plane, a grid for walls.
 Worked out in four grilling rounds after the spike. Replaces the single arena.
 
 **Shape.** D2-style crawl: each level is generated fresh — a main path with 2–3 side
-rooms, open corridors, no doors. ~6 packs, 4–5 minutes a level. Rooms 9–12 units
-across, corridors 3.5 wide, a few debris pieces per room as cover. Rubble fades
-into the fog beyond the edge.
+rooms, open corridors, no doors. ~6 packs, 4–5 minutes a level. Main-path rooms
+5x5 cells (20 units — the first 12-unit rooms were too small for the ranged band,
+the dash and the vent), a 5x3 hall now and then; side rooms, entrance and exit
+stay 3x3. Corridors one 4-unit cell wide, cover scaled to room size. Rubble fades
+into the fog beyond the edge; nothing tall on the camera side.
 
 **Packs.** Groups placed in the level, asleep (dim, cores dark) until you come
 within ~8 units; the whole pack wakes with a flash and an alert sound. No
@@ -78,7 +80,8 @@ Enemies path around walls.
 **Quiet.** 2.5s with nothing awake = a fight cleared: half of missing HP back (with
 a visible fill), strain −2, a chime and a small banner.
 
-**Exit.** A tall plain beam visible over the walls; Grace's light around Still
+**Exit.** A cold beam, 9 units and fading as it climbs (a tall one painted a stripe
+across the rooms behind it); Grace's light around Still
 leans toward it. Walk in → fade → next depth, full HP, strain carries, no going
 back. The exit is always open, even while chased.
 
@@ -88,11 +91,28 @@ packs, more ranged, later archetypes by depth. Never more enemy HP or damage.
 **Loot.** 22% per kill; side-room packs always drop. Parts stay on the floor until
 you leave the level. The "next fight" button goes away.
 
-**Camera** frames only awake enemies. **Ending** shows depth reached. **No extra
-healing** for now; rare repair drops are the fallback if low HP drags.
+**Camera** frames only awake enemies. **Ending** shows depth reached.
 
-**Art.** KayKit Dungeon Remastered (CC0) — `wall_half` pieces for the waist-high
-rule. Only the pieces used are vendored, with the kit's licence.
+**Art.** KayKit Dungeon Remastered (CC0) for shapes — its `barrier` pieces are the
+waist-high walls (`wall_half` is half-width, not half-height). Flat KayKit colour
+read as clay, so every surface wears an ambientCG (CC0) photo texture projected
+triplanar, plus grime and contact darkening. Only the pieces used are vendored.
+
+### Added after the grilling (24 Sep)
+
+- **Still is the Lantern**, picked from a lineup (`lineup.html`): open cage torso
+  with a cold core, a lens on a stalk, bird legs, clamp and hook. Eye and core are
+  pale cold, not amber — Grace stays the only warm light. Walk speed 5.5.
+- **Enemies**: the chaser is a headless hulk that rears and slams; the ranged is
+  a tripod sentinel whose lens swells as it locks.
+- **Still starts incomplete**: one random plain part, three empty buttons, unfound
+  parts drawn bare. While a slot is empty, 60% of drops fill one.
+- **Elites** (D2 champions): a named leader, bigger, double HP, blue aura, one of
+  Quick / Plated / Many / Warden. Always drops, 60% blue, 25% gold.
+- **Crates and barrels** break to any hit, either side's; 10% hold a part, 30%
+  repair scrap (+20 HP). This replaces "no extra healing".
+- **Shrines**, most levels: Rest (−6 strain, wakes the nearest pack) or Plenty (a
+  good part for +4 strain, which can end the run).
 
 ---
 
@@ -151,7 +171,7 @@ button again. Second criterion, equally binding: is building it still fun.
 |---|---|---|
 | `windupMs` | 520 | the most important number in the project |
 | `AUTO_INTERVAL` | 0.62s | sets the tempo of everything |
-| Still speed / chaser speed | 7.4 / 4.3 | kiting should work but not trivially |
+| Still speed / chaser speed | 5.5 / 4.3 | kiting should work but not trivially (was 7.4) |
 | `hitstop` | 45ms / 90ms | first dial if hits feel mushy |
 | Cleaver cooldown | 2.6s | may be doing so much work the others don't matter |
 
