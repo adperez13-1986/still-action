@@ -8,7 +8,8 @@ re-derive either.
 A playable D2-style crawl on the phone. Live at
 **https://adperez13-1986.github.io/still-action/** (every push to `main`
 deploys via `.github/workflows/deploy.yml`; a service worker makes it work
-offline after one load). Repo is public: `adperez13-1986/still-action`.
+offline after one load; installable as a fullscreen landscape PWA via
+`public/manifest.webmanifest`). Repo is public: `adperez13-1986/still-action`.
 
 **In the game now**
 - Generated levels: a main path of 5x5 rooms and halls, 2–3 small side rooms,
