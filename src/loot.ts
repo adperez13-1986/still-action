@@ -1,8 +1,8 @@
 import * as THREE from 'three'
 import { DECAL_Y } from './world'
-import { PARTS, type AbilityDef, type Tier } from './abilities'
+import { PARTS, READY, type AbilityDef, type DropGate, type Tier } from './abilities'
 import type { SlotName } from './still'
-import type { Archetype } from './combat'
+import type { Archetype, Pack } from './combat'
 import type { Terrain } from './terrain'
 
 /**
@@ -11,12 +11,21 @@ import type { Terrain } from './terrain'
  * comes from whatever of that tier isn't already on Still. Tiers mean
  * "different", never "stronger".
  */
+export type DropSource = 'kill' | 'crate' | 'elite' | 'plenty' | 'boss-blue' | 'boss-gold'
+
 export const LOOT = {
-  /** Per kill. Low on purpose: a phone screen buried in beams can't show telegraphs. */
-  dropChance: 0.22,
-  tierOdds: { white: 0.55, blue: 0.38, gold: 0.07 } as Record<Tier, number>,
-  /** An elite always drops, and leans toward the interesting tiers. */
-  eliteOdds: { white: 0.15, blue: 0.6, gold: 0.25 } as Record<Tier, number>,
+  /**
+   * One pack pays out about this many parts, whatever its size: each kill rolls
+   * packPayout / size. Low on purpose: a phone screen buried in beams can't show telegraphs.
+   */
+  packPayout: 0.66,
+  /** Tier odds per source. Elites and Plenty lean toward the interesting tiers; only they can give gold. */
+  odds: {
+    kill: { white: 0.60, blue: 0.40, gold: 0 },
+    crate: { white: 0.60, blue: 0.40, gold: 0 },
+    elite: { white: 0.15, blue: 0.75, gold: 0.10 },
+    plenty: { white: 0.15, blue: 0.75, gold: 0.10 },
+  } as Record<'kill' | 'crate' | 'elite' | 'plenty', Record<Tier, number>>,
   pickupRadius: 1.15,
   /** A crate or barrel: sometimes a part, more often a scrap of repair. */
   crateParts: 0.1,
@@ -48,15 +57,39 @@ function pickWeighted<T extends string>(weights: Record<T, number>): T {
   return entries[entries.length - 1]![0]
 }
 
-/** Null when nothing is left to find at any tier. */
-export function rollPart(from: Archetype, equipped: readonly AbilityDef[], odds = LOOT.tierOdds): AbilityDef | null {
-  const on = new Set(equipped.map((p) => p.id))
-  const pool = PARTS.filter((p) => !on.has(p.id))
+/** Which parts each source may give. A 'rare' part only comes from something rare; a 'boss' part only from a boss. */
+const GATES: Record<DropSource, readonly DropGate[]> = {
+  kill: ['any'], crate: ['any'], elite: ['any', 'rare'], plenty: ['any', 'rare'],
+  'boss-blue': ['any', 'rare', 'boss'], 'boss-gold': ['any', 'rare', 'boss'],
+}
+
+/**
+ * The chance this kill drops a part: 1 when it's owed (an elite, or a side room's
+ * last kill with nothing dropped yet), 0 for a boss add, otherwise the pack's
+ * payout split across its members.
+ */
+export function dropChance(
+  pack: Pick<Pack, 'size' | 'side' | 'dropped'> & { members: readonly unknown[] }, wasElite: boolean, summoned: boolean,
+): number {
+  if (summoned) return 0
+  if (wasElite || (pack.side && pack.members.length === 0 && !pack.dropped)) return 1
+  return LOOT.packPayout / Math.max(1, pack.size)
+}
+
+/**
+ * Null when nothing is left to find at any tier. `taken` is everything on Still
+ * or on the floor; `excludeSlot` keeps a boss's second drop off the first one's slot.
+ */
+export function rollPart(from: Archetype, taken: readonly AbilityDef[], source: DropSource, excludeSlot?: SlotName): AbilityDef | null {
+  const on = new Set(taken.map((p) => p.id))
+  const gates = GATES[source]
+  const pool = PARTS.filter((p) => READY.has(p.id) && !on.has(p.id) && gates.includes(p.drops) && p.slot !== excludeSlot)
   if (pool.length === 0) return null
 
   // tier first, then fall back through the others if that tier has nothing left
-  const first = pickWeighted(odds)
-  for (const tier of [first, 'blue', 'white', 'gold'] as Tier[]) {
+  const first: Tier = source === 'boss-blue' ? 'blue' : source === 'boss-gold' ? 'gold' : pickWeighted(LOOT.odds[source])
+  const order: Tier[] = source === 'boss-gold' ? ['gold', 'blue', 'white'] : [first, 'blue', 'white', 'gold']
+  for (const tier of order) {
     const tierPool = pool.filter((p) => p.tier === tier)
     if (tierPool.length === 0) continue
     const slotWeights = {} as Record<SlotName, number>

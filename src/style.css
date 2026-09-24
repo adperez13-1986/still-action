@@ -76,6 +76,8 @@ html, body {
 .btn.swapped { animation: swapped .45s ease-out; }
 @keyframes swapped { 0% { transform: scale(1.25); box-shadow: 0 0 24px rgba(223, 230, 238, .7); } }
 .btn.pushable { border-color: var(--strain); color: #ffd0c4; box-shadow: 0 0 18px rgba(200, 69, 47, .5); }
+.btn.refused { animation: refused .3s ease-out; }
+@keyframes refused { 20%, 60% { translate: -4px 0; } 40%, 80% { translate: 4px 0; } }
 
 /* --- meters --- */
 .meter {

@@ -4,9 +4,9 @@ import { createWorld, grade } from './world'
 import { Still } from './still'
 import { createHud } from './hud'
 import { createGradePanel } from './grade'
-import { Combat, MELEE_PAD, ELITE_LINE, type Archetype, type Pack } from './combat'
-import { STARTING, PARTS, type AbilityDef } from './abilities'
-import { SLOT_NAMES } from './still'
+import { Combat, ELITE_LINE, type Archetype, type CastResult, type EliteMod, type Pack } from './combat'
+import { STARTING, PARTS, READY, byId, type AbilityDef, type AbilityShape } from './abilities'
+import { SLOT_NAMES, type SlotName } from './still'
 import type { Enemy } from './enemy'
 import type { Assembler } from './boss'
 import { RANGED } from './ranged'
@@ -14,13 +14,15 @@ import * as sfx from './audio'
 import { createCameraRig } from './camera'
 import { updateMusic } from './music'
 import { updateAmbience } from './ambience'
-import { Loot, LOOT, rollPart, type GroundPart } from './loot'
+import { Loot, LOOT, dropChance, rollPart, type GroundPart } from './loot'
 import { createPauseScreen } from './pause'
 import { createOverlay, type EndingKind } from './ending'
 import { loadKit } from './kit'
-import { generateLevel, type Level, type Shrine } from './dungeon'
+import { generateLevel, makeTerrain, key, type Box, type Breakable, type Circle, type Level, type Shrine } from './dungeon'
 import type { Terrain } from './terrain'
 import { Vfx, syncTells, COLD, COLD_DEEP, EMBER } from './vfx'
+import { PartFx } from './partfx'
+import type { PartEvent } from './parts'
 
 const canvas = document.querySelector<HTMLCanvasElement>('#view')!
 const hudRoot = document.querySelector<HTMLElement>('#hud')!
@@ -42,6 +44,9 @@ const rig = createCameraRig(world)
 const loot = new Loot(world.scene)
 const pause = createPauseScreen(hudRoot)
 const vfx = new Vfx(world.scene)
+const partFx = new PartFx(world.scene)
+/** Dev only: every onPart event, for headless checks to read back. */
+const partLog: PartEvent[] = []
 
 /** Effect helpers: a point at a height, and the colours things break into. */
 const at3 = (p: { x: number; z: number }, y: number) => new THREE.Vector3(p.x, y, p.z)
@@ -108,7 +113,8 @@ const combat = new Combat(world.scene, OPEN, {
     rig.punch(-0.03)
     navigator.vibrate?.(30)
   },
-  onKill: (at, kind, pack, wasElite) => {
+  onKill: (at, kind, pack, wasElite, summoned) => {
+    run.killed = true
     if (kind === 'boss') {
       bossDown(at)
       return
@@ -119,21 +125,30 @@ const combat = new Combat(world.scene, OPEN, {
     vfx.sparks(at3(at, 0.9), EMBER, 16, 6)
     vfx.flash(at3(at, 0.9), EMBER, 0.9)
     vfx.dust(at, 8, 0.8)
-    maybeDrop(at, kind, pack, wasElite)
+    maybeDrop(at, kind, pack, wasElite, summoned)
     hitstop = Math.max(hitstop, 0.08)
     shake = Math.max(shake, 0.28)
     rig.punch(0.035)
   },
-  onDash: (x, z, ms) => {
-    vfx.dust(still.pos, 10, 0.6, undefined, 4)
-    vfx.sparks(at3(still.pos, 0.4), COLD, 8, 4)
-    still.startDash(x, z, ms)
-    shake = Math.max(shake, 0.18)
-    rig.punch(0.03)
+  onPart: (ev) => {
+    if (import.meta.env.DEV) {
+      partLog.push(ev)
+      if (partLog.length > 500) partLog.shift()
+    }
+    partFx.event(ev)
+    if (ev.kind === 'move') {
+      // off the mark: grit, cold sparks, and the body carried to where the part put him
+      const to = ev.move.path[ev.move.path.length - 1]!
+      vfx.dust(still.pos, 10, 0.6, undefined, 4)
+      vfx.sparks(at3(still.pos, 0.4), COLD, 8, 4)
+      still.startDash(to.x, to.z, ev.move.ms)
+      shake = Math.max(shake, 0.18)
+      rig.punch(0.03)
+    }
   },
   onShot: () => {
     sfx.shot(0)
-    still.attack('shot')
+    still.attack({ beat: 'shot', pushed: false })
     vfx.flash(still.lensPoint(new THREE.Vector3()), COLD_DEEP, 0.25)
   },
   onSmash: (b) => {
@@ -147,7 +162,7 @@ const combat = new Combat(world.scene, OPEN, {
     const roll = Math.random()
     if (roll < LOOT.crateParts) {
       const taken = [...hud.loadout, ...loot.ground.map((g) => g.def)]
-      const def = fillEmpty(taken) ?? rollPart('chaser', taken)
+      const def = fillEmpty(taken) ?? rollPart('chaser', taken, 'crate')
       if (def) {
         loot.drop(def, at, still.pos)
         sfx.drop(def.tier, panOf(at))
@@ -224,9 +239,6 @@ function strikeFx(e: Enemy) {
   }
 }
 
-/** Dev only: lets a headless browser read the fight without guessing from pixels. */
-if (import.meta.env.DEV) Object.assign(window, { __combat: combat, __world: world, __loot: loot, __hud: hud, __still: still, __level: () => level })
-
 // --- the run: a descent through generated levels, and the two ways it ends ---
 
 const STRAIN_MAX = 20
@@ -242,7 +254,7 @@ const EXIT_RADIUS = 1.4
 
 type Phase = 'crawl' | 'descending' | 'broken' | 'stopping' | 'over'
 
-const run = { phase: 'crawl' as Phase, depth: 1, strain: 0, t: 0, swapped: false, fought: false, quietT: 0 }
+const run = { phase: 'crawl' as Phase, depth: 1, strain: 0, t: 0, swapped: false, fought: false, quietT: 0, killed: false }
 
 /** Nothing awake for this long counts as a fight cleared. */
 const QUIET_SECONDS = 2.5
@@ -259,12 +271,11 @@ document.body.appendChild(fade)
 let offered: GroundPart | null = null
 let offerHeld = false
 
-function maybeDrop(at: THREE.Vector3, kind: Archetype, pack: Pack, wasElite: boolean) {
-  // a side room's pack always pays out: the last kill drops if nothing else did
-  const owed = (pack.side && pack.members.length === 0 && !pack.dropped) || wasElite
-  if (!owed && Math.random() > LOOT.dropChance) return
+function maybeDrop(at: THREE.Vector3, kind: Archetype, pack: Pack, wasElite: boolean, summoned: boolean) {
+  // a side room's pack always pays out (the last kill drops if nothing else did), elites always do
+  if (Math.random() >= dropChance(pack, wasElite, summoned)) return
   const taken = [...hud.loadout, ...loot.ground.map((g) => g.def)]
-  const def = wasElite ? rollPart(kind, taken, LOOT.eliteOdds) : fillEmpty(taken) ?? rollPart(kind, taken)
+  const def = wasElite ? rollPart(kind, taken, 'elite') : fillEmpty(taken) ?? rollPart(kind, taken, 'kill')
   if (!def) return
   pack.dropped = true
   loot.drop(def, at, still.pos)
@@ -280,7 +291,7 @@ function fillEmpty(taken: readonly AbilityDef[]): AbilityDef | null {
   const empty = hud.slots.filter((s) => !s.def).map((s) => s.slot)
   if (empty.length === 0 || Math.random() > FILL_EMPTY_CHANCE) return null
   const ids = new Set(taken.map((p) => p.id))
-  const options = PARTS.filter((p) => p.tier === 'white' && empty.includes(p.slot) && !ids.has(p.id))
+  const options = PARTS.filter((p) => p.tier === 'white' && READY.has(p.id) && empty.includes(p.slot) && !ids.has(p.id))
   return options[Math.floor(Math.random() * options.length)] ?? null
 }
 
@@ -321,15 +332,14 @@ hud.onPrompt(() => {
     combat.wakeNearest(at)
   } else {
     const taken = [...hud.loadout, ...loot.ground.map((g) => g.def)]
-    const def = rollPart('chaser', taken, LOOT.eliteOdds)
+    const def = rollPart('chaser', taken, 'plenty')
     if (def) {
       loot.drop(def, at, still.pos)
       sfx.drop(def.tier, 0)
     }
-    run.strain = Math.min(STRAIN_MAX, run.strain + 4)
     overlay.banner('bargained \u00b7 strain +4')
     // a bargain can cost everything
-    if (run.strain >= STRAIN_MAX) beginStopping()
+    addStrain(4)
   }
 })
 
@@ -360,6 +370,7 @@ function quiet() {
   vfx.embers(at3(still.pos, 0.4), 18, 0.9, COLD)
   run.fought = false
   run.quietT = 0
+  run.killed = false
   const before = combat.hp
   combat.hp += (100 - combat.hp) / 2
   const eased = run.strain > 0
@@ -462,11 +473,11 @@ function bossDown(at: THREE.Vector3) {
   hitstop = 0.25
   rig.punch(0.12)
   navigator.vibrate?.([60, 40, 120])
+  // one blue and one gold, never for the same slot
   const taken = [...hud.loadout, ...loot.ground.map((g) => g.def)]
-  for (let i = 0; i < 2; i++) {
-    const def = rollPart('boss', [...taken, ...loot.ground.map((g) => g.def)], LOOT.eliteOdds)
-    if (def) loot.drop(def, at, still.pos)
-  }
+  const blue = rollPart('boss', taken, 'boss-blue')
+  const gold = rollPart('boss', blue ? [...taken, blue] : taken, 'boss-gold', blue?.slot)
+  for (const def of [blue, gold]) if (def) loot.drop(def, at, still.pos)
   loot.dropScrap(new THREE.Vector3(at.x + 1.2, 0, at.z))
   loot.dropScrap(new THREE.Vector3(at.x - 1.2, 0, at.z))
   overlay.banner(`area ${run.depth / BOSS_EVERY} cleared`)
@@ -480,6 +491,7 @@ function enterLevel(depth: number) {
   level?.dispose()
   loot.clear()
   combat.reset()
+  partFx.clear()
   level = generateLevel(depth, undefined, { boss: depth % BOSS_EVERY === 0 })
   world.scene.add(level.group)
   combat.terrain = level.terrain
@@ -489,6 +501,7 @@ function enterLevel(depth: number) {
   if (level.boss) combat.addBoss(level.boss.x, level.boss.z, level.boss.face)
   run.fought = false
   run.quietT = 0
+  run.killed = false
   lastStep.clear()
   still.pos.copy(level.entrance)
   prev.copy(still.pos)
@@ -566,48 +579,66 @@ function beginStopping() {
 }
 
 hud.onFire((def, pushed) => {
-  if (run.phase !== 'crawl') return
-  cast(def, pushed)
-  if (pushed) {
-    run.strain = Math.min(STRAIN_MAX, run.strain + STRAIN_PER_PUSH)
-    // the push that crosses the line still lands at full power; then he stops
-    if (run.strain >= STRAIN_MAX) beginStopping()
-  }
+  if (run.phase !== 'crawl') return { cooldown: 'refused' }
+  const r = cast(def, pushed)
+  if (r.cooldown === 'refused') return r
+  // the part has already landed; now it's paid for. The push that crosses the line
+  // still lands at full power, then he stops.
+  const cost = r.strain + (pushed ? STRAIN_PER_PUSH : 0)
+  if (cost > 0) addStrain(cost)
+  return r
 })
 
-function cast(def: AbilityDef, pushed: boolean) {
-  // Snap the body to the target, or the swing plays sideways out of his shoulder.
-  // Nothing in reach: still face the nearest threat, never the way you're running.
-  if (def.shape === 'arc') {
-    const snap = combat.nearestTarget(still.pos, def.range + MELEE_PAD) ?? combat.nearestTarget(still.pos, 9.5)
-    if (snap) still.facing = Math.atan2(snap.x - still.pos.x, snap.z - still.pos.z)
-  }
-  combat.useAbility(def, still.pos, still.facing, hud.moveX, hud.moveZ)
-  sfx.ability(def.shape, pushed)
-  still.attack(def.shape, pushed)
-  castFx(def, pushed)
-  still.group.scale.setScalar(pushed ? 1.16 : 1.08)
-  shake = Math.max(shake, pushed ? 0.34 : 0.16)
-  // no freeze on a dash: a pause right before the move is what made it look like a teleport
-  if (def.shape !== 'dash') hitstop = Math.max(hitstop, pushed ? 0.06 : 0.035)
-  rig.punch(pushed ? 0.06 : 0.02)
+/**
+ * The only way strain goes up: pushes, parts that cost strain, bargains. It clamps
+ * at the max and starts the stop the moment strain reaches it, so every path can end the run.
+ */
+function addStrain(n: number) {
+  if (run.phase !== 'crawl' && run.phase !== 'stopping') return
+  run.strain = Math.min(STRAIN_MAX, run.strain + n)
+  if (run.strain >= STRAIN_MAX && run.phase === 'crawl') beginStopping()
 }
 
-/** Still's attacks are cold light. A pushed one also throws embers off his own joints: it costs him. */
-function castFx(def: AbilityDef, pushed: boolean) {
+/** Parts that move Still. No freeze before them: a pause right before the move is what made the dash look like a teleport. */
+const MOVES = new Set<AbilityShape>(['dash', 'hop', 'anchor', 'rewind'])
+
+function cast(def: AbilityDef, pushed: boolean): CastResult {
+  const r = combat.useAbility(def, {
+    origin: still.pos, facing: still.facing, moveX: hud.moveX, moveZ: hud.moveZ, pushed, strain: run.strain,
+  })
+  if (r.cooldown === 'refused') return r
+  // Snap the body to the target, or the swing plays sideways out of his shoulder.
+  if (r.aim !== null) still.facing = r.aim
+  sfx.ability(r.beat, pushed)
+  still.attack({ beat: r.beat, pushed, holdS: r.holdS, power: r.power, lean: r.lean })
+  castFx(def, r, pushed)
+  still.group.scale.setScalar(pushed ? 1.16 : 1.08)
+  shake = Math.max(shake, pushed ? 0.34 : 0.16)
+  if (!MOVES.has(def.shape)) hitstop = Math.max(hitstop, pushed ? 0.06 : 0.035)
+  rig.punch(pushed ? 0.06 : 0.02)
+  return r
+}
+
+/**
+ * Still's attacks are cold light, one recipe per beat. A pushed one also throws
+ * embers off his own joints: it costs him.
+ */
+function castFx(def: AbilityDef, r: CastResult, pushed: boolean) {
   const lens = still.lensPoint(new THREE.Vector3())
   const fwd = new THREE.Vector3(Math.sin(still.facing), 0, Math.cos(still.facing))
-  switch (def.shape) {
-    case 'bolt':
+  switch (r.beat) {
+    case 'lens':
+    case 'cracked':
       vfx.flash(lens, COLD, 0.8)
       vfx.sparks(lens, COLD, 10, 7, fwd, 0.5)
       break
-    case 'nova':
+    case 'vent':
+    case 'backdraft':
       vfx.flash(at3(still.pos, 1.2), COLD_DEEP, 0.9)
       vfx.sparks(at3(still.pos, 1.0), COLD, 26, 9)
       vfx.dust(still.pos, 14, def.radius * 0.6, new THREE.Color(0x55606c), 7)
       break
-    case 'arc': {
+    case 'cleaver': {
       // sparks along the swing's arc
       for (let i = 0; i < 7; i++) {
         const a = still.facing + (i / 6 - 0.5) * 2
@@ -616,7 +647,9 @@ function castFx(def: AbilityDef, pushed: boolean) {
       }
       break
     }
-    case 'dash':
+    // the dash's fx ride on its move event
+    case 'kick':
+    case 'skid':
       break
   }
   if (pushed) vfx.sparks(at3(still.pos, 1.2), EMBER, 14, 4)
@@ -707,7 +740,11 @@ function simulate(realDt: number) {
     run.quietT = 0
   } else if (run.fought && run.phase === 'crawl') {
     run.quietT += dt
-    if (run.quietT >= QUIET_SECONDS) quiet()
+    // a fight is cleared by clearing it: outrunning a pack until it walks home is not a quiet
+    if (run.quietT >= QUIET_SECONDS) {
+      if (run.killed) quiet()
+      else run.fought = false
+    }
   }
 
   // the boss: its bar, its overload, and the clang of a charge into a wall
@@ -845,12 +882,101 @@ function frame(nowMs: number) {
   hud.update(clock)
   if (!paused) {
     vfx.update(elapsed, world.camera, world.renderer.domElement.height)
+    partFx.update(elapsed)
     ambientFx(elapsed)
     footsteps()
   }
   syncTells()
   world.render()
   requestAnimationFrame(frame)
+}
+
+/**
+ * Dev only: lets a headless browser drive and read the fight without guessing
+ * from pixels. Checks run synchronously inside one evaluate, so the frame loop
+ * can't step the world between setup and assert.
+ */
+if (import.meta.env.DEV) {
+  Object.assign(window, {
+    __combat: combat, __still: still, __hud: hud, __loot: loot, __level: () => level, __world: world,
+    __run: run, __parts: PARTS, __partLog: partLog,
+    /** Advance exactly `s` seconds of game time, and the HUD clock with it. No rAF, no hitstop. */
+    __step: (s: number) => {
+      for (let i = 0; i < Math.round(s * 60); i++) {
+        simulate(STEP)
+        clock += STEP * 1000
+        hud.update(clock)
+      }
+    },
+    /** The same path a tap (false) or push (true) takes after the gesture: HUD cooldown, cast, strain. */
+    __fire: (slot: SlotName, pushed = false) => hud.fireSlot(slot, pushed),
+    /** Put a part on its button without the ground. */
+    __equip: (id: string) => {
+      const def = byId(id)
+      hud.equip(def)
+      still.setEquipped(def.slot, true)
+    },
+    __stick: (x: number, z: number) => hud.setStick(x, z),
+    /** One enemy as its own pack of 1. awake = true wakes it at once. */
+    __spawn: (kind: Archetype, x: number, z: number, awake = true, elite?: EliteMod): Enemy => {
+      if (kind === 'boss') {
+        const b = combat.addBoss(x, z, new THREE.Vector3(x, 0, z - 1))
+        if (awake) combat.wake(combat.packs[combat.packs.length - 1]!)
+        return b
+      }
+      const pack = combat.addPack([{ kind, x, z }], false, elite ? { mod: elite, name: 'Test' } : undefined)
+      if (awake) combat.wake(pack)
+      return pack.members[0]!
+    },
+    /**
+     * A clean test floor: cells i, j in [-3, 3] (x, z in [-14, 14]) plus these solids.
+     * Nothing else in the world; Still at (0, 0) facing +z, whole, unstrained, every button ready.
+     */
+    __arena: (o: { boxes?: Box[]; circles?: Circle[]; auto?: boolean } = {}) => {
+      const floor = new Set<string>()
+      for (let i = -3; i <= 3; i++) for (let j = -3; j <= 3; j++) floor.add(key(i, j))
+      const terrain = makeTerrain(floor, o.boxes ?? [], o.circles ?? [])
+      combat.reset()
+      loot.clear()
+      partFx.clear()
+      combat.terrain = terrain
+      loot.terrain = terrain
+      combat.breakables = []
+      combat.autoAttack = o.auto ?? false
+      // the real level stays loaded for its smash() and its look, but can't be walked out of
+      if (level) {
+        level.exitOpen = false
+        level.group.visible = false
+      }
+      pause.hide()
+      paused = false
+      overlay.hide()
+      still.reassemble()
+      still.pos.set(0, 0, 0)
+      still.facing = 0
+      prev.copy(still.pos)
+      combat.hp = 100
+      Object.assign(run, { phase: 'crawl', strain: 0, fought: false, quietT: 0, killed: false })
+      hud.resetLoadout(hud.loadout)
+      hud.setStick(0, 0)
+      hud.bossBar(null)
+      hud.enabled = true
+      hitstop = 0
+      partLog.length = 0
+    },
+    /** A breakable with a stand-in mesh. It isn't solid: only hits find it. */
+    __crate: (x: number, z: number): Breakable => {
+      const mesh = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.8, 0.8), new THREE.MeshStandardMaterial({ color: WOOD }))
+      mesh.position.set(x, 0.4, z)
+      world.scene.add(mesh)
+      const circle = { x, z, r: 0.45 }
+      const b: Breakable = { mesh, x, z, r: 0.45, circle, broken: false }
+      combat.breakables.push(b)
+      return b
+    },
+    __enter: enterLevel,
+    __lootRules: { rollPart, dropChance },
+  })
 }
 
 void loadKit().then(() => {

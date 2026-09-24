@@ -1,4 +1,5 @@
 import type { AbilityDef } from './abilities'
+import type { CastResult } from './combat'
 import { SLOT_NAMES, type SlotName } from './still'
 
 /**
@@ -13,20 +14,10 @@ const ARC_DEG = [0, 30, 60, 90]
 const PAD = 34
 
 /**
- * Line icons, one per ability shape, drawn in the tier colour. An empty slot shows
- * the outline of the body part Still is missing instead.
+ * Line icons, one per part (its def carries the markup), drawn in the tier colour.
+ * An empty slot shows the outline of the body part Still is missing instead.
  */
 const svg = (d: string) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`
-const SHAPE_ICON: Record<AbilityDef['shape'], string> = {
-  // a lens, and the beam leaving it
-  bolt: svg('<circle cx="7" cy="12" r="3.5"/><path d="M11.5 12H21"/><path d="M17 8.5 21 12l-4 3.5"/>'),
-  // a burst of rays around a small core
-  nova: svg('<circle cx="12" cy="12" r="2.5"/><path d="M12 2.5v4M12 17.5v4M2.5 12h4M17.5 12h4M5.3 5.3l2.8 2.8M15.9 15.9l2.8 2.8M18.7 5.3l-2.8 2.8M8.1 15.9l-2.8 2.8"/>'),
-  // a crescent slash
-  arc: svg('<path d="M4 19C6 10 12 5 20 4"/><path d="M8 20.5c2.5-6 6.5-9.5 12-10.5" opacity=".55"/>'),
-  // double chevrons
-  dash: svg('<path d="M4 6l6 6-6 6"/><path d="M12 6l6 6-6 6"/>'),
-}
 const SLOT_ICON: Record<SlotName, string> = {
   head: svg('<circle cx="12" cy="9" r="5"/><circle cx="12" cy="9" r="2"/><path d="M12 14v6"/>'),
   torso: svg('<path d="M7 5h10M7 19h10"/><path d="M8 5l-1 14M12 5v14M16 5l1 14"/>'),
@@ -35,6 +26,8 @@ const SLOT_ICON: Record<SlotName, string> = {
 }
 const PUSH_HOLD_MS = 180
 
+/** What the run tells the button after a press: start the cooldown, stay live, or nothing happened. */
+export type FireResult = Pick<CastResult, 'cooldown'>
 
 interface ButtonState {
   el: HTMLElement
@@ -59,7 +52,8 @@ export interface Hud {
   enabled: boolean
   /** `now` is game time in ms, not wall time: it stops while paused, and so do cooldowns. */
   update: (now: number) => void
-  onFire: (cb: (def: AbilityDef, pushed: boolean) => void) => void
+  /** One listener: the run casts the part and answers how the button should react. */
+  onFire: (cb: (def: AbilityDef, pushed: boolean) => FireResult) => void
   /** The parts on Still right now; empty slots are left out. */
   readonly loadout: readonly AbilityDef[]
   /** All four slots in button order, empty ones as null. */
@@ -84,6 +78,10 @@ export interface Hud {
   onPause: (cb: () => void) => void
   /** A slow fill on the HP meter, so a quiet's refill is seen, not just counted. */
   healing: () => void
+  /** Dev only: the path a tap (false) or a push (true) takes once the gesture is recognised. */
+  fireSlot: (slot: SlotName, pushed: boolean) => void
+  /** Dev only: hold the stick at a world direction (0, 0 lets go). */
+  setStick: (x: number, z: number) => void
 }
 
 const TIER_CSS = { white: 'var(--tier-white)', blue: 'var(--tier-blue)', gold: 'var(--tier-gold)' }
@@ -157,7 +155,7 @@ export function createHud(root: HTMLElement): Hud {
   const KEYS: Record<SlotName, string> = { head: 'H', torso: 'T', arms: 'A', legs: 'L' }
   const paint = (b: ButtonState) => {
     b.el.className = b.def ? `btn tier-${b.def.tier}` : 'btn empty'
-    b.el.querySelector('.lbl')!.innerHTML = b.def ? SHAPE_ICON[b.def.shape] : SLOT_ICON[b.slot]
+    b.el.querySelector('.lbl')!.innerHTML = b.def ? svg(b.def.icon) : SLOT_ICON[b.slot]
   }
   const buttons: ButtonState[] = SLOT_NAMES.map((slot, i) => {
     const el = document.createElement('div')
@@ -171,7 +169,7 @@ export function createHud(root: HTMLElement): Hud {
     return b
   })
 
-  const listeners: ((def: AbilityDef, pushed: boolean) => void)[] = []
+  const listeners: ((def: AbilityDef, pushed: boolean) => FireResult)[] = []
   const state = { moveX: 0, moveZ: 0, strain: 0, integrity: 1, enabled: true, clock: 0 }
 
   // --- stick ---
@@ -250,13 +248,16 @@ export function createHud(root: HTMLElement): Hud {
 
   function fire(b: ButtonState, pushed: boolean) {
     if (!state.enabled || !b.def) return
-    b.readyAt = state.clock + b.def.cooldownMs
-    if (pushed) {
-      navigator.vibrate?.([14, 26, 14])
-    } else {
-      navigator.vibrate?.(12)
+    const r = listeners[0]?.(b.def, pushed) ?? { cooldown: 'start' }
+    if (r.cooldown === 'refused') {
+      // nothing happened, and the button says so
+      b.el.classList.add('refused')
+      setTimeout(() => b.el.classList.remove('refused'), 300)
+      return
     }
-    for (const cb of listeners) cb(b.def, pushed)
+    // a live part (a planted anchor) keeps its button ready for the second press
+    b.readyAt = r.cooldown === 'hold' ? state.clock : state.clock + b.def.cooldownMs
+    navigator.vibrate?.(pushed ? [14, 26, 14] : 12)
   }
 
   return {
@@ -367,6 +368,18 @@ export function createHud(root: HTMLElement): Hud {
       const meter = hpFill.parentElement!
       meter.classList.add('healing')
       setTimeout(() => meter.classList.remove('healing'), 1100)
+    },
+
+    fireSlot(slot, pushed) {
+      const b = buttons.find((x) => x.slot === slot)!
+      const ready = state.clock >= b.readyAt
+      // as the fingers would: a tap on a cooling button does nothing, and a hold on a ready one fires as a tap
+      if (!ready && !pushed) return
+      fire(b, pushed && !ready)
+    },
+    setStick(x, z) {
+      state.moveX = x
+      state.moveZ = z
     },
   }
 }

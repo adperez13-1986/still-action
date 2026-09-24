@@ -6,20 +6,52 @@ import { Ranged } from './ranged'
 import { Assembler, BOSS } from './boss'
 import type { Terrain } from './terrain'
 import type { Breakable } from './dungeon'
-import type { AbilityDef } from './abilities'
+import type { AbilityDef, BeatKey } from './abilities'
+import { PART, type PartEvent, type StillMove } from './parts'
 
 const AUTO_RANGE = 7.6
 const AUTO_INTERVAL = 0.62
 const AUTO_DAMAGE = 5
-const BOLT_SPEED = 26
 const PLAYER_MAX_HP = 100
 const PLAYER_RADIUS = 0.42
 const SHOT_SPEED = 15
 const SHOT_RADIUS = 0.3
-/** Long enough that the dash reads as travel, not a teleport. */
-export const DASH_MS = 280
 /** A swing connects with anything whose body reaches the blade, not just its centre. */
 export const MELEE_PAD = 0.6
+
+/** What a cast knows about the moment it was pressed. */
+export interface CastContext {
+  origin: THREE.Vector3      // Still's live position; clone anything you store
+  facing: number
+  moveX: number; moveZ: number
+  pushed: boolean
+  /** Run strain at the moment of the press (Frayed Cleaver reads it). */
+  strain: number
+}
+
+/** What a cast did, for the HUD, the strain meter and Still's body. */
+export interface CastResult {
+  /**
+   * 'start'   the HUD starts the full cooldown now (almost everything)
+   * 'hold'    the part is live and waits for a second press; the button stays tappable (Plumb plant)
+   * 'refused' nothing happened: no cooldown, no strain, no push cost, no beat (Plumb snap past 10 u)
+   */
+  cooldown: 'start' | 'hold' | 'refused'
+  /** The part's own strain for this cast (def.strain). Main adds +2 on top if pushed. */
+  strain: number
+  /** Face this way for the beat (arcs, grabs), or null to leave facing alone. */
+  aim: number | null
+  beat: BeatKey
+  /** 0..1 where a beat scales (Patient Lens charge); 0 otherwise. */
+  power: number
+  /** Seconds to hold the pose at k = 1 (stances: Ward, Mirror, Brace, Anvil). */
+  holdS: number
+  /** −1 / 0 / +1: which side the head cants (Ricochet bank). */
+  lean: number
+}
+
+/** Who hurt Still: Anvil catches melee only, and the sound can tell them apart. */
+export type HurtSource = 'melee' | 'shot' | 'wave'
 
 interface Bolt {
   mesh: THREE.Mesh
@@ -76,6 +108,8 @@ export interface Pack {
   /** A side room's pack always pays out. */
   side: boolean
   dropped: boolean
+  /** Members at birth. A pack pays out about the same whatever its size, so each kill rolls 1/size of it. */
+  size: number
   homes: Map<Enemy, THREE.Vector3>
   /** Where each member looks while it sleeps. */
   gaze: Map<Enemy, THREE.Vector3>
@@ -112,18 +146,20 @@ interface Fx {
 
 export interface CombatEvents {
   onHit: (at: THREE.Vector3) => void
-  onPlayerHurt: (amount: number) => void
-  onKill: (at: THREE.Vector3, kind: Archetype, pack: Pack, wasElite: boolean) => void
+  onPlayerHurt: (amount: number, source: HurtSource) => void
+  /** `summoned`: a boss add, scrap that never drops anything. */
+  onKill: (at: THREE.Vector3, kind: Archetype, pack: Pack, wasElite: boolean, summoned: boolean) => void
   onWake: (at: THREE.Vector3) => void
   onSmash: (b: Breakable) => void
   /** A boss volley leaving the cannon. */
   onVolley: (at: THREE.Vector3) => void
-  onDash: (x: number, z: number, ms: number) => void
   onShot: () => void
   onWindup: (e: Enemy, ms: number) => void
   onStrike: (e: Enemy) => void
   onGone: (e: Enemy) => void
   onShotBlocked: (at: THREE.Vector3) => void
+  /** A part did something this instant. Lasting things are polled instead (parts.ts). */
+  onPart: (ev: PartEvent) => void
 }
 
 export class Combat {
@@ -149,6 +185,10 @@ export class Combat {
   private fx: Fx[] = []
   private autoTimer = 0
   private hurtCooldown = 0
+  /** Boss adds: scrap, so they never roll drops. */
+  private readonly summoned = new WeakSet<Enemy>()
+  /** Dev checks switch it off to test a part in isolation. */
+  autoAttack = true
 
   // Still's bolts are cold light; enemy shots are embers. Both leave trails.
   private readonly boltGeo = new THREE.BoxGeometry(0.1, 0.1, 0.8)
@@ -176,6 +216,12 @@ export class Combat {
     // --- enemies ---
     for (let i = this.enemies.length - 1; i >= 0; i--) {
       const e = this.enemies[i]!
+      // killed between ticks (a cast, a bolt): buried before it can act, so a hulk
+      // killed mid-windup never lands its slam
+      if (e.dead) {
+        this.bury(i)
+        continue
+      }
       const pack = this.packOf.get(e)
       if (pack && pack.state !== 'awake') {
         if (pack.state === 'returning') this.walkHome(e, pack, dt)
@@ -188,7 +234,7 @@ export class Combat {
         if (e.phase === 'windup') this.events.onWindup(e, e.windupMs)
         if (e.phase === 'strike') this.events.onStrike(e)
       }
-      if (action?.kind === 'melee') this.hurtPlayer(action.damage)
+      if (action?.kind === 'melee') this.hurtPlayer(action.damage, 'melee')
       if (action?.kind === 'shot') this.fireShot(e.pos, action.dir, action.damage)
       if (action?.kind === 'shots') {
         for (const d of action.dirs) this.fireShot(action.from, d, action.damage)
@@ -197,29 +243,12 @@ export class Combat {
       if (action?.kind === 'wave') this.startWave(action.center, action.gaps, action.damage)
       if (action?.kind === 'summon' && pack) this.summon(pack, action.points)
       if (action?.kind === 'pull') this.pull = { center: action.center, strength: action.strength, t: action.seconds }
-      if (e.dead) {
-        e.dispose(this.scene)
-        this.enemies.splice(i, 1)
-        if (pack) {
-          pack.members.splice(pack.members.indexOf(e), 1)
-          this.packOf.delete(e)
-          const wasElite = pack.elite?.leader === e
-          if (wasElite && pack.elite!.mod === 'splitting') this.split(pack, e)
-          if (wasElite) {
-            this.scene.remove(pack.elite!.aura)
-            pack.elite!.aura.geometry.dispose()
-            ;(pack.elite!.aura.material as THREE.Material).dispose()
-          }
-          this.events.onKill(e.pos, e.kind, pack, wasElite)
-          if (pack.members.length === 0) this.packs.splice(this.packs.indexOf(pack), 1)
-        }
-        this.events.onGone(e)
-      }
+      if (e.dead) this.bury(i)
     }
 
     // --- auto attack: nearest enemy in range, no aiming required ---
     this.autoTimer -= dt
-    if (this.autoTimer <= 0) {
+    if (this.autoAttack && this.autoTimer <= 0) {
       // the auto attack doesn't waste itself on a wall: nearest enemy you can actually hit
       const target = this.nearest(player, AUTO_RANGE, true)
       if (target) {
@@ -232,7 +261,7 @@ export class Combat {
     // --- bolts ---
     for (let i = this.bolts.length - 1; i >= 0; i--) {
       const b = this.bolts[i]!
-      b.mesh.position.addScaledVector(b.dir, BOLT_SPEED * dt)
+      b.mesh.position.addScaledVector(b.dir, PART.boltSpeed * dt)
       b.life -= dt
       this.vfx?.trail(b.mesh.position, COLD, b.radius > 0.5 ? 0.34 : 0.18)
 
@@ -254,6 +283,8 @@ export class Combat {
             this.events.onHit(e.pos)
             if (b.pierced) {
               b.pierced.add(e)
+              // n counts up along the line, so each pass can sound a step higher
+              this.events.onPart({ kind: 'pierce', at: e.pos.clone(), n: b.pierced.size })
               continue
             }
             spent = true
@@ -309,7 +340,7 @@ export class Combat {
       const shadowed = !this.terrain.lineClear(w.center.x, w.center.z, player.x, player.z, 0.1)
       if (!w.hit && Math.abs(pd - w.r) < 0.55 && !shadowed && !inGap(Math.atan2(player.x - w.center.x, player.z - w.center.z), pd)) {
         w.hit = true
-        this.hurtPlayer(w.damage)
+        this.hurtPlayer(w.damage, 'wave')
       }
       if (w.r > WAVE_MAX) {
         for (const m of w.segs) this.scene.remove(m)
@@ -337,7 +368,7 @@ export class Combat {
 
       let spent = s.life <= 0
       if (!spent && Math.hypot(p.x - player.x, p.z - player.z) < SHOT_RADIUS + PLAYER_RADIUS) {
-        this.hurtPlayer(s.damage)
+        this.hurtPlayer(s.damage, 'shot')
         spent = true
       }
       if (!spent && this.terrain.blocked(p.x, p.z, 0.15)) {
@@ -406,11 +437,34 @@ export class Combat {
     this.fx.length = 0
   }
 
-  private hurtPlayer(damage: number) {
+  /** Every way Still loses HP comes through here, so windows (Anvil, Brace) have one place to step in. */
+  private hurtPlayer(damage: number, source: HurtSource) {
     if (this.hurtCooldown > 0) return
     this.hp = Math.max(0, this.hp - damage)
     this.hurtCooldown = 0.35
-    this.events.onPlayerHurt(damage)
+    this.events.onPlayerHurt(damage, source)
+  }
+
+  /** The dead branch of the enemy loop: out of the scene, out of its pack, paid out. */
+  private bury(i: number) {
+    const e = this.enemies[i]!
+    const pack = this.packOf.get(e)
+    e.dispose(this.scene)
+    this.enemies.splice(i, 1)
+    if (pack) {
+      pack.members.splice(pack.members.indexOf(e), 1)
+      this.packOf.delete(e)
+      const wasElite = pack.elite?.leader === e
+      if (wasElite && pack.elite!.mod === 'splitting') this.split(pack, e)
+      if (wasElite) {
+        this.scene.remove(pack.elite!.aura)
+        pack.elite!.aura.geometry.dispose()
+        ;(pack.elite!.aura.material as THREE.Material).dispose()
+      }
+      this.events.onKill(e.pos, e.kind, pack, wasElite, this.summoned.has(e))
+      if (pack.members.length === 0) this.packs.splice(this.packs.indexOf(pack), 1)
+    }
+    this.events.onGone(e)
   }
 
   private fireShot(from: THREE.Vector3, dir: THREE.Vector3, damage: number) {
@@ -476,145 +530,194 @@ export class Combat {
     this.bolts.push({ mesh, dir, life: 0.7, damage: AUTO_DAMAGE, radius: 0.3 })
   }
 
-  /** One part, one action. `shape` decides how it lands. */
-  useAbility(def: AbilityDef, origin: THREE.Vector3, facing: number, moveX: number, moveZ: number) {
+  /**
+   * One part, one action. `shape` decides how it lands, the def's numbers decide
+   * how hard, and the mod bends it one way. Returns what the HUD and the body need.
+   */
+  useAbility(def: AbilityDef, ctx: CastContext): CastResult {
+    const o = ctx.origin
+    const mod = def.mod
+    const r: CastResult = { cooldown: 'start', strain: def.strain ?? 0, aim: null, beat: def.beat, power: 0, holdS: 0, lean: 0 }
+
     switch (def.shape) {
       case 'bolt': {
-        const target = this.nearest(origin, def.range)
-        const aim = target
-          ? Math.atan2(target.pos.x - origin.x, target.pos.z - origin.z)
-          : facing
-        const spread = def.mod === 'fan' ? [-0.26, 0, 0.26] : [0]
+        // no line needed to pick a target: walls stop the bolt, not the aim
+        const target = this.nearest(o, def.range)
+        const aim = target ? Math.atan2(target.pos.x - o.x, target.pos.z - o.z) : ctx.facing
+        const spread = mod?.kind === 'fan'
+          ? Array.from({ length: mod.count }, (_, k) => (k - (mod.count - 1) / 2) * mod.spreadRad)
+          : [0]
         for (const off of spread) {
           const dir = new THREE.Vector3(Math.sin(aim + off), 0, Math.cos(aim + off))
           const mesh = new THREE.Mesh(this.boltGeo, this.abilityBoltMat)
           mesh.scale.set(2.2, 2.2, 2.6)
-          mesh.position.set(origin.x, 1.15, origin.z)
+          mesh.position.set(o.x, 1.15, o.z)
           mesh.rotation.y = aim + off
           this.scene.add(mesh)
           this.bolts.push({
-            mesh, dir, life: def.range / BOLT_SPEED, damage: def.damage, radius: def.radius,
-            pierced: def.mod === 'pierce' ? new Set() : undefined,
+            mesh, dir, life: def.range / PART.boltSpeed, damage: def.damage, radius: def.radius,
+            pierced: mod?.kind === 'pierce' ? new Set() : undefined,
           })
         }
         break
       }
 
       case 'nova': {
+        const pull = mod?.kind === 'pull' ? mod : null
         for (const e of this.enemies) {
-          const d = Math.hypot(e.pos.x - origin.x, e.pos.z - origin.z)
-          if (d <= def.radius + e.radius - 0.5) {
-            e.hit(def.damage)
-            const ox = e.pos.x - origin.x
-            const oz = e.pos.z - origin.z
-            if (def.mod === 'pull') {
-              // drag them in, but stop short of stacking them on top of you
-              e.knock.addScaledVector(shoveVelocity(-ox, -oz, Math.max(0, d - 1.4)), e.knockMul)
-            } else {
-              // shove them out of your face — this is the panic button. Closer flies further.
-              e.knock.addScaledVector(shoveVelocity(ox, oz, Math.max(2.4, 4.2 - d * 0.35)), e.knockMul)
-            }
-            this.ring(e.pos, 0.2, 0.9, 0.3, 0x8fa3b8)
-            this.events.onHit(e.pos)
+          // a blast doesn't go through the wall you're hiding behind, either way
+          if (!this.inBlast(o, e, def.radius) || this.shaded(o, e)) continue
+          const d = Math.hypot(e.pos.x - o.x, e.pos.z - o.z)
+          e.hit(def.damage)
+          const ox = e.pos.x - o.x
+          const oz = e.pos.z - o.z
+          if (pull) {
+            // drag them in, but stop short of stacking them on top of you
+            e.knock.addScaledVector(shoveVelocity(-ox, -oz, Math.max(0, d - pull.to)), e.knockMul)
+          } else if (def.shove) {
+            // shove them out of your face: this is the panic button. Closer flies further.
+            this.shoveFrom(e, o.x, o.z, Math.max(PART.novaShoveMin, def.shove - PART.novaShoveFalloff * d))
           }
+          this.ring(e.pos, 0.2, 0.9, 0.3, 0x8fa3b8)
+          this.events.onHit(e.pos)
         }
+        // crates are hit without the line check: anything that touches one breaks it
         for (const b of this.breakables) {
-          if (!b.broken && Math.hypot(b.x - origin.x, b.z - origin.z) <= def.radius + b.r) this.events.onSmash(b)
+          if (!b.broken && Math.hypot(b.x - o.x, b.z - o.z) <= def.radius + b.r) this.events.onSmash(b)
         }
-        if (def.mod === 'pull') this.ring(origin, def.radius, 0.3, 0.45, 0xbcd6ff)
-        else this.ring(origin, 0.3, def.radius, 0.45, 0x8fb8e8)
+        if (pull) this.ring(o, def.radius, 0.3, 0.45, 0xbcd6ff)
+        else this.ring(o, 0.3, def.radius, 0.45, 0x8fb8e8)
         break
       }
 
       case 'arc': {
-        // A melee swing never needs aiming — snap to whatever is closest in reach.
-        // Snap reach must equal hit reach, or the blade turns toward things it can't touch.
-        const snap = this.nearest(origin, def.range + MELEE_PAD)
-        const aimed = snap ? Math.atan2(snap.pos.x - origin.x, snap.pos.z - origin.z) : facing
+        const coneDeg = def.cone ?? 120
+        const coneCos = coneDeg >= 360 ? -1.01 : Math.cos((coneDeg * Math.PI) / 360)
+        // A melee swing never needs aiming: snap to the nearest thing the blade can
+        // actually touch. Snap reach equals hit reach, or the blade turns toward
+        // things it can't reach. Nothing in reach: still face the nearest threat.
+        let snap: Enemy | null = null
+        let snapD = Infinity
+        for (const e of this.enemies) {
+          const d = Math.hypot(e.pos.x - o.x, e.pos.z - o.z)
+          if (d < snapD && this.inReach(o, e, def.range) && !this.shaded(o, e)) {
+            snap = e
+            snapD = d
+          }
+        }
+        const face = snap ?? this.nearest(o, 9.5)
+        const aimed = face ? Math.atan2(face.pos.x - o.x, face.pos.z - o.z) : ctx.facing
+        r.aim = aimed
         const fx = Math.sin(aimed)
         const fz = Math.cos(aimed)
-        // the hook trades width for reach: ~80 degrees instead of 120
-        const cone = def.mod === 'hook' ? 0.76 : 0.5
         for (const e of this.enemies) {
-          const dx = e.pos.x - origin.x
-          const dz = e.pos.z - origin.z
-          const d = Math.hypot(dx, dz)
-          if (d > def.range + MELEE_PAD + e.radius - 0.55) continue
-          // 120-degree sweep in front
-          if ((dx / d) * fx + (dz / d) * fz < cone) continue
+          if (!this.inReach(o, e, def.range)) continue
+          const d = Math.hypot(e.pos.x - o.x, e.pos.z - o.z)
+          if (d > 0.001 && ((e.pos.x - o.x) / d) * fx + ((e.pos.z - o.z) / d) * fz < coneCos) continue
+          // behind a wall: no spark, no sound. The swing visibly fails to reach it.
+          if (this.shaded(o, e)) continue
           e.hit(def.damage)
-          if (def.mod === 'hook' && d > 1.5) e.knock.addScaledVector(shoveVelocity(-dx, -dz, d - 1.3), e.knockMul)
           this.events.onHit(e.pos)
         }
         for (const b of this.breakables) {
           if (b.broken) continue
-          const bx = b.x - origin.x
-          const bz = b.z - origin.z
+          const bx = b.x - o.x
+          const bz = b.z - o.z
           const bd = Math.hypot(bx, bz)
-          if (bd <= def.range + b.r && (bx / bd) * fx + (bz / bd) * fz >= cone) this.events.onSmash(b)
+          if (bd <= def.range + b.r && (bd < 0.001 || (bx / bd) * fx + (bz / bd) * fz >= coneCos)) this.events.onSmash(b)
         }
-        this.sweep(origin, aimed, def.range, 0x8fb8e8, Math.acos(cone) * 2)
+        this.sweep(o, aimed, def.range, 0x8fb8e8, (coneDeg * Math.PI) / 180)
         break
       }
 
       case 'dash': {
-        let dx = moveX
-        let dz = moveZ
-        if (Math.hypot(dx, dz) < 0.1) {
-          dx = Math.sin(facing)
-          dz = Math.cos(facing)
-        }
-        const m = Math.hypot(dx, dz)
-        dx /= m
-        dz /= m
-
+        const ms = def.travelMs ?? 280
+        const knock = def.shove ?? 0
+        const dir = this.steer(ctx)
         // the dash stops at the first wall, it never carries you over one
-        const end = this.terrain.clampMove(origin.x, origin.z, origin.x + dx * def.range, origin.z + dz * def.range, PLAYER_RADIUS)
+        const end = this.terrain.clampMove(o.x, o.z, o.x + dir.x * def.range, o.z + dir.z * def.range, PLAYER_RADIUS)
+        const sx = o.x
+        const sz = o.z
         const ex = end.x
         const ez = end.z
 
-        // everything near the line gets run over — at the moment Still reaches it, not on the press
-        const sx = origin.x
-        const sz = origin.z
-        const lenSq = (ex - sx) ** 2 + (ez - sz) ** 2
-        for (const e of this.enemies) {
-          if (this.distToSegment(e.pos.x, e.pos.z, sx, sz, ex, ez) > def.radius + e.radius) continue
-          const along = lenSq > 0 ? Math.max(0, Math.min(1, ((e.pos.x - sx) * (ex - sx) + (e.pos.z - sz) * (ez - sz)) / lenSq)) : 0
-          // the dash eases out, so the time to reach a point isn't linear in distance
-          const reachT = 1 - Math.sqrt(1 - along)
-          this.later.push({
-            t: reachT * (DASH_MS / 1000),
-            run: () => {
-              if (e.dead || this.distToSegment(e.pos.x, e.pos.z, sx, sz, ex, ez) > def.radius + 1.1) return
-              e.hit(def.damage)
-              e.knock.addScaledVector(shoveVelocity(e.pos.x - sx, e.pos.z - sz, 1.2), e.knockMul)
-              this.events.onHit(e.pos)
-            },
-          })
+        // everything near the line gets run over, at the moment Still reaches it, not on the press
+        if (def.damage > 0) {
+          const lenSq = (ex - sx) ** 2 + (ez - sz) ** 2
+          for (const e of this.enemies) {
+            if (this.distToSegment(e.pos.x, e.pos.z, sx, sz, ex, ez) > def.radius + e.radius) continue
+            const along = lenSq > 0 ? Math.max(0, Math.min(1, ((e.pos.x - sx) * (ex - sx) + (e.pos.z - sz) * (ez - sz)) / lenSq)) : 0
+            // the dash eases out, so the time to reach a point isn't linear in distance
+            const reachT = 1 - Math.sqrt(1 - along)
+            this.later.push({
+              t: reachT * (ms / 1000),
+              run: () => {
+                if (e.dead || this.distToSegment(e.pos.x, e.pos.z, sx, sz, ex, ez) > def.radius + 1.1) return
+                e.hit(def.damage)
+                this.shoveFrom(e, sx, sz, knock)
+                this.events.onHit(e.pos)
+              },
+            })
+          }
         }
         for (const b of this.breakables) {
           if (!b.broken && this.distToSegment(b.x, b.z, sx, sz, ex, ez) <= def.radius + b.r) this.events.onSmash(b)
         }
-        this.ring(origin, 0.3, 1.6, 0.3, 0xbcd6ff)
-        this.events.onDash(ex, ez, DASH_MS)
-        if (def.mod === 'slam') {
+        this.ring(o, 0.3, 1.6, 0.3, 0xbcd6ff)
+        this.emitMove({ kind: 'dash', path: [new THREE.Vector3(ex, 0, ez)], ms, vault: false, lockMs: 0 }, r.beat)
+
+        if (mod?.kind === 'slam') {
+          // Skid Plates: the landing blast. Shoves, so it clears space where you stop.
           const at = new THREE.Vector3(ex, 0, ez)
           this.later.push({
-            t: DASH_MS / 1000,
+            t: ms / 1000,
             run: () => {
               for (const e of this.enemies) {
-                if (Math.hypot(e.pos.x - at.x, e.pos.z - at.z) <= 2.8) {
-                  e.hit(10)
-                  this.events.onHit(e.pos)
-                }
+                if (!this.inBlast(at, e, mod.radius) || this.shaded(at, e)) continue
+                e.hit(mod.damage)
+                this.shoveFrom(e, at.x, at.z, mod.shove)
+                this.events.onHit(e.pos)
               }
-              this.ring(at, 0.3, 2.8, 0.35, 0x8fb8e8)
+              this.ring(at, 0.3, mod.radius, 0.35, 0x8fb8e8)
             },
           })
         }
         break
       }
     }
+    return r
+  }
+
+  /** Arm reach: whatever body reaches the blade, not just its centre. */
+  private inReach(o: THREE.Vector3, e: Enemy, range: number) {
+    return Math.hypot(e.pos.x - o.x, e.pos.z - o.z) <= range + MELEE_PAD + e.radius - 0.55
+  }
+
+  /** Blast reach: the nova's own test, body included. */
+  private inBlast(c: THREE.Vector3, e: Enemy, radius: number) {
+    return Math.hypot(e.pos.x - c.x, e.pos.z - c.z) <= radius + e.radius - 0.5
+  }
+
+  /** Melee and blasts need a clear line, the same test a hulk uses before it swings. */
+  private shaded(a: THREE.Vector3, e: Enemy) {
+    return !this.terrain.lineClear(a.x, a.z, e.pos.x, e.pos.z, PART.linePad)
+  }
+
+  /** The stick's direction, or where he's facing when the stick is idle. A unit vector. */
+  private steer(ctx: CastContext): { x: number; z: number } {
+    const m = Math.hypot(ctx.moveX, ctx.moveZ)
+    if (m < 0.1) return { x: Math.sin(ctx.facing), z: Math.cos(ctx.facing) }
+    return { x: ctx.moveX / m, z: ctx.moveZ / m }
+  }
+
+  /** Shove away from a point by `dist` units of slide, scaled by how hard the enemy is to move. */
+  private shoveFrom(e: Enemy, cx: number, cz: number, dist: number) {
+    e.knock.addScaledVector(shoveVelocity(e.pos.x - cx, e.pos.z - cz, dist), e.knockMul)
+  }
+
+  /** A part moving Still: main hands it to his body. */
+  private emitMove(move: StillMove, beat: BeatKey) {
+    this.events.onPart({ kind: 'move', move, beat })
   }
 
   private distToSegment(px: number, pz: number, ax: number, az: number, bx: number, bz: number): number {
@@ -653,7 +756,7 @@ export class Combat {
 
   /** Put a sleeping pack in the level. Packs are placed, not spawned from a rim. */
   addPack(members: { kind: Archetype; x: number; z: number }[], side: boolean, elite?: { mod: EliteMod; name: string }): Pack {
-    const pack: Pack = { members: [], state: 'asleep', side, dropped: false, homes: new Map(), gaze: new Map(), hpSeen: 0 }
+    const pack: Pack = { members: [], state: 'asleep', side, dropped: false, size: members.length, homes: new Map(), gaze: new Map(), hpSeen: 0 }
     const look = Math.random() * Math.PI * 2
     for (const m of members) {
       const e = m.kind === 'ranged' ? new Ranged(m.x, m.z) : new Chaser(m.x, m.z)
@@ -680,7 +783,7 @@ export class Combat {
     this.enemies.push(b)
     b.setAsleep(true)
     const pack: Pack = {
-      members: [b], state: 'asleep', side: false, dropped: false,
+      members: [b], state: 'asleep', side: false, dropped: false, size: 1,
       homes: new Map([[b as Enemy, new THREE.Vector3(x, 0, z)]]),
       gaze: new Map([[b as Enemy, face.clone()]]),
       hpSeen: b.hp, wakeRadius: 12.5, leash: Infinity,
@@ -719,6 +822,7 @@ export class Combat {
       this.scene.add(c.group, c.tellGroup)
       this.enemies.push(c)
       c.setAsleep(false)
+      this.summoned.add(c)
       pack.members.push(c)
       pack.homes.set(c, p.clone())
       pack.gaze.set(c, p.clone())
@@ -765,7 +869,8 @@ export class Combat {
     return pack.members.reduce((a, e) => a + e.hp, 0)
   }
 
-  private wake(pack: Pack) {
+  /** The whole pack at once: there is no chain-waking. */
+  wake(pack: Pack) {
     if (pack.state === 'awake') return
     const wasAsleep = pack.state === 'asleep'
     pack.state = 'awake'

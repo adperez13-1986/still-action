@@ -1,4 +1,4 @@
-import type { AbilityShape, Tier } from './abilities'
+import type { BeatKey, Tier } from './abilities'
 
 /**
  * Every sound is synthesised. No files to source, no load latency, and each one
@@ -537,7 +537,12 @@ function grind(c: AudioContext, d: AudioNode, t: number) {
   tone(c, d, 'sine', t + 0.04, 190, 118, 0.26, 0.2, 0.02)
 }
 
-export function ability(shape: AbilityShape, pushed: boolean) {
+/**
+ * A part's voice, keyed by its beat. The ported parts borrow their shape's voice
+ * until they get their own; a beat with no voice yet is silent apart from the
+ * push grind.
+ */
+export function ability(beat: BeatKey, pushed: boolean) {
   const c = live()
   if (!c) return
   const t = c.currentTime
@@ -545,21 +550,24 @@ export function ability(shape: AbilityShape, pushed: boolean) {
   const r = pushed ? 0.8 : 1
   const k = pushed ? 1.3 : 1
 
-  switch (shape) {
-    case 'bolt':
+  switch (beat) {
+    case 'lens':
+    case 'cracked':
       tone(c, d, 'sawtooth', t, 600 * r, 2600 * r, 0.06, 0.35 * k)
       tone(c, d, 'sine', t + 0.05, 2400 * r, 260 * r, 0.2, 0.5 * k)
       hiss(c, d, t, 0.12, 0.3 * k, 'highpass', 3000, 6000, 0.7)
       break
-    case 'nova':
+    case 'vent':
+    case 'backdraft':
       tone(c, d, 'sine', t, 120 * r, 38 * r, 0.42, 1 * k)
       hiss(c, d, t, 0.5, 0.7 * k, 'lowpass', 5000 * r, 250, 0.7, 0.004)
       break
-    case 'arc':
+    case 'cleaver':
       hiss(c, d, t, 0.15, 0.9 * k, 'bandpass', 500 * r, 3800 * r, 2.2, 0.01)
       tone(c, d, 'triangle', t + 0.08, vary(420 * r, 0.05), 380 * r, 0.18, 0.12 * k)
       break
-    case 'dash': {
+    case 'kick':
+    case 'skid': {
       const lp = c.createBiquadFilter()
       lp.type = 'lowpass'
       lp.frequency.value = 900

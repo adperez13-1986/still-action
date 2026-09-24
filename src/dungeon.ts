@@ -34,8 +34,8 @@ export interface Room {
   center: THREE.Vector3
 }
 
-interface Box { minX: number; maxX: number; minZ: number; maxZ: number }
-interface Circle { x: number; z: number; r: number; /** Smashed: no longer solid. */ dead?: boolean }
+export interface Box { minX: number; maxX: number; minZ: number; maxZ: number }
+export interface Circle { x: number; z: number; r: number; /** Smashed: no longer solid. */ dead?: boolean }
 
 /** A crate or barrel that breaks when hit. Sometimes there's something inside. */
 export interface Breakable { mesh: THREE.Mesh; x: number; z: number; r: number; circle: Circle; broken: boolean }
@@ -76,7 +76,8 @@ export interface Level {
   dispose: () => void
 }
 
-const key = (i: number, j: number) => `${i},${j}`
+/** A grid cell's name in the floor set. */
+export const key = (i: number, j: number) => `${i},${j}`
 const DIRS: [number, number][] = [[1, 0], [0, 1], [-1, 0], [0, -1]]
 
 function rng(seed: number) {
@@ -200,7 +201,8 @@ function generateLayout(rand: () => number, sideRooms: number): Layout {
 
 // --- terrain ----------------------------------------------------------------
 
-function makeTerrain(floor: Set<string>, boxes: Box[], circles: Circle[]): Terrain {
+/** The solid world of one level: floor cells (by `key`), wall boxes, props as circles. */
+export function makeTerrain(floor: Set<string>, boxes: Box[], circles: Circle[]): Terrain {
   // bucket everything by cell, so a query only looks at its neighbourhood
   const boxIndex = new Map<string, Box[]>()
   const circleIndex = new Map<string, Circle[]>()

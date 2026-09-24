@@ -10,10 +10,16 @@ import type { SlotName } from './still'
  * so there is no green-good / red-bad here.
  */
 const SLOT_LABEL = { head: 'Head', torso: 'Torso', arms: 'Arms', legs: 'Legs' }
-const REACH_LABEL: Record<AbilityShape, string> = { bolt: 'range', nova: 'radius', arc: 'reach', dash: 'distance' }
+const REACH_LABEL: Record<AbilityShape, string> = {
+  bolt: 'range', lob: 'range', nova: 'radius', ward: 'radius', decoy: 'radius', arc: 'reach',
+  grab: 'reach', catch: 'radius', dash: 'distance', hop: 'distance', anchor: 'snap', rewind: 'rewind',
+}
 
+/** The one distance worth comparing: a blast's size, a rewind's length, otherwise how far it goes. */
 function reach(d: AbilityDef) {
-  return d.shape === 'nova' ? d.radius : d.range
+  if (d.shape === 'nova' || d.shape === 'ward' || d.shape === 'decoy' || d.shape === 'catch') return d.radius
+  if (d.shape === 'rewind') return (d.windowMs ?? 0) / 1000
+  return d.range
 }
 
 function stats(d: AbilityDef, other?: AbilityDef) {

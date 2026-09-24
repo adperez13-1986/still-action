@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import type { AbilityShape } from './abilities'
+import type { BeatKey } from './abilities'
 
 /**
  * Q16: architecture yes, content no.
@@ -47,6 +47,36 @@ interface Ghost { obj: THREE.Object3D; mat: THREE.MeshBasicMaterial; life: numbe
 
 interface Debris { part: THREE.Object3D; vel: THREE.Vector3; spin: THREE.Vector3; floor: number }
 
+/** One cast's body: which beat, and the few numbers some beats scale by. */
+export interface AttackSpec {
+  beat: BeatKey | 'shot' | 'anvil-slam'
+  pushed: boolean
+  /** Seconds to hold the pose at its peak (stances). */
+  holdS?: number
+  /** 0..1 where a beat scales (Patient Lens). */
+  power?: number
+  /** −1 / 0 / +1: which way the head cants (Ricochet bank). */
+  lean?: number
+}
+
+/** The bodies built so far. Every beat plays one of them; a new part adds its own. */
+type Pose = 'shot' | 'bolt' | 'nova' | 'arc' | 'dash'
+
+/**
+ * Beat -> pose and duration. The ported parts borrow their shape's pose until
+ * they get their own (Cracked Lens kicks like the Lens, Backdraft bursts like the Vent).
+ */
+const POSES: Partial<Record<AttackSpec['beat'], { pose: Pose; dur: number }>> = {
+  shot: { pose: 'shot', dur: 0.14 },
+  lens: { pose: 'bolt', dur: 0.3 },
+  cracked: { pose: 'bolt', dur: 0.3 },
+  vent: { pose: 'nova', dur: 0.42 },
+  backdraft: { pose: 'nova', dur: 0.42 },
+  cleaver: { pose: 'arc', dur: 0.34 },
+  kick: { pose: 'dash', dur: 0.3 },
+  skid: { pose: 'dash', dur: 0.3 },
+}
+
 export class Still {
   readonly group = new THREE.Group()
   readonly parts = {} as Record<SlotName, THREE.Object3D>
@@ -68,8 +98,8 @@ export class Still {
   private debris: Debris[] = []
 
   private ghosts: Ghost[] = []
-  /** The attack being played: which shape, and how far through it (seconds). */
-  private anim: { shape: AbilityShape | 'shot'; t: number; dur: number; pushed: boolean } | null = null
+  /** The attack being played: which pose, and how far through it (seconds). */
+  private anim: { pose: Pose; t: number; dur: number; pushed: boolean } | null = null
   private eyeFlash = 0
   private slowdown = 0
   private ghostTimer = 0
@@ -96,23 +126,25 @@ export class Still {
     })
   }
 
-  /** 0 is running, 1 is stopped: the eye goes out and the head drops. */
   /**
    * Play an attack. Each part's ability has a body to go with it: the cleaver
    * winds back and swings across, the lens recoils, the vent bursts the cage
    * open, the dash leans in. Pushed casts play bigger.
    */
-  attack(shape: AbilityShape | 'shot', pushed = false) {
-    const dur = { shot: 0.14, bolt: 0.3, nova: 0.42, arc: 0.34, dash: 0.3 }[shape]
+  attack(a: AttackSpec) {
+    const shot = a.beat === 'shot'
     // the auto attack never interrupts a real attack
-    if (shape === 'shot' && this.anim && this.anim.shape !== 'shot') {
+    if (shot && this.anim && this.anim.pose !== 'shot') {
       this.eyeFlash = Math.max(this.eyeFlash, 0.5)
       return
     }
-    this.anim = { shape, t: 0, dur, pushed }
-    this.eyeFlash = shape === 'shot' ? 0.5 : 1
+    this.eyeFlash = shot ? 0.5 : 1
+    const p = POSES[a.beat]
+    // a beat with no body yet still lights the eye
+    this.anim = p ? { pose: p.pose, t: 0, dur: p.dur, pushed: a.pushed } : null
   }
 
+  /** 0 is running, 1 is stopped: the eye goes out and the head drops. */
   setSlowdown(k: number) {
     this.slowdown = k
     EYE.color.copy(EYE_ON).lerp(EYE_OFF, k)
@@ -293,7 +325,7 @@ export class Still {
     const release = k < 0.3 ? 0 : (k - 0.3) / 0.7
     const settle = 1 - release
 
-    switch (a.shape) {
+    switch (a.pose) {
       case 'arc': {
         // clamp arm winds back and up, the cage twists, then it all whips across
         const yaw = k < 0.3 ? 0.75 * wind : 0.75 - 1.75 * Math.sin((release * Math.PI) / 2)
