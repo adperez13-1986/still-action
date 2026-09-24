@@ -339,12 +339,26 @@ export class Vfx {
     }
   }
 
-  /** A glowing trail behind something in flight: call every frame with its position. */
-  trail(at: THREE.Vector3, color: THREE.Color, size = 0.18) {
+  /** A glowing trail behind something in flight: call every frame with its position. A longer life keeps the whole line lit. */
+  trail(at: THREE.Vector3, color: THREE.Color, size = 0.18, life = 0.18) {
     this.glow.spawn({
       x: at.x + rnd(-0.03, 0.03), y: at.y + rnd(-0.03, 0.03), z: at.z + rnd(-0.03, 0.03),
-      max: 0.18, size, grow: -size * 3, r: color.r, g: color.g, b: color.b,
+      max: life, size, grow: -size * 0.54 / life, r: color.r, g: color.g, b: color.b,
     })
+  }
+
+  /** The inverse of sparks: motes spawned on a ring that fly in to a point. Charge, suction, a rewind arriving. */
+  gather(at: THREE.Vector3, count: number, radius: number, color = COLD, speed = 6) {
+    const life = radius / speed
+    for (let i = 0; i < count; i++) {
+      const a = rnd(0, Math.PI * 2)
+      const r = radius * rnd(0.85, 1.1)
+      this.glow.spawn({
+        x: at.x + Math.sin(a) * r, y: at.y + rnd(-0.2, 0.2), z: at.z + Math.cos(a) * r,
+        vx: -Math.sin(a) * speed, vy: 0, vz: -Math.cos(a) * speed,
+        max: life * rnd(0.85, 1), size: rnd(0.06, 0.12), r: color.r, g: color.g, b: color.b,
+      })
+    }
   }
 }
 
@@ -373,6 +387,7 @@ const TELL_FRAG = /* glsl */ `
   uniform vec3 uDeep;
   uniform float uStrip;
   uniform float uRadius;
+  uniform float uCold;
   varying vec2 vUv;
   varying vec3 vPos;
   float h(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
@@ -385,21 +400,37 @@ const TELL_FRAG = /* glsl */ `
     // strips are baked flat in xz, discs and rings in xy
     vec2 w = uStrip > 0.5 ? vPos.xz : vPos.xy;
     float noise = fbm(w * 0.9 + vec2(uTime * 0.35, -uTime * 0.25));
+    // Still's marks are frost, not fire: faceted instead of molten, ripples running
+    // inward instead of out, and a dashed edge where an enemy's is solid
+    bool cold = uCold > 0.5;
+    if (cold) noise = floor(noise * 5.0) / 5.0;
     float pattern;
     float edge;
+    // how much of the edge a cold dash cuts away (1 = none)
+    float cut = 1.0;
     if (uStrip > 0.5) {
       float along = vUv.y;
       float across = abs(vUv.x - 0.5) * 2.0;
-      pattern = smoothstep(0.35, 0.0, abs(fract(along * 9.0 - uTime * 2.2 + across * 0.35) - 0.5));
+      pattern = cold ? 0.0 : smoothstep(0.35, 0.0, abs(fract(along * 9.0 - uTime * 2.2 + across * 0.35) - 0.5));
       edge = smoothstep(0.7, 1.0, across);
+      if (cold) {
+        float dash = step(0.45, fract(along * 16.0));
+        edge *= dash;
+        cut = mix(1.0, 0.15 + 0.85 * dash, smoothstep(0.6, 1.0, across));
+      }
     } else {
       float r = length(w) / uRadius;
-      pattern = smoothstep(0.25, 0.0, abs(fract(r * 5.0 - uTime * 1.6) - 0.5));
+      pattern = smoothstep(0.25, 0.0, abs(fract(r * 5.0 + (cold ? 1.6 : -1.6) * uTime) - 0.5));
       edge = smoothstep(0.86, 1.0, r);
+      if (cold) {
+        float dash = step(0.45, fract(atan(w.y, w.x) / 6.283 * 16.0));
+        edge *= dash;
+        cut = mix(1.0, 0.15 + 0.85 * dash, smoothstep(0.8, 0.95, r));
+      }
     }
     float heat = clamp(noise * 0.8 + pattern * 0.45 + edge * 0.9, 0.0, 1.6);
     vec3 col = mix(uDeep, uHot, clamp(heat, 0.0, 1.0)) + uHot * max(0.0, heat - 1.0) * 0.6;
-    float a = uOpacity * clamp(0.35 + noise * 0.5 + pattern * 0.35 + edge * 0.8, 0.0, 1.0);
+    float a = uOpacity * clamp(0.35 + noise * 0.5 + pattern * 0.35 + edge * 0.8, 0.0, 1.0) * cut;
     gl_FragColor = vec4(col, a);
   }
 `
@@ -409,9 +440,10 @@ export type TellStyle = 'radial' | 'strip'
 /**
  * A telegraph material. Code keeps setting `.opacity` as before; `syncTells()`
  * copies it into the shader each frame. `radius` is the shape's world radius,
- * so the ripples and edge line up with it.
+ * so the ripples and edge line up with it. `cold` is Still's variant (N1):
+ * the same shape, but it can never be mistaken for an enemy's tell.
  */
-export function tellMaterial(style: TellStyle, radius = 1, hot = EMBER, deep = EMBER_DEEP): THREE.ShaderMaterial {
+export function tellMaterial(style: TellStyle, radius = 1, hot = EMBER, deep = EMBER_DEEP, opts: { cold?: boolean } = {}): THREE.ShaderMaterial {
   const m = new THREE.ShaderMaterial({
     vertexShader: TELL_VERT,
     fragmentShader: TELL_FRAG,
@@ -422,6 +454,7 @@ export function tellMaterial(style: TellStyle, radius = 1, hot = EMBER, deep = E
       uDeep: { value: deep.clone() },
       uStrip: { value: style === 'strip' ? 1 : 0 },
       uRadius: { value: radius },
+      uCold: { value: opts.cold ? 1 : 0 },
     },
     transparent: true,
     depthWrite: false,

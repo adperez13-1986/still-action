@@ -371,4 +371,6 @@ export const STARTING: AbilityDef[] = ['focusing-lens', 'pressure-vent', 'scrap-
 export const READY = new Set<string>([
   // step 1: today's parts, ported
   'focusing-lens', 'cracked-lens', 'pressure-vent', 'backdraft-vent', 'scrap-cleaver', 'kickstart', 'skid-plates',
+  // step 2: the parts that fit the existing shapes, plus the lob and the hop
+  'piston', 'rusted-hook', 'frayed-cleaver', 'skitter', 'spring-heels', 'overrun', 'patient-lens', 'overclocked-coil', 'flare',
 ])

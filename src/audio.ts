@@ -537,12 +537,21 @@ function grind(c: AudioContext, d: AudioNode, t: number) {
   tone(c, d, 'sine', t + 0.04, 190, 118, 0.26, 0.2, 0.02)
 }
 
+/** A lowpass in front of `d`, for voices that should sit low and body-heavy. */
+function lowpass(c: AudioContext, d: AudioNode, hz: number): AudioNode {
+  const f = c.createBiquadFilter()
+  f.type = 'lowpass'
+  f.frequency.value = hz
+  f.connect(d)
+  return f
+}
+
 /**
  * A part's voice, keyed by its beat. The ported parts borrow their shape's voice
  * until they get their own; a beat with no voice yet is silent apart from the
- * push grind.
+ * push grind. `power` is 0..1 where a beat scales (Patient Lens's charge).
  */
-export function ability(beat: BeatKey, pushed: boolean) {
+export function ability(beat: BeatKey, pushed: boolean, power = 0) {
   const c = live()
   if (!c) return
   const t = c.currentTime
@@ -557,28 +566,166 @@ export function ability(beat: BeatKey, pushed: boolean) {
       tone(c, d, 'sine', t + 0.05, 2400 * r, 260 * r, 0.2, 0.5 * k)
       hiss(c, d, t, 0.12, 0.3 * k, 'highpass', 3000, 6000, 0.7)
       break
+    case 'patient': {
+      // the bolt voice, its tail stretched by the charge and dropped a third at full
+      const full = power >= 0.99
+      tone(c, d, 'sawtooth', t, 600 * r, 2600 * r, 0.06, (0.2 + 0.15 * power) * k)
+      tone(c, d, 'sine', t + 0.05, 2400 * r, (full ? 175 : 260) * r, 0.2 + 0.15 * power, (0.3 + 0.2 * power) * k)
+      hiss(c, d, t, 0.12, (0.15 + 0.15 * power) * k, 'highpass', 3000, 6000, 0.7)
+      if (full) sample(c, 'metalMedium', d, 0.5, 1.2)
+      break
+    }
+    case 'coil': {
+      // three thin bolt voices a hair apart, and a little of the push grind every time
+      for (let i = 0; i < 3; i++) {
+        const at = t + i * 0.012
+        tone(c, d, 'sawtooth', at, vary(900, 0.04) * r, 3000 * r, 0.04, 0.16 * k)
+        tone(c, d, 'sine', at + 0.02, 2800 * r, 400 * r, 0.12, 0.18 * k)
+      }
+      const bp = c.createBiquadFilter()
+      bp.type = 'bandpass'
+      bp.frequency.value = 320
+      bp.Q.value = 3
+      bp.connect(d)
+      tone(c, distorted(c, bp), 'square', t, 110, 98, 0.18, 0.15, 0.01)
+      break
+    }
+    case 'flare':
+      // a hollow thoop that rises, because it goes up. No whistle in flight: windup tones must stay clear.
+      tone(c, d, 'sine', t, 380 * r, 620 * r, 0.09, 0.45 * k)
+      hiss(c, d, t, 0.12, 0.35 * k, 'bandpass', 1200, 600, 1.5)
+      break
     case 'vent':
     case 'backdraft':
       tone(c, d, 'sine', t, 120 * r, 38 * r, 0.42, 1 * k)
       hiss(c, d, t, 0.5, 0.7 * k, 'lowpass', 5000 * r, 250, 0.7, 0.004)
       break
     case 'cleaver':
-      hiss(c, d, t, 0.15, 0.9 * k, 'bandpass', 500 * r, 3800 * r, 2.2, 0.01)
+    case 'fray-90':
+    case 'fray-180':
+    case 'fray-360':
+      hiss(c, d, t, 0.15, 0.9 * k, 'bandpass', 500 * r, 3800 * r, beat === 'cleaver' || beat === 'fray-90' ? 2.2 : 1.2, 0.01)
       tone(c, d, 'triangle', t + 0.08, vary(420 * r, 0.05), 380 * r, 0.18, 0.12 * k)
+      // the tear grows with the strain feeding the swing: you hear it in the blade
+      if (beat === 'fray-180' || beat === 'fray-360') sample(c, 'tin', d, 0.3, 0.9)
+      if (beat === 'fray-360' && !pushed) smallGrind(c, d, t, 0.5)
       break
-    case 'kick':
-    case 'skid': {
-      const lp = c.createBiquadFilter()
-      lp.type = 'lowpass'
-      lp.frequency.value = 900
-      lp.connect(d)
-      tone(c, lp, 'sawtooth', t, 65 * r, 190 * r, 0.2, 0.6 * k, 0.01)
-      hiss(c, d, t, 0.22, 0.6 * k, 'bandpass', 400, 2400, 1.4, 0.02)
+    case 'piston':
+      // the whoosh only; the thunk or the pneumatic miss follows once it's known which
+      hiss(c, d, t, 0.06, 0.7 * k, 'bandpass', 800 * r, 2400 * r, 2, 0.004)
+      break
+    case 'hook': {
+      hiss(c, d, t, 0.12, 0.7 * k, 'bandpass', 700 * r, 3000 * r, 3, 0.006)
+      for (let i = 0; i < 3; i++) sample(c, 'tin', d, 0.3, 1.2 + Math.random() * 0.3, 0.1 + i * 0.03)
+      // the yank rises: it's coming toward you
+      tone(c, lowpass(c, d, 700), 'sawtooth', t + 0.16, 90 * r, 180 * r, 0.1, 0.4 * k, 0.01)
       break
     }
+    case 'kick':
+    case 'skid':
+      tone(c, lowpass(c, d, 900), 'sawtooth', t, 65 * r, 190 * r, 0.2, 0.6 * k, 0.01)
+      hiss(c, d, t, 0.22, 0.6 * k, 'bandpass', 400, 2400, 1.4, 0.02)
+      break
+    case 'overrun-step':
+      sample(c, 'step', d, 0.5, 1.2)
+      hiss(c, d, t, 0.1, 0.3, 'bandpass', 600, 1800, 1.2, 0.01)
+      break
+    case 'overrun-charge':
+      // the dash voice, longer and lower: the loudest movement in the pool
+      tone(c, lowpass(c, d, 1200), 'sawtooth', t, 50 * r, 220 * r, 0.3, 0.7 * k, 0.01)
+      hiss(c, d, t, 0.32, 0.7 * k, 'bandpass', 350, 2600, 1.4, 0.02)
+      break
+    case 'skitter':
+      // his own footstep, doubled and light
+      sample(c, 'step', d, 0.5, 1.6)
+      hiss(c, d, t, 0.08, 0.3, 'bandpass', 1200, 2400, 1.2, 0.005)
+      break
+    case 'spring':
+      sample(c, 'step', d, 0.8, 1.2)
+      tone(c, lowpass(c, d, 700), 'sawtooth', t, 80, 160, 0.12, 0.5, 0.005)
+      break
   }
 
   if (pushed) grind(c, d, t)
+}
+
+/** A little of the push grind, for parts that run on strain. */
+function smallGrind(c: AudioContext, d: AudioNode, t: number, gain: number) {
+  const bp = c.createBiquadFilter()
+  bp.type = 'bandpass'
+  bp.frequency.value = 320
+  bp.Q.value = 3
+  bp.connect(d)
+  tone(c, distorted(c, bp), 'square', t, 55, 49, 0.3, 0.5 * gain, 0.01)
+}
+
+/** Piston connected: a punch and a piston thunk. */
+export function pistonHit() {
+  const c = live()
+  if (!c) return
+  const t = c.currentTime
+  const d = out(c, 'abilities', 0)
+  sample(c, 'punchHeavy', d, 0.8, 1.1)
+  sample(c, 'metalMedium', d, 0.4)
+  tone(c, d, 'square', t, 120, 60, 0.06, 0.35)
+}
+
+/** Piston hit nothing: the pneumatic breath of an empty stroke. */
+export function pistonMiss() {
+  const c = live()
+  if (!c) return
+  hiss(c, out(c, 'abilities', 0), c.currentTime, 0.05, 0.35, 'highpass', 4000, 4000, 0.7)
+}
+
+/** A lob coming down, panned to where it lands: a small nova. */
+export function lobLand(pan: number) {
+  const c = live()
+  if (!c) return
+  const t = c.currentTime
+  const d = out(c, 'abilities', pan)
+  tone(c, d, 'sine', t, 160, 50, 0.22, 0.8)
+  hiss(c, d, t, 0.25, 0.5, 'lowpass', 3000, 300, 0.7, 0.004)
+  sample(c, 'softMedium', d, 0.5, 1.1)
+  sample(c, 'metalLight', d, 0.3, 1.5)
+}
+
+/** Patient Lens reached full: one glassy tick. No charging drone, that would be clutter. */
+export function patientFull() {
+  const c = live()
+  if (!c) return
+  const t = c.currentTime
+  const d = out(c, 'abilities', 0)
+  tone(c, d, 'sine', t, 2637, 2637, 0.12, 0.08)
+  tone(c, d, 'triangle', t, 1318, 1318, 0.1, 0.1)
+}
+
+/** Strain crossed one of Frayed Cleaver's notches: a tear going up, a soft click coming down. */
+export function frayCross(up: boolean) {
+  const c = live()
+  if (!c) return
+  const t = c.currentTime
+  const d = out(c, 'abilities', 0)
+  if (up) {
+    sample(c, 'tin', d, 0.35, 0.9)
+    hiss(c, d, t, 0.14, 0.35, 'bandpass', 2400, 900, 1.5, 0.004)
+  } else {
+    tone(c, d, 'triangle', t, 1400, 1100, 0.03, 0.15)
+  }
+}
+
+/** Touching down from a hop. A vault lands heavy; a hop lands light. */
+export function landing(heavy: boolean) {
+  const c = live()
+  if (!c) return
+  const d = out(c, 'abilities', 0)
+  if (heavy) {
+    sample(c, 'softMedium', d, 0.7)
+    sample(c, 'step', d, 1, 0.9)
+    sample(c, 'tin', d, 0.15, 1.4)
+  } else {
+    sample(c, 'step', d, 0.8, 1.4)
+    sample(c, 'tin', d, 0.1, 2.2)
+  }
 }
 
 /**

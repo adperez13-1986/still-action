@@ -1,4 +1,4 @@
-import type { AbilityDef } from './abilities'
+import type { AbilityDef, IconState } from './abilities'
 import type { CastResult } from './combat'
 import { SLOT_NAMES, type SlotName } from './still'
 
@@ -35,6 +35,8 @@ interface ButtonState {
   slot: SlotName
   /** Null: nothing found for this slot yet. The button sits dark and does nothing. */
   def: AbilityDef | null
+  /** Which of the part's icons is showing (Frayed's width, Plumb's snap). Null is the base icon. */
+  icon: IconState | null
   readyAt: number
   pointerId: number | null
   downAt: number
@@ -78,6 +80,12 @@ export interface Hud {
   onPause: (cb: () => void) => void
   /** A slow fill on the HP meter, so a quiet's refill is seen, not just counted. */
   healing: () => void
+  /** Swap a button to one of its part's alternate icons, or back (null). Repaints only on change. */
+  iconState: (slot: SlotName, s: IconState | null) => void
+  /** 0..1 into the button's `.charge` fill (Patient Lens). */
+  charge: (slot: SlotName, c: number) => void
+  /** A short pulse on one button: something about it just changed. */
+  pulse: (slot: SlotName) => void
   /** Dev only: the path a tap (false) or a push (true) takes once the gesture is recognised. */
   fireSlot: (slot: SlotName, pushed: boolean) => void
   /** Dev only: hold the stick at a world direction (0, 0 lets go). */
@@ -155,21 +163,41 @@ export function createHud(root: HTMLElement): Hud {
   const KEYS: Record<SlotName, string> = { head: 'H', torso: 'T', arms: 'A', legs: 'L' }
   const paint = (b: ButtonState) => {
     b.el.className = b.def ? `btn tier-${b.def.tier}` : 'btn empty'
+    b.icon = null
     b.el.querySelector('.lbl')!.innerHTML = b.def ? svg(b.def.icon) : SLOT_ICON[b.slot]
+    // the price of every cast, printed on the rim before you press it: ● always, ○ when it depends
+    const pips = b.def?.pips
+    b.el.querySelector('.pips')!.textContent = pips ? (pips.hollow ? '\u25cb' : '\u25cf').repeat(pips.n) : ''
   }
   const buttons: ButtonState[] = SLOT_NAMES.map((slot, i) => {
     const el = document.createElement('div')
-    el.innerHTML = `<div class="cd"></div><span class="lbl" aria-label="${KEYS[slot]}"></span>`
+    el.innerHTML = `<div class="cd"></div><span class="lbl" aria-label="${KEYS[slot]}"></span><span class="pips"></span>`
     const th = (ARC_DEG[i] ?? 0) * (Math.PI / 180)
     el.style.right = `calc(env(safe-area-inset-right, 0px) + ${PAD + ARC_R * Math.cos(th) - BTN / 2}px)`
     el.style.bottom = `calc(env(safe-area-inset-bottom, 0px) + ${PAD + ARC_R * Math.sin(th) - BTN / 2}px)`
     root.appendChild(el)
-    const b: ButtonState = { el, cdEl: el.querySelector<HTMLElement>('.cd')!, slot, def: null, readyAt: 0, pointerId: null, downAt: 0, pushed: false }
+    const b: ButtonState = { el, cdEl: el.querySelector<HTMLElement>('.cd')!, slot, def: null, icon: null, readyAt: 0, pointerId: null, downAt: 0, pushed: false }
     paint(b)
     return b
   })
 
   const listeners: ((def: AbilityDef, pushed: boolean) => FireResult)[] = []
+
+  /**
+   * N8b: ticks on the strain meter where a part changes with strain (Frayed
+   * Cleaver's 6 and 12), drawn only while such a part is on a button.
+   */
+  const drawNotches = () => {
+    const at = new Set<number>()
+    for (const b of buttons) if (b.def?.mod?.kind === 'fray') for (const n of b.def.mod.at) at.add(n)
+    strainMeter.querySelectorAll('.notch').forEach((n) => n.remove())
+    for (const n of at) {
+      const tick = document.createElement('s')
+      tick.className = 'notch'
+      tick.style.left = `${(n / 20) * 100}%`
+      strainMeter.appendChild(tick)
+    }
+  }
   const state = { moveX: 0, moveZ: 0, strain: 0, integrity: 1, enabled: true, clock: 0 }
 
   // --- stick ---
@@ -312,6 +340,7 @@ export function createHud(root: HTMLElement): Hud {
       b.def = def
       b.readyAt = now + frac * def.cooldownMs
       paint(b)
+      drawNotches()
       b.el.classList.add('swapped')
       setTimeout(() => b.el.classList.remove('swapped'), 450)
       return old
@@ -323,6 +352,7 @@ export function createHud(root: HTMLElement): Hud {
         b.readyAt = 0
         paint(b)
       }
+      drawNotches()
     },
 
     bossBar(b) {
@@ -368,6 +398,23 @@ export function createHud(root: HTMLElement): Hud {
       const meter = hpFill.parentElement!
       meter.classList.add('healing')
       setTimeout(() => meter.classList.remove('healing'), 1100)
+    },
+
+    iconState(slot, st) {
+      const b = buttons.find((x) => x.slot === slot)!
+      if (!b.def || b.icon === st) return
+      b.icon = st
+      b.el.querySelector('.lbl')!.innerHTML = svg((st && b.def.iconStates?.[st]) ?? b.def.icon)
+    },
+    charge(slot, c) {
+      buttons.find((x) => x.slot === slot)!.el.style.setProperty('--charge', c.toFixed(3))
+    },
+    pulse(slot) {
+      const el = buttons.find((x) => x.slot === slot)!.el
+      el.classList.remove('pulse')
+      void el.offsetWidth
+      el.classList.add('pulse')
+      setTimeout(() => el.classList.remove('pulse'), 400)
     },
 
     fireSlot(slot, pushed) {

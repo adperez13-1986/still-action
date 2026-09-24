@@ -5,7 +5,7 @@ import { Still } from './still'
 import { createHud } from './hud'
 import { createGradePanel } from './grade'
 import { Combat, ELITE_LINE, type Archetype, type CastResult, type EliteMod, type Pack } from './combat'
-import { STARTING, PARTS, READY, byId, type AbilityDef, type AbilityShape } from './abilities'
+import { STARTING, PARTS, READY, byId, type AbilityDef, type AbilityShape, type BeatKey } from './abilities'
 import { SLOT_NAMES, type SlotName } from './still'
 import type { Enemy } from './enemy'
 import type { Assembler } from './boss'
@@ -44,7 +44,6 @@ const rig = createCameraRig(world)
 const loot = new Loot(world.scene)
 const pause = createPauseScreen(hudRoot)
 const vfx = new Vfx(world.scene)
-const partFx = new PartFx(world.scene)
 /** Dev only: every onPart event, for headless checks to read back. */
 const partLog: PartEvent[] = []
 
@@ -57,6 +56,7 @@ const WOOD = new THREE.Color(0x6b4a30)
 
 const still = new Still()
 world.scene.add(still.group)
+const partFx = new PartFx(world.scene, vfx, () => still.pos)
 
 sfx.unlockAudio()
 
@@ -93,9 +93,15 @@ const MAX_FRAME = 0.25
 /** Hit feel lives here: a few frames of frozen time and a kick to the camera. */
 let hitstop = 0
 let shake = 0
+/** Hits landed during the cast being resolved: Piston sounds different when it connects. */
+let castHits = 0
+
+/** How high each hop arcs. Flat is a dash, an arc is a hop: height is how you tell them apart. */
+const HOP_H: Partial<Record<BeatKey, number>> = { skitter: 0.35, spring: 0.9 }
 
 const combat = new Combat(world.scene, OPEN, {
   onHit: (at) => {
+    castHits++
     sfx.hit(panOf(at))
     // cold sparks off the metal, thrown away from Still
     const away = new THREE.Vector3(at.x - still.pos.x, 0, at.z - still.pos.z)
@@ -137,13 +143,21 @@ const combat = new Combat(world.scene, OPEN, {
     }
     partFx.event(ev)
     if (ev.kind === 'move') {
-      // off the mark: grit, cold sparks, and the body carried to where the part put him
-      const to = ev.move.path[ev.move.path.length - 1]!
-      vfx.dust(still.pos, 10, 0.6, undefined, 4)
-      vfx.sparks(at3(still.pos, 0.4), COLD, 8, 4)
-      still.startDash(to.x, to.z, ev.move.ms)
-      shake = Math.max(shake, 0.18)
-      rig.punch(0.03)
+      moveFx(ev.move.path[ev.move.path.length - 1] ?? still.pos, ev.beat)
+      still.startMove({
+        ...ev.move,
+        hopH: ev.move.kind === 'hop' ? HOP_H[ev.beat] ?? 0.35 : 0,
+        // the charge is the loudest movement in the pool; the step is deliberately modest
+        ghostEvery: ev.beat === 'overrun-charge' ? 0.02 : ev.beat === 'overrun-step' ? 0.07 : undefined,
+      })
+    }
+    if (ev.kind === 'land') {
+      // the lob comes down: a small nova where it lands
+      vfx.flash(at3(ev.at, 0.4), COLD_DEEP, 1.2)
+      vfx.dust(ev.at, 10, 1.2)
+      vfx.sparks(at3(ev.at, 0.3), COLD, 16, 6)
+      sfx.lobLand(panOf(ev.at))
+      shake = Math.max(shake, 0.14)
     }
   },
   onShot: () => {
@@ -211,6 +225,51 @@ const combat = new Combat(world.scene, OPEN, {
     windups.delete(e)
   },
 })
+
+/** Off the mark: what a move throws up as it leaves. Read before Still starts moving. */
+function moveFx(to: THREE.Vector3, beat: BeatKey) {
+  switch (beat) {
+    case 'overrun-step':
+      vfx.dust(still.pos, 4, 0.5, undefined, 3)
+      break
+    case 'overrun-charge':
+      // the wake: a cold strip behind him the width of what he runs over
+      partFx.beam(still.pos, to, 1.4, 0.3)
+      vfx.dust(still.pos, 12, 0.8, undefined, 5)
+      vfx.sparks(at3(still.pos, 0.4), COLD, 10, 5)
+      shake = Math.max(shake, 0.24)
+      rig.punch(0.04)
+      break
+    case 'skitter':
+      vfx.dust(still.pos, 6, 0.3, undefined, 2.5)
+      shake = Math.max(shake, 0.06)
+      break
+    case 'spring':
+      vfx.dust(still.pos, 8, 0.4, undefined, 3)
+      shake = Math.max(shake, 0.08)
+      break
+    default:
+      // grit, cold sparks, and the body carried to where the part put him
+      vfx.dust(still.pos, 10, 0.6, undefined, 4)
+      vfx.sparks(at3(still.pos, 0.4), COLD, 8, 4)
+      shake = Math.max(shake, 0.18)
+      rig.punch(0.03)
+  }
+}
+
+/** Touchdown: a hop lands light, a vault lands heavy with its stick lock. */
+still.onLand = (m) => {
+  if (m.kind !== 'hop') return
+  if (m.vault) {
+    vfx.dust(still.pos, 12, 0.8, undefined, 4)
+    combat.ring(still.pos, 0.3, 1.0, 0.3, 0x8fa3b8)
+    shake = Math.max(shake, 0.16)
+    rig.punch(-0.02)
+  } else {
+    vfx.dust(still.pos, 8, 0.5, undefined, 3)
+  }
+  sfx.landing(m.vault)
+}
 
 /** What each enemy's strike throws up: grit and dust for slams, a muzzle flash for shots. */
 function strikeFx(e: Enemy) {
@@ -408,6 +467,7 @@ hud.onCompare(() => {
 })
 
 function takePart(g: GroundPart) {
+  combat.clearSlot(g.def.slot)
   const old = hud.equip(g.def)
   loot.remove(g)
   // an empty slot filled: nothing falls out
@@ -603,13 +663,14 @@ function addStrain(n: number) {
 const MOVES = new Set<AbilityShape>(['dash', 'hop', 'anchor', 'rewind'])
 
 function cast(def: AbilityDef, pushed: boolean): CastResult {
+  castHits = 0
   const r = combat.useAbility(def, {
     origin: still.pos, facing: still.facing, moveX: hud.moveX, moveZ: hud.moveZ, pushed, strain: run.strain,
   })
   if (r.cooldown === 'refused') return r
   // Snap the body to the target, or the swing plays sideways out of his shoulder.
   if (r.aim !== null) still.facing = r.aim
-  sfx.ability(r.beat, pushed)
+  sfx.ability(r.beat, pushed, r.power)
   still.attack({ beat: r.beat, pushed, holdS: r.holdS, power: r.power, lean: r.lean })
   castFx(def, r, pushed)
   still.group.scale.setScalar(pushed ? 1.16 : 1.08)
@@ -626,12 +687,76 @@ function cast(def: AbilityDef, pushed: boolean): CastResult {
 function castFx(def: AbilityDef, r: CastResult, pushed: boolean) {
   const lens = still.lensPoint(new THREE.Vector3())
   const fwd = new THREE.Vector3(Math.sin(still.facing), 0, Math.cos(still.facing))
+  const ahead = (d: number, y = 1.0) => at3(still.pos, y).addScaledVector(fwd, d)
   switch (r.beat) {
     case 'lens':
     case 'cracked':
       vfx.flash(lens, COLD, 0.8)
       vfx.sparks(lens, COLD, 10, 7, fwd, 0.5)
       break
+    case 'patient':
+      // a weak shot is a twitch, a full one looks like a Focusing Lens
+      vfx.flash(lens, COLD, 0.4 + 0.8 * r.power)
+      vfx.sparks(lens, COLD, Math.round(4 + 12 * r.power), 7, fwd, 0.5)
+      break
+    case 'coil':
+      // three small flashes fanned at the lens, and a few embers off the stalk: it runs on strain
+      for (const off of [-0.26, 0, 0.26]) {
+        const dir = new THREE.Vector3(Math.sin(still.facing + off), 0, Math.cos(still.facing + off))
+        vfx.flash(lens.clone().addScaledVector(dir, 0.25), COLD, 0.35)
+      }
+      vfx.embers(at3(still.pos, 1.6), 4, 0.15)
+      break
+    case 'flare':
+      vfx.flash(lens, COLD, 0.6)
+      vfx.sparks(lens, COLD, 6, 4, new THREE.Vector3(fwd.x, 0, fwd.z), 0.6)
+      break
+    case 'piston':
+      // a long thin strike inside the narrow sweep: never mistaken for the Cleaver's fan
+      partFx.beam(still.pos, ahead(def.range, 0), 0.5, 0.15)
+      if (castHits > 0) {
+        vfx.sparks(ahead(def.range * 0.8), COLD, 12, 7, fwd, 0.3)
+        vfx.flash(ahead(def.range * 0.8), COLD, 0.6)
+        sfx.pistonHit()
+      } else {
+        sfx.pistonMiss()
+      }
+      break
+    case 'hook':
+      // a chain to everything caught, while it's hauled in
+      for (const e of combat.enemies) {
+        const tx = still.pos.x - e.pos.x
+        const tz = still.pos.z - e.pos.z
+        if (e.knock.lengthSq() > 4 && e.knock.x * tx + e.knock.z * tz > 0 && Math.hypot(tx, tz) <= def.range + 1.5) {
+          partFx.yank(e)
+          vfx.sparks(at3(e.pos, 1.0), COLD, 6, 5)
+          vfx.dust(e.pos, 6, 0.4)
+        }
+      }
+      break
+    case 'fray-90':
+    case 'fray-180':
+    case 'fray-360': {
+      // the swing at its width, ragged at both ends; at 12+ the fray turns ember, the heat that feeds it
+      const wide = r.beat === 'fray-360' ? 2 : r.beat === 'fray-180' ? 1 : 0
+      const spread = [Math.PI / 2, Math.PI, Math.PI * 2][wide]!
+      const points = [7, 12, 20][wide]!
+      for (let i = 0; i < points; i++) {
+        const a = still.facing + (i / (points - 1) - 0.5) * spread
+        const p = at3(still.pos, 1.0).add(new THREE.Vector3(Math.sin(a) * def.range * 0.8, 0, Math.cos(a) * def.range * 0.8))
+        vfx.sparks(p, COLD, 2, 3, new THREE.Vector3(Math.sin(a), 0, Math.cos(a)), 0.3)
+      }
+      if (wide < 2) {
+        for (const side of [-1, 1]) {
+          const a = still.facing + side * spread / 2
+          const p = at3(still.pos, 1.0).add(new THREE.Vector3(Math.sin(a) * def.range, 0, Math.cos(a) * def.range))
+          vfx.sparks(p, COLD, 3, 3)
+        }
+      } else {
+        vfx.sparks(at3(still.pos, 1.0), EMBER, 8, 5)
+      }
+      break
+    }
     case 'vent':
     case 'backdraft':
       vfx.flash(at3(still.pos, 1.2), COLD_DEEP, 0.9)
@@ -647,12 +772,58 @@ function castFx(def: AbilityDef, r: CastResult, pushed: boolean) {
       }
       break
     }
-    // the dash's fx ride on its move event
-    case 'kick':
-    case 'skid':
+    // movement fx ride on the move event
+    default:
       break
   }
   if (pushed) vfx.sparks(at3(still.pos, 1.2), EMBER, 14, 4)
+}
+
+/** Patient Lens has banked a full shot, and the button has said so once. */
+let patientFull = false
+let patientMotes = 0
+/** Frayed Cleaver's width tier last frame; null while it isn't on a button. */
+let frayTier: number | null = null
+
+/**
+ * What the buttons show about the parts on them, every frame: how much Patient
+ * Lens has banked, how wide Frayed Cleaver will swing.
+ */
+function partFaces(dt: number) {
+  const [head, , arms] = hud.slots.map((s) => s.def)
+  if (head?.mod?.kind === 'charge') {
+    const m = head.mod
+    const c = Math.min(1, Math.max(0, (combat.parts.patientSince - m.minS) / (m.fullS - m.minS)))
+    hud.charge('head', c)
+    if (c >= 1 && !patientFull) {
+      // full: one glassy tick and a small ring of cold round the lens
+      sfx.patientFull()
+      vfx.gather(still.lensPoint(new THREE.Vector3()), 12, 0.6, COLD, 4)
+    }
+    patientFull = c >= 1
+    if (patientFull && run.phase === 'crawl' && (patientMotes -= dt) <= 0) {
+      patientMotes = 0.2
+      vfx.gather(still.lensPoint(new THREE.Vector3()), 2, 0.5, COLD, 2.5)
+    }
+  } else {
+    patientFull = false
+  }
+
+  if (arms?.mod?.kind === 'fray') {
+    const at = arms.mod.at
+    const tier = run.strain < at[0] ? 0 : run.strain < at[1] ? 1 : 2
+    hud.iconState('arms', tier === 0 ? null : tier === 1 ? 'fray-180' : 'fray-360')
+    if (frayTier !== null && tier !== frayTier) {
+      // the meter, the button and the body change together, so the link teaches itself
+      const up = tier > frayTier
+      sfx.frayCross(up)
+      hud.pulse('arms')
+      if (up) vfx.embers(still.jawL.getWorldPosition(new THREE.Vector3()), 8, 0.1)
+    }
+    frayTier = tier
+  } else {
+    frayTier = null
+  }
 }
 
 let accumulator = 0
@@ -711,12 +882,14 @@ function simulate(realDt: number) {
 
   still.update(dt, hud.moveX, hud.moveZ)
 
-  combat.terrain.pushOut(still.pos, BODY_RADIUS)
+  // mid-vault he's over the wall, not in it
+  if (!still.vaulting) combat.terrain.pushOut(still.pos, BODY_RADIUS)
 
   const target = combat.nearestTarget(still.pos, 9.5)
   still.aim = target ? Math.atan2(target.x - still.pos.x, target.z - still.pos.z) : null
 
   combat.update(dt, still.pos)
+  partFx.update(dt)
   loot.update(dt)
   updateOffer()
   updateShrinePrompt()
@@ -879,10 +1052,10 @@ function frame(nowMs: number) {
   })
   if (!paused) clock += elapsed * 1000
   drawEliteLabels()
+  partFaces(elapsed)
   hud.update(clock)
   if (!paused) {
     vfx.update(elapsed, world.camera, world.renderer.domElement.height)
-    partFx.update(elapsed)
     ambientFx(elapsed)
     footsteps()
   }
@@ -900,11 +1073,12 @@ if (import.meta.env.DEV) {
   Object.assign(window, {
     __combat: combat, __still: still, __hud: hud, __loot: loot, __level: () => level, __world: world,
     __run: run, __parts: PARTS, __partLog: partLog,
-    /** Advance exactly `s` seconds of game time, and the HUD clock with it. No rAF, no hitstop. */
+    /** Advance exactly `s` seconds of game time, and the HUD clock (and the button faces) with it. No rAF, no hitstop. */
     __step: (s: number) => {
       for (let i = 0; i < Math.round(s * 60); i++) {
         simulate(STEP)
         clock += STEP * 1000
+        partFaces(STEP)
         hud.update(clock)
       }
     },
@@ -913,6 +1087,7 @@ if (import.meta.env.DEV) {
     /** Put a part on its button without the ground. */
     __equip: (id: string) => {
       const def = byId(id)
+      combat.clearSlot(def.slot)
       hud.equip(def)
       still.setEquipped(def.slot, true)
     },

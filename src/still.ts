@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import type { BeatKey } from './abilities'
+import type { StillMove } from './parts'
 
 /**
  * Q16: architecture yes, content no.
@@ -60,21 +61,59 @@ export interface AttackSpec {
 }
 
 /** The bodies built so far. Every beat plays one of them; a new part adds its own. */
-type Pose = 'shot' | 'bolt' | 'nova' | 'arc' | 'dash'
+type Pose =
+  | 'shot' | 'bolt' | 'patient' | 'coil' | 'flare' | 'nova'
+  | 'arc' | 'spin' | 'piston' | 'hook'
+  | 'dash' | 'step' | 'ram' | 'hop' | 'spring'
 
 /**
  * Beat -> pose and duration. The ported parts borrow their shape's pose until
  * they get their own (Cracked Lens kicks like the Lens, Backdraft bursts like the Vent).
+ * `yaw` scales a swing's twist (the narrow fray is a smaller Cleaver).
  */
-const POSES: Partial<Record<AttackSpec['beat'], { pose: Pose; dur: number }>> = {
+const POSES: Partial<Record<AttackSpec['beat'], { pose: Pose; dur: number; yaw?: number }>> = {
   shot: { pose: 'shot', dur: 0.14 },
   lens: { pose: 'bolt', dur: 0.3 },
   cracked: { pose: 'bolt', dur: 0.3 },
+  // stretched by the charge at the press: 0.26 s weak, 0.40 s full
+  patient: { pose: 'patient', dur: 0.26 },
+  coil: { pose: 'coil', dur: 0.22 },
+  flare: { pose: 'flare', dur: 0.34 },
   vent: { pose: 'nova', dur: 0.42 },
   backdraft: { pose: 'nova', dur: 0.42 },
   cleaver: { pose: 'arc', dur: 0.34 },
+  'fray-90': { pose: 'arc', dur: 0.3, yaw: 0.7 },
+  'fray-180': { pose: 'arc', dur: 0.34 },
+  'fray-360': { pose: 'spin', dur: 0.4 },
+  piston: { pose: 'piston', dur: 0.28 },
+  hook: { pose: 'hook', dur: 0.36 },
   kick: { pose: 'dash', dur: 0.3 },
   skid: { pose: 'dash', dur: 0.3 },
+  'overrun-step': { pose: 'step', dur: 0.22 },
+  'overrun-charge': { pose: 'ram', dur: 0.3 },
+  skitter: { pose: 'hop', dur: 0.26 },
+  spring: { pose: 'spring', dur: 0.4 },
+}
+
+/** Where the clamp's jaws rest, either side of the hand. They close toward it. */
+const JAW_X = -0.05
+const JAW_OPEN = 0.06
+
+/** A move in progress: the path, how long it takes, and how high it arcs. */
+interface Move {
+  from: THREE.Vector3
+  path: THREE.Vector3[]
+  /** Cumulative length at each waypoint, so the ease runs over the whole path. */
+  at: number[]
+  total: number
+  T: number
+  t: number
+  hopH: number
+  dash: boolean
+  vault: boolean
+  lockMs: number
+  ghostEvery: number
+  src: StillMove
 }
 
 export class Still {
@@ -93,21 +132,29 @@ export class Still {
   private legR!: THREE.Group
   private armL!: THREE.Group
   private armR!: THREE.Group
+  /** Rig handles the beats reach for: the lens inside the head, the core in the cage, the clamp's jaws. */
+  lens!: THREE.Group
+  core!: THREE.Mesh
+  jawL!: THREE.Mesh
+  jawR!: THREE.Mesh
+  /** A pose's own lift (a crouch, a squash), added over the walk bob and any hop. */
+  private lift = 0
 
   private readonly home = new Map<THREE.Object3D, THREE.Vector3>()
   private debris: Debris[] = []
 
   private ghosts: Ghost[] = []
   /** The attack being played: which pose, and how far through it (seconds). */
-  private anim: { pose: Pose; t: number; dur: number; pushed: boolean } | null = null
+  private anim: { pose: Pose; t: number; dur: number; pushed: boolean; power: number; yaw: number } | null = null
   private eyeFlash = 0
   private slowdown = 0
   private ghostTimer = 0
 
-  private dashT = 0
-  private dashDur = 0
-  private readonly dashFrom = new THREE.Vector3()
-  private readonly dashTo = new THREE.Vector3()
+  private move: Move | null = null
+  /** After a vault he lands heavy: the stick reads as idle until this runs out. */
+  private lockT = 0
+  /** Called on the tick a move arrives, for landing dust and sound. */
+  onLand: ((m: StillMove) => void) | null = null
 
   constructor() {
     this.setPart('legs', this.buildLegs())
@@ -140,8 +187,10 @@ export class Still {
     }
     this.eyeFlash = shot ? 0.5 : 1
     const p = POSES[a.beat]
+    const power = a.power ?? 0
+    const dur = p?.pose === 'patient' ? p.dur + 0.14 * power : p?.dur ?? 0
     // a beat with no body yet still lights the eye
-    this.anim = p ? { pose: p.pose, t: 0, dur: p.dur, pushed: a.pushed } : null
+    this.anim = p ? { pose: p.pose, t: 0, dur, pushed: a.pushed, power, yaw: p.yaw ?? 1 } : null
   }
 
   /** 0 is running, 1 is stopped: the eye goes out and the head drops. */
@@ -154,7 +203,8 @@ export class Still {
 
   /** HP death. The four parts were always separate meshes; now they come apart. */
   breakApart(fromX: number, fromZ: number) {
-    this.dashT = 0
+    this.move = null
+    this.lockT = 0
     const away = Math.atan2(this.pos.x - fromX, this.pos.z - fromZ)
     this.group.updateMatrixWorld(true)
     const box = new THREE.Box3()
@@ -191,7 +241,8 @@ export class Still {
 
   reassemble() {
     this.debris = []
-    this.dashT = 0
+    this.move = null
+    this.lockT = 0
     for (const p of Object.values(this.parts)) {
       p.position.copy(this.home.get(p) ?? new THREE.Vector3())
       p.rotation.set(0, 0, 0)
@@ -207,42 +258,82 @@ export class Still {
     this.group.add(mesh)
   }
 
-  get dashing(): boolean {
-    return this.dashT > 0
+  /** A part is moving him: a dash, a hop, and later a snap or a rewind. */
+  get moving(): boolean {
+    return this.move !== null
   }
 
-  startDash(x: number, z: number, ms: number) {
-    this.dashFrom.set(this.pos.x, 0, this.pos.z)
-    this.dashTo.set(x, 0, z)
-    this.dashDur = ms / 1000
-    this.dashT = this.dashDur
-    this.facing = Math.atan2(x - this.pos.x, z - this.pos.z)
+  /** True from a vault's takeoff until it lands: the run doesn't push him out of the wall he's clearing. */
+  get vaulting(): boolean {
+    return !!this.move?.vault
+  }
+
+  /**
+   * Carry him along a path over `ms`, easing out (fast off the mark, settling
+   * in). `hopH` above zero makes it a hop: a parabola over the whole flight.
+   */
+  startMove(m: StillMove & { hopH: number; ghostEvery?: number }) {
+    const from = new THREE.Vector3(this.pos.x, 0, this.pos.z)
+    const at: number[] = []
+    let total = 0
+    let prev = from
+    for (const p of m.path) {
+      total += Math.hypot(p.x - prev.x, p.z - prev.z)
+      at.push(total)
+      prev = p
+    }
+    const first = m.path[0]
+    if (first && Math.hypot(first.x - from.x, first.z - from.z) > 0.01) this.facing = Math.atan2(first.x - from.x, first.z - from.z)
+    this.move = {
+      from, path: m.path.map((p) => new THREE.Vector3(p.x, 0, p.z)), at, total, T: Math.max(0.001, m.ms / 1000), t: 0,
+      hopH: m.hopH, dash: m.kind === 'dash', vault: m.vault, lockMs: m.lockMs, ghostEvery: m.ghostEvery ?? GHOST_EVERY, src: m,
+    }
+    this.ghostTimer = 0
   }
 
   update(dt: number, moveX: number, moveZ: number) {
     this.updateGhosts(dt)
 
-    if (this.dashT > 0) {
+    if (this.lockT > 0) {
+      this.lockT = Math.max(0, this.lockT - dt)
+      moveX = 0
+      moveZ = 0
+    }
+
+    const m = this.move
+    if (m) {
       // afterimages along the path: the eye reads travel, not a teleport
       this.ghostTimer -= dt
       if (this.ghostTimer <= 0) {
-        this.ghostTimer = GHOST_EVERY
+        this.ghostTimer = m.ghostEvery
         this.spawnGhost()
       }
-      this.dashT = Math.max(0, this.dashT - dt)
-      const k = 1 - this.dashT / this.dashDur
-      const eased = 1 - (1 - k) * (1 - k)
-      this.pos.x = this.dashFrom.x + (this.dashTo.x - this.dashFrom.x) * eased
-      this.pos.z = this.dashFrom.z + (this.dashTo.z - this.dashFrom.z) * eased
+      m.t = Math.min(m.T, m.t + dt)
+      const k = m.t / m.T
+      this.placeOnPath(m, (1 - (1 - k) * (1 - k)) * m.total)
       this.bob += dt * 22
-      this.group.position.set(this.pos.x, 0.12, this.pos.z)
-      this.group.rotation.y = this.facing
-      // leaning into the dash, legs tucked
-      this.parts.torso.rotation.x = 0.16 + 0.4
-      this.parts.head.rotation.x = 0.3
-      this.legL.rotation.x = -0.7
-      this.legR.rotation.x = 0.5
+      this.parts.torso.rotation.x = 0.16
+      if (m.dash) {
+        // leaning into the dash, legs tucked; the short step leans half as far
+        const lean = this.anim?.pose === 'step' ? 0.5 : 1
+        this.parts.torso.rotation.x = 0.16 + 0.4 * lean
+        this.parts.head.rotation.x = 0.3 * lean
+        this.legL.rotation.x = -0.7 * lean
+        this.legR.rotation.x = 0.5 * lean
+      } else {
+        this.legL.rotation.x = 0
+        this.legR.rotation.x = 0
+      }
       this.animate(dt)
+      // flat is a dash, an arc is a hop: height is how you tell them apart
+      const y = m.dash ? 0.12 : 4 * m.hopH * k * (1 - k)
+      this.group.position.set(this.pos.x, y + this.lift, this.pos.z)
+      this.group.rotation.y = this.facing
+      if (m.t >= m.T) {
+        this.move = null
+        if (m.vault) this.lockT = m.lockMs / 1000
+        this.onLand?.(m.src)
+      }
       return
     }
 
@@ -269,8 +360,26 @@ export class Still {
     this.parts.torso.rotation.x = 0.16
     this.animate(dt)
 
-    this.group.position.set(this.pos.x, Math.abs(Math.sin(this.bob)) * 0.05 * mag, this.pos.z)
+    this.group.position.set(this.pos.x, Math.abs(Math.sin(this.bob)) * 0.05 * mag + this.lift, this.pos.z)
     this.group.rotation.y = this.facing
+  }
+
+  /** Put him `d` along the move's path. */
+  private placeOnPath(m: Move, d: number) {
+    let a = m.from
+    let start = 0
+    for (let i = 0; i < m.path.length; i++) {
+      const b = m.path[i]!
+      const end = m.at[i]!
+      if (d <= end || i === m.path.length - 1) {
+        const f = end > start ? Math.min(1, (d - start) / (end - start)) : 1
+        this.pos.x = a.x + (b.x - a.x) * f
+        this.pos.z = a.z + (b.z - a.z) * f
+        return
+      }
+      a = b
+      start = end
+    }
   }
 
   private spawnGhost() {
@@ -310,7 +419,22 @@ export class Still {
     this.armR.rotation.z = 0
     this.armL.rotation.y = 0
     if (this.slowdown <= 0) head.rotation.x = 0
+    head.rotation.y = 0
+    head.rotation.z = 0
     head.position.z = 0.1
+    this.lens.rotation.z = 0.18
+    this.lift = 0
+    this.jawL.position.x = JAW_X - JAW_OPEN
+    this.jawR.position.x = JAW_X + JAW_OPEN
+
+    // landing heavy after a vault: knees buckled, head down, for as long as the stick is locked
+    if (this.lockT > 0) {
+      this.lift = -0.12
+      torso.rotation.x = 0.16 + 0.35
+      head.rotation.x = 0.2
+      this.legL.rotation.x = 0.45
+      this.legR.rotation.x = 0.45
+    }
 
     this.eyeFlash = Math.max(0, this.eyeFlash - dt * 5)
     if (this.slowdown <= 0) EYE.color.copy(EYE_ON).lerp(new THREE.Color(0xffffff), this.eyeFlash)
@@ -329,7 +453,7 @@ export class Still {
       case 'arc': {
         // clamp arm winds back and up, the cage twists, then it all whips across
         const yaw = k < 0.3 ? 0.75 * wind : 0.75 - 1.75 * Math.sin((release * Math.PI) / 2)
-        torso.rotation.y = yaw * big * (k < 0.3 ? 1 : settle + 0.3)
+        torso.rotation.y = yaw * a.yaw * big * (k < 0.3 ? 1 : settle + 0.3)
         this.armL.rotation.x = (k < 0.3 ? -1.7 * wind : -1.7 + 1.5 * release) * big
         this.armL.rotation.z = (k < 0.3 ? -0.5 * wind : -0.5 + 1.1 * release) * big
         this.armR.rotation.x = -0.4 * (1 - k)
@@ -352,10 +476,100 @@ export class Still {
         torso.rotation.x = 0.16 + (k < 0.25 ? 0.2 * (k / 0.25) : 0.2 * (1 - k))
         break
       }
+      case 'patient': {
+        // the kick grows with what was banked; a full shot plants a foot and rocks back
+        const kick = Math.pow(1 - k, 2) * (0.2 + 0.5 * a.power) * big
+        head.rotation.x = -kick
+        head.position.z = 0.1 - 0.27 * kick
+        torso.rotation.x = 0.16 - 0.4 * kick
+        if (a.power >= 0.99) {
+          this.legR.rotation.x = 0.35 * (1 - k)
+          torso.rotation.x -= 0.05 * (1 - k)
+        }
+        break
+      }
+      case 'coil': {
+        // a short kick, and the lens shivers like a coil let go
+        head.rotation.x = -0.3 * Math.pow(1 - k, 2) * big
+        if (a.t < 0.15) this.lens.rotation.z = 0.18 + 0.08 * Math.sin(a.t * Math.PI * 2 * 30)
+        break
+      }
+      case 'flare': {
+        // a lob lifts the lens where a bolt kicks it back: look up, crouch into the toss, release
+        const up = k < 0.3 ? wind : settle
+        head.rotation.x = -0.7 * up * big
+        this.lift = -0.06 * (k < 0.3 ? wind : settle)
+        this.legL.rotation.x = this.legR.rotation.x = 0.2 * (k < 0.3 ? wind : settle)
+        torso.rotation.x = 0.16 - 0.14 * Math.sin(release * Math.PI)
+        break
+      }
+      case 'spin': {
+        // the widest fray: a full turn, arms flung out, legs planted
+        torso.rotation.y = k < 0.3 ? -0.4 * wind : -0.4 + (Math.PI * 2 + 0.4) * (1 - Math.pow(1 - release, 2))
+        const out = Math.sin(k * Math.PI) * big
+        this.armL.rotation.z = -0.9 * out
+        this.armR.rotation.z = 0.9 * out
+        this.legL.rotation.x = this.legR.rotation.x = 0
+        break
+      }
+      case 'piston': {
+        // straight, no lunge: elbow back and the cage coils, then the arm goes dead straight
+        const ext = k < 0.3 ? 0 : Math.min(1, (k - 0.3) / 0.2)
+        const back = Math.max(0, (k - 0.6) / 0.4)
+        const hold = 1 - back
+        this.armL.rotation.x = (k < 0.3 ? 0.6 * wind : 0.6 - 2.2 * ext) * hold * big
+        torso.rotation.y = (k < 0.3 ? 0.35 * wind : 0.35 - 0.55 * ext) * hold
+        torso.rotation.x = 0.16 + 0.2 * ext * hold
+        const shut = 0.04 * ext * hold
+        this.jawL.position.x = JAW_X - JAW_OPEN + shut
+        this.jawR.position.x = JAW_X + JAW_OPEN - shut
+        break
+      }
+      case 'hook': {
+        // the only swing the hook arm leads: reach out long, then haul back
+        const reach = Math.min(1, k / 0.45)
+        const yank = k < 0.45 ? 0 : (k - 0.45) / 0.55
+        this.armR.rotation.x = (k < 0.45 ? -0.3 - 1.5 * reach : -1.8 + 2.2 * yank) * big
+        const haul = Math.sin(yank * Math.PI)
+        torso.rotation.x = 0.16 - 0.1 * haul
+        torso.rotation.y = -0.25 * haul
+        break
+      }
       case 'dash':
         this.armL.rotation.x = 0.9 * (1 - k)
         this.armR.rotation.x = 0.9 * (1 - k)
         break
+      case 'step':
+        this.armL.rotation.x = 0.45 * (1 - k)
+        this.armR.rotation.x = 0.45 * (1 - k)
+        break
+      case 'ram': {
+        // the charge: head down, cage forward, arms swept back
+        const r = k < 0.2 ? k / 0.2 : k > 0.8 ? (1 - k) / 0.2 : 1
+        head.rotation.x = 0.5 * r
+        torso.rotation.x = 0.16 + (0.7 - 0.16) * r
+        this.armL.rotation.x = this.armR.rotation.x = 1.2 * r
+        break
+      }
+      case 'hop':
+      case 'spring': {
+        // crouch, spring with the legs tucked and the arms up for balance, land with a squash
+        const deep = a.pose === 'spring'
+        const crouch = deep ? 0.06 : 0.04
+        const land = a.dur - (deep ? 0.08 : 0.05)
+        if (a.t < crouch) {
+          this.lift = deep ? -0.1 : -0.06
+          this.legL.rotation.x = this.legR.rotation.x = deep ? 0.45 : 0.3
+        } else if (a.t < land) {
+          this.legL.rotation.x = deep ? -0.9 : -0.6
+          this.legR.rotation.x = deep ? -0.7 : -0.4
+          this.armL.rotation.z = -(deep ? 0.4 : 0.3)
+          this.armR.rotation.z = deep ? 0.4 : 0.3
+        } else if (this.lockT <= 0) {
+          this.lift = deep ? -0.08 : -0.04
+        }
+        break
+      }
       case 'shot':
         head.position.z = 0.1 - 0.05 * (1 - k)
         break
@@ -419,7 +633,8 @@ export class Still {
     top.rotation.x = Math.PI / 2
     const bottom = new THREE.Mesh(new THREE.TorusGeometry(0.15, 0.045, 6, 16), SHELL_DARK)
     bottom.rotation.x = Math.PI / 2
-    g.add(top, bottom, ball(0.11, EYE, v3(0, 0.28, 0)))
+    this.core = ball(0.11, EYE, v3(0, 0.28, 0))
+    g.add(top, bottom, this.core)
     return g
   }
 
@@ -435,11 +650,14 @@ export class Still {
       rod(le, lh, 0.045, SHELL),
       ball(0.06, SHELL, le),
     )
-    for (const off of [-0.06, 0.06]) {
-      const jaw = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.16, 0.07), SHELL)
-      jaw.position.set(lh.x + off, lh.y - 0.07, lh.z)
-      this.armL.add(jaw)
+    const jaw = (off: number) => {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.16, 0.07), SHELL)
+      m.position.set(lh.x + off, lh.y - 0.07, lh.z)
+      this.armL.add(m)
+      return m
     }
+    this.jawL = jaw(-JAW_OPEN)
+    this.jawR = jaw(JAW_OPEN)
     // right: shorter, a hook
     this.armR = new THREE.Group()
     this.armR.position.set(0.26, 1.5, 0.04)
@@ -458,6 +676,7 @@ export class Still {
     g.position.set(0, 1.56, 0.1)
     g.add(rod(v3(0, 0, 0), v3(0.03, 0.2, 0.04), 0.04, SHELL_DARK))
     const lens = new THREE.Group()
+    this.lens = lens
     lens.position.set(0.03, 0.32, 0.05)
     lens.rotation.z = 0.18 // tilted, curious
     const body = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.17, 18), SHELL)
