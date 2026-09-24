@@ -21,7 +21,8 @@ export const BOSS = {
   overloadAt: 0.55,
   recoverMs: [1000, 560] as const,
   sweep: { windupMs: 720, range: 5.2, halfAngle: 1.3, damage: 18 },
-  wave: { windupMs: 900, gaps: 3, gapWidth: 0.5, damage: 14 },
+  // gaps ~50 degrees, and never narrower than MIN_GAP units even close to the boss
+  wave: { windupMs: 900, gaps: 3, gapWidth: 0.88, minGap: 2.2, damage: 14 },
   barrage: { windupMs: 620, volleys: 3, between: 330, spread: 0.55, damage: 7 },
   charge: { windupMs: 950, lockAt: 0.55, speed: 21, width: 2.3, damage: 22, stunMs: 1700 },
   summon: { windupMs: 1250, count: 3, maxAdds: 4 },
@@ -290,7 +291,7 @@ export class Assembler implements Enemy {
           break
         }
         case 'windup':
-          action = this.windup(dt, target, toward)
+          action = this.windup(dt, target, toward, terrain)
           break
         case 'strike':
           action = this.strike(dt, target, terrain)
@@ -366,7 +367,7 @@ export class Assembler implements Enemy {
 
   private windupTotal = 1
 
-  private windup(_dt: number, target: THREE.Vector3, toward: number): EnemyAction | null {
+  private windup(_dt: number, target: THREE.Vector3, toward: number, terrain: Terrain): EnemyAction | null {
     const t = 1 - Math.max(0, this.timer) / this.windupTotal
     if (this.move === 'charge' && !this.locked) {
       this.aim = toward
@@ -388,7 +389,8 @@ export class Assembler implements Enemy {
     switch (this.move) {
       case 'sweep':
         this.timer = 220
-        return this.inSweep(target) ? { kind: 'melee', damage: BOSS.sweep.damage } : null
+        // cover works against the hammer too: it needs a clear line to you
+        return this.inSweep(target) && this.inSight(target, terrain) ? { kind: 'melee', damage: BOSS.sweep.damage } : null
       case 'wave':
         this.timer = 300
         return { kind: 'wave', center: this.pos.clone(), gaps: [...this.gaps], damage: BOSS.wave.damage }
@@ -407,7 +409,9 @@ export class Assembler implements Enemy {
         return { kind: 'summon', points: this.summonPoints.map((p) => p.clone()) }
       case 'magnet':
         this.timer = 260
-        return target.distanceTo(this.pos) <= BOSS.magnet.radius + 0.4 ? { kind: 'melee', damage: BOSS.magnet.damage } : null
+        return target.distanceTo(this.pos) <= BOSS.magnet.radius + 0.4 && this.inSight(target, terrain)
+          ? { kind: 'melee', damage: BOSS.magnet.damage }
+          : null
     }
     return null
   }
@@ -465,6 +469,11 @@ export class Assembler implements Enemy {
   private endMove() {
     this.phase = 'recover'
     this.timer = BOSS.recoverMs[this.overloaded ? 1 : 0]
+  }
+
+  /** Walls and crates are cover for everything it does, not just the barrage. */
+  private inSight(target: THREE.Vector3, terrain: Terrain) {
+    return terrain.lineClear(this.pos.x, this.pos.z, target.x, target.z, 0.1)
   }
 
   private inSweep(target: THREE.Vector3) {

@@ -303,56 +303,52 @@ export function hurt() {
 }
 
 /**
- * The telegraph, heard. Rises in pitch and flutters faster as the disc fills, and
- * cuts dead at the strike, so you can dodge a chaser you aren't looking at.
- * Returns a stop for when the enemy dies mid-windup.
+ * The hulk's tell, heard: a crank being wound, ratchet clicks speeding up toward
+ * the slam over a low swell of pressure. Ends exactly at the strike, so you can
+ * dodge a hulk you aren't looking at. Returns a stop for when it dies mid-windup.
  */
 export function windup(ms: number, pan: number): () => void {
   const c = live()
   if (!c) return () => {}
   const t = c.currentTime
   const dur = ms / 1000
-  const d = out(c, 'enemy', pan)
-
-  const o = c.createOscillator()
-  o.type = 'sawtooth'
-  o.frequency.setValueAtTime(150, t)
-  o.frequency.exponentialRampToValueAtTime(440, t + dur)
-
-  const f = c.createBiquadFilter()
-  f.type = 'lowpass'
-  f.Q.value = 6
-  f.frequency.setValueAtTime(350, t)
-  f.frequency.exponentialRampToValueAtTime(2600, t + dur)
-
-  const flutter = c.createGain()
-  flutter.gain.value = 0.55
-  const lfo = c.createOscillator()
-  lfo.frequency.setValueAtTime(7, t)
-  lfo.frequency.exponentialRampToValueAtTime(24, t + dur)
-  const depth = c.createGain()
-  depth.gain.value = 0.45
-  lfo.connect(depth).connect(flutter.gain)
-
+  // everything goes through one gain, so a stop silences clicks already scheduled
   const g = c.createGain()
-  g.gain.setValueAtTime(0.03, t)
-  g.gain.exponentialRampToValueAtTime(0.35, t + dur)
-  g.gain.setValueAtTime(0.35, t + dur)
-  g.gain.exponentialRampToValueAtTime(0.0001, t + dur + 0.025)
+  g.connect(out(c, 'enemy', pan))
 
-  o.connect(f).connect(flutter).connect(g).connect(d)
-  o.start(t)
-  lfo.start(t)
-  o.stop(t + dur + 0.05)
-  lfo.stop(t + dur + 0.05)
+  // the pressure: low noise opening up as the blow loads
+  const s = c.createBufferSource()
+  s.buffer = noise
+  s.loop = true
+  const lp = c.createBiquadFilter()
+  lp.type = 'lowpass'
+  lp.Q.value = 3
+  lp.frequency.setValueAtTime(160, t)
+  lp.frequency.exponentialRampToValueAtTime(900, t + dur)
+  const swell = c.createGain()
+  swell.gain.setValueAtTime(0.0001, t)
+  swell.gain.exponentialRampToValueAtTime(0.3, t + dur)
+  swell.gain.setValueAtTime(0.3, t + dur)
+  swell.gain.exponentialRampToValueAtTime(0.0001, t + dur + 0.03)
+  s.connect(lp).connect(swell).connect(g)
+  s.start(t, Math.random() * 0.5)
+  s.stop(t + dur + 0.05)
+
+  // the ratchet: clicks from ~9 a second to ~30, each a hard little tick
+  let at = 0
+  while (at < dur - 0.015) {
+    const k = at / dur
+    const f = 1500 + k * 1600
+    tone(c, g, 'square', t + at, f, f * 0.6, 0.012, 0.1 + k * 0.12, 0.0008)
+    hiss(c, g, t + at, 0.01, 0.12 + k * 0.1, 'bandpass', 3200, 2800, 3, 0.0008)
+    at += 0.11 - k * 0.077
+  }
 
   return () => {
     const now = c.currentTime
     if (now >= t + dur) return
     g.gain.cancelScheduledValues(now)
-    g.gain.setTargetAtTime(0.0001, now, 0.012)
-    o.stop(now + 0.08)
-    lfo.stop(now + 0.08)
+    g.gain.setTargetAtTime(0.0001, now, 0.01)
   }
 }
 
@@ -369,9 +365,9 @@ export function strike(pan: number) {
 }
 
 /**
- * The ranged tell. Thinner and higher than the chaser's so the two never blur:
- * a whistle that climbs while it tracks you, and a hard click when the line
- * freezes — the moment to move. Returns a stop, like windup().
+ * The tripod's tell: a soft servo whir climbing while it tracks you, then a crisp
+ * recorded clack when the line freezes — the moment to move — and a short, quiet
+ * capacitor whine up to the shot. Returns a stop, like windup().
  */
 export function aim(ms: number, lockAt: number, pan: number): () => void {
   const c = live()
@@ -379,38 +375,54 @@ export function aim(ms: number, lockAt: number, pan: number): () => void {
   const t = c.currentTime
   const dur = ms / 1000
   const lock = t + dur * lockAt
+  const g = c.createGain()
   const d = out(c, 'enemy', pan)
+  g.connect(d)
 
+  // servo: narrow band of noise sweeping up, with a slight motor wobble
+  const s = c.createBufferSource()
+  s.buffer = noise
+  s.loop = true
+  const bp = c.createBiquadFilter()
+  bp.type = 'bandpass'
+  bp.Q.value = 9
+  bp.frequency.setValueAtTime(600, t)
+  bp.frequency.exponentialRampToValueAtTime(1500, lock)
+  const whir = c.createGain()
+  whir.gain.setValueAtTime(0.0001, t)
+  whir.gain.linearRampToValueAtTime(0.5, t + 0.08)
+  whir.gain.setValueAtTime(0.5, lock - 0.01)
+  whir.gain.linearRampToValueAtTime(0.0001, lock + 0.02)
+  s.connect(bp).connect(whir).connect(g)
+  s.start(t, Math.random() * 0.5)
+  s.stop(lock + 0.05)
+
+  // the clack: the aim is set
+  const clack = c.createGain()
+  clack.connect(g)
+  const wait = Math.max(0, lock - t)
+  sample(c, 'metalLight', clack, 0.9, 2.4, wait)
+  tone(c, clack, 'square', lock, 1900, 1200, 0.018, 0.14, 0.0008)
+
+  // capacitor: a quiet, rising charge from the lock to the shot
   const o = c.createOscillator()
   o.type = 'sine'
-  o.frequency.setValueAtTime(700, t)
-  o.frequency.exponentialRampToValueAtTime(1250, lock)
-  // locked: the pitch jumps and holds, like the line freezing
-  o.frequency.setValueAtTime(1500, lock)
-
-  const g = c.createGain()
-  g.gain.setValueAtTime(0.0001, t)
-  g.gain.exponentialRampToValueAtTime(0.1, lock)
-  g.gain.setValueAtTime(0.2, lock)
-  g.gain.setValueAtTime(0.2, t + dur)
-  g.gain.exponentialRampToValueAtTime(0.0001, t + dur + 0.02)
-  o.connect(g).connect(d)
-  o.start(t)
+  o.frequency.setValueAtTime(1800, lock)
+  o.frequency.exponentialRampToValueAtTime(3600, t + dur)
+  const cap = c.createGain()
+  cap.gain.setValueAtTime(0.0001, lock)
+  cap.gain.exponentialRampToValueAtTime(0.06, t + dur)
+  cap.gain.setValueAtTime(0.06, t + dur)
+  cap.gain.exponentialRampToValueAtTime(0.0001, t + dur + 0.02)
+  o.connect(cap).connect(g)
+  o.start(lock)
   o.stop(t + dur + 0.05)
-
-  const click = c.createGain()
-  click.connect(d)
-  hiss(c, click, lock, 0.018, 0.9, 'highpass', 3500, 3500, 0.8, 0.001)
-  tone(c, click, 'square', lock, 2400, 1800, 0.02, 0.25, 0.001)
 
   return () => {
     const now = c.currentTime
     if (now >= t + dur) return
     g.gain.cancelScheduledValues(now)
     g.gain.setTargetAtTime(0.0001, now, 0.01)
-    o.stop(now + 0.06)
-    // a click that hasn't happened yet must not happen
-    if (now < lock) click.gain.value = 0
   }
 }
 

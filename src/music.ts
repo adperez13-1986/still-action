@@ -12,7 +12,8 @@ import { musicContext } from './audio'
  * Phone speakers can't reproduce the low end, so the bass carries overtones.
  */
 const BPM = 97
-const BEAT = 60 / BPM
+/** The Assembler's fight: same key, faster, and a drum line under everything. */
+const BOSS_BPM = 124
 const CHORD_BARS = 2
 const LOOKAHEAD = 0.15
 
@@ -29,6 +30,9 @@ const OSTINATO = [1, 0, 1, 0, 1, 1, 0, 1]
 const BELL_LINE = [69, 72, 74, 77, 76, 74, 81, 79, 77, 74]
 
 export interface MusicState {
+  /** The boss is awake: tempo up, drums, drive. `overloaded` adds the arpeggio. */
+  boss: boolean
+  overloaded: boolean
   fighting: boolean
   /** Breather or ending screen: room for the bell. */
   calm: boolean
@@ -39,6 +43,9 @@ export interface MusicState {
 interface Engine {
   ctx: AudioContext
   pulse: GainNode
+  drums: GainNode
+  drive: GainNode
+  arp: GainNode
   bell: GainNode
   tension: GainNode
   padOut: AudioNode
@@ -48,7 +55,11 @@ interface Engine {
 }
 
 let engine: Engine | null = null
-let last = { fighting: false, calm: false, strain: -1 }
+let last = { fighting: false, calm: false, strain: -1, boss: false, overloaded: false }
+let boss = false
+let overloaded = false
+const beatLen = () => 60 / (boss ? BOSS_BPM : BPM)
+let noiseBuf: AudioBuffer | null = null
 
 function impulse(ctx: AudioContext, seconds: number): AudioBuffer {
   const len = Math.floor(ctx.sampleRate * seconds)
@@ -81,6 +92,12 @@ function build(ctx: AudioContext, out: AudioNode): Engine {
 
   const padOut = layer(1, 0.8)
   const pulse = layer(0, 0.15)
+  const drums = layer(0, 0.12)
+  const drive = layer(0, 0.1)
+  const arp = layer(0, 0.5)
+  noiseBuf = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate)
+  const nd = noiseBuf.getChannelData(0)
+  for (let i = 0; i < nd.length; i++) nd[i] = Math.random() * 2 - 1
   const bell = layer(0.5, 1)
   const tension = layer(0, 0.6)
 
@@ -119,7 +136,7 @@ function build(ctx: AudioContext, out: AudioNode): Engine {
     o.start()
   }
 
-  return { ctx, pulse, bell, tension, padOut, nextBeat: ctx.currentTime + 0.1, beat: 0, bellStep: 0 }
+  return { ctx, pulse, drums, drive, arp, bell, tension, padOut, nextBeat: ctx.currentTime + 0.1, beat: 0, bellStep: 0 }
 }
 
 function note(
@@ -149,11 +166,60 @@ function note(
   o.stop(t + attack + hold + release + 0.05)
 }
 
+/** A burst of filtered noise: hats and snares. */
+function hit(e: Engine, dest: AudioNode, t: number, type: BiquadFilterType, f: number, len: number, peak: number) {
+  if (!noiseBuf) return
+  const s = e.ctx.createBufferSource()
+  s.buffer = noiseBuf
+  const filt = e.ctx.createBiquadFilter()
+  filt.type = type
+  filt.frequency.value = f
+  filt.Q.value = 0.9
+  const g = e.ctx.createGain()
+  g.gain.setValueAtTime(0.0001, t)
+  g.gain.linearRampToValueAtTime(peak, t + 0.002)
+  g.gain.exponentialRampToValueAtTime(0.0001, t + len)
+  s.connect(filt).connect(g).connect(dest)
+  s.start(t, Math.random() * 0.5)
+  s.stop(t + len + 0.02)
+}
+
+/** The boss layer: drums, a sixteenth-note drive on the root, a stab each bar, the arpeggio. */
+function scheduleBoss(e: Engine, i: number, t: number, chord: (typeof CHORDS)[number]) {
+  const B = beatLen()
+  const beatInBar = i % 4
+  // kick on every beat, and a pickup before the bar turns
+  note(e, e.drums, 'sine', 70, t, 0.002, 0.03, 0.26, 0.9)
+  note(e, e.drums, 'triangle', 1400, t, 0.001, 0, 0.02, 0.1)
+  if (beatInBar === 3) note(e, e.drums, 'sine', 70, t + B * 0.75, 0.002, 0.02, 0.2, 0.6)
+  // snare on 2 and 4
+  if (beatInBar === 1 || beatInBar === 3) {
+    hit(e, e.drums, t, 'bandpass', 1900, 0.18, 0.5)
+    note(e, e.drums, 'triangle', 190, t, 0.001, 0, 0.1, 0.25)
+  }
+  // hats in sixteenths, accents on the off-beats
+  for (let k = 0; k < 4; k++) hit(e, e.drums, t + (k * B) / 4, 'highpass', 7000, 0.04, k === 2 ? 0.22 : 0.1)
+  // drive: the chord root in sixteenths, jumping the octave, through grit
+  const pattern = [0, 0, 12, 0]
+  for (let k = 0; k < 4; k++) {
+    note(e, e.drive, 'sawtooth', midi(chord.root - 12 + pattern[k]!), t + (k * B) / 4, 0.004, 0.04, 0.09, 0.11, 900)
+  }
+  // a heavy stab at the top of each bar
+  if (beatInBar === 0) for (const n of chord.pad) note(e, e.drive, 'sawtooth', midi(n + 12), t, 0.005, 0.08, 0.3, 0.035, 2200)
+  // overloaded: a fast rising arpeggio over the top
+  if (overloaded) {
+    const up = [...chord.pad, chord.pad[0]! + 12]
+    for (let k = 0; k < 4; k++) note(e, e.arp, 'square', midi(up[(i * 4 + k) % up.length]! + 12), t + (k * B) / 4, 0.003, 0.02, 0.1, 0.03, 3000)
+  }
+}
+
 function schedule(e: Engine, i: number, t: number) {
+  const BEAT = beatLen()
   const beatInBar = i % 4
   const bar = Math.floor(i / 4)
   const chord = CHORDS[Math.floor(bar / CHORD_BARS) % CHORDS.length]!
   const chordBeats = CHORD_BARS * 4
+  if (boss) scheduleBoss(e, i, t, chord)
 
   // pad: each chord swells in and overlaps the next
   if (i % chordBeats === 0) {
@@ -198,7 +264,7 @@ function tick() {
     if (e.nextBeat < e.ctx.currentTime - 0.5) e.nextBeat = e.ctx.currentTime + 0.05
     schedule(e, e.beat, e.nextBeat)
     e.beat++
-    e.nextBeat += BEAT
+    e.nextBeat += beatLen()
   }
 }
 
@@ -213,11 +279,20 @@ export function updateMusic(state: MusicState) {
   }
 
   const strain = Math.round(state.strain * 20) / 20
-  if (state.fighting === last.fighting && state.calm === last.calm && strain === last.strain) return
-  last = { fighting: state.fighting, calm: state.calm, strain }
+  if (
+    state.fighting === last.fighting && state.calm === last.calm && strain === last.strain &&
+    state.boss === last.boss && state.overloaded === last.overloaded
+  ) return
+  last = { fighting: state.fighting, calm: state.calm, strain, boss: state.boss, overloaded: state.overloaded }
+  boss = state.boss
+  overloaded = state.overloaded
 
   const t = engine.ctx.currentTime
-  engine.pulse.gain.setTargetAtTime(state.fighting ? 1 : 0, t, state.fighting ? 1.2 : 0.8)
+  // the boss fight replaces the gentle pulse with its own drums and drive
+  engine.pulse.gain.setTargetAtTime(state.fighting && !state.boss ? 1 : 0, t, state.fighting ? 1.2 : 0.8)
+  engine.drums.gain.setTargetAtTime(state.boss ? 1 : 0, t, state.boss ? 0.4 : 1.2)
+  engine.drive.gain.setTargetAtTime(state.boss ? 1 : 0, t, state.boss ? 0.6 : 1.2)
+  engine.arp.gain.setTargetAtTime(state.boss && state.overloaded ? 1 : 0, t, 0.8)
   engine.bell.gain.setTargetAtTime(state.calm ? 1 : 0.28, t, 1.5)
   // silent until strain passes 0.7 (14 of 20), then up to full at 20
   const rub = Math.max(0, (strain - 0.7) / 0.3)

@@ -90,6 +90,8 @@ export interface Pack {
 interface Wave {
   center: THREE.Vector3
   r: number
+  /** Per segment: how far out the ring gets before cover stops it. */
+  reach: number[]
   gaps: number[]
   damage: number
   hit: boolean
@@ -283,16 +285,17 @@ export class Combat {
     for (let i = this.waves.length - 1; i >= 0; i--) {
       const w = this.waves[i]!
       w.r += WAVE_SPEED * dt
-      const gapHalf = BOSS.wave.gapWidth / 2
-      const inGap = (a: number) => w.gaps.some((g) => {
+      // a gap is ~50 degrees, but never narrower than minGap units, even close in
+      const inGap = (a: number, r: number) => w.gaps.some((g) => {
         let d = a - g
         while (d > Math.PI) d -= Math.PI * 2
         while (d < -Math.PI) d += Math.PI * 2
-        return Math.abs(d) < gapHalf
+        return Math.abs(d) < Math.max(BOSS.wave.gapWidth / 2, BOSS.wave.minGap / 2 / Math.max(0.5, r))
       })
       w.segs.forEach((m, k) => {
         const a = (k / WAVE_SEGS) * Math.PI * 2
-        m.visible = !inGap(a)
+        // behind cover the ring is gone: you can see the shadow where you'd be safe
+        m.visible = !inGap(a, w.r) && w.r < w.reach[k]!
         m.position.set(w.center.x + Math.sin(a) * w.r, 0.2, w.center.z + Math.cos(a) * w.r)
         m.rotation.y = a
       })
@@ -303,7 +306,8 @@ export class Combat {
         if (m.visible) this.vfx?.embers(m.position, 1, 0.2)
       }
       const pd = Math.hypot(player.x - w.center.x, player.z - w.center.z)
-      if (!w.hit && Math.abs(pd - w.r) < 0.55 && !inGap(Math.atan2(player.x - w.center.x, player.z - w.center.z))) {
+      const shadowed = !this.terrain.lineClear(w.center.x, w.center.z, player.x, player.z, 0.1)
+      if (!w.hit && Math.abs(pd - w.r) < 0.55 && !shadowed && !inGap(Math.atan2(player.x - w.center.x, player.z - w.center.z), pd)) {
         w.hit = true
         this.hurtPlayer(w.damage)
       }
@@ -694,7 +698,15 @@ export class Combat {
       this.scene.add(m)
       return m
     })
-    this.waves.push({ center: center.clone(), r: 1.4, gaps, damage, hit: false, segs })
+    // march out along each segment's line once, to find where cover cuts it off
+    const reach = Array.from({ length: WAVE_SEGS }, (_, k) => {
+      const a = (k / WAVE_SEGS) * Math.PI * 2
+      for (let r = 1.8; r < WAVE_MAX; r += 0.4) {
+        if (this.terrain.blocked(center.x + Math.sin(a) * r, center.z + Math.cos(a) * r, 0.1)) return r
+      }
+      return WAVE_MAX
+    })
+    this.waves.push({ center: center.clone(), r: 1.4, reach, gaps, damage, hit: false, segs })
   }
 
   /** "Assemble": scrap piles become small awake hulks, up to a cap. */

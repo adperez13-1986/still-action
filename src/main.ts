@@ -827,7 +827,10 @@ function frame(nowMs: number) {
   world.camera.lookAt(camTarget)
 
   updateAmbience(level?.boss ? 'boss' : 'crawl')
+  const bossAwake = !!combat.boss && !combat.boss.dead && awake.includes(combat.boss)
   updateMusic({
+    boss: bossAwake,
+    overloaded: bossAwake && combat.boss!.overloaded,
     fighting,
     calm: !fighting,
     strain: run.strain / 20,
