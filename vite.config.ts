@@ -1,7 +1,7 @@
 import { writeFileSync } from 'node:fs'
 import { defineConfig, type Plugin } from 'vite'
 
-const SINKS = new Set(['grade', 'mix', 'zoom'])
+const SINKS = new Set(['grade', 'mix', 'zoom', 'kit'])
 
 /**
  * The phone is on plain http over LAN, so the clipboard API is unavailable.

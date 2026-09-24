@@ -48,6 +48,9 @@ const GradeShader = {
     tDiffuse: { value: null as THREE.Texture | null },
     uVignette: { value: grade.vignette },
     uSaturation: { value: grade.saturation },
+    /** Film grain, 0 = off. Breaks up the clean "clay" read of flat-coloured kits. */
+    uGrain: { value: 0 },
+    uTime: { value: 0 },
   },
   vertexShader: /* glsl */ `
     varying vec2 vUv;
@@ -60,7 +63,11 @@ const GradeShader = {
     uniform sampler2D tDiffuse;
     uniform float uVignette;
     uniform float uSaturation;
+    uniform float uGrain;
+    uniform float uTime;
     varying vec2 vUv;
+
+    float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
 
     void main() {
       vec4 c = texture2D(tDiffuse, vUv);
@@ -74,6 +81,10 @@ const GradeShader = {
       vec2 d = vUv - 0.5;
       float v = 1.0 - dot(d, d) * uVignette * 2.2;
       c.rgb *= clamp(v, 0.0, 1.0);
+
+      // grain: strongest in the mids, where flat colour reads most like clay
+      float n = hash(gl_FragCoord.xy + fract(uTime) * 91.7) - 0.5;
+      c.rgb += n * uGrain * (0.35 + 0.65 * smoothstep(0.0, 0.35, l) * (1.0 - smoothstep(0.55, 1.0, l)));
 
       gl_FragColor = c;
     }
@@ -94,7 +105,9 @@ export interface World {
   render: () => void
 }
 
-export function createWorld(canvas: HTMLCanvasElement): World {
+/** `arena: false` gives the lit, graded, empty world: for the dungeon look test, and later the crawl. */
+export function createWorld(canvas: HTMLCanvasElement, opts: { arena?: boolean } = {}): World {
+  const withArena = opts.arena ?? true
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' })
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5))
   renderer.toneMapping = THREE.ACESFilmicToneMapping
@@ -121,22 +134,26 @@ export function createWorld(canvas: HTMLCanvasElement): World {
   graceLight.position.set(0, 4.6, 0)
   scene.add(graceLight)
 
-  // --- floor ---
-  const floor = new THREE.Mesh(
-    new THREE.CircleGeometry(ARENA_RADIUS + 34, 72),
-    new THREE.MeshStandardMaterial({ color: 0x24303f, roughness: 0.95, metalness: 0 }),
-  )
-  floor.rotation.x = -Math.PI / 2
-  scene.add(floor)
+  const colliders: Collider[] = []
+  if (withArena) {
+    // --- floor ---
+    const floor = new THREE.Mesh(
+      new THREE.CircleGeometry(ARENA_RADIUS + 34, 72),
+      new THREE.MeshStandardMaterial({ color: 0x24303f, roughness: 0.95, metalness: 0 }),
+    )
+    floor.rotation.x = -Math.PI / 2
+    scene.add(floor)
 
-  const grid = new THREE.GridHelper(ARENA_RADIUS * 2, 26, 0x2a3f5c, 0x1b2837)
-  ;(grid.material as THREE.Material).transparent = true
-  ;(grid.material as THREE.Material).opacity = 0.35
-  grid.position.y = 0.01
-  scene.add(grid)
+    const grid = new THREE.GridHelper(ARENA_RADIUS * 2, 26, 0x2a3f5c, 0x1b2837)
+    ;(grid.material as THREE.Material).transparent = true
+    ;(grid.material as THREE.Material).opacity = 0.35
+    grid.position.y = 0.01
+    scene.add(grid)
 
-  const arena = buildArena()
-  scene.add(arena.group)
+    const arena = buildArena()
+    scene.add(arena.group)
+    colliders.push(...arena.colliders)
+  }
 
   // --- post ---
   const composer = new EffectComposer(renderer)
@@ -171,7 +188,7 @@ export function createWorld(canvas: HTMLCanvasElement): World {
 
   return {
     scene, camera, renderer, composer, graceLight, fog, bloom, gradePass,
-    colliders: arena.colliders,
+    colliders,
     resize,
     render: () => composer.render(),
   }

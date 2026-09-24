@@ -61,6 +61,41 @@ plane, a grid for walls.
 
 ---
 
+## Dungeon crawl (settled 24 Sep 2026)
+
+Worked out in four grilling rounds after the spike. Replaces the single arena.
+
+**Shape.** D2-style crawl: each level is generated fresh — a main path with 2–3 side
+rooms, open corridors, no doors. ~6 packs, 4–5 minutes a level. Rooms 9–12 units
+across, corridors 3.5 wide, a few debris pieces per room as cover. Rubble fades
+into the fog beyond the edge.
+
+**Packs.** Groups placed in the level, asleep (dim, cores dark) until you come
+within ~8 units; the whole pack wakes with a flash and an alert sound. No
+chain-waking. A pack that loses you past ~16 units walks home and sleeps again.
+Enemies path around walls.
+
+**Quiet.** 2.5s with nothing awake = a fight cleared: half of missing HP back (with
+a visible fill), strain −2, a chime and a small banner.
+
+**Exit.** A tall plain beam visible over the walls; Grace's light around Still
+leans toward it. Walk in → fade → next depth, full HP, strain carries, no going
+back. The exit is always open, even while chased.
+
+**Depth.** Level 1: packs of 2–3 chasers, one ranged among them. Deeper: bigger
+packs, more ranged, later archetypes by depth. Never more enemy HP or damage.
+
+**Loot.** 22% per kill; side-room packs always drop. Parts stay on the floor until
+you leave the level. The "next fight" button goes away.
+
+**Camera** frames only awake enemies. **Ending** shows depth reached. **No extra
+healing** for now; rare repair drops are the fallback if low HP drags.
+
+**Art.** KayKit Dungeon Remastered (CC0) — `wall_half` pieces for the waist-high
+rule. Only the pieces used are vendored, with the kit's licence.
+
+---
+
 ## Spike scope
 
 Answers one question: does moving Still and hitting something feel good on a phone.
