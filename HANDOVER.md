@@ -27,20 +27,13 @@ offline after one load; installable as a fullscreen landscape PWA via
   synthesized ambience, generative music.
 - Two endings (sudden break / strain stop), "reached depth N".
 
-## Open bug — check first
+## Resolved — phone crash on rotation (25 Sep)
 
-**Chrome crashes on the Poco ("Aw, Snap": blank white page, sad face top-left)
-when the phone is turned sideways**, installed or in the browser. Not
-reproducible on desktop Chrome with phone emulation (heap flat 11–14MB, no GL
-errors, 20 textures ~6MB — so not texture memory). Deployed as a guess:
-resizes debounced 180ms, reload on `webglcontextlost` (commit after
-`e1767a7`). If it still crashes: `adb` is at
-`~/Library/Android/sdk/platform-tools/adb` — have him connect the Poco by USB
-with USB debugging on, then `adb logcat | grep -iE "chromium|gpu|crash"` while
-it crashes to get the real cause (a shader the mobile GPU rejects? OOM?).
-Suspects: the kit's triplanar skin shader, the particle point sprites, the
-telegraph shader. He was last seen playing fine on the LAN dev build *before*
-the boss-music/windup/deploy changes.
+Chrome showed "Aw, Snap" on the Poco when turned sideways. After deploying the
+180ms resize debounce and the reload-on-`webglcontextlost` guard it works; the
+exact cause was never confirmed (not reproducible on desktop). If it ever comes
+back, `adb` is at `~/Library/Android/sdk/platform-tools/adb`: USB debugging on,
+then `adb logcat | grep -iE "chromium|gpu|crash"` while it crashes.
 
 ## Next up — agreed, not started
 
