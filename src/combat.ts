@@ -23,6 +23,8 @@ interface Bolt {
   life: number
   damage: number
   radius: number
+  /** Piercing bolts remember who they've hit, so each enemy is hit once. */
+  pierced?: Set<Enemy>
 }
 
 /** An enemy projectile. Slower than yours, and waist-high walls stop it. */
@@ -47,7 +49,7 @@ interface Fx {
 export interface CombatEvents {
   onHit: (at: THREE.Vector3) => void
   onPlayerHurt: (amount: number) => void
-  onKill: (at: THREE.Vector3) => void
+  onKill: (at: THREE.Vector3, kind: Archetype) => void
   onDash: (x: number, z: number, ms: number) => void
   onShot: () => void
   onWindup: (e: Enemy, ms: number) => void
@@ -62,6 +64,8 @@ export class Combat {
 
   private bolts: Bolt[] = []
   private shots: Shot[] = []
+  /** Effects that land a beat after the cast, on game time (so hitstop and the stop freeze them too). */
+  private later: { t: number; run: () => void }[] = []
   private fx: Fx[] = []
   private autoTimer = 0
   private spawnTimer = 1.2
@@ -105,7 +109,7 @@ export class Combat {
       if (e.dead) {
         e.dispose(this.scene)
         this.enemies.splice(i, 1)
-        this.events.onKill(e.pos)
+        this.events.onKill(e.pos, e.kind)
         this.events.onGone(e)
       }
     }
@@ -138,11 +142,16 @@ export class Combat {
       }
       if (!spent) {
         for (const e of this.enemies) {
+          if (b.pierced?.has(e)) continue
           const dx = b.mesh.position.x - e.pos.x
           const dz = b.mesh.position.z - e.pos.z
           if (Math.hypot(dx, dz) < b.radius + 0.5) {
             e.hit(b.damage)
             this.events.onHit(e.pos)
+            if (b.pierced) {
+              b.pierced.add(e)
+              continue
+            }
             spent = true
             break
           }
@@ -151,6 +160,15 @@ export class Combat {
       if (spent) {
         this.scene.remove(b.mesh)
         this.bolts.splice(i, 1)
+      }
+    }
+
+    for (let i = this.later.length - 1; i >= 0; i--) {
+      const l = this.later[i]!
+      l.t -= dt
+      if (l.t <= 0) {
+        this.later.splice(i, 1)
+        l.run()
       }
     }
 
@@ -221,6 +239,7 @@ export class Combat {
     this.bolts.length = 0
     for (const s of this.shots) this.scene.remove(s.mesh)
     this.shots.length = 0
+    this.later.length = 0
     for (const f of this.fx) this.scene.remove(f.mesh)
     this.fx.length = 0
     this.spawnTimer = 1.5
@@ -283,15 +302,22 @@ export class Combat {
     switch (def.shape) {
       case 'bolt': {
         const target = this.nearest(origin, def.range)
-        const dir = target
-          ? new THREE.Vector3(target.pos.x - origin.x, 0, target.pos.z - origin.z).normalize()
-          : new THREE.Vector3(Math.sin(facing), 0, Math.cos(facing))
-        const mesh = new THREE.Mesh(this.boltGeo, this.abilityBoltMat)
-        mesh.scale.set(2.2, 2.2, 2.6)
-        mesh.position.set(origin.x, 1.15, origin.z)
-        mesh.rotation.y = Math.atan2(dir.x, dir.z)
-        this.scene.add(mesh)
-        this.bolts.push({ mesh, dir, life: def.range / BOLT_SPEED, damage: def.damage, radius: def.radius })
+        const aim = target
+          ? Math.atan2(target.pos.x - origin.x, target.pos.z - origin.z)
+          : facing
+        const spread = def.mod === 'fan' ? [-0.26, 0, 0.26] : [0]
+        for (const off of spread) {
+          const dir = new THREE.Vector3(Math.sin(aim + off), 0, Math.cos(aim + off))
+          const mesh = new THREE.Mesh(this.boltGeo, this.abilityBoltMat)
+          mesh.scale.set(2.2, 2.2, 2.6)
+          mesh.position.set(origin.x, 1.15, origin.z)
+          mesh.rotation.y = aim + off
+          this.scene.add(mesh)
+          this.bolts.push({
+            mesh, dir, life: def.range / BOLT_SPEED, damage: def.damage, radius: def.radius,
+            pierced: def.mod === 'pierce' ? new Set() : undefined,
+          })
+        }
         break
       }
 
@@ -300,14 +326,22 @@ export class Combat {
           const d = Math.hypot(e.pos.x - origin.x, e.pos.z - origin.z)
           if (d <= def.radius) {
             e.hit(def.damage)
-            // shove them out of your face — this is the panic button
-            const k = 2.4 / Math.max(0.4, d)
-            e.pos.x += (e.pos.x - origin.x) * k * 0.35
-            e.pos.z += (e.pos.z - origin.z) * k * 0.35
+            if (def.mod === 'pull') {
+              // drag them in, but stop short of stacking them on top of you
+              const k = Math.max(0, d - 1.4) / Math.max(0.001, d)
+              e.pos.x -= (e.pos.x - origin.x) * k * 0.75
+              e.pos.z -= (e.pos.z - origin.z) * k * 0.75
+            } else {
+              // shove them out of your face — this is the panic button
+              const k = 2.4 / Math.max(0.4, d)
+              e.pos.x += (e.pos.x - origin.x) * k * 0.35
+              e.pos.z += (e.pos.z - origin.z) * k * 0.35
+            }
             this.events.onHit(e.pos)
           }
         }
-        this.ring(origin, 0.3, def.radius, 0.45, 0xffd39b)
+        if (def.mod === 'pull') this.ring(origin, def.radius, 0.3, 0.45, 0xbcd6ff)
+        else this.ring(origin, 0.3, def.radius, 0.45, 0xffd39b)
         break
       }
 
@@ -318,17 +352,24 @@ export class Combat {
         const aimed = snap ? Math.atan2(snap.pos.x - origin.x, snap.pos.z - origin.z) : facing
         const fx = Math.sin(aimed)
         const fz = Math.cos(aimed)
+        // the hook trades width for reach: ~80 degrees instead of 120
+        const cone = def.mod === 'hook' ? 0.76 : 0.5
         for (const e of this.enemies) {
           const dx = e.pos.x - origin.x
           const dz = e.pos.z - origin.z
           const d = Math.hypot(dx, dz)
           if (d > def.range + MELEE_PAD) continue
           // 120-degree sweep in front
-          if ((dx / d) * fx + (dz / d) * fz < 0.5) continue
+          if ((dx / d) * fx + (dz / d) * fz < cone) continue
           e.hit(def.damage)
+          if (def.mod === 'hook' && d > 1.5) {
+            const k = (d - 1.3) / d
+            e.pos.x -= dx * k
+            e.pos.z -= dz * k
+          }
           this.events.onHit(e.pos)
         }
-        this.sweep(origin, aimed, def.range, 0xffe0b0)
+        this.sweep(origin, aimed, def.range, 0xffe0b0, Math.acos(cone) * 2)
         break
       }
 
@@ -361,6 +402,21 @@ export class Combat {
         }
         this.ring(origin, 0.3, 1.6, 0.3, 0xbcd6ff)
         this.events.onDash(ex, ez, 190)
+        if (def.mod === 'slam') {
+          const at = new THREE.Vector3(ex, 0, ez)
+          this.later.push({
+            t: 0.19,
+            run: () => {
+              for (const e of this.enemies) {
+                if (Math.hypot(e.pos.x - at.x, e.pos.z - at.z) <= 2.8) {
+                  e.hit(10)
+                  this.events.onHit(e.pos)
+                }
+              }
+              this.ring(at, 0.3, 2.8, 0.35, 0xffd39b)
+            },
+          })
+        }
         break
       }
     }
@@ -384,9 +440,9 @@ export class Combat {
     this.fx.push({ mesh, mat, life, max: life, from, to })
   }
 
-  private sweep(at: THREE.Vector3, facing: number, range: number, color: number) {
+  private sweep(at: THREE.Vector3, facing: number, range: number, color: number, spread = (Math.PI * 2) / 3) {
     const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.6, depthWrite: false })
-    const mesh = new THREE.Mesh(new THREE.CircleGeometry(range, 24, -Math.PI / 3, (Math.PI * 2) / 3), mat)
+    const mesh = new THREE.Mesh(new THREE.CircleGeometry(range, 24, -spread / 2, spread), mat)
     // The circle's rotation.z is applied before the tilt flat, so it maps to the
     // floor with z mirrored. -facing + PI/2 looked right on the x axis only.
     mesh.rotation.x = -Math.PI / 2

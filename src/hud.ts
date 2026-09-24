@@ -1,4 +1,4 @@
-import { ABILITIES, type AbilityDef } from './abilities'
+import { STARTING, type AbilityDef } from './abilities'
 
 /** Variant A, locked after the reach test: fixed stick, tight arc (r96, 62px). */
 const ARC_R = 96
@@ -27,9 +27,29 @@ export interface Hud {
   integrity: number
   /** Off once an ending starts: the stick and buttons stop answering. */
   enabled: boolean
+  /** `now` is game time in ms, not wall time: it stops while paused, and so do cooldowns. */
   update: (now: number) => void
   onFire: (cb: (def: AbilityDef, pushed: boolean) => void) => void
+  /** What's on the four buttons right now. */
+  readonly loadout: readonly AbilityDef[]
+  /**
+   * Put a part on its slot's button and return the one it replaced. The new part
+   * inherits the slot's cooldown as a fraction, so swapping never resets anything.
+   */
+  equip: (def: AbilityDef) => AbilityDef
+  resetLoadout: () => void
+  /** The pickup card. Null hides it. */
+  offer: (incoming: AbilityDef | null) => void
+  onTake: (cb: () => void) => void
+  onCompare: (cb: () => void) => void
+  onPause: (cb: () => void) => void
+  /** The "next fight" button, shown while the breather is waiting on you. */
+  ready: (show: boolean) => void
+  onReady: (cb: () => void) => void
 }
+
+const TIER_CSS = { white: 'var(--tier-white)', blue: 'var(--tier-blue)', gold: 'var(--tier-gold)' }
+const SLOT_LABEL = { head: 'Head', torso: 'Torso', arms: 'Arms', legs: 'Legs' }
 
 export function createHud(root: HTMLElement): Hud {
   root.innerHTML = `
@@ -37,6 +57,19 @@ export function createHud(root: HTMLElement): Hud {
     <div id="stickBase"><div id="stickKnob"></div></div>
     <div class="meter" id="strain"><i style="width:0%"></i><b>STRAIN</b></div>
     <div class="meter" id="hp"><i style="width:100%"></i><b>INTEGRITY</b></div>
+    <div id="offer">
+      <div class="info">
+        <div class="head"><span class="slot"></span><b class="name"></b></div>
+        <p class="line"></p>
+        <p class="replaces"></p>
+      </div>
+      <div class="choices">
+        <button type="button" class="take">take</button>
+        <button type="button" class="compare">compare</button>
+      </div>
+    </div>
+    <button type="button" id="pauseBtn" aria-label="pause"><i></i><i></i></button>
+    <button type="button" id="readyBtn">next fight</button>
   `
 
   const zone = root.querySelector<HTMLElement>('#stickZone')!
@@ -45,10 +78,41 @@ export function createHud(root: HTMLElement): Hud {
   const strainMeter = root.querySelector<HTMLElement>('#strain')!
   const strainFill = strainMeter.querySelector<HTMLElement>('i')!
   const hpFill = root.querySelector<HTMLElement>('#hp i')!
+  const offerEl = root.querySelector<HTMLElement>('#offer')!
+  const offerSlot = offerEl.querySelector<HTMLElement>('.slot')!
+  const offerName = offerEl.querySelector<HTMLElement>('.name')!
+  const offerLine = offerEl.querySelector<HTMLElement>('.line')!
+  const offerReplaces = offerEl.querySelector<HTMLElement>('.replaces')!
+  const takeBtn = offerEl.querySelector<HTMLElement>('.take')!
+  const compareBtn = offerEl.querySelector<HTMLElement>('.compare')!
+  const pauseBtn = root.querySelector<HTMLElement>('#pauseBtn')!
+  const takeListeners: (() => void)[] = []
+  const compareListeners: (() => void)[] = []
+  const pauseListeners: (() => void)[] = []
+  const readyListeners: (() => void)[] = []
+  const readyBtn = root.querySelector<HTMLElement>('#readyBtn')!
+  readyBtn.addEventListener('pointerdown', (e) => {
+    e.preventDefault()
+    if (state.enabled) for (const cb of readyListeners) cb()
+  })
+  let offered: AbilityDef | null = null
+  // pointerdown, not click: a mid-fight tap should land the first time
+  takeBtn.addEventListener('pointerdown', (e) => {
+    e.preventDefault()
+    if (offered && state.enabled) for (const cb of takeListeners) cb()
+  })
+  compareBtn.addEventListener('pointerdown', (e) => {
+    e.preventDefault()
+    if (offered && state.enabled) for (const cb of compareListeners) cb()
+  })
+  pauseBtn.addEventListener('pointerdown', (e) => {
+    e.preventDefault()
+    if (state.enabled) for (const cb of pauseListeners) cb()
+  })
 
-  const buttons: ButtonState[] = ABILITIES.map((def, i) => {
+  const buttons: ButtonState[] = STARTING.map((def, i) => {
     const el = document.createElement('div')
-    el.className = 'btn ready'
+    el.className = `btn ready tier-${def.tier}`
     el.innerHTML = `<div class="cd"></div><span class="lbl">${def.key}</span>`
     const th = (ARC_DEG[i] ?? 0) * (Math.PI / 180)
     el.style.right = `calc(env(safe-area-inset-right, 0px) + ${PAD + ARC_R * Math.cos(th) - BTN / 2}px)`
@@ -58,7 +122,7 @@ export function createHud(root: HTMLElement): Hud {
   })
 
   const listeners: ((def: AbilityDef, pushed: boolean) => void)[] = []
-  const state = { moveX: 0, moveZ: 0, strain: 0, integrity: 1, enabled: true }
+  const state = { moveX: 0, moveZ: 0, strain: 0, integrity: 1, enabled: true, clock: 0 }
 
   // --- stick ---
   let stickPointer: number | null = null
@@ -119,7 +183,7 @@ export function createHud(root: HTMLElement): Hud {
     b.el.addEventListener('pointerdown', (e) => {
       b.el.setPointerCapture(e.pointerId)
       b.pointerId = e.pointerId
-      b.downAt = performance.now()
+      b.downAt = state.clock
       b.pushed = false
       b.el.classList.add('press')
     })
@@ -129,14 +193,14 @@ export function createHud(root: HTMLElement): Hud {
         b.pointerId = null
         b.el.classList.remove('press')
         if (b.pushed) return
-        if (performance.now() >= b.readyAt) fire(b, false)
+        if (state.clock >= b.readyAt) fire(b, false)
       })
     }
   }
 
   function fire(b: ButtonState, pushed: boolean) {
     if (!state.enabled) return
-    b.readyAt = performance.now() + b.def.cooldownMs
+    b.readyAt = state.clock + b.def.cooldownMs
     if (pushed) {
       navigator.vibrate?.([14, 26, 14])
     } else {
@@ -163,6 +227,7 @@ export function createHud(root: HTMLElement): Hud {
     },
 
     update(now: number) {
+      state.clock = now
       for (const b of buttons) {
         const left = b.readyAt - now
         const ready = left <= 0
@@ -182,5 +247,52 @@ export function createHud(root: HTMLElement): Hud {
     },
 
     onFire(cb) { listeners.push(cb) },
+
+    get loadout() { return buttons.map((b) => b.def) },
+
+    equip(def) {
+      const b = buttons.find((x) => x.def.slot === def.slot)!
+      const old = b.def
+      const now = state.clock
+      const frac = Math.max(0, b.readyAt - now) / old.cooldownMs
+      b.def = def
+      b.readyAt = now + frac * def.cooldownMs
+      b.el.className = b.el.className.replace(/tier-\w+/, `tier-${def.tier}`)
+      b.el.classList.add('swapped')
+      setTimeout(() => b.el.classList.remove('swapped'), 450)
+      return old
+    },
+
+    resetLoadout() {
+      for (const b of buttons) {
+        const start = STARTING.find((p) => p.slot === b.def.slot)!
+        b.def = start
+        b.readyAt = 0
+        b.el.className = b.el.className.replace(/tier-\w+/, `tier-${start.tier}`)
+      }
+    },
+
+    offer(incoming) {
+      offered = incoming
+      // the button that would change pulses, so "which slot" needs no reading
+      for (const b of buttons) b.el.classList.toggle('target', !!incoming && b.def.slot === incoming.slot)
+      if (!incoming) {
+        offerEl.classList.remove('show')
+        return
+      }
+      const current = buttons.find((b) => b.def.slot === incoming.slot)!.def
+      offerSlot.textContent = SLOT_LABEL[incoming.slot]
+      offerName.textContent = incoming.name
+      offerName.style.color = TIER_CSS[incoming.tier]
+      offerLine.textContent = incoming.line
+      offerReplaces.textContent = `replaces ${current.name}`
+      offerEl.classList.add('show')
+    },
+
+    onTake(cb) { takeListeners.push(cb) },
+    onCompare(cb) { compareListeners.push(cb) },
+    onPause(cb) { pauseListeners.push(cb) },
+    ready(show) { readyBtn.classList.toggle('show', show) },
+    onReady(cb) { readyListeners.push(cb) },
   }
 }

@@ -97,6 +97,16 @@ button again. Second criterion, equally binding: is building it still fun.
 - **Dynamic zoom built** (`src/camera.ts`): frames every threat, never below 0.7,
   drifts in to 1.1 between fights, small punches on impact. Dials live in the grade
   panel and save to `zoom.json`.
+- **Drops and swapping built** (`src/loot.ts`, `src/pause.ts`). D2's structure, not
+  its maths: treasure classes per archetype, tiers mean *different* not stronger,
+  no stat affixes. Parts drop on the ground; walk over, take or compare (pauses).
+  The old part drops at your feet. Swapped-in parts inherit the cooldown fraction;
+  cooldowns run on game time. While loot is on the floor the breather waits for a
+  "next fight" tap. The five non-white parts are placeholders.
+- **Part ideas to explore:** a bolt that really pierces everything, walls included;
+  a bolt that bounces.
+- **Not built:** found parts joining the pool across runs (needs the meta layer);
+  Still's body showing what he's wearing.
 - **Grade defaults are guesses.** Tune live in-app, hit save, values land in
   `grade.json`.
 

@@ -1,4 +1,4 @@
-import type { AbilityShape } from './abilities'
+import type { AbilityShape, Tier } from './abilities'
 
 /**
  * Every sound is synthesised. No files to source, no load latency, and each one
@@ -388,6 +388,41 @@ export function ability(shape: AbilityShape, pushed: boolean) {
   if (pushed) grind(c, d, t)
 }
 
+/**
+ * A part hitting the floor. The tier is audible before you read it, the way D2's
+ * drops were: white a dull clink, blue a bright two-note ping, gold a long shimmer.
+ */
+export function drop(tier: Tier, pan: number) {
+  const c = live()
+  if (!c) return
+  const t = c.currentTime + 0.4 // lands at the end of the hop, not when it leaves the body
+  const d = out(c, 'abilities', pan)
+  tone(c, d, 'triangle', t, 900, 820, 0.08, 0.25)
+  hiss(c, d, t, 0.03, 0.2, 'highpass', 4000, 4000, 0.7)
+  if (tier === 'blue') {
+    tone(c, d, 'sine', t + 0.02, 1318, 1316, 0.45, 0.2, 0.004)
+    tone(c, d, 'sine', t + 0.12, 1976, 1974, 0.6, 0.16, 0.004)
+  }
+  if (tier === 'gold') {
+    for (const [i, f] of [587, 740, 880, 1175, 1480].entries()) {
+      tone(c, d, 'triangle', t + i * 0.07, f, f, 1.4, 0.13, 0.004)
+      tone(c, d, 'sine', t + i * 0.07 + 0.01, f * 2, f * 2, 0.8, 0.04, 0.004)
+    }
+    hiss(c, d, t, 1.2, 0.08, 'highpass', 7000, 9000, 0.5, 0.2)
+  }
+}
+
+/** Taking a part: a mechanical seat-and-click, the body accepting it. */
+export function take() {
+  const c = live()
+  if (!c) return
+  const t = c.currentTime
+  const d = out(c, 'abilities', 0)
+  tone(c, d, 'square', t, 180, 120, 0.05, 0.18, 0.002)
+  hiss(c, d, t + 0.05, 0.03, 0.4, 'bandpass', 3200, 2600, 2)
+  tone(c, d, 'triangle', t + 0.09, 660, 990, 0.12, 0.2, 0.004)
+}
+
 /** A fight cleared: the one warm sound in the game, and short. */
 export function cleared() {
   const c = live()
@@ -464,6 +499,14 @@ export function restore(fadeSeconds = 0) {
     duck.gain.setValueAtTime(Math.max(0.0001, duck.gain.value), t)
     duck.gain.exponentialRampToValueAtTime(1, t + fadeSeconds)
   }
+}
+
+/** Paused: everything drops back, the music keeps breathing underneath. */
+export function pauseDuck(on: boolean) {
+  if (!ctx) return
+  const t = ctx.currentTime
+  duck.gain.cancelScheduledValues(t)
+  duck.gain.setTargetAtTime(on ? 0.3 : 1, t, 0.12)
 }
 
 /** For the music: the running context, and its bus. Null until audio is unlocked. */

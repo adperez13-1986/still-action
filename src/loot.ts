@@ -1,0 +1,172 @@
+import * as THREE from 'three'
+import { PARTS, type AbilityDef, type Tier } from './abilities'
+import type { SlotName } from './still'
+import type { Archetype } from './combat'
+import { ARENA_RADIUS } from './world'
+
+/**
+ * D2's structure, not D2's maths. Each archetype has a treasure class that
+ * leans toward certain slots; a tier roll picks white, blue or gold; the part
+ * comes from whatever of that tier isn't already on Still. Tiers mean
+ * "different", never "stronger".
+ */
+export const LOOT = {
+  /** Per kill. Low on purpose: a phone screen buried in beams can't show telegraphs. */
+  dropChance: 0.22,
+  tierOdds: { white: 0.55, blue: 0.38, gold: 0.07 } as Record<Tier, number>,
+  pickupRadius: 1.15,
+}
+
+const TREASURE: Record<Archetype, Record<SlotName, number>> = {
+  // chasers are all arms and torso; ranged ones are all eyes and legs
+  chaser: { head: 1, torso: 3, arms: 3, legs: 1 },
+  ranged: { head: 3, torso: 1, arms: 1, legs: 3 },
+}
+
+export const TIER_COLOR: Record<Tier, number> = {
+  white: 0xdfe6ee,
+  blue: 0x6f8cff,
+  // warm like Grace's light, so it's kept thin and rare; no light source of its own
+  gold: 0xd9b36c,
+}
+
+function pickWeighted<T extends string>(weights: Record<T, number>): T {
+  const entries = Object.entries(weights) as [T, number][]
+  let r = Math.random() * entries.reduce((a, [, w]) => a + w, 0)
+  for (const [k, w] of entries) {
+    r -= w
+    if (r <= 0) return k
+  }
+  return entries[entries.length - 1]![0]
+}
+
+/** Null when nothing is left to find at any tier. */
+export function rollPart(from: Archetype, equipped: readonly AbilityDef[]): AbilityDef | null {
+  const on = new Set(equipped.map((p) => p.id))
+  const pool = PARTS.filter((p) => !on.has(p.id))
+  if (pool.length === 0) return null
+
+  // tier first, then fall back through the others if that tier has nothing left
+  const first = pickWeighted(LOOT.tierOdds)
+  for (const tier of [first, 'blue', 'white', 'gold'] as Tier[]) {
+    const tierPool = pool.filter((p) => p.tier === tier)
+    if (tierPool.length === 0) continue
+    const slotWeights = {} as Record<SlotName, number>
+    for (const p of tierPool) slotWeights[p.slot] = TREASURE[from][p.slot]
+    const slot = pickWeighted(slotWeights)
+    const options = tierPool.filter((p) => p.slot === slot)
+    return options[Math.floor(Math.random() * options.length)]!
+  }
+  return null
+}
+
+export interface GroundPart {
+  def: AbilityDef
+  pos: THREE.Vector3
+  group: THREE.Group
+  /** The pop out of the enemy: counts down to landing. */
+  fly: number
+  from: THREE.Vector3
+  bob: number
+}
+
+const FLY = 0.42
+
+export class Loot {
+  readonly ground: GroundPart[] = []
+  private readonly beamGeo = new THREE.CylinderGeometry(0.07, 0.16, 5, 8, 1, true)
+  private readonly chunkGeo = new THREE.BoxGeometry(0.38, 0.3, 0.38)
+  private readonly discGeo = new THREE.CircleGeometry(0.55, 24)
+
+  constructor(private readonly scene: THREE.Scene) {}
+
+  drop(def: AbilityDef, at: THREE.Vector3, toward?: THREE.Vector3) {
+    const color = TIER_COLOR[def.tier]
+    const group = new THREE.Group()
+
+    const chunk = new THREE.Mesh(this.chunkGeo, new THREE.MeshStandardMaterial({
+      color: 0x3a4b61, emissive: color, emissiveIntensity: 0.55, roughness: 0.5, metalness: 0.4,
+    }))
+    chunk.position.y = 0.35
+    chunk.name = 'chunk'
+
+    const beamMat = new THREE.MeshBasicMaterial({
+      color, transparent: true, opacity: def.tier === 'white' ? 0.18 : 0.34,
+      depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending,
+    })
+    const beam = new THREE.Mesh(this.beamGeo, beamMat)
+    beam.position.y = 2.5
+
+    const disc = new THREE.Mesh(this.discGeo, new THREE.MeshBasicMaterial({
+      color, transparent: true, opacity: 0.3, depthWrite: false,
+    }))
+    disc.rotation.x = -Math.PI / 2
+    disc.position.y = 0.03
+
+    group.add(chunk, beam, disc)
+
+    // land a short hop away from where it fell, inside the arena
+    const a = toward
+      ? Math.atan2(toward.x - at.x, toward.z - at.z) + (Math.random() - 0.5) * 1.6
+      : Math.random() * Math.PI * 2
+    const dist = 0.8 + Math.random() * 0.8
+    const pos = new THREE.Vector3(at.x + Math.sin(a) * dist, 0, at.z + Math.cos(a) * dist)
+    const r = Math.hypot(pos.x, pos.z)
+    if (r > ARENA_RADIUS - 1.5) pos.multiplyScalar((ARENA_RADIUS - 1.5) / r)
+
+    group.position.copy(at)
+    this.scene.add(group)
+    this.ground.push({ def, pos, group, fly: FLY, from: at.clone(), bob: Math.random() * 10 })
+  }
+
+  update(dt: number) {
+    for (const g of this.ground) {
+      g.bob += dt * 2.4
+      const chunk = g.group.getObjectByName('chunk')!
+      if (g.fly > 0) {
+        g.fly = Math.max(0, g.fly - dt)
+        const k = 1 - g.fly / FLY
+        g.group.position.lerpVectors(g.from, g.pos, k)
+        g.group.position.y = Math.sin(k * Math.PI) * 1.4
+      } else {
+        g.group.position.set(g.pos.x, 0, g.pos.z)
+      }
+      chunk.rotation.y += dt * 1.6
+      chunk.position.y = 0.35 + Math.sin(g.bob) * 0.08
+    }
+  }
+
+  /** The closest landed part Still is standing on, if any. */
+  under(at: THREE.Vector3): GroundPart | null {
+    let best: GroundPart | null = null
+    let bestD = LOOT.pickupRadius
+    for (const g of this.ground) {
+      if (g.fly > 0) continue
+      const d = Math.hypot(g.pos.x - at.x, g.pos.z - at.z)
+      if (d < bestD) {
+        bestD = d
+        best = g
+      }
+    }
+    return best
+  }
+
+  remove(g: GroundPart) {
+    const i = this.ground.indexOf(g)
+    if (i < 0) return
+    this.ground.splice(i, 1)
+    this.dispose(g)
+  }
+
+  clear() {
+    for (const g of this.ground) this.dispose(g)
+    this.ground.length = 0
+  }
+
+  private dispose(g: GroundPart) {
+    this.scene.remove(g.group)
+    g.group.traverse((o) => {
+      if (o instanceof THREE.Mesh) (o.material as THREE.Material).dispose()
+    })
+  }
+}

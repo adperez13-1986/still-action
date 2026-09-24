@@ -11,6 +11,8 @@ import { RANGED } from './ranged'
 import * as sfx from './audio'
 import { createCameraRig } from './camera'
 import { updateMusic } from './music'
+import { Loot, LOOT, rollPart, type GroundPart } from './loot'
+import { createPauseScreen } from './pause'
 import { createOverlay, type EndingKind } from './ending'
 
 const canvas = document.querySelector<HTMLCanvasElement>('#view')!
@@ -30,6 +32,8 @@ const hud = createHud(hudRoot)
 createGradePanel(hudRoot, world)
 const overlay = createOverlay(hudRoot)
 const rig = createCameraRig(world)
+const loot = new Loot(world.scene)
+const pause = createPauseScreen(hudRoot)
 
 const still = new Still()
 world.scene.add(still.group)
@@ -65,8 +69,9 @@ const combat = new Combat(world.scene, world.colliders, {
     rig.punch(-0.03)
     navigator.vibrate?.(30)
   },
-  onKill: (at) => {
+  onKill: (at, kind) => {
     sfx.kill(panOf(at))
+    maybeDrop(at, kind)
     hitstop = Math.max(hitstop, 0.08)
     shake = Math.max(shake, 0.28)
     rig.punch(0.035)
@@ -96,7 +101,7 @@ const combat = new Combat(world.scene, world.colliders, {
 })
 
 /** Dev only: lets a headless browser read the fight without guessing from pixels. */
-if (import.meta.env.DEV) Object.assign(window, { __combat: combat, __world: world })
+if (import.meta.env.DEV) Object.assign(window, { __combat: combat, __world: world, __loot: loot, __hud: hud, __still: still })
 
 // --- the run: fights, breathers between them, and the two ways it ends ---
 
@@ -111,7 +116,107 @@ const BREAK_SECONDS = 0.85
 
 type Phase = 'fight' | 'breather' | 'broken' | 'stopping' | 'over'
 
-const run = { phase: 'fight' as Phase, fight: 1, cleared: 0, strain: 0, t: 0 }
+const run = { phase: 'fight' as Phase, fight: 1, cleared: 0, strain: 0, t: 0, dropped: false, readyTapped: false }
+
+// --- loot: drops come from enemies, on the ground; walk over, tap take ---
+
+/** Offered ground part, and whether the card is held off until Still steps away. */
+let offered: GroundPart | null = null
+let offerHeld = false
+
+function maybeDrop(at: THREE.Vector3, kind: Archetype) {
+  // never a fight with nothing: the last kill drops if nothing else did
+  const last = combat.cleared && !run.dropped
+  if (!last && Math.random() > LOOT.dropChance) return
+  const taken = [...hud.loadout, ...loot.ground.map((g) => g.def)]
+  const def = rollPart(kind, taken)
+  if (!def) return
+  run.dropped = true
+  loot.drop(def, at, still.pos)
+  sfx.drop(def.tier, panOf(at))
+}
+
+function updateOffer() {
+  const open = run.phase === 'fight' || run.phase === 'breather'
+  const under = open ? loot.under(still.pos) : null
+  // after a take, the old part lands at your feet: don't offer it back until you step off
+  if (!under) offerHeld = false
+  const next = under && !offerHeld ? under : null
+  if (next !== offered) {
+    offered = next
+    hud.offer(next?.def ?? null)
+  }
+}
+
+hud.onReady(() => {
+  if (run.phase === 'breather') run.readyTapped = true
+})
+
+hud.onTake(() => {
+  if (offered) takePart(offered)
+})
+
+hud.onCompare(() => {
+  const g = offered
+  if (!g || !canPause()) return
+  const current = hud.loadout.find((p) => p.slot === g.def.slot)!
+  openPause()
+  pause.compare(current, g.def, () => {
+    resume()
+    takePart(g)
+  }, resume)
+})
+
+function takePart(g: GroundPart) {
+  const old = hud.equip(g.def)
+  loot.remove(g)
+  loot.drop(old, still.pos)
+  offered = null
+  offerHeld = true
+  hud.offer(null)
+  sfx.take()
+  rig.punch(0.03)
+  still.group.scale.setScalar(1.12)
+  navigator.vibrate?.(18)
+}
+
+// --- pause: the world stops, cooldowns included; the music keeps going, quieter ---
+
+let paused = false
+/** Game time in ms. Cooldowns run on this, so pausing can't be used to wait them out. */
+let clock = 0
+
+function canPause() {
+  return !paused && (run.phase === 'fight' || run.phase === 'breather')
+}
+
+function openPause() {
+  paused = true
+  hud.enabled = false
+  stopAllWindups()
+  sfx.pauseDuck(true)
+}
+
+function resume() {
+  pause.hide()
+  paused = false
+  hud.enabled = true
+  sfx.pauseDuck(false)
+}
+
+hud.onPause(() => {
+  if (!canPause()) return
+  openPause()
+  pause.loadout(hud.loadout, resume)
+})
+
+// the screen going off mid-fight shouldn't cost you the fight
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden && canPause()) {
+    openPause()
+    pause.loadout(hud.loadout, resume)
+  }
+})
 
 /**
  * 3 + n enemies. One ranged from the start, two from fight 3; never the first
@@ -133,7 +238,10 @@ function startRun() {
   still.reassemble()
   still.pos.set(0, 0, 0)
   prev.set(0, 0, 0)
-  Object.assign(run, { phase: 'fight', fight: 1, cleared: 0, strain: 0, t: 0 })
+  Object.assign(run, { phase: 'fight', fight: 1, cleared: 0, strain: 0, t: 0, dropped: false, readyTapped: false })
+  hud.ready(false)
+  loot.clear()
+  hud.resetLoadout()
   combat.startFight(roster(1))
   rig.reset()
   world.gradePass.uniforms.uSaturation!.value = grade.saturation
@@ -157,6 +265,7 @@ function stopAllWindups() {
 
 function breakApart() {
   run.phase = 'broken'
+  updateOffer()
   run.t = 0
   hud.enabled = false
   stopAllWindups()
@@ -171,6 +280,7 @@ function breakApart() {
 
 function beginStopping() {
   run.phase = 'stopping'
+  updateOffer()
   run.t = 0
   hud.enabled = false
   stopAllWindups()
@@ -252,6 +362,8 @@ function simulate(realDt: number) {
   still.aim = target ? Math.atan2(target.x - still.pos.x, target.z - still.pos.z) : null
 
   combat.update(dt, still.pos)
+  loot.update(dt)
+  updateOffer()
   hud.integrity = combat.hp / 100
   hud.strain = run.strain
 
@@ -269,9 +381,17 @@ function simulate(realDt: number) {
     overlay.banner(`Fight ${run.fight} cleared \u00b7 strain \u2212${STRAIN_DECAY_PER_FIGHT}`)
   } else if (run.phase === 'breather') {
     run.t += dt
-    if (run.t >= BREATHER) {
+    // loot on the floor: the next fight waits until you say so
+    const waiting = loot.ground.length > 0
+    hud.ready(waiting)
+    if (run.readyTapped || (!waiting && run.t >= BREATHER)) {
+      run.readyTapped = false
+      hud.ready(false)
       run.fight++
       run.phase = 'fight'
+      run.dropped = false
+      // whatever you left on the floor is gone once the next fight starts
+      loot.clear()
       combat.startFight(roster(run.fight))
       hud.integrity = 1
       overlay.banner(`Fight ${run.fight}`)
@@ -286,7 +406,9 @@ function frame(nowMs: number) {
   const elapsed = Math.min(MAX_FRAME, now - last)
   last = now
 
-  if (hitstop > 0) {
+  if (paused) {
+    // frozen: render only
+  } else if (hitstop > 0) {
     hitstop -= elapsed
   } else {
     accumulator += elapsed
@@ -321,7 +443,8 @@ function frame(nowMs: number) {
     calm: run.phase === 'breather' || run.phase === 'over',
     strain: run.strain / 20,
   })
-  hud.update(nowMs)
+  if (!paused) clock += elapsed * 1000
+  hud.update(clock)
   world.render()
   requestAnimationFrame(frame)
 }
