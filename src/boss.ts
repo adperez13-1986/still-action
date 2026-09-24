@@ -74,6 +74,8 @@ export class Assembler implements Enemy {
   stunned = false
   /** Set on the tick it overloads, so the run can mark the moment. */
   justOverloaded = false
+  walking = false
+  get gait() { return this.bob * 2.2 }
 
   private timer = 0
   private flash = 0
@@ -580,6 +582,7 @@ export class Assembler implements Enemy {
     this.core.scale.setScalar(pulse)
 
     const walking = this.phase === 'approach' && dist > 5.5
+    this.walking = walking
     this.legs.forEach((leg, i) => {
       leg.rotation.x = walking ? Math.sin(this.bob * 2.2 + (i % 2) * Math.PI) * 0.3 : 0
     })

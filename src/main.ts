@@ -483,6 +483,7 @@ function enterLevel(depth: number) {
   if (level.boss) combat.addBoss(level.boss.x, level.boss.z, level.boss.face)
   run.fought = false
   run.quietT = 0
+  lastStep.clear()
   still.pos.copy(level.entrance)
   prev.copy(still.pos)
   run.depth = depth
@@ -731,6 +732,26 @@ function simulate(realDt: number) {
   still.group.scale.lerp(new THREE.Vector3(1, 1, 1), Math.min(1, dt * 9))
 }
 
+/** Footsteps: a step sounds each time a foot lands, quieter with distance. */
+const lastStep = new Map<object, number>()
+const STEP_HEAR = 16
+function footsteps() {
+  if (run.phase !== 'crawl') return
+  const k = Math.floor(still.stride / Math.PI)
+  if (still.walking && k !== lastStep.get(still)) sfx.step('still', 0)
+  lastStep.set(still, k)
+  for (const e of combat.awake) {
+    const d = Math.hypot(e.pos.x - still.pos.x, e.pos.z - still.pos.z)
+    if (d > STEP_HEAR) continue
+    const ek = Math.floor(e.gait / Math.PI)
+    if (e.walking && ek !== lastStep.get(e)) {
+      const who = e.kind === 'chaser' ? 'hulk' : e.kind === 'ranged' ? 'tripod' : 'boss'
+      sfx.step(who, panOf(e.pos), (1 - d / STEP_HEAR) * (e.kind === 'chaser' ? Math.min(1, e.size) : 1))
+    }
+    lastStep.set(e, ek)
+  }
+}
+
 /** Continuous effects: the boss smoking and sparking, hulks glowing as they wind up. */
 let ambientT = 0
 const stackA = new THREE.Vector3()
@@ -815,6 +836,7 @@ function frame(nowMs: number) {
   if (!paused) {
     vfx.update(elapsed, world.camera, world.renderer.domElement.height)
     ambientFx(elapsed)
+    footsteps()
   }
   syncTells()
   world.render()

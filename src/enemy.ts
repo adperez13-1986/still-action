@@ -61,6 +61,9 @@ export interface Enemy {
   knockMul: number
   /** Overall scale; an elite leader stands bigger than its pack. */
   size: number
+  /** For footsteps: whether it's walking, and a phase that advances one PI per step. */
+  readonly walking: boolean
+  readonly gait: number
   hit: (damage: number) => boolean
   update: (dt: number, target: THREE.Vector3, terrain: Terrain) => EnemyAction | null
   /** Presentation only, no thinking: while asleep, or walking home. `face` is where to look. */
@@ -110,6 +113,8 @@ export class Chaser implements Enemy {
   speedMul = 1
   knockMul = 1
   size = 1
+  walking = false
+  get gait() { return this.bob * 1.6 }
 
   private timer = 0
   private flash = 0
@@ -297,6 +302,7 @@ export class Chaser implements Enemy {
     this.core.scale.setScalar(1 + (winding ? t * 0.7 : 0))
 
     const walking = this.phase === 'approach' && !staggered
+    this.walking = walking
     const stride = walking ? Math.sin(this.bob * 1.6) * 0.4 : 0
     this.legL.rotation.x = stride
     this.legR.rotation.x = -stride

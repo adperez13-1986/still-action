@@ -60,7 +60,89 @@ function ensure(): AudioContext | null {
   }
 
   applyMix()
+  void loadSamples(ctx)
   return ctx
+}
+
+// --- recorded layers (Kenney, CC0) ---
+// Synthesis keeps the weight and the exact timing; the recordings add texture:
+// metal that sounds like metal, stone like stone, wood like wood.
+
+const SAMPLE_FILES: Record<string, [string, number]> = {
+  metalLight: ['impactMetal_light', 4],
+  metalMedium: ['impactMetal_medium', 4],
+  metalHeavy: ['impactMetal_heavy', 4],
+  plateHeavy: ['impactPlate_heavy', 3],
+  punchHeavy: ['impactPunch_heavy', 3],
+  softHeavy: ['impactSoft_heavy', 3],
+  softMedium: ['impactSoft_medium', 3],
+  mining: ['impactMining', 3],
+  woodHeavy: ['impactWood_heavy', 3],
+  plank: ['impactPlank_medium', 3],
+  generic: ['impactGeneric_light', 3],
+  bell: ['impactBell_heavy', 2],
+  tin: ['impactTin_medium', 4],
+  step: ['footstep_concrete', 5],
+}
+export type SampleName = keyof typeof SAMPLE_FILES
+const samples = new Map<string, AudioBuffer[]>()
+/** Every recorded layer sits a touch under the synthesis. */
+const SAMPLE_GAIN = 0.85
+
+async function loadSamples(c: AudioContext) {
+  await Promise.all(Object.entries(SAMPLE_FILES).map(async ([name, [file, n]]) => {
+    const list: AudioBuffer[] = []
+    for (let i = 0; i < n; i++) {
+      try {
+        const res = await fetch(`/sfx/${file}_${i}.ogg`)
+        list.push(await c.decodeAudioData(await res.arrayBuffer()))
+      } catch {
+        // a missing file just means one fewer variation
+      }
+    }
+    samples.set(name, list)
+  }))
+}
+
+/**
+ * One recorded hit: a random variation, a little pitch drift so repeats never
+ * sound identical. `rate` below 1 is heavier, above 1 lighter.
+ */
+function sample(c: AudioContext, name: SampleName, dest: AudioNode, gain: number, rate = 1, when = 0) {
+  const list = samples.get(name)
+  if (!list || list.length === 0) return
+  const src = c.createBufferSource()
+  src.buffer = list[Math.floor(Math.random() * list.length)]!
+  src.playbackRate.value = rate * vary(1, 0.06)
+  const g = c.createGain()
+  g.gain.value = gain * SAMPLE_GAIN
+  src.connect(g).connect(dest)
+  src.start(c.currentTime + when)
+}
+
+/** Footsteps. Who's walking sets the weight; distance sets how loud. */
+export function step(who: 'still' | 'hulk' | 'tripod' | 'boss', pan: number, loudness = 1) {
+  const c = live()
+  if (!c || loudness <= 0.02) return
+  const d = out(c, who === 'still' ? 'auto' : 'enemy', pan)
+  switch (who) {
+    case 'still':
+      // light and a little metallic: a thin machine on stone
+      sample(c, 'step', d, 0.55 * loudness, 1.35)
+      sample(c, 'tin', d, 0.07 * loudness, 2.2)
+      break
+    case 'hulk':
+      sample(c, 'step', d, 0.8 * loudness, 0.62)
+      sample(c, 'softMedium', d, 0.5 * loudness, 0.7)
+      break
+    case 'tripod':
+      sample(c, 'tin', d, 0.35 * loudness, 1.6)
+      break
+    case 'boss':
+      sample(c, 'softHeavy', d, 0.9 * loudness, 0.55)
+      sample(c, 'metalHeavy', d, 0.2 * loudness, 0.5)
+      break
+  }
 }
 
 /** Android only lets audio start from a real gesture; keep trying until one counts. */
@@ -167,6 +249,7 @@ export function shot(pan: number) {
   const d = out(c, 'auto', pan)
   const r = vary(1, 0.06)
   tone(c, d, 'triangle', t, 1500 * r, 650 * r, 0.045, 0.5)
+  sample(c, 'metalLight', d, 0.18, 1.8)
   hiss(c, d, t, 0.025, 0.25, 'highpass', 5000, 5000, 0.7)
 }
 
@@ -180,7 +263,9 @@ export function hit(pan: number) {
   const d = out(c, 'hits', pan)
   const r = vary(1, 0.08)
   tone(c, d, 'sine', t, 200 * r, 50 * r, 0.11, 0.9, 0.002)
-  hiss(c, d, t, 0.05, 0.55, 'bandpass', 2200 * r, 900 * r, 1.2)
+  // the recording carries the crack now; the synth noise steps back
+  hiss(c, d, t, 0.05, 0.25, 'bandpass', 2200 * r, 900 * r, 1.2)
+  sample(c, 'metalMedium', d, 0.8, 0.9)
   tone(c, d, 'square', t, 95 * r, 60 * r, 0.04, 0.12)
 }
 
@@ -190,7 +275,9 @@ export function kill(pan: number) {
   const t = c.currentTime
   const d = out(c, 'hits', pan)
   tone(c, d, 'sine', t, 140, 32, 0.32, 1)
-  hiss(c, d, t, 0.28, 0.8, 'lowpass', 3800, 300, 0.8)
+  hiss(c, d, t, 0.28, 0.45, 'lowpass', 3800, 300, 0.8)
+  sample(c, 'metalHeavy', d, 0.9, 0.8)
+  sample(c, 'plateHeavy', d, 0.5, 0.75, 0.03)
   // debris: two detuned bits of scrap ringing out just after the crunch
   tone(c, d, 'triangle', t + 0.03, vary(640, 0.1), vary(600, 0.1), 0.4, 0.14)
   tone(c, d, 'triangle', t + 0.05, vary(955, 0.1), vary(900, 0.1), 0.32, 0.1)
@@ -205,7 +292,9 @@ export function hurt() {
   g.gain.value = mix.hits
   g.connect(master)
   tone(c, distorted(c, g), 'sine', t, 95, 38, 0.28, 0.9, 0.002)
-  hiss(c, g, t, 0.22, 0.8, 'lowpass', 900, 200, 0.7)
+  hiss(c, g, t, 0.22, 0.5, 'lowpass', 900, 200, 0.7)
+  sample(c, 'punchHeavy', g, 0.9, 0.85)
+  sample(c, 'metalMedium', g, 0.4, 1.3)
 
   duck.gain.cancelScheduledValues(t)
   duck.gain.setValueAtTime(0.35, t)
@@ -271,8 +360,11 @@ export function strike(pan: number) {
   if (!c) return
   const t = c.currentTime
   const d = out(c, 'enemy', pan)
-  hiss(c, d, t, 0.12, 0.9, 'bandpass', 900, 300, 0.9)
+  hiss(c, d, t, 0.12, 0.5, 'bandpass', 900, 300, 0.9)
   tone(c, d, 'sine', t, 110, 45, 0.15, 0.8)
+  // fists into stone: a heavy thud and the crack of the floor
+  sample(c, 'softHeavy', d, 1, 0.7)
+  sample(c, 'mining', d, 0.55, 0.8, 0.02)
 }
 
 /**
@@ -335,6 +427,7 @@ export function blocked(pan: number) {
   if (!c) return
   const t = c.currentTime
   const d = out(c, 'hits', pan)
+  sample(c, 'generic', d, 0.6, 0.9)
   tone(c, d, 'sine', t, 240, 90, 0.08, 0.4)
   hiss(c, d, t, 0.06, 0.35, 'bandpass', 1400, 600, 1)
 }
@@ -345,7 +438,9 @@ export function smash(pan: number) {
   if (!c) return
   const t = c.currentTime
   const d = out(c, 'hits', pan)
-  hiss(c, d, t, 0.16, 0.8, 'bandpass', 1600, 500, 1.4)
+  sample(c, 'woodHeavy', d, 0.9, 1)
+  sample(c, 'plank', d, 0.5, 1.1, 0.04)
+  hiss(c, d, t, 0.16, 0.35, 'bandpass', 1600, 500, 1.4)
   tone(c, d, 'square', t, 160, 70, 0.08, 0.2)
   for (let i = 0; i < 3; i++) tone(c, d, 'triangle', t + 0.04 + i * 0.03, vary(700, 0.3), vary(500, 0.3), 0.08, 0.06)
 }
@@ -377,7 +472,8 @@ export function bossDown() {
   const t = c.currentTime
   const d = out(c, 'hits', 0)
   tone(c, distorted(c, d), 'sine', t, 110, 24, 1.2, 1, 0.004)
-  hiss(c, d, t, 1.4, 0.9, 'lowpass', 5000, 160, 0.7)
+  hiss(c, d, t, 1.4, 0.6, 'lowpass', 5000, 160, 0.7)
+  for (const [i, when] of [0, 0.12, 0.3, 0.55].entries()) sample(c, i % 2 ? 'plateHeavy' : 'metalHeavy', d, 0.9 - i * 0.15, 0.6 + i * 0.1, when)
   for (let i = 0; i < 7; i++) tone(c, d, 'triangle', t + 0.1 + i * 0.13, vary(500 + i * 90, 0.2), vary(420, 0.2), 0.5, 0.08)
   tone(c, out(c, 'abilities', 0), 'sine', t + 1.2, 196, 195, 2.4, 0.18, 0.02)
 }
@@ -399,7 +495,8 @@ export function clang(pan: number) {
   const t = c.currentTime
   const d = out(c, 'hits', pan)
   tone(c, d, 'sine', t, 160, 60, 0.3, 0.9)
-  for (const f of [620, 930, 1390]) tone(c, d, 'triangle', t, f, f * 0.98, 0.9, 0.12)
+  sample(c, 'bell', d, 1, 0.7)
+  for (const f of [620, 930, 1390]) tone(c, d, 'triangle', t, f, f * 0.98, 0.9, 0.06)
   hiss(c, d, t, 0.2, 0.6, 'bandpass', 2500, 900, 1)
 }
 

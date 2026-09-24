@@ -228,6 +228,7 @@ export class Still {
       this.bob += (0 - (this.bob % (Math.PI * 2))) * Math.min(1, dt * 8)
     }
 
+    this.walking = mag > 0.08
     const swing = Math.sin(this.bob) * 0.45 * Math.min(1, mag)
     this.legL.rotation.x = swing
     this.legR.rotation.x = -swing
@@ -329,6 +330,10 @@ export class Still {
     }
     if (k >= 1) this.anim = null
   }
+
+  /** For footsteps: one PI per step while he's walking. */
+  get stride() { return this.bob }
+  walking = false
 
   /** The lens, in world space: where Still's bolts leave from. */
   lensPoint(out: THREE.Vector3) {

@@ -80,6 +80,8 @@ export class Ranged implements Enemy {
   /** The tripod's legs: they rock as it walks, so it reads as stepping, not gliding. */
   private readonly legs = new THREE.Group()
   private stepping = 0
+  get walking() { return this.stepping > 0.3 && this.phase === 'approach' }
+  get gait() { return this.bob * 3.2 }
   private readonly barrel: THREE.Mesh
   private readonly coreMat: THREE.MeshBasicMaterial
   private asleep = false
