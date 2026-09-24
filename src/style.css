@@ -78,6 +78,16 @@ html, body {
 .btn.pushable { border-color: var(--strain); color: #ffd0c4; box-shadow: 0 0 18px rgba(200, 69, 47, .5); }
 .btn.refused { animation: refused .3s ease-out; }
 .btn.pulse { animation: swapped .4s ease-out; }
+/* LIVE: a lit ring draining clockwise while something of his is out; the dark cooldown sweep waits under it */
+.btn .live {
+  position: absolute; inset: -5px; border-radius: 50%; opacity: 0; pointer-events: none;
+  background: conic-gradient(rgba(214, 235, 255, .95) var(--live, 0deg), transparent 0deg);
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 4px), #000 calc(100% - 3.5px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 4px), #000 calc(100% - 3.5px));
+}
+.btn.live .live { opacity: 1; }
+.btn.live .cd { opacity: 0; }
+.btn.live { box-shadow: 0 0 16px rgba(214, 235, 255, .35), 0 4px 12px rgba(0, 0, 0, .5); }
 /* the price on the rim: ember dots, always visible */
 .btn .pips { position: absolute; bottom: 3px; left: 0; right: 0; z-index: 3; text-align: center; font: 700 8px/1 var(--ui); letter-spacing: 2px; color: var(--strain); pointer-events: none; }
 /* parts that change when pushed show what the push buys: dim while ready, ember while a hold would push */

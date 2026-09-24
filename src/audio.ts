@@ -600,6 +600,29 @@ export function ability(beat: BeatKey, pushed: boolean, power = 0) {
       tone(c, d, 'sine', t, 120 * r, 38 * r, 0.42, 1 * k)
       hiss(c, d, t, 0.5, 0.7 * k, 'lowpass', 5000 * r, 250, 0.7, 0.004)
       break
+    case 'ward':
+      // a glassy close, with a shimmer over it
+      tone(c, d, 'triangle', t, 880 * r, 660 * r, 0.1, 0.35 * k)
+      tone(c, d, 'sine', t, 1320 * r, 1320 * r, 0.3, 0.1 * k)
+      hiss(c, d, t, 0.2, 0.25 * k, 'bandpass', 5000, 3000, 3)
+      break
+    case 'mirror':
+      // the shell rises instead of closing
+      tone(c, d, 'triangle', t, 1320 * r, 1760 * r, 0.08, 0.3 * k)
+      tone(c, d, 'sine', t, 2640 * r, 2640 * r, 0.25, 0.08 * k)
+      break
+    case 'brace':
+      // setting his weight: a low plate and a short breath
+      tone(c, lowpass(c, d, 600), 'square', t, 90 * r, 70 * r, 0.12, 0.5 * k, 0.005)
+      sample(c, 'plateHeavy', d, 0.6, 0.9)
+      hiss(c, d, t, 0.1, 0.3 * k, 'bandpass', 900, 500, 1.2)
+      tone(c, d, 'sine', t, 110 * r, 40 * r, 0.3, 0.6 * k)
+      break
+    case 'anvil':
+      // the clamp raised: a light clink and a faint ring-in
+      sample(c, 'metalLight', d, 0.3, 0.8)
+      tone(c, d, 'triangle', t, 440, 440, 0.3, 0.05)
+      break
     case 'cleaver':
     case 'fray-90':
     case 'fray-180':
@@ -657,6 +680,60 @@ function smallGrind(c: AudioContext, d: AudioNode, t: number, gain: number) {
   bp.Q.value = 3
   bp.connect(d)
   tone(c, distorted(c, bp), 'square', t, 55, 49, 0.3, 0.5 * gain, 0.01)
+}
+
+/** A shot destroyed on the Ward: a ting. */
+export function shieldTing() {
+  const c = live()
+  if (!c) return
+  const d = out(c, 'abilities', 0)
+  sample(c, 'tin', d, 0.5, 1.4)
+  tone(c, d, 'triangle', c.currentTime, 1760, 1200, 0.05, 0.2)
+}
+
+/** A shot turned by the Mirror Ward: it sounds like Still's bolt now, because it is. */
+export function reflect() {
+  const c = live()
+  if (!c) return
+  const d = out(c, 'abilities', 0)
+  sample(c, 'tin', d, 0.4, 1.9)
+  tone(c, d, 'sawtooth', c.currentTime, 800, 2400, 0.05, 0.22)
+}
+
+/** A hit turned into strain by Brace. It replaces the hurt sound: it's strain, not damage. */
+export function braceConvert() {
+  const c = live()
+  if (!c) return
+  const t = c.currentTime
+  const d = out(c, 'abilities', 0)
+  sample(c, 'bell', d, 0.35, 1.3)
+  smallGrind(c, d, t, 0.6)
+}
+
+/** The Anvil catches a blow: the loudest sound any of Still's parts makes, because it's the payoff. */
+export function anvilCatch() {
+  const c = live()
+  if (!c) return
+  const t = c.currentTime
+  const d = out(c, 'abilities', 0)
+  sample(c, 'bell', d, 1, 0.8)
+  sample(c, 'metalHeavy', d, 0.8, 0.9)
+  tone(c, distorted(c, d), 'sine', t, 90, 30, 0.35, 0.9, 0.004)
+}
+
+/** The Anvil's window ran out: small and honest. */
+export function anvilMiss() {
+  const c = live()
+  if (!c) return
+  sample(c, 'tin', out(c, 'abilities', 0), 0.2, 0.6)
+}
+
+/** G8: something that lasted has ended. A tick you notice without watching for it. */
+export function windowEnd() {
+  const c = live()
+  if (!c) return
+  const d = out(c, 'abilities', 0)
+  tone(c, d, 'triangle', c.currentTime, 1500, 1250, 0.04, 0.1)
 }
 
 /** Piston connected: a punch and a piston thunk. */

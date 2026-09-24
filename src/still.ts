@@ -65,6 +65,7 @@ type Pose =
   | 'shot' | 'bolt' | 'patient' | 'coil' | 'flare' | 'nova'
   | 'arc' | 'spin' | 'piston' | 'hook'
   | 'dash' | 'step' | 'ram' | 'hop' | 'spring'
+  | 'ward' | 'brace' | 'mirror' | 'anvil' | 'anvil-slam'
 
 /**
  * Beat -> pose and duration. The ported parts borrow their shape's pose until
@@ -93,7 +94,16 @@ const POSES: Partial<Record<AttackSpec['beat'], { pose: Pose; dur: number; yaw?:
   'overrun-charge': { pose: 'ram', dur: 0.3 },
   skitter: { pose: 'hop', dur: 0.26 },
   spring: { pose: 'spring', dur: 0.4 },
+  // stances: the rise, then held for the window (holdS), then a 0.1 s release
+  ward: { pose: 'ward', dur: 0.35 },
+  brace: { pose: 'brace', dur: 0.4 },
+  mirror: { pose: 'mirror', dur: 0.3 },
+  anvil: { pose: 'anvil', dur: 0.3 },
+  'anvil-slam': { pose: 'anvil-slam', dur: 0.3 },
 }
+
+/** A stance lets go over this long once its window is done. */
+const RELEASE_S = 0.1
 
 /** Where the clamp's jaws rest, either side of the hand. They close toward it. */
 const JAW_X = -0.05
@@ -145,7 +155,7 @@ export class Still {
 
   private ghosts: Ghost[] = []
   /** The attack being played: which pose, and how far through it (seconds). */
-  private anim: { pose: Pose; t: number; dur: number; pushed: boolean; power: number; yaw: number } | null = null
+  private anim: { pose: Pose; t: number; dur: number; hold: number; pushed: boolean; power: number; yaw: number } | null = null
   private eyeFlash = 0
   private slowdown = 0
   private ghostTimer = 0
@@ -190,7 +200,7 @@ export class Still {
     const power = a.power ?? 0
     const dur = p?.pose === 'patient' ? p.dur + 0.14 * power : p?.dur ?? 0
     // a beat with no body yet still lights the eye
-    this.anim = p ? { pose: p.pose, t: 0, dur, pushed: a.pushed, power, yaw: p.yaw ?? 1 } : null
+    this.anim = p ? { pose: p.pose, t: 0, dur, hold: a.holdS ?? 0, pushed: a.pushed, power, yaw: p.yaw ?? 1 } : null
   }
 
   /** 0 is running, 1 is stopped: the eye goes out and the head drops. */
@@ -443,6 +453,10 @@ export class Still {
     if (!a) return
     a.t += dt
     const k = Math.min(1, a.t / a.dur)
+    // a stance: rises over the beat, stays for the window, then lets go
+    const stance = a.hold > 0
+      ? (a.t < a.dur ? 1 - Math.pow(1 - k, 2) : Math.max(0, Math.min(1, 1 - (a.t - a.dur - a.hold) / RELEASE_S)))
+      : 1 - Math.pow(1 - k, 2)
     const big = a.pushed ? 1.35 : 1
     // a quick wind-up then a fast release reads as weight
     const wind = Math.min(1, k / 0.3)
@@ -570,11 +584,60 @@ export class Still {
         }
         break
       }
+      case 'ward': {
+        // the cage pulls in, both arms come up and cross in front, the head ducks
+        const e = stance
+        torso.scale.setScalar(1 - 0.1 * e)
+        this.armL.rotation.x = this.armR.rotation.x = -0.6 * e
+        this.armL.rotation.z = 0.5 * e
+        this.armR.rotation.z = -0.5 * e
+        head.rotation.x = 0.2 * e
+        break
+      }
+      case 'mirror': {
+        // the opposite of Ward: arms flung open, the chest presented
+        const e = stance
+        torso.scale.setScalar(1 + 0.1 * e)
+        this.armL.rotation.z = -0.6 * e
+        this.armR.rotation.z = 0.6 * e
+        break
+      }
+      case 'brace': {
+        // planted, leaning into a wind: legs spread, low, arms down and out, head down
+        const e = stance
+        this.legL.rotation.x = 0.3 * e
+        this.legR.rotation.x = -0.3 * e
+        this.lift = -0.08 * e
+        torso.rotation.x = 0.16 + 0.35 * e
+        this.armL.rotation.z = -0.4 * e
+        this.armR.rotation.z = 0.4 * e
+        head.rotation.x = 0.25 * e
+        break
+      }
+      case 'anvil': {
+        // the clamp raised overhead, legs spread, waiting for the blow
+        const e = stance
+        this.armL.rotation.x = -2.6 * e
+        torso.rotation.x = 0.16 - 0.1 * e
+        this.legL.rotation.x = 0.3 * e
+        this.legR.rotation.x = -0.3 * e
+        break
+      }
+      case 'anvil-slam': {
+        // caught: the clamp comes down hard (in 0.08 s), the cage swells, he drops into it
+        const down = Math.min(1, a.t / 0.08)
+        const back = k < 0.4 ? 1 : 1 - (k - 0.4) / 0.6
+        this.armL.rotation.x = (-2.6 + 2.3 * down) * back
+        torso.rotation.x = 0.16 + 0.4 * down * back
+        this.lift = -0.08 * down * back
+        torso.scale.setScalar(1 + 0.15 * down * back)
+        break
+      }
       case 'shot':
         head.position.z = 0.1 - 0.05 * (1 - k)
         break
     }
-    if (k >= 1) this.anim = null
+    if (a.t >= a.dur + (a.hold > 0 ? a.hold + RELEASE_S : 0)) this.anim = null
   }
 
   /** For footsteps: one PI per step while he's walking. */

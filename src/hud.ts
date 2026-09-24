@@ -80,6 +80,12 @@ export interface Hud {
   onPause: (cb: () => void) => void
   /** A slow fill on the HP meter, so a quiet's refill is seen, not just counted. */
   healing: () => void
+  /**
+   * LIVE: something of this part's is out in the world (a window, a decoy, an
+   * anchor). A lit ring drains clockwise, 1 → 0, and the cooldown sweep hides
+   * under it. Null clears it.
+   */
+  live: (slot: SlotName, frac: number | null) => void
   /** Swap a button to one of its part's alternate icons, or back (null). Repaints only on change. */
   iconState: (slot: SlotName, s: IconState | null) => void
   /** 0..1 into the button's `.charge` fill (Patient Lens). */
@@ -171,7 +177,7 @@ export function createHud(root: HTMLElement): Hud {
   }
   const buttons: ButtonState[] = SLOT_NAMES.map((slot, i) => {
     const el = document.createElement('div')
-    el.innerHTML = `<div class="cd"></div><span class="lbl" aria-label="${KEYS[slot]}"></span><span class="pips"></span>`
+    el.innerHTML = `<div class="cd"></div><div class="live"></div><span class="lbl" aria-label="${KEYS[slot]}"></span><span class="pips"></span>`
     const th = (ARC_DEG[i] ?? 0) * (Math.PI / 180)
     el.style.right = `calc(env(safe-area-inset-right, 0px) + ${PAD + ARC_R * Math.cos(th) - BTN / 2}px)`
     el.style.bottom = `calc(env(safe-area-inset-bottom, 0px) + ${PAD + ARC_R * Math.sin(th) - BTN / 2}px)`
@@ -400,6 +406,12 @@ export function createHud(root: HTMLElement): Hud {
       setTimeout(() => meter.classList.remove('healing'), 1100)
     },
 
+    live(slot, frac) {
+      const b = buttons.find((x) => x.slot === slot)!
+      const on = frac !== null && !!b.def
+      if (on) b.el.style.setProperty('--live', `${Math.round(frac * 360)}deg`)
+      if (b.el.classList.contains('live') !== on) b.el.classList.toggle('live', on)
+    },
     iconState(slot, st) {
       const b = buttons.find((x) => x.slot === slot)!
       if (!b.def || b.icon === st) return

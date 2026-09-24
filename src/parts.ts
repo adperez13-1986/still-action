@@ -46,6 +46,8 @@ export interface PartRuntime {
     radius: number                    // ward/mirror shell
     reflectsLeft: number; reflectDamage: number   // mirror
     perStrain: number                 // brace
+    /** It met something (a shot destroyed or turned, a hit converted): the end tick says so. */
+    used: boolean
   } | null
   /** Arms window: Anvil. Closes on the first catch. */
   anvil: { t: number; max: number; def: AbilityDef } | null

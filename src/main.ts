@@ -56,7 +56,6 @@ const WOOD = new THREE.Color(0x6b4a30)
 
 const still = new Still()
 world.scene.add(still.group)
-const partFx = new PartFx(world.scene, vfx, () => still.pos)
 
 sfx.unlockAudio()
 
@@ -151,6 +150,54 @@ const combat = new Combat(world.scene, OPEN, {
         ghostEvery: ev.beat === 'overrun-charge' ? 0.02 : ev.beat === 'overrun-step' ? 0.07 : undefined,
       })
     }
+    if (ev.kind === 'strain') {
+      // Brace: the hit flies into his cage as embers and costs strain; integrity doesn't move
+      const core = still.core.getWorldPosition(new THREE.Vector3())
+      for (let i = 0; i < 10; i++) {
+        const a = Math.random() * Math.PI * 2
+        const from = core.clone().add(new THREE.Vector3(Math.sin(a) * 0.9, 0.2, Math.cos(a) * 0.9))
+        vfx.sparks(from, EMBER, 1, 4, core.clone().sub(from), 0.2)
+      }
+      sfx.braceConvert()
+      shake = Math.max(shake, 0.2)
+      addStrain(ev.amount)
+    }
+    if (ev.kind === 'catch') {
+      // the biggest moment an arms part has: the blow lands on the clamp, and he hammers back
+      still.attack({ beat: 'anvil-slam', pushed: false })
+      const at = at3(ev.at, 0.8)
+      vfx.flash(at, COLD, 1.4)
+      vfx.sparks(at, COLD, 34, 10)
+      vfx.dust(ev.at, 18, 1.6, undefined, 5)
+      vfx.chunks(at, 4, STEEL, 5, 0.12)
+      sfx.anvilCatch()
+      hitstop = Math.max(hitstop, 0.09)
+      shake = Math.max(shake, 0.5)
+      rig.punch(0.07)
+      navigator.vibrate?.([20, 30, 40])
+    }
+    if (ev.kind === 'shield') {
+      const at = at3(ev.at, 1.3)
+      if (ev.reflected) {
+        vfx.flash(at, COLD, 0.5)
+        sfx.reflect()
+      } else {
+        // its heat broken on his cold
+        vfx.sparks(at, COLD, 8, 5)
+        vfx.flash(at, COLD_DEEP, 0.3)
+        sfx.shieldTing()
+      }
+    }
+    if (ev.kind === 'windowEnd') {
+      // G8: it ends with a snap. A missed Anvil is small and honest: a clink and a puff off the clamp.
+      if (ev.slot === 'arms') {
+        sfx.anvilMiss()
+        vfx.dust(still.jawL.getWorldPosition(new THREE.Vector3()), 3, 0.2, undefined, 1)
+      } else {
+        sfx.windowEnd()
+        vfx.sparks(at3(still.pos, 1.0), COLD, 4, 2)
+      }
+    }
     if (ev.kind === 'land') {
       // the lob comes down: a small nova where it lands
       vfx.flash(at3(ev.at, 0.4), COLD_DEEP, 1.2)
@@ -225,6 +272,8 @@ const combat = new Combat(world.scene, OPEN, {
     windups.delete(e)
   },
 })
+
+const partFx = new PartFx(world.scene, vfx, still, combat.parts)
 
 /** Off the mark: what a move throws up as it leaves. Read before Still starts moving. */
 function moveFx(to: THREE.Vector3, beat: BeatKey) {
@@ -772,6 +821,22 @@ function castFx(def: AbilityDef, r: CastResult, pushed: boolean) {
       }
       break
     }
+    case 'ward':
+      vfx.flash(still.core.getWorldPosition(new THREE.Vector3()), COLD_DEEP, 0.6)
+      // the edge of the zone on the floor too, closing on its size
+      combat.ring(still.pos, def.radius + 0.1, def.radius, 0.3, 0x8fb8e8)
+      break
+    case 'mirror':
+      vfx.flash(still.core.getWorldPosition(new THREE.Vector3()), COLD, 0.7)
+      combat.ring(still.pos, def.radius + 0.1, def.radius, 0.3, 0xdfeaff)
+      break
+    case 'brace':
+      vfx.flash(still.core.getWorldPosition(new THREE.Vector3()), COLD_DEEP, 0.8)
+      vfx.dust(still.pos, 8, 0.6, new THREE.Color(0x55606c), 3)
+      break
+    case 'anvil':
+      vfx.flash(still.jawL.getWorldPosition(new THREE.Vector3()), COLD, 0.4)
+      break
     // movement fx ride on the move event
     default:
       break
@@ -791,6 +856,8 @@ let frayTier: number | null = null
  */
 function partFaces(dt: number) {
   const [head, , arms] = hud.slots.map((s) => s.def)
+  // LIVE: something of his is out in the world, drawn as a lit ring that drains
+  for (const slot of SLOT_NAMES) hud.live(slot, combat.liveFrac(slot))
   if (head?.mod?.kind === 'charge') {
     const m = head.mod
     const c = Math.min(1, Math.max(0, (combat.parts.patientSince - m.minS) / (m.fullS - m.minS)))

@@ -77,6 +77,8 @@ interface Shot {
   dir: THREE.Vector3
   life: number
   damage: number
+  /** Who fired it: a Mirror Ward sends it back there. */
+  owner?: Enemy
 }
 
 export type Archetype = Enemy['kind']
@@ -193,6 +195,8 @@ export class Combat {
   private fx: Fx[] = []
   private autoTimer = 0
   private hurtCooldown = 0
+  /** Where Still was on the last update: windows answer a hit there. */
+  private lastPlayer = new THREE.Vector3()
   /** Boss adds: scrap, so they never roll drops. */
   private readonly summoned = new WeakSet<Enemy>()
   /** Dev checks switch it off to test a part in isolation. */
@@ -220,6 +224,7 @@ export class Combat {
   }
 
   update(dt: number, player: THREE.Vector3) {
+    this.lastPlayer = player
     this.hurtCooldown = Math.max(0, this.hurtCooldown - dt)
     this.updatePacks(player)
 
@@ -245,9 +250,9 @@ export class Combat {
         if (e.phase === 'strike') this.events.onStrike(e)
       }
       if (action?.kind === 'melee') this.hurtPlayer(action.damage, 'melee')
-      if (action?.kind === 'shot') this.fireShot(e.pos, action.dir, action.damage)
+      if (action?.kind === 'shot') this.fireShot(e.pos, action.dir, action.damage, e)
       if (action?.kind === 'shots') {
-        for (const d of action.dirs) this.fireShot(action.from, d, action.damage)
+        for (const d of action.dirs) this.fireShot(action.from, d, action.damage, e)
         this.events.onVolley(action.from)
       }
       if (action?.kind === 'wave') this.startWave(action.center, action.gaps, action.damage)
@@ -379,6 +384,24 @@ export class Combat {
       const p = s.mesh.position
 
       let spent = s.life <= 0
+      // a shell meets shots before they reach him: Ward destroys them, Mirror Ward sends them home
+      const g = this.parts.guard
+      if (!spent && g && g.kind !== 'brace' && Math.hypot(p.x - player.x, p.z - player.z) < g.radius) {
+        if (g.kind === 'ward') {
+          g.used = true
+          this.events.onPart({ kind: 'shield', at: p.clone(), reflected: false })
+          spent = true
+        } else if (g.reflectsLeft > 0) {
+          g.reflectsLeft--
+          g.used = true
+          const o = s.owner && !s.owner.dead ? s.owner.pos : null
+          const aim = o ? Math.atan2(o.x - p.x, o.z - p.z) : Math.atan2(-s.dir.x, -s.dir.z)
+          // his shot now: a cold bolt, and walls stop it like any other
+          this.spawnBolt(p, aim, g.reflectDamage, 0.3, 20)
+          this.events.onPart({ kind: 'shield', at: p.clone(), reflected: true })
+          spent = true
+        }
+      }
       if (!spent && Math.hypot(p.x - player.x, p.z - player.z) < SHOT_RADIUS + PLAYER_RADIUS) {
         this.hurtPlayer(s.damage, 'shot')
         spent = true
@@ -448,11 +471,39 @@ export class Combat {
     for (const f of this.fx) this.scene.remove(f.mesh)
     this.fx.length = 0
     this.parts.patientSince = PATIENT_START
+    this.parts.guard = null
+    this.parts.anvil = null
   }
 
   /** Part timers, on game time: pause, hitstop and the stop freeze them the way they freeze enemies. */
   private tickParts(dt: number) {
-    this.parts.patientSince += dt
+    const p = this.parts
+    p.patientSince += dt
+    if (p.guard && (p.guard.t -= dt) <= 0) this.endGuard()
+    if (p.anvil && (p.anvil.t -= dt) <= 0) this.endAnvil()
+  }
+
+  /** G8: a window ends with a small tick, and says whether it met anything. */
+  private endGuard() {
+    const g = this.parts.guard
+    if (!g) return
+    this.parts.guard = null
+    this.events.onPart({ kind: 'windowEnd', slot: 'torso', used: g.used })
+  }
+
+  /** The Anvil ran out without a blow to catch. A catch closes it without this. */
+  private endAnvil() {
+    if (!this.parts.anvil) return
+    this.parts.anvil = null
+    this.events.onPart({ kind: 'windowEnd', slot: 'arms', used: false })
+  }
+
+  /** How much of a slot's window is left, 1 → 0, for the button's LIVE ring. Null when nothing is out. */
+  liveFrac(slot: SlotName): number | null {
+    const p = this.parts
+    if (slot === 'torso' && p.guard) return Math.max(0, p.guard.t / p.guard.max)
+    if (slot === 'arms' && p.anvil) return Math.max(0, p.anvil.t / p.anvil.max)
+    return null
   }
 
   /**
@@ -462,11 +513,47 @@ export class Combat {
   clearSlot(slot: SlotName) {
     // a swapped-in Patient Lens starts ready but uncharged, so a swap can't bank a full shot
     if (slot === 'head') this.parts.patientSince = PATIENT_START
+    // a window ends quietly, as if it ran out
+    if (slot === 'torso') this.endGuard()
+    if (slot === 'arms') this.endAnvil()
+  }
+
+  /** Anvil: the blow that would have hit him lands on the clamp, and he hammers back. */
+  private catchBlow() {
+    const a = this.parts.anvil
+    if (!a) return
+    this.parts.anvil = null
+    const at = this.lastPlayer.clone()
+    this.events.onPart({ kind: 'catch', at })
+    for (const e of this.enemies) {
+      if (!this.inBlast(at, e, a.def.radius) || this.shaded(at, e)) continue
+      e.hit(a.def.damage)
+      this.shoveFrom(e, at.x, at.z, a.def.shove ?? 0)
+      this.events.onHit(e.pos)
+    }
+    for (const b of this.breakables) {
+      if (!b.broken && Math.hypot(b.x - at.x, b.z - at.z) <= a.def.radius + b.r) this.events.onSmash(b)
+    }
+    this.ring(at, 0.3, a.def.radius, 0.35, 0x8fb8e8)
   }
 
   /** Every way Still loses HP comes through here, so windows (Anvil, Brace) have one place to step in. */
   private hurtPlayer(damage: number, source: HurtSource) {
     if (this.hurtCooldown > 0) return
+    // Anvil first: it catches body strikes only, and a catch folds simultaneous strikes into one
+    if (source === 'melee' && this.parts.anvil) {
+      this.hurtCooldown = 0.35
+      this.catchBlow()
+      return
+    }
+    // Brace: the hit becomes strain instead of integrity. Main adds it, so it can end the run.
+    const g = this.parts.guard
+    if (g?.kind === 'brace') {
+      this.hurtCooldown = 0.35
+      g.used = true
+      this.events.onPart({ kind: 'strain', amount: Math.ceil(damage / g.perStrain), at: this.lastPlayer.clone() })
+      return
+    }
     this.hp = Math.max(0, this.hp - damage)
     this.hurtCooldown = 0.35
     this.events.onPlayerHurt(damage, source)
@@ -494,12 +581,13 @@ export class Combat {
     this.events.onGone(e)
   }
 
-  private fireShot(from: THREE.Vector3, dir: THREE.Vector3, damage: number) {
+  /** An enemy shot. Public for dev checks; `owner` is who a Mirror Ward sends it back to. */
+  fireShot(from: THREE.Vector3, dir: THREE.Vector3, damage: number, owner?: Enemy) {
     const mesh = new THREE.Mesh(this.shotGeo, this.shotMat)
     // leaves from the barrel, not the feet
     mesh.position.set(from.x + dir.x * 0.7, 1.45, from.z + dir.z * 0.7)
     this.scene.add(mesh)
-    this.shots.push({ mesh, dir, life: 20 / SHOT_SPEED, damage })
+    this.shots.push({ mesh, dir, life: 20 / SHOT_SPEED, damage, owner })
   }
 
   /** A burst ring at a point: for smashed crates and used shrines. */
@@ -645,6 +733,32 @@ export class Combat {
         }
         if (pull) this.ring(o, def.radius, 0.3, 0.45, 0xbcd6ff)
         else this.ring(o, 0.3, def.radius, 0.45, 0x8fb8e8)
+        if (mod?.kind === 'brace') {
+          // then, for a moment, hits cost strain instead of integrity (a push reopens it at full)
+          const s = (def.windowMs ?? 800) / 1000
+          this.parts.guard = { kind: 'brace', t: s, max: s, radius: def.radius, reflectsLeft: 0, reflectDamage: 0, perStrain: mod.perStrain, used: false }
+          r.holdS = s
+        }
+        break
+      }
+
+      case 'ward': {
+        // a shell that meets shots in the shot loop; melee, waves and pulls go straight through it
+        const s = (def.windowMs ?? 1400) / 1000
+        const reflect = mod?.kind === 'reflect' ? mod : null
+        this.parts.guard = {
+          kind: reflect ? 'mirror' : 'ward', t: s, max: s, radius: def.radius,
+          reflectsLeft: reflect?.max ?? 0, reflectDamage: reflect?.damage ?? 0, perStrain: 0, used: false,
+        }
+        r.holdS = s
+        break
+      }
+
+      case 'catch': {
+        // Anvil: the next body strike inside the window is caught (hurtPlayer), then countered
+        const s = (def.windowMs ?? 900) / 1000
+        this.parts.anvil = { t: s, max: s, def }
+        r.holdS = s
         break
       }
 

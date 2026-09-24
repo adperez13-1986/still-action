@@ -373,4 +373,6 @@ export const READY = new Set<string>([
   'focusing-lens', 'cracked-lens', 'pressure-vent', 'backdraft-vent', 'scrap-cleaver', 'kickstart', 'skid-plates',
   // step 2: the parts that fit the existing shapes, plus the lob and the hop
   'piston', 'rusted-hook', 'frayed-cleaver', 'skitter', 'spring-heels', 'overrun', 'patient-lens', 'overclocked-coil', 'flare',
+  // step 3: the windows
+  'ward', 'mirror-ward', 'brace', 'anvil',
 ])
