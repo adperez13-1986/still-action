@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { Chaser, type Enemy } from './enemy'
+import { Chaser, shoveVelocity, type Enemy } from './enemy'
 import { Ranged } from './ranged'
 import { ARENA_RADIUS, type Collider } from './world'
 import type { AbilityDef } from './abilities'
@@ -14,6 +14,8 @@ const PLAYER_MAX_HP = 100
 const PLAYER_RADIUS = 0.42
 const SHOT_SPEED = 15
 const SHOT_RADIUS = 0.3
+/** Long enough that the dash reads as travel, not a teleport. */
+export const DASH_MS = 280
 /** A swing connects with anything whose body reaches the blade, not just its centre. */
 export const MELEE_PAD = 0.6
 
@@ -326,17 +328,16 @@ export class Combat {
           const d = Math.hypot(e.pos.x - origin.x, e.pos.z - origin.z)
           if (d <= def.radius) {
             e.hit(def.damage)
+            const ox = e.pos.x - origin.x
+            const oz = e.pos.z - origin.z
             if (def.mod === 'pull') {
               // drag them in, but stop short of stacking them on top of you
-              const k = Math.max(0, d - 1.4) / Math.max(0.001, d)
-              e.pos.x -= (e.pos.x - origin.x) * k * 0.75
-              e.pos.z -= (e.pos.z - origin.z) * k * 0.75
+              e.knock.add(shoveVelocity(-ox, -oz, Math.max(0, d - 1.4)))
             } else {
-              // shove them out of your face — this is the panic button
-              const k = 2.4 / Math.max(0.4, d)
-              e.pos.x += (e.pos.x - origin.x) * k * 0.35
-              e.pos.z += (e.pos.z - origin.z) * k * 0.35
+              // shove them out of your face — this is the panic button. Closer flies further.
+              e.knock.add(shoveVelocity(ox, oz, Math.max(2.4, 4.2 - d * 0.35)))
             }
+            this.ring(e.pos, 0.2, 0.9, 0.3, 0x8fa3b8)
             this.events.onHit(e.pos)
           }
         }
@@ -362,11 +363,7 @@ export class Combat {
           // 120-degree sweep in front
           if ((dx / d) * fx + (dz / d) * fz < cone) continue
           e.hit(def.damage)
-          if (def.mod === 'hook' && d > 1.5) {
-            const k = (d - 1.3) / d
-            e.pos.x -= dx * k
-            e.pos.z -= dz * k
-          }
+          if (def.mod === 'hook' && d > 1.5) e.knock.add(shoveVelocity(-dx, -dz, d - 1.3))
           this.events.onHit(e.pos)
         }
         this.sweep(origin, aimed, def.range, 0xffe0b0, Math.acos(cone) * 2)
@@ -393,19 +390,31 @@ export class Combat {
           ez = (ez / outer) * limit
         }
 
-        // everything near the line gets run over
+        // everything near the line gets run over — at the moment Still reaches it, not on the press
+        const sx = origin.x
+        const sz = origin.z
+        const lenSq = (ex - sx) ** 2 + (ez - sz) ** 2
         for (const e of this.enemies) {
-          if (this.distToSegment(e.pos.x, e.pos.z, origin.x, origin.z, ex, ez) <= def.radius + 0.6) {
-            e.hit(def.damage)
-            this.events.onHit(e.pos)
-          }
+          if (this.distToSegment(e.pos.x, e.pos.z, sx, sz, ex, ez) > def.radius + 0.6) continue
+          const along = lenSq > 0 ? Math.max(0, Math.min(1, ((e.pos.x - sx) * (ex - sx) + (e.pos.z - sz) * (ez - sz)) / lenSq)) : 0
+          // the dash eases out, so the time to reach a point isn't linear in distance
+          const reachT = 1 - Math.sqrt(1 - along)
+          this.later.push({
+            t: reachT * (DASH_MS / 1000),
+            run: () => {
+              if (e.dead || this.distToSegment(e.pos.x, e.pos.z, sx, sz, ex, ez) > def.radius + 1.1) return
+              e.hit(def.damage)
+              e.knock.add(shoveVelocity(e.pos.x - sx, e.pos.z - sz, 1.2))
+              this.events.onHit(e.pos)
+            },
+          })
         }
         this.ring(origin, 0.3, 1.6, 0.3, 0xbcd6ff)
-        this.events.onDash(ex, ez, 190)
+        this.events.onDash(ex, ez, DASH_MS)
         if (def.mod === 'slam') {
           const at = new THREE.Vector3(ex, 0, ez)
           this.later.push({
-            t: 0.19,
+            t: DASH_MS / 1000,
             run: () => {
               for (const e of this.enemies) {
                 if (Math.hypot(e.pos.x - at.x, e.pos.z - at.z) <= 2.8) {

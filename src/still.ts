@@ -14,6 +14,11 @@ const EYE_ON = new THREE.Color(0xffb26b)
 const EYE_OFF = new THREE.Color(0x14100c)
 const EYE = new THREE.MeshBasicMaterial({ color: EYE_ON })
 
+const GHOST_EVERY = 0.03
+const GHOST_LIFE = 0.26
+
+interface Ghost { obj: THREE.Object3D; mat: THREE.MeshBasicMaterial; life: number }
+
 interface Debris { part: THREE.Object3D; vel: THREE.Vector3; spin: THREE.Vector3; floor: number }
 
 export class Still {
@@ -33,6 +38,9 @@ export class Still {
 
   private readonly home = new Map<THREE.Object3D, THREE.Vector3>()
   private debris: Debris[] = []
+
+  private ghosts: Ghost[] = []
+  private ghostTimer = 0
 
   private dashT = 0
   private dashDur = 0
@@ -122,7 +130,15 @@ export class Still {
   }
 
   update(dt: number, moveX: number, moveZ: number) {
+    this.updateGhosts(dt)
+
     if (this.dashT > 0) {
+      // afterimages along the path: the eye reads travel, not a teleport
+      this.ghostTimer -= dt
+      if (this.ghostTimer <= 0) {
+        this.ghostTimer = GHOST_EVERY
+        this.spawnGhost()
+      }
       this.dashT = Math.max(0, this.dashT - dt)
       const k = 1 - this.dashT / this.dashDur
       const eased = 1 - (1 - k) * (1 - k)
@@ -154,6 +170,33 @@ export class Still {
 
     this.group.position.set(this.pos.x, Math.abs(Math.sin(this.bob)) * 0.05 * mag, this.pos.z)
     this.group.rotation.y = this.facing
+  }
+
+  private spawnGhost() {
+    const scene = this.group.parent
+    if (!scene) return
+    const mat = new THREE.MeshBasicMaterial({
+      color: 0x9fc0ff, transparent: true, opacity: 0.45, depthWrite: false, blending: THREE.AdditiveBlending,
+    })
+    const obj = this.group.clone(true)
+    obj.traverse((o) => {
+      if (o instanceof THREE.Mesh) o.material = mat
+    })
+    scene.add(obj)
+    this.ghosts.push({ obj, mat, life: GHOST_LIFE })
+  }
+
+  private updateGhosts(dt: number) {
+    for (let i = this.ghosts.length - 1; i >= 0; i--) {
+      const g = this.ghosts[i]!
+      g.life -= dt
+      g.mat.opacity = Math.max(0, (g.life / GHOST_LIFE) * 0.45)
+      if (g.life <= 0) {
+        g.obj.removeFromParent()
+        g.mat.dispose()
+        this.ghosts.splice(i, 1)
+      }
+    }
   }
 
   /** Shortest way round. */

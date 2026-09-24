@@ -308,7 +308,8 @@ function cast(def: AbilityDef, pushed: boolean) {
   sfx.ability(def.shape, pushed)
   still.group.scale.setScalar(pushed ? 1.16 : 1.08)
   shake = Math.max(shake, pushed ? 0.34 : 0.16)
-  hitstop = Math.max(hitstop, pushed ? 0.06 : 0.035)
+  // no freeze on a dash: a pause right before the move is what made it look like a teleport
+  if (def.shape !== 'dash') hitstop = Math.max(hitstop, pushed ? 0.06 : 0.035)
   rig.punch(pushed ? 0.06 : 0.02)
 }
 

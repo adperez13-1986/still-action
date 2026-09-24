@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import { pushOutOfColliders, ARENA_RADIUS, type Collider } from './world'
-import type { Enemy, EnemyAction, EnemyPhase } from './enemy'
+import { slide, type Enemy, type EnemyAction, type EnemyPhase } from './enemy'
 
 const BODY = 0x4e2438
 const CORE = 0xff5a3c
@@ -35,6 +35,7 @@ function strip(width: number, length: number) {
 export class Ranged implements Enemy {
   readonly kind = 'ranged'
   readonly windupMs = RANGED.windupMs
+  readonly knock = new THREE.Vector3()
   readonly group = new THREE.Group()
   readonly tellGroup = new THREE.Group()
   readonly pos = new THREE.Vector3()
@@ -107,10 +108,12 @@ export class Ranged implements Enemy {
     const dist = Math.max(0.001, Math.hypot(dx, dz))
     const toward = Math.atan2(dx, dz)
     let action: EnemyAction | null = null
+    const staggered = slide(this.pos, this.knock, dt)
 
     switch (this.phase) {
       case 'approach': {
         this.aim = toward
+        if (staggered) break
         let mx = 0
         let mz = 0
         if (dist > RANGED.preferMax) {

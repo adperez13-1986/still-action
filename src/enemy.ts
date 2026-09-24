@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { pushOutOfColliders, type Collider } from './world'
+import { pushOutOfColliders, ARENA_RADIUS, type Collider } from './world'
 
 /**
  * Every archetype is the same machine: approach, windup, strike, recover.
@@ -12,6 +12,24 @@ export type EnemyAction =
   | { kind: 'melee'; damage: number }
   | { kind: 'shot'; dir: THREE.Vector3; damage: number }
 
+/** A shove is a velocity that bleeds off, not a teleport: slide distance = speed / decay. */
+export const KNOCK_DECAY = 9
+/** Above this speed an enemy is sliding and can't advance or start a windup. */
+const STAGGER_SPEED = 1.5
+
+/** Integrates knockback. Returns true while the enemy is still sliding. */
+export function slide(pos: THREE.Vector3, knock: THREE.Vector3, dt: number): boolean {
+  pos.addScaledVector(knock, dt)
+  knock.multiplyScalar(Math.exp(-KNOCK_DECAY * dt))
+  return knock.lengthSq() > STAGGER_SPEED * STAGGER_SPEED
+}
+
+/** The velocity that slides something `distance` units along (dx, dz). */
+export function shoveVelocity(dx: number, dz: number, distance: number): THREE.Vector3 {
+  const len = Math.hypot(dx, dz) || 1
+  return new THREE.Vector3((dx / len) * distance * KNOCK_DECAY, 0, (dz / len) * distance * KNOCK_DECAY)
+}
+
 export interface Enemy {
   readonly kind: 'chaser' | 'ranged'
   readonly group: THREE.Group
@@ -19,6 +37,8 @@ export interface Enemy {
   readonly tellGroup: THREE.Group
   readonly pos: THREE.Vector3
   readonly windupMs: number
+  /** Knockback velocity. Combat adds to it; the enemy slides it off. */
+  readonly knock: THREE.Vector3
   hp: number
   phase: EnemyPhase
   dead: boolean
@@ -45,6 +65,7 @@ export const CHASER = {
 export class Chaser implements Enemy {
   readonly kind = 'chaser'
   readonly windupMs = CHASER.windupMs
+  readonly knock = new THREE.Vector3()
   readonly group = new THREE.Group()
   readonly pos = new THREE.Vector3()
   hp = CHASER.hp
@@ -112,9 +133,11 @@ export class Chaser implements Enemy {
     const dz = target.z - this.pos.z
     const dist = Math.hypot(dx, dz)
     let action: EnemyAction | null = null
+    const staggered = slide(this.pos, this.knock, dt)
 
     switch (this.phase) {
       case 'approach': {
+        if (staggered) break
         if (dist > CHASER.strikeRange) {
           this.pos.x += (dx / dist) * CHASER.speed * dt
           this.pos.z += (dz / dist) * CHASER.speed * dt
@@ -147,6 +170,9 @@ export class Chaser implements Enemy {
     }
 
     pushOutOfColliders(this.pos, CHASER.bodyRadius, colliders)
+    // a shove can't carry anything out of the arena
+    const rim = Math.hypot(this.pos.x, this.pos.z)
+    if (rim > ARENA_RADIUS - 1.5) this.pos.multiplyScalar((ARENA_RADIUS - 1.5) / rim)
 
     // --- presentation ---
     const winding = this.phase === 'windup'
