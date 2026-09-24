@@ -30,7 +30,9 @@ function gradeSink(): Plugin {
   }
 }
 
-export default defineConfig({
+// GitHub Pages serves the build from /still-action/; the dev server stays at the root
+export default defineConfig(({ command, isPreview }) => ({
+  base: command === 'build' || isPreview ? '/still-action/' : '/',
   server: { host: true },
   plugins: [gradeSink()],
-})
+}))

@@ -95,7 +95,7 @@ async function loadSamples(c: AudioContext) {
     const list: AudioBuffer[] = []
     for (let i = 0; i < n; i++) {
       try {
-        const res = await fetch(`/sfx/${file}_${i}.ogg`)
+        const res = await fetch(`${import.meta.env.BASE_URL}sfx/${file}_${i}.ogg`)
         list.push(await c.decodeAudioData(await res.arrayBuffer()))
       } catch {
         // a missing file just means one fewer variation

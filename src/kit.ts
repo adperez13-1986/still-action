@@ -47,7 +47,7 @@ const texCache = new Map<string, THREE.Texture>()
 function tex(file: string, color: boolean) {
   let t = texCache.get(file)
   if (!t) {
-    t = texLoader.load(`/textures/${file}.jpg`)
+    t = texLoader.load(`${import.meta.env.BASE_URL}textures/${file}.jpg`)
     t.wrapS = t.wrapT = THREE.RepeatWrapping
     t.colorSpace = color ? THREE.SRGBColorSpace : THREE.NoColorSpace
     t.anisotropy = 4
@@ -139,7 +139,7 @@ const loaded = new Map<Piece, PieceData>()
 export async function loadKit(): Promise<void> {
   const loader = new GLTFLoader()
   await Promise.all(PIECES.map(async (name) => {
-    const scene = (await loader.loadAsync(`/kaykit/${name}.glb`)).scene
+    const scene = (await loader.loadAsync(`${import.meta.env.BASE_URL}kaykit/${name}.glb`)).scene
     let mesh: THREE.Mesh | null = null
     scene.traverse((o) => {
       if (!mesh && o instanceof THREE.Mesh) mesh = o

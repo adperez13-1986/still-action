@@ -55,6 +55,11 @@ world.scene.add(still.group)
 
 sfx.unlockAudio()
 
+// the deployed build caches itself for offline play (the dev server doesn't)
+if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+  void navigator.serviceWorker.register(`${import.meta.env.BASE_URL}sw.js`)
+}
+
 /** Screen-space left/right of a world point relative to Still, for stereo panning. */
 function panOf(at: THREE.Vector3) {
   const screenX = ((at.x - still.pos.x) - (at.z - still.pos.z)) * Math.SQRT1_2
