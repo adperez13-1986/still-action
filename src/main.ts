@@ -25,6 +25,7 @@ import type { Terrain } from './terrain'
 import { Vfx, syncTells, COLD, COLD_DEEP, EMBER } from './vfx'
 import { PartFx } from './partfx'
 import type { PartEvent } from './parts'
+import { RUN_DEPTHS, BOSS_EVERY, LEAN_HOME, exitsAfterBoss } from './areas'
 
 const canvas = document.querySelector<HTMLCanvasElement>('#view')!
 const hudRoot = document.querySelector<HTMLElement>('#hud')!
@@ -844,10 +845,31 @@ const BREAK_SECONDS = 0.85
 const DESCEND_OUT = 0.45
 const DESCEND_IN = 0.5
 const EXIT_RADIUS = 1.4
+/** The walk into the warm beam, before the words. The world holds while he takes it. */
+const HOMING_SECONDS = 0.6
 
-type Phase = 'crawl' | 'descending' | 'broken' | 'stopping' | 'over'
+/**
+ * boot until the kit is in; crawl and descending as ever; broken, stopping and
+ * homing are the three terminal sequences (the ending is already kept by then);
+ * ending is the words.
+ */
+type Phase = 'boot' | 'crawl' | 'descending' | 'broken' | 'stopping' | 'homing' | 'ending'
 
-const run = { phase: 'crawl' as Phase, depth: 1, strain: 0, t: 0, swapped: false, fought: false, quietT: 0, killed: false, ramStunSeen: false }
+/** One depth of a run, for __runStats: the phone test measures whether Stopped is reachable at all. */
+interface DepthStats { depth: number; pushes: number; quiets: number; strainIn: number; strainOut: number | null }
+
+const run = {
+  phase: 'boot' as Phase,
+  /** Whose run this is: a fresh one per startRun. The save keys its card by it (the next step). */
+  id: '',
+  /** ?depth= runs: tuning, not a real run. From the next step, nothing of them is saved. */
+  dev: false,
+  /** The ending is kept at its trigger, once: the first terminal thing in a tick wins. */
+  committed: false,
+  ending: null as { kind: EndingKind } | null,
+  depth: 1, strain: 0, t: 0, swapped: false, fought: false, quietT: 0, killed: false, ramStunSeen: false,
+  stats: [] as DepthStats[],
+}
 
 /** Nothing awake for this long counts as a fight cleared. */
 const QUIET_SECONDS = 2.5
@@ -968,6 +990,8 @@ function quiet() {
   combat.hp += (100 - combat.hp) / 2
   const eased = run.strain > 0
   run.strain = Math.max(0, run.strain - QUIET_STRAIN)
+  const st = run.stats[run.stats.length - 1]
+  if (st) st.quiets++
   hud.healing()
   sfx.cleared()
   if (combat.hp > before + 0.5 || eased) overlay.banner(eased ? `quiet \u00b7 strain \u2212${QUIET_STRAIN}` : 'quiet')
@@ -1066,11 +1090,17 @@ document.addEventListener('visibilitychange', () => {
 let bossWasStunned = false
 const BOSS_HP = 900
 
-/** The Assembler falls: the exit opens, and it leaves the best of what it was made from. */
+/**
+ * The Assembler falls: the beams open, and it leaves the best of what it was made from.
+ * Before the last depth that's on and home; after the last one, home only.
+ */
 function bossDown(at: THREE.Vector3) {
   combat.boss = null
   hud.bossBar(null)
-  level?.openExit()
+  for (const kind of exitsAfterBoss(run.depth)) {
+    if (kind === 'cold') level?.openExit()
+    else level?.openHome()
+  }
   sfx.bossDown()
   shake = 1.2
   hitstop = 0.25
@@ -1085,9 +1115,6 @@ function bossDown(at: THREE.Vector3) {
   loot.dropScrap(new THREE.Vector3(at.x - 1.2, 0, at.z))
   overlay.banner(`area ${run.depth / BOSS_EVERY} cleared`)
 }
-
-/** Every third depth closes an area with the Assembler. */
-const BOSS_EVERY = 3
 
 /** Build a level and put Still at its entrance. HP is whole again; strain carries. */
 function enterLevel(depth: number) {
@@ -1109,15 +1136,21 @@ function enterLevel(depth: number) {
   still.pos.copy(level.entrance)
   prev.copy(still.pos)
   run.depth = depth
+  closeStats()
+  run.stats.push({ depth, pushes: 0, quiets: 0, strainIn: run.strain, strainOut: null })
   overlay.banner(level.boss ? `Depth ${depth} \u00b7 something is waiting` : `Depth ${depth}`)
 }
 
-/** `?depth=3` starts a run there: the fastest way to the boss while tuning it. */
-const START_DEPTH = Math.max(1, Number(new URLSearchParams(location.search).get('depth')) || 1)
+/** `?depth=3` starts a run there: the fastest way to the boss while tuning it. Never past the last depth. */
+const DEPTH_PARAM = new URLSearchParams(location.search).get('depth')
+const START_DEPTH = Math.min(RUN_DEPTHS, Math.max(1, Number(DEPTH_PARAM) || 1))
 
 function startRun() {
   still.reassemble()
-  Object.assign(run, { phase: 'crawl', strain: 0, t: 0, swapped: false, ramStunSeen: false })
+  Object.assign(run, {
+    phase: 'crawl', strain: 0, t: 0, swapped: false, ramStunSeen: false,
+    id: newRunId(), dev: DEPTH_PARAM !== null, committed: false, ending: null, stats: [],
+  })
   loot.clear()
   // Still begins with one random plain part; the rest he finds. Starting deeper
   // (?depth=) skips the levels where he'd have found them, so he gets all four.
@@ -1130,9 +1163,21 @@ function startRun() {
   hud.bossBar(null)
   rig.reset()
   world.gradePass.uniforms.uSaturation!.value = grade.saturation
+  world.graceLight.intensity = grade.graceLight
   hud.enabled = true
   overlay.hide()
   sfx.restore()
+}
+
+/** Not crypto.randomUUID: that needs a secure context, and the phone plays over plain http on the LAN. */
+function newRunId() {
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+}
+
+/** The depth being left gets its strain on the way out. */
+function closeStats() {
+  const st = run.stats[run.stats.length - 1]
+  if (st && st.strainOut === null) st.strainOut = run.strain
 }
 
 function descend() {
@@ -1145,8 +1190,20 @@ function descend() {
   stopAllWindups()
 }
 
+/**
+ * The ending is kept the moment it's triggered (HP out, strain full, the warm beam),
+ * never at the button: a tab closed during the words must still keep the run.
+ * Once per run. The save writes the card from the next step; for now it's the flag.
+ */
+function commit(kind: EndingKind) {
+  if (run.committed) return
+  run.committed = true
+  run.ending = { kind }
+  closeStats()
+}
+
 function end(kind: EndingKind) {
-  run.phase = 'over'
+  run.phase = 'ending'
   overlay.show(kind, run.depth, startRun)
   // the silence after the ending is held a moment, then the bell comes back under the words
   sfx.restore(3)
@@ -1160,6 +1217,7 @@ function stopAllWindups() {
 }
 
 function breakApart() {
+  commit('broken')
   run.phase = 'broken'
   updateOffer()
   updateShrinePrompt()
@@ -1176,6 +1234,7 @@ function breakApart() {
 }
 
 function beginStopping() {
+  commit('stopped')
   run.phase = 'stopping'
   updateOffer()
   updateShrinePrompt()
@@ -1185,10 +1244,32 @@ function beginStopping() {
   sfx.windDown(STOP_SECONDS)
 }
 
+/** Where the homing walk ends: the warm beam's centre. */
+const homingTo = new THREE.Vector3()
+
+/**
+ * Into the warm beam, by choice. The world holds from this tick (combat isn't
+ * updated again), so nothing can reach him once he's in the light.
+ */
+function beginHoming(to: THREE.Vector3) {
+  commit('home')
+  run.phase = 'homing'
+  homingTo.set(to.x, 0, to.z)
+  updateOffer()
+  updateShrinePrompt()
+  run.t = 0
+  hud.enabled = false
+  stopAllWindups()
+  // the world goes soft around him rather than silent: nothing broke
+  sfx.pauseDuck(true)
+}
+
 hud.onFire((def, pushed) => {
   if (run.phase !== 'crawl') return { cooldown: 'refused' }
   const r = cast(def, pushed)
   if (r.cooldown === 'refused') return r
+  const st = run.stats[run.stats.length - 1]
+  if (pushed && st) st.pushes++
   // the part has already landed; now it's paid for. The push that crosses the line
   // still lands at full power, then he stops.
   const cost = r.strain + (pushed ? STRAIN_PER_PUSH : 0)
@@ -1506,7 +1587,12 @@ function simulate(realDt: number) {
   prev.copy(still.pos)
   miteKills = 0
 
-  if (run.phase === 'over') return
+  if (run.phase === 'ending' || run.phase === 'boot') return
+
+  if (run.phase === 'homing') {
+    homing(realDt)
+    return
+  }
 
   if (run.phase === 'descending') {
     run.t += realDt
@@ -1612,8 +1698,35 @@ function simulate(realDt: number) {
     descend()
     return
   }
+  // and so is home, the same way
+  if (run.phase === 'crawl' && level?.home && level.homeOpen && Math.hypot(still.pos.x - level.home.x, still.pos.z - level.home.z) < EXIT_RADIUS) {
+    beginHoming(level.home)
+    return
+  }
 
   still.group.scale.lerp(new THREE.Vector3(1, 1, 1), Math.min(1, dt * 9))
+}
+
+/**
+ * The walk into the warm beam: a scripted stick that brings him to its centre just
+ * as the time runs out, at whatever pace that takes. The beam brightens and Grace's
+ * light swells with it. Then the words; the walk home after the last depth comes later.
+ */
+function homing(dt: number) {
+  run.t += dt
+  const k = Math.min(1, run.t / HOMING_SECONDS)
+  const ease = k * k * (3 - 2 * k)
+  const dx = homingTo.x - still.pos.x
+  const dz = homingTo.z - still.pos.z
+  const d = Math.hypot(dx, dz)
+  const pace = Math.min(1, d / (still.speed * Math.max(STEP, HOMING_SECONDS - run.t)))
+  still.aim = null
+  still.update(dt, d > 0.02 ? (dx / d) * pace : 0, d > 0.02 ? (dz / d) * pace : 0)
+  if (!still.vaulting) combat.terrain.pushOut(still.pos, BODY_RADIUS)
+  still.group.scale.lerp(new THREE.Vector3(1, 1, 1), Math.min(1, dt * 9))
+  if (level) level.homeGlow = 1 + ease
+  world.graceLight.intensity = grade.graceLight * (1 + 0.4 * ease)
+  if (run.t >= HOMING_SECONDS) end('home')
 }
 
 /** Footsteps: a step sounds each time a foot lands, quieter with distance. */
@@ -1624,10 +1737,12 @@ const stepTimes: number[] = []
 const STEP_WINDOW = 0.12
 const STEPS_MAX = 3
 function footsteps(now: number) {
-  if (run.phase !== 'crawl') return
+  // his own steps into the warm beam still land; the held world's don't
+  if (run.phase !== 'crawl' && run.phase !== 'homing') return
   const k = Math.floor(still.stride / Math.PI)
   if (still.walking && k !== lastStep.get(still)) sfx.step('still', 0)
   lastStep.set(still, k)
+  if (run.phase !== 'crawl') return
   while (stepTimes.length && now - stepTimes[0]! > STEP_WINDOW) stepTimes.shift()
   const quiet = hush()
   const dist = (e: Enemy) => Math.hypot(e.pos.x - still.pos.x, e.pos.z - still.pos.z)
@@ -1691,10 +1806,12 @@ function frame(nowMs: number) {
   still.group.position.x = x + still.nudge.x
   still.group.position.z = z + still.nudge.z
 
-  // Grace's light drifts a little toward the exit: the light you carry points the way
+  // Grace's light drifts a little toward the exit: the light you carry points the way.
+  // Once an Assembler is down, it points home.
   if (level && run.phase === 'crawl') {
-    const ex = level.exit.x - x
-    const ez = level.exit.z - z
+    const to = LEAN_HOME && level.home && level.homeOpen ? level.home : level.exit
+    const ex = to.x - x
+    const ez = to.z - z
     const d = Math.hypot(ex, ez)
     const k = Math.min(1, d / 6) * GRACE_LEAN
     graceLean.lerp(tmpLean.set(d > 0.01 ? (ex / d) * k : 0, 0, d > 0.01 ? (ez / d) * k : 0), Math.min(1, elapsed * 2))
@@ -1832,6 +1949,8 @@ if (import.meta.env.DEV) {
       // the real level stays loaded for its smash() and its look, but can't be walked out of
       if (level) {
         level.exitOpen = false
+        level.homeOpen = false
+        level.homeGlow = 1
         level.group.visible = false
       }
       pause.hide()
@@ -1842,7 +1961,11 @@ if (import.meta.env.DEV) {
       still.facing = 0
       prev.copy(still.pos)
       combat.hp = 100
-      Object.assign(run, { phase: 'crawl', strain: 0, fought: false, quietT: 0, killed: false })
+      Object.assign(run, { phase: 'crawl', strain: 0, t: 0, fought: false, quietT: 0, killed: false, committed: false, ending: null })
+      world.gradePass.uniforms.uSaturation!.value = grade.saturation
+      world.graceLight.intensity = grade.graceLight
+      fade.style.opacity = '0'
+      sfx.restore()
       hud.resetLoadout(hud.loadout)
       hud.setStick(0, 0)
       hud.bossBar(null)
@@ -1863,6 +1986,51 @@ if (import.meta.env.DEV) {
     },
     __enter: enterLevel,
     __lootRules: { rollPart, dropChance },
+    __mode: () => run.phase,
+    /** The level's beams, read off its scene: a beam that was never built is null. */
+    __exits: () => {
+      const beam = (name: string, at: THREE.Vector3 | null, open: boolean) =>
+        level?.group.getObjectByName(name) && at ? { x: at.x, z: at.z, open } : null
+      return {
+        cold: level ? beam('beam:cold', level.exit, level.exitOpen) : null,
+        warm: level ? beam('beam:warm', level.home, level.homeOpen) : null,
+        meshes: level ? level.group.children.filter((o) => o.name.startsWith('beam:')).length : 0,
+      }
+    },
+    __exitsAfterBoss: exitsAfterBoss,
+    /** The boss takes its remaining HP through the same hit a part lands; it's buried, and onKill fires, on the next step. */
+    __killBoss: () => {
+      const b = combat.boss
+      if (!b || b.dead) return false
+      b.hit(b.hp / (b.armor * (b.stunned ? 1.5 : 1)) + 1e-6)
+      return true
+    },
+    __strain: (n: number) => addStrain(n, { x: window.innerWidth / 2, y: window.innerHeight / 2 }),
+    /**
+     * An ending, the game's way, and one step so its trigger has fired on return:
+     * HP to 0; strain to full; into the warm beam. Without a warm beam to walk
+     * into (a crawl depth, or __arena's floor), he homes where he stands: a
+     * shortcut for checks that aren't about the beam.
+     */
+    __end: (kind: EndingKind) => {
+      if (run.phase !== 'crawl') return false
+      if (kind === 'broken') {
+        combat.hp = 0
+        devTick()
+      } else if (kind === 'stopped') {
+        addStrain(STRAIN_MAX - run.strain, { x: window.innerWidth / 2, y: window.innerHeight / 2 })
+      } else if (level?.home && level.group.visible) {
+        level.openHome()
+        still.pos.set(level.home.x, 0, level.home.z)
+        devTick()
+      } else {
+        beginHoming(still.pos)
+      }
+      return true
+    },
+    __continue: () => overlay.press(),
+    /** Per depth this run: pushes, quiets, and strain in and out. The open depth reads its strain now. */
+    __runStats: () => run.stats.map((st) => ({ ...st, strainOut: st.strainOut ?? run.strain })),
   })
 }
 

@@ -5,6 +5,7 @@ import type { Terrain, WallFace } from './terrain'
 import type { BreachHole } from './parts'
 import { ELITE_MODS, type Archetype, type EliteMod } from './combat'
 import { BROOD } from './swarm'
+import { exitsAfterBoss, type ExitKind } from './areas'
 
 /**
  * A D2-style crawl level on a 4-unit grid (KayKit's floor tile). A main path of
@@ -72,10 +73,17 @@ export interface Level {
   shrines: Shrine[]
   /** Break a crate: it stops being solid and its mesh goes. */
   smash: (b: Breakable) => void
-  /** Boss levels: where the boss stands and what it faces. The exit stays shut until it falls. */
+  /** Boss levels: where the boss stands and what it faces. The exits stay shut until it falls. */
   boss?: { x: number; z: number; face: THREE.Vector3 }
+  /** The cold beam, on. The last Assembler's arena builds none, so there it never opens. */
   exitOpen: boolean
   openExit: () => void
+  /** The warm beam, home: boss levels only; null elsewhere. Opens by exitsAfterBoss. */
+  home: THREE.Vector3 | null
+  homeOpen: boolean
+  openHome: () => void
+  /** The warm beam's brightness over its breathing: 1 at rest, up to 2 as he walks into it. */
+  homeGlow: number
   group: THREE.Group
   terrain: Terrain
   rooms: Room[]
@@ -880,38 +888,34 @@ export function generateLevel(depth: number, seed = Math.floor(Math.random() * 1
   ground.position.set(((minI + maxI) / 2) * CELL, -0.12, ((minJ + maxJ) / 2) * CELL)
   group.add(ground)
 
-  // --- the exit: a cold beam that rises well over the walls and fades out as it climbs ---
-  // Tall enough to spot over waist-high barriers, short enough that it never paints a
-  // stripe across the room behind it (the locked camera looks from +x,+z).
+  // --- the exits: the cold beam goes on, the warm one goes home ---
   const exitRoom = layout.rooms.find((r) => r.kind === 'exit')!
   const entranceRoom = layout.rooms.find((r) => r.kind === 'entrance')!
-  const BEAM_H = 9
-  const fadeUp = (() => {
-    const data = new Uint8Array(64 * 4)
-    for (let i = 0; i < 64; i++) {
-      const v = Math.round(255 * Math.pow(1 - i / 63, 1.6))
-      data.set([v, v, v, 255], i * 4)
-    }
-    const t = new THREE.DataTexture(data, 1, 64)
-    t.needsUpdate = true
-    return t
-  })()
-  const beamMat = new THREE.MeshBasicMaterial({
-    color: 0xcfe0ff, map: fadeUp, transparent: true, opacity: 0.2, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending,
-  })
-  const coreMat = beamMat.clone()
-  coreMat.opacity = 0.35
-  const beam = new THREE.Mesh(new THREE.CylinderGeometry(1.1, 1.4, BEAM_H, 16, 1, true), beamMat)
-  beam.position.set(exitRoom.center.x, BEAM_H / 2, exitRoom.center.z)
-  const core = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.45, BEAM_H, 10, 1, true), coreMat)
-  core.position.copy(beam.position)
-  const padMat = new THREE.MeshBasicMaterial({ color: 0xcfe0ff, transparent: true, opacity: 0.25, depthWrite: false })
-  const pad = new THREE.Mesh(new THREE.RingGeometry(1.2, 1.6, 40), padMat)
-  pad.rotation.x = -Math.PI / 2
-  pad.position.set(exitRoom.center.x, DECAL_Y, exitRoom.center.z)
-  group.add(beam, core, pad)
-  // a boss level's exit stays dark until the boss is down
-  if (opts.boss) beam.visible = core.visible = pad.visible = false
+  // a crawl depth has only the cold beam, lit from the start; a boss depth builds what
+  // exitsAfterBoss says it can open, and keeps it dark until the boss is down
+  const exits: ExitKind[] = opts.boss ? exitsAfterBoss(depth) : ['cold']
+  const cold = exits.includes('cold') ? makeBeam(COLD_BEAM, BEAM_H) : null
+  if (cold) {
+    cold.group.name = 'beam:cold'
+    cold.group.position.set(exitRoom.center.x, 0, exitRoom.center.z)
+    cold.group.visible = !opts.boss
+    group.add(cold.group)
+  }
+  let home: THREE.Vector3 | null = null
+  let warm: Beam | null = null
+  if (opts.boss && exits.includes('warm')) {
+    // beside the cold one, on the side away from the camera, so its stripe falls on the void
+    const c = exitRoom.center
+    const away = new THREE.Vector3(c.x - entranceRoom.center.x, 0, c.z - entranceRoom.center.z).normalize()
+    const a = new THREE.Vector3(away.z, 0, -away.x)
+    const side = a.x + a.z <= -a.x - a.z ? a : a.negate()
+    home = c.clone().addScaledVector(side, WARM_OFFSET)
+    warm = makeBeam(WARM_BEAM, BEAM_H)
+    warm.group.name = 'beam:warm'
+    warm.group.position.copy(home)
+    warm.group.visible = false
+    group.add(warm.group)
+  }
 
   return {
     depth,
@@ -920,9 +924,18 @@ export function generateLevel(depth: number, seed = Math.floor(Math.random() * 1
     boss: bossSpot,
     exitOpen: !opts.boss,
     openExit() {
+      if (!cold) return
       this.exitOpen = true
-      beam.visible = core.visible = pad.visible = true
+      cold.group.visible = true
     },
+    home,
+    homeOpen: false,
+    openHome() {
+      if (!warm) return
+      this.homeOpen = true
+      warm.group.visible = true
+    },
+    homeGlow: 1,
     packs,
     breakables,
     shrines,
@@ -936,19 +949,81 @@ export function generateLevel(depth: number, seed = Math.floor(Math.random() * 1
     exit: exitRoom.center.clone(),
     update(t) {
       for (const o of shrineParts) if (o.name === 'glyph') o.rotation.y = t * 0.8
-      const breathe = 0.5 + 0.5 * Math.sin(t * 1.3)
-      beamMat.opacity = 0.14 + breathe * 0.08
-      coreMat.opacity = 0.28 + breathe * 0.12
-      padMat.opacity = 0.18 + breathe * 0.14
+      cold?.update(t)
+      warm?.update(t, this.homeGlow)
     },
     dispose() {
       group.removeFromParent()
       // kit geometry and materials are shared across levels; only this level's own things go
-      for (const o of [ground, beam, core, pad]) o.geometry.dispose()
-      for (const m of [groundMat, beamMat, coreMat, padMat]) m.dispose()
+      ground.geometry.dispose()
+      groundMat.dispose()
+      cold?.dispose()
+      warm?.dispose()
       for (const sh of shrines) sh.rune.dispose()
-      fadeUp.dispose()
       for (const o of group.children) if (o instanceof THREE.InstancedMesh) o.dispose()
+    },
+  }
+}
+
+// --- the beams ---------------------------------------------------------------
+
+/**
+ * Tall enough to spot over waist-high barriers, short enough that it never paints a
+ * stripe across the room behind it (the locked camera looks from +x,+z).
+ */
+const BEAM_H = 9
+/** Cold is the way on. Warm is Grace's light: the only warm thing in the maze besides her. */
+const COLD_BEAM = 0xcfe0ff
+const WARM_BEAM = 0xffb26b
+/** How far the warm beam stands from the arena centre, where the cold one is. */
+const WARM_OFFSET = 4.5
+
+interface Beam {
+  group: THREE.Group
+  /** `glow` scales the whole beam over its breathing (the walk into the warm one). */
+  update(t: number, glow?: number): void
+  dispose(): void
+}
+
+/** A beam that rises well over the walls and fades out as it climbs, with a ring on the floor. */
+function makeBeam(color: number, height: number): Beam {
+  const fadeUp = (() => {
+    const data = new Uint8Array(64 * 4)
+    for (let i = 0; i < 64; i++) {
+      const v = Math.round(255 * Math.pow(1 - i / 63, 1.6))
+      data.set([v, v, v, 255], i * 4)
+    }
+    const t = new THREE.DataTexture(data, 1, 64)
+    t.needsUpdate = true
+    return t
+  })()
+  const beamMat = new THREE.MeshBasicMaterial({
+    color, map: fadeUp, transparent: true, opacity: 0.2, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending,
+  })
+  const coreMat = beamMat.clone()
+  coreMat.opacity = 0.35
+  const beam = new THREE.Mesh(new THREE.CylinderGeometry(1.1, 1.4, height, 16, 1, true), beamMat)
+  beam.position.y = height / 2
+  const core = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.45, height, 10, 1, true), coreMat)
+  core.position.copy(beam.position)
+  const padMat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.25, depthWrite: false })
+  const pad = new THREE.Mesh(new THREE.RingGeometry(1.2, 1.6, 40), padMat)
+  pad.rotation.x = -Math.PI / 2
+  pad.position.y = DECAL_Y
+  const group = new THREE.Group()
+  group.add(beam, core, pad)
+  return {
+    group,
+    update(t, glow = 1) {
+      const breathe = 0.5 + 0.5 * Math.sin(t * 1.3)
+      beamMat.opacity = (0.14 + breathe * 0.08) * glow
+      coreMat.opacity = (0.28 + breathe * 0.12) * glow
+      padMat.opacity = (0.18 + breathe * 0.14) * glow
+    },
+    dispose() {
+      for (const o of [beam, core, pad]) o.geometry.dispose()
+      for (const m of [beamMat, coreMat, padMat]) m.dispose()
+      fadeUp.dispose()
     },
   }
 }

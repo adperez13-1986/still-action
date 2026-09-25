@@ -255,7 +255,7 @@ html, body {
   position: absolute; inset: 0; z-index: 50; display: none; place-items: center;
   padding: 24px; text-align: center; pointer-events: auto;
 }
-#ending.broken, #ending.stopped { display: grid; }
+#ending.broken, #ending.stopped, #ending.home { display: grid; }
 #ending .words { max-width: 440px; opacity: 0; }
 #ending h1 { margin: 0 0 10px; font: 600 28px/1.2 var(--tender); color: #e6edf5; }
 #ending p { margin: 0 0 8px; color: #9fb2c6; font: italic 500 18px/1.35 var(--tender); text-shadow: 0 1px 6px #000; }
@@ -274,6 +274,11 @@ html, body {
 #ending.stopped { background: rgba(4, 6, 9, 0); transition: background 2.6s; }
 #ending.stopped.show { background: rgba(4, 6, 9, .66); }
 #ending.stopped.show .words { opacity: 1; transition: opacity 2.4s .6s; }
+
+/* Home: chosen. The warm light stays up behind a thin warm veil, and the words come in unhurried. */
+#ending.home { background: rgba(12, 9, 6, 0); transition: background 2s; }
+#ending.home.show { background: rgba(12, 9, 6, .55); }
+#ending.home.show .words { opacity: 1; transition: opacity 1.6s; }
 
 /* --- grade panel --- */
 #topRight {

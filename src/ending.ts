@@ -1,11 +1,12 @@
 /**
- * The two endings, as text. Deliberately different: HP death is a hard cut to
- * black; strain is Still stopping, and the scene stays up behind the words.
- * Both close on the same line, whatever happened.
+ * The three endings, as text. Deliberately different: HP death is a hard cut to
+ * black; strain is Still stopping, and the scene stays up behind the words; home
+ * is walking into Grace's light by choice, and the warm scene stays with him.
+ * All three close on the same line, whatever happened.
  *
  * DRAFT COPY. The words are placeholders to feel the shape of the moment.
  */
-export type EndingKind = 'broken' | 'stopped'
+export type EndingKind = 'broken' | 'stopped' | 'home'
 
 const COPY: Record<EndingKind, { title: string; body: string }> = {
   broken: {
@@ -16,14 +17,23 @@ const COPY: Record<EndingKind, { title: string; body: string }> = {
     title: 'Still slowed down, and stopped.',
     body: 'Nothing broke. It gave what it had.',
   },
+  // PLACEHOLDER, Adrian's words. Walking into Grace's light by choice: the third ending.
+  home: {
+    title: 'Still came home.',
+    body: '[Adrian writes this line.]',
+  },
 }
 
 const CLOSING = 'You showed up. That was enough.'
+/** The button ignores taps this long after the words go up: a thumb still pressing from the fight can't skip them. */
+const GUARD_MS = 1200
 
 export interface Overlay {
   banner: (text: string) => void
   show: (kind: EndingKind, depth: number, onAgain: () => void) => void
   hide: () => void
+  /** The button, without the finger guard (dev checks have no real time between frames). */
+  press: () => void
 }
 
 export function createOverlay(root: HTMLElement): Overlay {
@@ -51,7 +61,10 @@ export function createOverlay(root: HTMLElement): Overlay {
 
   let bannerTimer = 0
   let onAgain: (() => void) | null = null
-  again.addEventListener('click', () => onAgain?.())
+  let shownAt = 0
+  again.addEventListener('click', () => {
+    if (performance.now() - shownAt >= GUARD_MS) onAgain?.()
+  })
 
   return {
     banner(text) {
@@ -63,8 +76,10 @@ export function createOverlay(root: HTMLElement): Overlay {
 
     show(kind, depth, cb) {
       onAgain = cb
+      shownAt = performance.now()
       title.textContent = COPY[kind].title
       body.textContent = COPY[kind].body
+      // stays until the run's card carries the depth (the corkboard step)
       count.textContent = `reached depth ${depth}`
       closing.textContent = CLOSING
       banner.classList.remove('show')
@@ -76,6 +91,10 @@ export function createOverlay(root: HTMLElement): Overlay {
     hide() {
       onAgain = null
       end.className = ''
+    },
+
+    press() {
+      onAgain?.()
     },
   }
 }
