@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { haloTexture, trackingDim, tellOrder } from './vfx'
 import {
-  slide, statusTint, disposeBody, turn, distToSegment, PLAYER_RADIUS, BODY, JOINT, CORE, CORE_ASLEEP, SLEEP_BODY,
+  slide, statusTint, disposeBody, turn, distToSegment, PLAYER_RADIUS, BODY, JOINT, CORE, CORE_ASLEEP, SLEEP_BODY, SLAG_CORE, SLAG_CORE_ASLEEP,
   type Enemy, type EnemyAction, type EnemyCtx, type EnemyPhase,
 } from './enemy'
 import { LaneTell, type LaneEnd } from './lane'
@@ -233,6 +233,9 @@ export class Charger implements Enemy {
   // its lights ignore the fog (the lights-out rule): lamp, firebox, seams and their glow
   private readonly coreMat = new THREE.MeshBasicMaterial({ color: CORE, fog: false })
   private readonly fireMat = new THREE.MeshBasicMaterial({ color: CORE, fog: false })
+  /** The lamp and the firebox, lit and asleep: a slag core swaps them. The seams stay its tell. */
+  private coreOn = CORE_C
+  private coreOff = CORE_OFF
   private readonly seamMats = Array.from({ length: 5 }, () => new THREE.MeshBasicMaterial({ color: CORE, fog: false }))
   /**
    * Heat over the seam. Additive over lit rust, the halo at full strength washed the
@@ -710,6 +713,11 @@ export class Charger implements Enemy {
     this.tripped = false
   }
 
+  setSlag() {
+    this.coreOn = new THREE.Color(SLAG_CORE)
+    this.coreOff = new THREE.Color(SLAG_CORE_ASLEEP)
+  }
+
   setElite(mod: EliteMod) {
     this.elite = mod
     if (mod === 'plated') this.plated = true
@@ -897,7 +905,7 @@ export class Charger implements Enemy {
     this.flanks.forEach((f, i) => { f.rotation.z = (i === 0 ? -1 : 1) * flare })
     this.firebox.visible = this.stunned
     this.firebox.scale.setScalar(fire)
-    this.fireMat.color.copy(CORE_C).lerp(FIRE_HOT, heat)
+    this.fireMat.color.copy(this.coreOn).lerp(FIRE_HOT, heat)
     this.glowMat.opacity = glow
     this.glow.visible = glow > 0.01
 
@@ -905,7 +913,7 @@ export class Charger implements Enemy {
     // sealed: an iron lid on every light but one dim segment, the rim that says it's warded
     const sealed = !this.asleep && (this.sealed || this.unsealT > 0)
     this.seamMats.forEach((m, i) => m.color.copy(this.asleep ? CORE_OFF : sealed ? (i === 2 ? SEAL_RIM : JOINT_C) : seam[i]!))
-    this.coreMat.color.copy(this.asleep ? CORE_OFF : sealed ? JOINT_C : CORE_C)
+    this.coreMat.color.copy(this.asleep ? this.coreOff : sealed ? JOINT_C : this.coreOn)
     this.tint()
 
     this.group.position.set(this.pos.x, 0, this.pos.z)

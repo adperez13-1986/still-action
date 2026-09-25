@@ -10,6 +10,9 @@ import { musicContext } from './audio'
  *   tension       a faint rub that creeps in as strain gets high
  *
  * Phone speakers can't reproduce the low end, so the bass carries overtones.
+ *
+ * Area II has its own loop and a metal tick for the click, and its tempo slows as
+ * the day goes: depth 4 from 97, depth 5 from 94.5, 2.5 BPM over each (the run sets it).
  */
 const BPM = 97
 /** The Assembler's fight: same key, faster, and a drum line under everything. */
@@ -26,6 +29,13 @@ const CHORDS = [
   { root: 43, pad: [43, 46, 50, 57] },
   { root: 45, pad: [45, 50, 52, 57] },
 ]
+/** Area II: Dm, Gm, Bb, A7 with no third. The A still refuses home. */
+const CHORDS_II = [
+  { root: 50, pad: [50, 53, 57, 62] },
+  { root: 43, pad: [43, 50, 53, 58] },
+  { root: 46, pad: [46, 50, 53, 57] },
+  { root: 45, pad: [45, 52, 55, 57] },
+]
 const OSTINATO = [1, 0, 1, 0, 1, 1, 0, 1]
 const BELL_LINE = [69, 72, 74, 77, 76, 74, 81, 79, 77, 74]
 
@@ -40,6 +50,9 @@ export interface MusicState {
   strain: number
   /** The Workshop: the pad and drone drop back, no pulse or drums, the bell alone over them. */
   home?: boolean
+  /** Which loop, and the crawl's tempo (the boss's is its own). Default area I at 97. */
+  area?: 'I' | 'II'
+  bpm?: number
 }
 
 interface Engine {
@@ -60,7 +73,9 @@ let engine: Engine | null = null
 let last = { fighting: false, calm: false, strain: -1, boss: false, phase2: false, home: false }
 let boss = false
 let phase2 = false
-const beatLen = () => 60 / (boss ? BOSS_BPM : BPM)
+let area: 'I' | 'II' = 'I'
+let bpm = BPM
+const beatLen = () => 60 / (boss ? BOSS_BPM : bpm)
 let noiseBuf: AudioBuffer | null = null
 
 function impulse(ctx: AudioContext, seconds: number): AudioBuffer {
@@ -186,6 +201,24 @@ function hit(e: Engine, dest: AudioNode, t: number, type: BiquadFilterType, f: n
   s.stop(t + len + 0.02)
 }
 
+/** Area II's click: a square at 2400 Hz, 12 ms, rung through a narrow band. */
+function metalTick(e: Engine, t: number) {
+  const o = e.ctx.createOscillator()
+  o.type = 'square'
+  o.frequency.value = 2400
+  const f = e.ctx.createBiquadFilter()
+  f.type = 'bandpass'
+  f.frequency.value = 3000
+  f.Q.value = 4
+  const g = e.ctx.createGain()
+  g.gain.setValueAtTime(0.0001, t)
+  g.gain.linearRampToValueAtTime(0.06, t + 0.001)
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.012)
+  o.connect(f).connect(g).connect(e.pulse)
+  o.start(t)
+  o.stop(t + 0.03)
+}
+
 /** The boss layer: drums, a sixteenth-note drive on the root, a stab each bar, the arpeggio. */
 function scheduleBoss(e: Engine, i: number, t: number, chord: (typeof CHORDS)[number]) {
   const B = beatLen()
@@ -219,7 +252,8 @@ function schedule(e: Engine, i: number, t: number) {
   const BEAT = beatLen()
   const beatInBar = i % 4
   const bar = Math.floor(i / 4)
-  const chord = CHORDS[Math.floor(bar / CHORD_BARS) % CHORDS.length]!
+  const loop = area === 'II' ? CHORDS_II : CHORDS
+  const chord = loop[Math.floor(bar / CHORD_BARS) % loop.length]!
   const chordBeats = CHORD_BARS * 4
   if (boss) scheduleBoss(e, i, t, chord)
 
@@ -242,8 +276,9 @@ function schedule(e: Engine, i: number, t: number) {
   }
   if (beatInBar === 0 || beatInBar === 2) {
     note(e, e.pulse, 'sine', 62, t, 0.003, 0.02, 0.22, 0.5)
-    // the click is what a phone speaker can actually play
-    note(e, e.pulse, 'triangle', 1200, t, 0.001, 0, 0.03, 0.05)
+    // the click is what a phone speaker can actually play; in area II it's a metal tick
+    if (area === 'II') metalTick(e, t)
+    else note(e, e.pulse, 'triangle', 1200, t, 0.001, 0, 0.03, 0.05)
   }
 
   // bell: sparse, never on a grid you can count
@@ -270,6 +305,14 @@ function tick() {
   }
 }
 
+/**
+ * The beat grid, for anything that plays in time with the score (the Works' forge
+ * thump): when the next beat falls on the audio clock, how long one is, its index.
+ */
+export function beatClock(): { next: number; len: number; beat: number } | null {
+  return engine ? { next: engine.nextBeat, len: beatLen(), beat: engine.beat } : null
+}
+
 /** Call every frame. Starts itself the first time audio is running, then only reacts to changes. */
 export function updateMusic(state: MusicState) {
   if (!engine) {
@@ -279,6 +322,9 @@ export function updateMusic(state: MusicState) {
     window.setInterval(tick, 30)
     tick()
   }
+  // the loop and the tempo change on the next beat, without restarting anything
+  area = state.area ?? 'I'
+  bpm = state.bpm ?? BPM
 
   const strain = Math.round(state.strain * 20) / 20
   if (

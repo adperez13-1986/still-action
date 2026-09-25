@@ -110,6 +110,8 @@ export type EnemyEvent =
   | { kind: 'bite'; brood: Brood; at: THREE.Vector3; biters: number; hit: boolean }
   /** The biters touch down in the clump. */
   | { kind: 'landed'; brood: Brood; at: THREE.Vector3[] }
+  /** A mite came out of its slag heap: `at` is where. */
+  | { kind: 'shed'; brood: Brood; at: THREE.Vector3 }
   /** The last mite of a brood died. */
   | { kind: 'broodEnd'; at: THREE.Vector3 }
   /** A level change took a brood away: stop its voices. */
@@ -173,6 +175,8 @@ export interface Enemy {
   setAsleep: (asleep: boolean) => void
   /** Crowning calls it after size, hp and armor are set, for a mod the body itself has to know about. */
   setElite?: (mod: EliteMod) => void
+  /** Area II: it carries a slag core, molten where its core was (the tell is on the body before the kill). */
+  setSlag?: () => void
   dispose: (scene: THREE.Scene) => void
 }
 
@@ -241,6 +245,9 @@ export function statusTint(joint: THREE.MeshStandardMaterial, shell: THREE.MeshS
   }
 }
 export const CORE_ASLEEP = 0x2a1512
+/** A slag core: hotter, not redder, than the ember it replaces; banked while it sleeps. */
+export const SLAG_CORE = 0xff8a3c
+export const SLAG_CORE_ASLEEP = 0x3a1a0e
 
 /** Dark rusted iron. Red belongs to the enemies: their cores and their tells. */
 export const BODY = 0x5b3b35
@@ -295,6 +302,9 @@ export class Chaser implements Enemy {
   private readonly jointMat: THREE.MeshStandardMaterial
   private readonly core: THREE.Mesh
   private readonly coreMat: THREE.MeshBasicMaterial
+  /** Its core's colours, lit and asleep: a slag core swaps them. */
+  private coreOn = CORE
+  private coreOff = CORE_ASLEEP
   /** The hulk's rig: hinged at the hips, shoulders and legs so it can rear and slam. */
   private readonly torso = new THREE.Group()
   private readonly armL = new THREE.Group()
@@ -402,7 +412,7 @@ export class Chaser implements Enemy {
     this.disc.scale.setScalar(0.001)
     this.core.scale.setScalar(1)
     this.blink = 0.2
-    this.coreMat.color.setHex(CORE_ASLEEP)
+    this.coreMat.color.setHex(this.coreOff)
     return true
   }
 
@@ -419,7 +429,7 @@ export class Chaser implements Enemy {
   update(dt: number, target: THREE.Vector3, terrain: Terrain): EnemyAction | null {
     this.timer -= dt * 1000
     this.bob += dt * 5
-    if (this.blink > 0 && (this.blink -= dt) <= 0) this.coreMat.color.setHex(CORE)
+    if (this.blink > 0 && (this.blink -= dt) <= 0) this.coreMat.color.setHex(this.coreOn)
     this.flash = Math.max(0, this.flash - dt * 6)
 
     const dx = target.x - this.pos.x
@@ -531,9 +541,15 @@ export class Chaser implements Enemy {
 
   setAsleep(asleep: boolean) {
     this.asleep = asleep
-    this.coreMat.color.setHex(asleep ? CORE_ASLEEP : CORE)
+    this.coreMat.color.setHex(asleep ? this.coreOff : this.coreOn)
     if (!asleep) this.flash = 1
     this.phase = 'approach'
+  }
+
+  setSlag() {
+    this.coreOn = SLAG_CORE
+    this.coreOff = SLAG_CORE_ASLEEP
+    this.coreMat.color.setHex(this.asleep ? this.coreOff : this.coreOn)
   }
 
   dispose(scene: THREE.Scene) {

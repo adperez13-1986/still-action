@@ -20,10 +20,10 @@ import { updateAmbience } from './ambience'
 import { Loot, LOOT, dropChance, rollPart, type GroundPart } from './loot'
 import { createPauseScreen } from './pause'
 import { createOverlay } from './ending'
-import { loadKit, setSurfaces } from './kit'
+import { loadKit, setSurfaces, pieceData, surfaceNow, PIECES, type Piece } from './kit'
 import { generateLevel, generateWalkHome, makeTerrain, key, type Box, type Breakable, type Circle, type Level, type Shrine } from './dungeon'
 import type { Terrain } from './terrain'
-import { Vfx, syncTells, COLD, COLD_DEEP, EMBER } from './vfx'
+import { Vfx, syncTells, COLD, COLD_DEEP, EMBER, SLAG_DROP } from './vfx'
 import { PartFx } from './partfx'
 import type { PartEvent } from './parts'
 import type { NotebookPage } from './pause'
@@ -452,10 +452,18 @@ const combat = new Combat(world.scene, OPEN, {
     strikeFx(e)
   },
   onHazard: (ev) => {
-    // the arm: the floor catches. Each place's own sounds arrive with the places that make hazards.
-    if (ev.kind !== 'arm') return
     const s = ev.h.spec.shape
-    if (s.kind === 'circle') vfx.embers(at3(s, 0.1), Math.round(4 + s.r * 3), s.r * 0.8)
+    const slag = ev.h.spec.source === 'slag'
+    if (s.kind !== 'circle') return
+    if (ev.kind === 'spawn' && slag) {
+      // the core breaks open where it fell
+      sfx.slagSpill(panOf(at3(s, 0)))
+      vfx.sparks(at3(s, 0.3), SLAG_DROP, 8, 3)
+    }
+    if (ev.kind !== 'arm') return
+    // the arm: the floor catches
+    if (slag) sfx.slagArm(panOf(at3(s, 0)))
+    vfx.embers(at3(s, 0.1), Math.round(4 + s.r * 3), s.r * 0.8)
   },
   onShotBlocked: (at) => {
     sfx.blocked(panOf(at))
@@ -509,6 +517,11 @@ function packEvent(ev: EnemyEvent) {
     case 'broodGone':
       windups.get(ev.brood)?.stop(true)
       windups.delete(ev.brood)
+      break
+    case 'shed':
+      // one mite out of the slag heap: a spit of embers off its coal, and a pop
+      vfx.embers(at3(ev.at, 0.15), 6, 0.3)
+      sfx.pop(panOf(ev.at))
       break
   }
 }
@@ -915,6 +928,8 @@ const run = {
   /** This level's names (§7.2), and the ones already counted as met here. */
   names: {} as Partial<Record<Archetype, string>>,
   met: new Set<string>(),
+  /** How far along this level he's got, 0..1, by the spine rooms he's reached. Never falls. */
+  reached: 0,
 }
 
 /** Nothing awake for this long counts as a fight cleared. */
@@ -1371,7 +1386,7 @@ function enterLevel(depth: number, o: { seed?: number; bossFelled?: boolean; res
   world.scene.add(level.group)
   combat.terrain = level.terrain
   loot.terrain = level.terrain
-  for (const p of level.packs) combat.addPack(p.members, p.room.kind === 'side', p.elite)
+  for (const p of level.packs) combat.addPack(p.members, p.room.kind === 'side', p.elite, p.look)
   combat.breakables = level.breakables
   const boss = bossFor(depth)
   if (level.boss && boss && !run.bossFelled) combat.addBoss(level.boss.x, level.boss.z, level.boss.face, boss)
@@ -1387,6 +1402,7 @@ function enterLevel(depth: number, o: { seed?: number; bossFelled?: boolean; res
   run.fought = false
   run.quietT = 0
   run.killed = false
+  run.reached = 0
   lastStep.clear()
   still.pos.copy(level.entrance)
   prev.copy(still.pos)
@@ -1661,6 +1677,8 @@ function enterRoom(arrival: ArrivalKind, hour: HomeHour, worn: (string | null)[]
   partFx.clear()
   combat.terrain = workshop.terrain
   loot.terrain = workshop.terrain
+  // the room wears its own wood and stone, whatever the run was last in
+  setSurfaces(PLACES.ruin.surfaces)
   offered = null
   atShrine = null
   hud.offer(null)
@@ -2222,6 +2240,7 @@ function simulate(realDt: number) {
   // mid-vault he's over the wall, not in it
   if (!still.vaulting) combat.terrain.pushOut(still.pos, BODY_RADIUS)
   pushOffBoss()
+  trackReach()
 
   const target = combat.nearestTarget(still.pos, 9.5)
   still.aim = target ? Math.atan2(target.x - still.pos.x, target.z - still.pos.z) : null
@@ -2378,6 +2397,20 @@ function walkStep(dt: number) {
 /** The house's door zone (§4.25). */
 const WALK_DOOR_R = 1.3
 
+/** Area II's day slows the score: 97 falling to 94.5 through depth 4, and 94.5 to 92 through depth 5. */
+function crawlBpm() {
+  if (level?.house || inRoom()) return 97
+  if (run.depth === 4) return 97 - 2.5 * run.reached
+  if (run.depth === 5) return 94.5 - 2.5 * run.reached
+  return 97
+}
+
+/** The spine room he's in moves how far along he's got; nothing else does, and it never goes back. */
+function trackReach() {
+  const r = level?.spineAt(still.pos.x, still.pos.z)
+  if (r && level) run.reached = Math.max(run.reached, level.progressOf(r))
+}
+
 /** The place he's in: the depth's look, or the quarter at night on the walk home. */
 function placeNow(): PlaceDef {
   return level?.house ? PLACES[WALK_PLACE] : lookAt(run.depth)
@@ -2428,15 +2461,17 @@ function footsteps(now: number) {
     const ek = Math.floor(e.gait / Math.PI)
     if (d <= STEP_HEAR && e.walking && ek !== lastStep.get(e) && stepTimes.length < STEPS_MAX) {
       const who = e.kind === 'chaser' ? 'hulk' : e.kind === 'ranged' ? 'tripod' : e.kind === 'charger' ? 'ram' : 'boss'
-      sfx.step(who, panOf(e.pos), (1 - d / STEP_HEAR) * (e.kind === 'chaser' ? Math.min(1, e.size) : 1) * quiet)
+      sfx.step(who, panOf(e.pos), (1 - d / STEP_HEAR) * (e.kind === 'chaser' ? Math.min(1, e.size) : 1) * quiet, placeNow().footsteps)
       stepTimes.push(now)
     }
     lastStep.set(e, ek)
   }
 }
 
-/** Continuous effects: the boss dressing itself (smoke, sparks), hulks glowing as they wind up. */
+/** Continuous effects: the boss dressing itself (smoke, sparks), hulks glowing as they wind up, slag dripping. */
 let ambientT = 0
+let slagT = 0
+const SLAG_DRIP_S = 0.33
 function ambientFx(dt: number) {
   ambientT -= dt
   const tick = ambientT <= 0
@@ -2447,6 +2482,12 @@ function ambientFx(dt: number) {
     for (const e of combat.awake) {
       if (e.kind === 'chaser' && e.phase === 'windup') vfx.embers(at3(e.pos, 1.0 * e.size), 1, 0.3)
     }
+  }
+  // a slag core drips while it's awake: the puddle is on the body before the kill
+  slagT -= dt
+  if (slagT <= 0) {
+    slagT = SLAG_DRIP_S
+    for (const e of combat.awake) if (combat.isSlagged(e)) vfx.drip(at3(e.pos, e.height * 0.55 * e.size))
   }
 }
 
@@ -2525,9 +2566,12 @@ function frame(nowMs: number) {
 
   updateAmbience(home ? 'workshop' : moodNow())
   const bossAwake = !!combat.boss && !combat.boss.dead && awake.includes(combat.boss)
+  const place = placeNow()
   updateMusic({
     boss: bossAwake,
     phase2: bossAwake && combat.boss!.phase2,
+    area: place.music,
+    bpm: crawlBpm(),
     fighting,
     calm: !fighting,
     strain: run.strain / 20,
@@ -2588,8 +2632,8 @@ if (import.meta.env.DEV) {
     /** The crowd's mix: live windup voices, the gain a new one would get, the hush. */
     __mix: { windups, windupGain, hush },
     /** A pack from members, like addPack (a member with `slag: true` carries a slag core). awake = true wakes it at once. */
-    __pack: (members: { kind: Archetype; x: number; z: number; slag?: true }[], awake = true, elite?: EliteMod): Pack => {
-      const pack = combat.addPack(members, false, elite ? { mod: elite, name: 'Test' } : undefined)
+    __pack: (members: { kind: Archetype; x: number; z: number; slag?: true }[], awake = true, elite?: EliteMod, look?: 'heap'): Pack => {
+      const pack = combat.addPack(members, false, elite ? { mod: elite, name: 'Test' } : undefined, look)
       if (awake) combat.wake(pack)
       return pack
     },
@@ -2600,6 +2644,25 @@ if (import.meta.env.DEV) {
         room: p.room.kind, rx: p.room.rx, rz: p.room.rz, kinds: p.members.map((m) => m.kind),
         elite: p.elite?.mod ?? null, name: p.elite?.name ?? null, lesson: !!p.lesson, budget: p.budget ?? null, template: p.template ?? null,
       }))
+      l.dispose()
+      return out
+    },
+    /**
+     * What a level is built from, generated and thrown away: its props (top = height x scale,
+     * p = the room's progress), the tall beyond (hides: its shadow falls on floor), the floor
+     * pieces, and the packs as __gen has them with their slag cores and look.
+     */
+    __genLook: (depth: number, seed: number) => {
+      const l = generateLevel(depth, seed, { boss: bossFor(depth) })
+      const out = {
+        place: l.place, props: l.made.props, tall: l.made.tall, floors: l.made.floors,
+        packs: l.packs.map((p) => ({
+          room: p.room.kind, p: l.progressOf(p.room), kinds: p.members.map((m) => m.kind), slag: p.members.map((m) => !!m.slag),
+          elite: p.elite?.mod ?? null, lesson: !!p.lesson, template: p.template ?? null, look: p.look ?? null,
+        })),
+        edge: l.made.edge,
+        thief: null,
+      }
       l.dispose()
       return out
     },
@@ -2732,6 +2795,12 @@ if (import.meta.env.DEV) {
       source: h.spec.source, shape: { ...h.spec.shape }, armIn: h.armIn, liveLeft: h.liveLeft, damage: h.spec.damage, done: h.done,
       hit: [...h.hit].map((w) => (w === 'still' ? 'still' : combat.enemies.indexOf(w))),
     })),
+    /** Every kit piece, and one's loaded shape: vertex count and top (a fallback has its stand-in's). */
+    __PIECES: PIECES,
+    __piece: (p: Piece) => ({ verts: pieceData(p).geometry.getAttribute('position').count, height: pieceData(p).height }),
+    __PLACES: PLACES,
+    /** The set each surface role is wearing right now. */
+    __surfaceNow: () => Object.fromEntries((['paving', 'rock', 'wood', 'ground', 'grate'] as const).map((r) => [r, surfaceNow(r)])),
     /** The place he's in, and what it sounds like. */
     __look: () => {
       const p = placeNow()

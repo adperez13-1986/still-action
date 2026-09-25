@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import type { Piece } from './kit'
 import type { RosterId } from './save'
+import type { AmbienceMood } from './ambience'
 import { grade, FOCUS_DEPTH, type World } from './world'
 
 /**
@@ -54,10 +55,11 @@ export function hourAtEnd(kind: 'broken' | 'stopped' | 'home', depth: number): H
 // --- areas and places ------------------------------------------------------------------
 
 export type AreaId = 'I' | 'II'
-export type SurfaceRole = 'paving' | 'rock' | 'wood' | 'ground'
+/** 'grate' is the Works' walkways; the ruin maps it to its own paving. */
+export type SurfaceRole = 'paving' | 'rock' | 'wood' | 'ground' | 'grate'
 export type FootSurface = 'stone' | 'wood' | 'plate'
-/** The content steps add 'works' | 'quarter' | 'square'. */
-export type AmbienceMood = 'crawl' | 'boss' | 'workshop'
+/** The room tones: ambience.ts owns the list. */
+export type { AmbienceMood }
 /** A depth's look (design/content/SPEC.md §2.1): area II has two, the Works and the quarter. */
 export type PlaceId = 'ruin' | 'works' | 'quarter'
 /** The Works' beyond: code-built machinery standing in the fog (the Works step builds them). */
@@ -128,16 +130,46 @@ const RUIN_KIT: KitPreset = {
   beyondLow: ['rubble_half', 'floor_dirt_large_rocky'],
   arenaCover: 'barrier_column',
 }
-const RUIN_SURFACES: Record<SurfaceRole, string> = { paving: 'PavingStones142', rock: 'Rock035', wood: 'Planks023A', ground: 'Ground108' }
+const RUIN_SURFACES: Record<SurfaceRole, string> = { paving: 'PavingStones142', rock: 'Rock035', wood: 'Planks023A', ground: 'Ground108', grate: 'PavingStones142' }
 const RUIN_GEN: GenPreset = { cover: [0.25, 0.25], coverGap: 3.2, coverTries: 40, coverMaxH: Infinity, slag: {} }
 
 const ruin: PlaceDef = {
   id: 'ruin', kit: RUIN_KIT, surfaces: RUIN_SURFACES, ambience: { crawl: 'crawl', boss: 'boss' }, footsteps: 'stone', music: 'I', gen: RUIN_GEN,
 }
-/** INV (for now): the Works and the quarter are the ruin but for their id. Steps 2 and 3 give them their own. */
+
+/**
+ * Depth 4, the Works at the end of the shift: the Assembler's foundry. Plate floors with
+ * walkway grates, the same waist-high barriers skinned in sheet iron, kegs and crates for
+ * cover (capped at the barrier's height), and machinery standing in the fog beyond.
+ */
+const works: PlaceDef = {
+  id: 'works',
+  kit: {
+    floorRoom: [['floor_tile_big_grate', 0.14], ['floor_tile_large_rocks', 0.22], ['floor_tile_large', 1]],
+    floorCorridor: [['floor_tile_big_grate', 0.6], ['floor_tile_large', 1]],
+    wall: 'barrier',
+    column: 'column',
+    cover: [['keg', 0.65], ['crates_stacked', 1], ['barrel_large', 0.7], ['box_large', 0.8], ['keg', 0.65], ['rubble_half', 0.42]],
+    breakable: ['barrel_large', 'box_large'],
+    beyondTall: ['wall_gated', 'wall_scaffold', 'pillar', 'wall_broken'],
+    beyondLow: ['rubble_half', 'floor_dirt_large_rocky'],
+    arenaCover: 'barrier_column',
+  },
+  surfaces: { paving: 'MetalPlates006', rock: 'Metal063', wood: 'Metal063', ground: 'Ground108', grate: 'MetalWalkway014' },
+  ambience: { crawl: 'works', boss: 'works' },
+  footsteps: 'plate',
+  music: 'II',
+  gen: {
+    cover: [0.25, 0.25], coverGap: 3.2, coverTries: 40, coverMaxH: 1.4,
+    machines: { kinds: ['chimney', 'crucible', 'press', 'hopper'], share: 0.45 },
+    slag: { chaser: 0.4, charger: 0.4, ranged: 0.25 },
+  },
+}
+
+/** INV (for now): the quarter is the ruin but for its id. Step 3 gives it its own. */
 export const PLACES: Record<PlaceId, PlaceDef> = {
   ruin,
-  works: { ...structuredClone(ruin), id: 'works' },
+  works,
   quarter: { ...structuredClone(ruin), id: 'quarter' },
 }
 export const PLACE_OF: Record<number, PlaceId> = { 1: 'ruin', 2: 'ruin', 3: 'ruin', 4: 'works', 5: 'quarter', 6: 'quarter' }

@@ -122,7 +122,7 @@ function sample(c: AudioContext, name: SampleName, dest: AudioNode, gain: number
   src.start(c.currentTime + when)
 }
 
-/** What a foot lands on. The Workshop's floor is wood; the maze is stone. */
+/** What a foot lands on. The Workshop's floor is wood; the maze is stone; the Works is plate. */
 export type FootSurface = 'stone' | 'wood' | 'plate'
 
 /** Footsteps. Who's walking sets the weight; distance sets how loud. */
@@ -138,6 +138,13 @@ export function step(who: 'still' | 'hulk' | 'tripod' | 'ram' | 'boss', pan: num
         else sample(c, 'plank', d, 0.3 * loudness, 1.8)
         sample(c, 'plank', d, 0.05 * loudness, 1.6)
         sample(c, 'tin', d, 0.05 * loudness, 2.2)
+        break
+      }
+      if (surface === 'plate') {
+        // iron on iron: a lighter, brighter step, and the plate ringing under it
+        sample(c, 'step', d, 0.45 * loudness, 1.25)
+        sample(c, 'metalLight', d, 0.16 * loudness, 1.5)
+        sample(c, 'tin', d, 0.07 * loudness, 2.2)
         break
       }
       // light and a little metallic: a thin machine on stone
@@ -161,6 +168,27 @@ export function step(who: 'still' | 'hulk' | 'tripod' | 'ram' | 'boss', pan: num
       sample(c, 'metalHeavy', d, 0.2 * loudness, 0.5)
       break
   }
+  // theirs ring on plate too, at half his layer
+  if (who !== 'still' && surface === 'plate') sample(c, 'metalLight', d, 0.08 * loudness, 1.5)
+}
+
+// --- slag: a core spilling where its body fell, and the puddle catching ---
+
+/** A wet glop: the core breaks open on the floor. */
+export function slagSpill(pan: number) {
+  const c = live()
+  if (!c || limited('slagSpill', 0.05, c.currentTime)) return
+  const d = out(c, 'enemy', pan)
+  sample(c, 'softMedium', d, 0.55, 0.7)
+  tone(c, d, 'sine', c.currentTime, 120, 70, 0.18, 0.12)
+}
+
+/** The puddle arms: a hiss rising as it catches. */
+export function slagArm(pan: number) {
+  const c = live()
+  if (!c || limited('slagArm', 0.05, c.currentTime)) return
+  const d = out(c, 'enemy', pan)
+  hiss(c, d, c.currentTime, 0.25, 0.22, 'bandpass', 1200, 3000, 1.4, 0.02)
 }
 
 /** Android only lets audio start from a real gesture; keep trying until one counts. */
@@ -1584,16 +1612,17 @@ export function ambienceContext(): {
   ctx: AudioContext
   out: AudioNode
   noise: AudioBuffer
-  play: (name: SampleName, dest: AudioNode, gain: number, rate?: number) => void
+  /** `when`: seconds from now. */
+  play: (name: SampleName, dest: AudioNode, gain: number, rate?: number, when?: number) => void
 } | null {
   const c = live()
-  return c ? { ctx: c, out: buses.ambience, noise, play: (n, d, g, r = 1) => sample(c, n, d, g, r) } : null
+  return c ? { ctx: c, out: buses.ambience, noise, play: (n, d, g, r = 1, w = 0) => sample(c, n, d, g, r, w) } : null
 }
 
 /** For the music: the running context, and its bus. Null until audio is unlocked. */
-export function musicContext(): { ctx: AudioContext; out: AudioNode } | null {
+export function musicContext(): { ctx: AudioContext; out: AudioNode; play: (name: SampleName, dest: AudioNode, gain: number, rate?: number, when?: number) => void } | null {
   const c = live()
-  return c ? { ctx: c, out: buses.music } : null
+  return c ? { ctx: c, out: buses.music, play: (n, d, g, r = 1, w = 0) => sample(c, n, d, g, r, w) } : null
 }
 
 // --- home: the Workshop's voices ---

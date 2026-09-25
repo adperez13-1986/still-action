@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import { DECAL_Y } from './world'
-import { tellMaterial, releaseTell, tellOrder, EMBER, EMBER_DEEP } from './vfx'
+import { tellMaterial, releaseTell, tellOrder, EMBER_DEEP } from './vfx'
 import { Quads, UV_LEN } from './lane'
 import type { Enemy } from './enemy'
 
@@ -77,6 +77,8 @@ const BEAM_Y = 1.2
 const LIVE = { wash: 0.45, core: 0.9, rails: 0.95 }
 /** Where a live puddle's heat ends: the deep ember, darker. */
 const COOLED = EMBER_DEEP.clone().multiplyScalar(0.6)
+/** A live slag puddle: hot slag over a dark crust, fading as it cools; its rim held so the edge stays honest. */
+const MOLTEN = { hot: new THREE.Color(0xff5c12), crust: new THREE.Color(0x1a0805), opacity: [0.95, 0.6] as const, rim: 0.55 }
 
 /**
  * Whether a centre is inside a shape as drawn, grown by `grow` (an enemy: its radius
@@ -247,11 +249,15 @@ export class HazardTell {
       } else if (flashing) {
         this.flash()
       } else {
-        // live: a molten puddle, cooling from ember to a deep crust as its time runs out
+        // Live: a molten puddle, cooling as its time runs out. Its noise runs from a near-black
+        // crust up to hot slag, so it reads as metal on the floor: an ember wash at 0.7 over
+        // grey plate read flat pink. The rim stays up the whole time: stepping in still hurts.
         const k = Math.min(1, Math.max(0, 1 - h.liveLeft / s.liveMs))
-        disc.opacity = 0.7 - 0.35 * k
-        ;(disc.uniforms.uHot!.value as THREE.Color).copy(EMBER).lerp(COOLED, k)
-        ring.opacity = Math.max(0, ring.opacity - dt * 4)
+        disc.opacity = MOLTEN.opacity[0] + (MOLTEN.opacity[1] - MOLTEN.opacity[0]) * k
+        disc.uniforms.uMolten!.value = 1
+        ;(disc.uniforms.uHot!.value as THREE.Color).copy(MOLTEN.hot).lerp(COOLED, k)
+        ;(disc.uniforms.uDeep!.value as THREE.Color).copy(MOLTEN.crust)
+        ring.opacity = MOLTEN.rim * (1 - 0.5 * k)
         this.disc!.scale.setScalar(1)
       }
     } else {

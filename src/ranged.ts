@@ -4,7 +4,7 @@ import { DECAL_Y } from './world'
 import { tellMaterial, releaseTell, trackingDim, tellOrder } from './vfx'
 import { PART, type Flip } from './parts'
 import { WALL_TOP } from './lane'
-import { slide, statusTint, disposeBody, type Enemy, type EnemyAction, type EnemyCtx, type EnemyPhase } from './enemy'
+import { slide, statusTint, disposeBody, SLAG_CORE, SLAG_CORE_ASLEEP, type Enemy, type EnemyAction, type EnemyCtx, type EnemyPhase } from './enemy'
 
 /**
  * Pale steel, lighter than anything else in the room so the silhouette reads on
@@ -102,6 +102,9 @@ export class Ranged implements Enemy {
   private readonly barrel: THREE.Mesh
   private readonly coreMat: THREE.MeshBasicMaterial
   private asleep = false
+  /** Its lens, lit and asleep: a slag core swaps them. */
+  private coreOn = CORE
+  private coreOff = 0x2a1512
   private readonly lineMat: THREE.ShaderMaterial
   private readonly fillMat: THREE.ShaderMaterial
   private readonly fill: THREE.Mesh
@@ -432,12 +435,18 @@ export class Ranged implements Enemy {
 
   setAsleep(asleep: boolean) {
     this.asleep = asleep
-    this.coreMat.color.setHex(asleep ? 0x2a1512 : CORE)
+    this.coreMat.color.setHex(asleep ? this.coreOff : this.coreOn)
     if (!asleep) {
       this.flash = 1
       this.reload = RANGED.reloadMs * 0.8
     }
     this.phase = 'approach'
+  }
+
+  setSlag() {
+    this.coreOn = SLAG_CORE
+    this.coreOff = SLAG_CORE_ASLEEP
+    this.coreMat.color.setHex(this.asleep ? this.coreOff : this.coreOn)
   }
 
   dispose(scene: THREE.Scene) {

@@ -2,6 +2,7 @@ import * as THREE from 'three'
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { DECAL_Y } from './world'
 import { tellMaterial, releaseTell, haloTexture, tellOrder } from './vfx'
+import { skin } from './kit'
 import {
   slide, disposeBody, PLAYER_RADIUS, BODY, JOINT, CORE, CORE_ASLEEP, SLEEP_BODY, RIME,
   type Enemy, type EnemyAction, type EnemyCtx, type EnemyPhase,
@@ -74,6 +75,118 @@ export const BROOD = {
   packMixed: 6,
 }
 
+/**
+ * The slag heap (design/content/SPEC.md §6.4): a Works brood asleep as a mound of slag
+ * with six coals on it, one per mite. It's a face, not a rule: the same brood, and its
+ * wake is the same ripple stretched out, so the shed is the tell.
+ */
+export const HEAP = {
+  /** Chance a Works level has one (after its lesson brood). */
+  chance: 0.6,
+  /** The nest is tighter than a brood's: it has to fit under the mound. */
+  nestR: 0.8,
+  nestGap: 0.5,
+  /** Each mite comes out this long after the one before, by angle round the mound: the last at 1000 ms. */
+  stepMs: 200,
+  moundR: 1.0,
+  moundY: 0.55,
+  /** After the shed: a dark lump for the rest of the level. */
+  slumpY: 0.2,
+  slumpMs: 1200,
+  coalR: 0.1,
+  coalHz: 0.3,
+  /** Out of the heap: a hop this high over this long. */
+  hop: 0.3,
+  hopS: 0.3,
+}
+/** Banked coals: the spec's 0x7a2a14 at the top of the breath vanished on the dark mound, so they breathe up to this. */
+const COAL_DIM = new THREE.Color(0x3a1a0e)
+const COAL_HOT = new THREE.Color(0xb04018)
+
+/** How far the mound's surface is pushed out at a point on the unit dome: a fixed pattern, so the coals can sit on it. */
+const lumpAt = (x: number, y: number, z: number) =>
+  y > 0.02 ? 1 + 0.13 * Math.sin(x * 5.1 + z * 2.3) * Math.cos(z * 4.7 - x * 1.9) + 0.06 * Math.sin((x + z) * 11) : 1
+
+/** Shared by every heap: the mound's shape and its skin (the Works' sheet iron over slag), and a coal. */
+let heapKit: { mound: THREE.BufferGeometry; mat: THREE.MeshStandardMaterial; coal: THREE.BufferGeometry } | null = null
+function heapParts() {
+  if (heapKit) return heapKit
+  // cinder, darker than the iron it's heaped on, so the coals have something to glow against
+  const mat = new THREE.MeshStandardMaterial({ color: 0xffffff })
+  skin(mat, 'rock', { gain: 0.26 })
+  // lumpy, not a dome: each vertex pushed in or out a little by a fixed pattern, the rim left on the floor
+  const mound = new THREE.SphereGeometry(HEAP.moundR, 20, 10, 0, Math.PI * 2, 0, Math.PI / 2)
+  const p = mound.getAttribute('position')
+  for (let i = 0; i < p.count; i++) {
+    const x = p.getX(i), y = p.getY(i), z = p.getZ(i)
+    const k = lumpAt(x / HEAP.moundR, y / HEAP.moundR, z / HEAP.moundR)
+    p.setXYZ(i, x * k, y * k, z * k)
+  }
+  mound.computeVertexNormals()
+  heapKit = { mound, mat, coal: new THREE.SphereGeometry(HEAP.coalR, 8, 6) }
+  return heapKit
+}
+
+/** The mound and its coals. Not solid: it's where they sleep, not cover. */
+export class Heap {
+  readonly group = new THREE.Group()
+  private readonly mound: THREE.Mesh
+  private readonly coalMat = new THREE.MeshBasicMaterial({ color: COAL_DIM, fog: false })
+  /** Each mite's coal, and its height on a mound of height 1: it rides the surface as the mound slumps. */
+  private readonly coals = new Map<Mite, { mesh: THREE.Mesh; y: number }>()
+  /** ms since the brood woke; null while it sleeps. */
+  private since: number | null = null
+  private life = Math.random() * 10
+
+  constructor(center: THREE.Vector3, mites: readonly Mite[]) {
+    const k = heapParts()
+    this.mound = new THREE.Mesh(k.mound, k.mat)
+    this.mound.scale.set(1, HEAP.moundY, 1)
+    this.group.position.set(center.x, 0, center.z)
+    this.group.add(this.mound)
+    for (const m of mites) {
+      const dx = m.pos.x - center.x
+      const dz = m.pos.z - center.z
+      // on the mound's surface over where the mite lies, half sunk into it
+      const d = Math.min(0.9, Math.hypot(dx, dz) / HEAP.moundR)
+      const a = Math.atan2(dx, dz)
+      const ux = Math.sin(a) * d, uz = Math.cos(a) * d, uy = Math.sqrt(1 - d * d)
+      const lump = lumpAt(ux, uy, uz)
+      const coal = new THREE.Mesh(k.coal, this.coalMat)
+      coal.position.set(ux * lump * HEAP.moundR, 0, uz * lump * HEAP.moundR)
+      this.coals.set(m, { mesh: coal, y: uy * lump * HEAP.moundR })
+      this.group.add(coal)
+    }
+  }
+
+  wake() {
+    this.since ??= 0
+  }
+
+  /** A mite has come out: its coal goes out. */
+  shed(m: Mite) {
+    const c = this.coals.get(m)
+    if (c) c.mesh.visible = false
+  }
+
+  update(dt: number) {
+    this.life += dt
+    // the coals breathe slowly together while it sleeps, like something banked
+    const k = 0.5 + 0.5 * Math.sin(Math.PI * 2 * HEAP.coalHz * this.life)
+    this.coalMat.color.copy(COAL_DIM).lerp(COAL_HOT, k)
+    if (this.since !== null) this.since += dt * 1000
+    const t = this.since === null ? 0 : Math.min(1, this.since / HEAP.slumpMs)
+    const y = HEAP.moundY + (HEAP.slumpY - HEAP.moundY) * t * (2 - t)
+    this.mound.scale.y = y
+    for (const c of this.coals.values()) c.mesh.position.y = c.y * y
+  }
+
+  dispose() {
+    this.group.removeFromParent()
+    this.coalMat.dispose()
+  }
+}
+
 const dist = (a: { x: number; z: number }, b: { x: number; z: number }) => Math.hypot(a.x - b.x, a.z - b.z)
 /** Radians of ring a mite walks toward its slot at a time: the chord stays near the ring. */
 const ORBIT_STEP = 0.35
@@ -144,6 +257,10 @@ export class Mite implements Enemy {
   asleep = true
   /** ms until its core lights, on waking: the ripple out from the nest's centre. */
   wakeDelay = 0
+  /** Under a slag heap: not drawn, and still, until its brood sheds it. */
+  buried = false
+  /** Seconds since it came out of the heap, for its hop (Infinity once done). */
+  private outT = Infinity
   /** It just stopped sliding: the run puffs one dust. */
   landed = false
   /** Walking this tick (the skitter counts these). */
@@ -200,7 +317,9 @@ export class Mite implements Enemy {
     // the brood's target, never the per-enemy one: one mind picks Still or the decoy for all of them
     const T = this.brood.T
     this.moving = false
-    if (this.phase === 'approach' && !this.staggered) {
+    this.outT += dt
+    // still in the heap: it waits its turn to come out
+    if (this.phase === 'approach' && !this.staggered && !this.buried) {
       const dT = dist(T, this.pos)
       const far = dT > MITE.farDist || !terrain.lineClear(this.pos.x, this.pos.z, T.x, T.z, MITE.streamPad)
       // in orbit it walks round its ring to the slot, never across: a chord through the middle
@@ -273,6 +392,13 @@ export class Mite implements Enemy {
     this.phase = 'approach'
     this.t = 0
     if (!asleep) this.flash = 1
+  }
+
+  /** Out of the heap: drawn again, with a hop up off its coal. */
+  unbury() {
+    this.buried = false
+    this.outT = 0
+    this.flash = 1
   }
 
   /**
@@ -360,6 +486,12 @@ export class Mite implements Enemy {
       tgt.jaw = 0.05
     }
 
+    // just out of the heap: one hop up off its coal
+    if (this.outT < HEAP.hopS) {
+      const u = this.outT / HEAP.hopS
+      hop = Math.max(hop, 4 * HEAP.hop * u * (1 - u))
+    }
+
     p.y += (tgt.y - p.y) * k
     p.sx += (tgt.sx - p.sx) * k
     p.sy += (tgt.sy - p.sy) * k
@@ -383,7 +515,8 @@ export class Mite implements Enemy {
     r.legsR.rotation.z = legsL !== null ? -legsL : -p.legs
     this.group.position.set(this.pos.x, hop, this.pos.z)
     this.group.rotation.y = yaw
-    this.group.scale.setScalar(this.size * (1 + this.flash * 0.1))
+    // under the heap it isn't drawn at all: its coal is what shows
+    this.group.scale.setScalar(this.buried ? 1e-4 : this.size * (1 + this.flash * 0.1))
     this.presentQueen()
   }
 
@@ -715,6 +848,8 @@ export class Brood {
   decoyed = false
   readonly ring: BiteRing
   readonly heartHz: number
+  /** A Works brood asleep as a slag heap (look: 'heap'). */
+  heap: Heap | null = null
   /** Ticked since its last reset: the first awake tick starts from scratch. */
   private active = false
 
@@ -731,6 +866,8 @@ export class Brood {
     const i = this.mites.indexOf(m)
     if (i >= 0) this.mites.splice(i, 1)
     if (this.queen === m) this.queen = null
+    // killed in the heap: its coal goes out with it
+    this.heap?.shed(m)
     const b = this.biters.indexOf(m)
     // a biter buried before the brood looked: the ring loses its arc next tick (it's dead)
     if (b >= 0 && !m.dead) this.biters.splice(b, 1)
@@ -786,6 +923,13 @@ export class Brood {
       this.rippleWake()
     }
     const ms = dt * 1000
+    // out of the heap one by one, each as its delay runs out
+    for (const m of this.mites) {
+      if (!m.buried || m.wakeDelay > 0 || m.dead) continue
+      m.unbury()
+      this.heap?.shed(m)
+      ctx.emit({ kind: 'shed', brood: this, at: m.pos.clone() })
+    }
     const alive = this.mites.filter((m) => !m.dead && !ctx.held(m))
     if (!alive.length) {
       // the last of them is in the clamp's throw (or dying): whatever surge was on is over
@@ -849,7 +993,7 @@ export class Brood {
         if (this.timer > 0) break
         const inner = alive.filter((m) => m.role !== 'outer')
         const near = inner
-          .filter((m) => m.phase === 'approach' && !m.staggered && dT(m) <= BROOD.surgeRange && terrain.lineClear(m.pos.x, m.pos.z, this.T.x, this.T.z, 0.2))
+          .filter((m) => m.phase === 'approach' && !m.staggered && !m.buried && dT(m) <= BROOD.surgeRange && terrain.lineClear(m.pos.x, m.pos.z, this.T.x, this.T.z, 0.2))
           .sort((a, b) => dT(a) - dT(b))
         const need = Math.min(BROOD.need, inner.length)
         // its ring is fixed from the start, so its lock is now: booked like any other
@@ -989,15 +1133,41 @@ export class Brood {
     })
   }
 
-  /** Cores light from the nest's centre outward: the first sign there's one mind. */
+  /**
+   * Cores light from the nest's centre outward: the first sign there's one mind. A heap
+   * sheds instead, one mite every HEAP.stepMs by angle round it, and only the shed tells.
+   */
   private rippleWake() {
     const homes = this.mites.map((m) => this.pack.homes.get(m) ?? m.pos)
     const cx = homes.reduce((a, h) => a + h.x, 0) / Math.max(1, homes.length)
     const cz = homes.reduce((a, h) => a + h.z, 0) / Math.max(1, homes.length)
+    if (this.heap) {
+      this.heap.wake()
+      const inHeap = this.mites.filter((m) => m.buried)
+      const angle = (m: Mite) => Math.atan2(m.pos.x - cx, m.pos.z - cz)
+      inHeap.sort((a, b) => angle(a) - angle(b)).forEach((m, rank) => { m.wakeDelay = HEAP.stepMs * rank })
+      return
+    }
     for (const m of this.mites) m.wakeDelay = BROOD.wakeRippleMs * Math.min(1, Math.hypot(m.pos.x - cx, m.pos.z - cz) / BROOD.nestR)
+  }
+
+  /** Asleep as a slag heap: its mites go under a mound, each with a coal where it lies. */
+  bury(scene: THREE.Scene) {
+    const homes = this.mites.map((m) => m.pos)
+    const c = new THREE.Vector3(
+      homes.reduce((a, h) => a + h.x, 0) / Math.max(1, homes.length), 0, homes.reduce((a, h) => a + h.z, 0) / Math.max(1, homes.length),
+    )
+    for (const m of this.mites) {
+      m.buried = true
+      // drawn as gone from now, not from its next frame
+      m.group.scale.setScalar(1e-4)
+    }
+    this.heap = new Heap(c, this.mites)
+    scene.add(this.heap.group)
   }
 
   dispose() {
     this.ring.dispose()
+    this.heap?.dispose()
   }
 }

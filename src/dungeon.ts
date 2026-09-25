@@ -4,8 +4,9 @@ import { buildInstanced, pieceData, skin, type Piece, type Placement } from './k
 import type { Terrain, WallFace } from './terrain'
 import type { BreachHole } from './parts'
 import { ELITE_MODS, type Archetype, type EliteMod } from './combat'
-import { BROOD } from './swarm'
-import { exitsAfterBoss, lookAt, type BossDef, type ExitKind, type KitPreset, type PlaceDef } from './areas'
+import { BROOD, HEAP } from './swarm'
+import { exitsAfterBoss, lookAt, type BossDef, type ExitKind, type KitPreset, type MachineKind, type PlaceDef, type PlaceId } from './areas'
+import { buildMachines, machineTop, CHIMNEY_H, type MachinePlacement } from './machines'
 
 /**
  * A D2-style crawl level on a 4-unit grid (KayKit's floor tile). A main path of
@@ -54,8 +55,13 @@ export interface Shrine { kind: ShrineKind; x: number; z: number; used: boolean;
 /** A group of enemies placed together, asleep until you come near. */
 export interface PackSpec {
   room: Room
-  /** `face`: where a member looks while it sleeps; without one the pack faces a random way together. */
-  members: { kind: Archetype; x: number; z: number; face?: { x: number; z: number } }[]
+  /**
+   * `face`: where a member looks while it sleeps; without one the pack faces a random way together.
+   * `slag`: it carries a slag core (area II), and leaves a burning puddle where it dies.
+   */
+  members: { kind: Archetype; x: number; z: number; face?: { x: number; z: number }; slag?: true }[]
+  /** 'heap': a Works brood asleep as a slag heap, a mound with six coals (a look, not a rule). */
+  look?: 'heap'
   /** The first member leads, named and with one modifier. */
   elite?: { mod: EliteMod; name: string }
   /** The pack that introduces an archetype: set up to be read, and never an elite. */
@@ -66,8 +72,26 @@ export interface PackSpec {
   template?: string
 }
 
+/** What a level was built from, for the look checks (__genLook): props, the tall beyond, floors. */
+export interface LevelMade {
+  props: { piece: Piece; x: number; z: number; top: number; p: number; breakable: boolean; intact: boolean }[]
+  tall: { what: Piece | MachineKind; x: number; z: number; hides: boolean }[]
+  floors: { piece: Piece; p: number; corridor: boolean }[]
+  /** Everything standing within 0.5 u of a floor edge that isn't the wall or a column (INV: none that's tall). */
+  edge: { piece: string; x: number; z: number; top: number }[]
+}
+
 export interface Level {
   depth: number
+  /** The look it was built in. */
+  place: PlaceId
+  /** The layout's floor cells (key(i, j)). */
+  floor: ReadonlySet<string>
+  /** 0..1 for a room: its spine index over the spine's length; side rooms take the nearest spine room's. */
+  progressOf: (room: Room) => number
+  /** The spine room containing (x, z), or null (corridors, side rooms, outside). */
+  spineAt: (x: number, z: number) => Room | null
+  made: LevelMade
   packs: PackSpec[]
   breakables: Breakable[]
   shrines: Shrine[]
@@ -102,6 +126,86 @@ const DIRS: [number, number][] = [[1, 0], [0, 1], [-1, 0], [0, -1]]
 function rng(seed: number) {
   let s = seed % 2147483647 || 1
   return () => (s = (s * 16807) % 2147483647) / 2147483647
+}
+
+/**
+ * Separate seeded streams for what area II adds (slag, the heap, machinery): the
+ * main sequence never sees them, so the ruin builds exactly as it did.
+ */
+const SALT = { slag: 0x51a6, heap: 0x4ea9, far: 0xfa51, machine: 0x3ac1 }
+/**
+ * The salted seed is scrambled before it seeds its stream: rng's first draws follow its
+ * seed almost linearly, so seeds 1, 2, 3 xor one salt would all open on the same roll.
+ */
+function scramble(n: number) {
+  n = Math.imul(n ^ (n >>> 16), 0x45d9f3b)
+  n = Math.imul(n ^ (n >>> 16), 0x45d9f3b)
+  return (n ^ (n >>> 16)) >>> 0
+}
+const stream = (seed: number, salt: number) => rng((scramble((seed ^ salt) >>> 0) % 2147483646) + 1)
+
+/** Whether a point is within 0.5 u of a floor edge: where only the wall and its columns may stand. */
+function nearEdge(floor: ReadonlySet<string>, x: number, z: number) {
+  const ci = Math.round(x / CELL)
+  const cj = Math.round(z / CELL)
+  for (let i = ci - 1; i <= ci + 1; i++) for (let j = cj - 1; j <= cj + 1; j++) {
+    if (!floor.has(key(i, j))) continue
+    for (const [dx, dz] of DIRS) {
+      if (floor.has(key(i + dx, j + dz))) continue
+      // the edge between (i, j) and its open neighbour: a segment one cell long
+      const ex = (i + dx / 2) * CELL
+      const ez = (j + dz / 2) * CELL
+      const along = dx !== 0 ? Math.max(0, Math.abs(z - ez) - CELL / 2) : Math.max(0, Math.abs(x - ex) - CELL / 2)
+      const across = dx !== 0 ? Math.abs(x - ex) : Math.abs(z - ez)
+      if (Math.hypot(along, across) < 0.5) return true
+    }
+  }
+  return false
+}
+
+/**
+ * G1: how far along the level each room is. Spine rooms by their index; a side room
+ * takes the spine room whose centre is nearest (ties to the lower index). No rand().
+ */
+function progressMap(rooms: Room[], boss: boolean) {
+  const spine = boss ? rooms.slice(0, 2) : rooms.slice(0, MAIN_ROOMS)
+  const of = new Map<Room, number>()
+  spine.forEach((r, i) => of.set(r, i / Math.max(1, spine.length - 1)))
+  for (const r of rooms) {
+    if (of.has(r)) continue
+    let best = 0
+    let bestD = Infinity
+    spine.forEach((sp, i) => {
+      const d = Math.hypot(sp.center.x - r.center.x, sp.center.z - r.center.z)
+      if (d < bestD - 1e-9) {
+        bestD = d
+        best = i
+      }
+    })
+    of.set(r, of.get(spine[best]!)!)
+  }
+  const inside = (r: Room, i: number, j: number) => Math.abs(i - r.ci) <= r.rx && Math.abs(j - r.cj) <= r.rz
+  /** A cell: its room's, or for a corridor cell the nearest room centre's. */
+  const cell = (i: number, j: number) => {
+    const r = rooms.find((rm) => inside(rm, i, j))
+    if (r) return of.get(r)!
+    let bestD = Infinity
+    let p = 0
+    for (const rm of rooms) {
+      const d = Math.hypot(rm.ci - i, rm.cj - j)
+      if (d < bestD - 1e-9) {
+        bestD = d
+        p = of.get(rm)!
+      }
+    }
+    return p
+  }
+  const spineAt = (x: number, z: number) => {
+    const i = Math.round(x / CELL)
+    const j = Math.round(z / CELL)
+    return spine.find((r) => inside(r, i, j)) ?? null
+  }
+  return { of: (r: Room) => of.get(r) ?? 0, cell, spineAt }
 }
 
 // --- layout -----------------------------------------------------------------
@@ -510,9 +614,12 @@ const D7: Row[] = [
   { members: ['C', 'H', 'H', 'H', 'S'], weight: 1 },
   { today: true, weight: 2 },
 ]
-/** Per level: how many packs may hold rams or mites, rams per pack, and distinct archetypes per pack. */
+/**
+ * Per level: how many packs may hold rams or mites, rams per pack, and distinct archetypes
+ * per pack. Depth 4 has two broods: the open lesson, and the Works' slag heap after it.
+ */
 const CAPS = (d: number) => d <= 4
-  ? { chargerPacks: 2, swarmPacks: 1, chargersPerPack: 1, kinds: 2 }
+  ? { chargerPacks: 2, swarmPacks: 2, chargersPerPack: 1, kinds: 2 }
   : d <= 6 ? { chargerPacks: 3, swarmPacks: 2, chargersPerPack: 2, kinds: 3 }
   : { chargerPacks: 3, swarmPacks: 2, chargersPerPack: 2, kinds: 4 }
 
@@ -551,10 +658,14 @@ const pickFloor = (table: [Piece, number][], roll: number): Piece => (table.find
 export function generateLevel(
   depth: number, seed = Math.floor(Math.random() * 1e9), opts: { boss?: BossDef | null; place?: PlaceDef; bossFelled?: boolean } = {},
 ): Level {
-  const kit = (opts.place ?? lookAt(depth)).kit
+  const place = opts.place ?? lookAt(depth)
+  const kit = place.kit
+  const gen = place.gen
   const rand = rng(seed)
   const layout = opts.boss ? generateBossLayout(rand) : generateLayout(rand, 2 + Math.floor(rand() * 2))
   const { floor } = layout
+  const progress = progressMap(layout.rooms, !!opts.boss)
+  const made: LevelMade = { props: [], tall: [], floors: [], edge: [] }
   const placements: Placement[] = []
   const boxes: Box[] = []
   const circles: Circle[] = []
@@ -563,11 +674,20 @@ export function generateLevel(
 
   // --- floors ---
   const cells = [...floor].map((k) => k.split(',').map(Number) as [number, number])
+  // G2: one rand() per cell, against the band for how far along it is (the ruin has one table)
+  const roomTable = (p: number) => {
+    const bands = gen.floorBands
+    if (!bands) return kit.floorRoom
+    for (let b = bands.length - 1; b >= 0; b--) if (bands[b]!.from <= p) return bands[b]!.room
+    return bands[0]!.room
+  }
   for (const [i, j] of cells) {
     const corridor = layout.corridors.has(key(i, j))
     const roll = rand()
-    const piece = pickFloor(corridor ? kit.floorCorridor : kit.floorRoom, roll)
+    const p = progress.cell(i, j)
+    const piece = pickFloor(corridor ? kit.floorCorridor : roomTable(p), roll)
     placements.push({ piece, x: i * CELL, z: j * CELL, rotY: quarter() })
+    made.floors.push({ piece, p, corridor })
   }
 
   buildWalls(cells, floor, kit, placements, boxes, circles)
@@ -579,18 +699,24 @@ export function generateLevel(
   for (const room of layout.rooms) {
     if (room.kind === 'entrance' || room.kind === 'exit') continue
     const cellsIn = (2 * room.rx + 1) * (2 * room.rz + 1)
-    const n = Math.round(cellsIn / 4) + Math.floor(rand() * 2)
+    const p = progress.of(room)
+    // G3: props per cell rise with progress where a place asks (the ruin's is 1/4 flat: round(cells / 4) as ever)
+    const n = Math.round(cellsIn * (gen.cover[0] + (gen.cover[1] - gen.cover[0]) * p)) + Math.floor(rand() * 2)
     const maxX = room.rx * CELL + CELL / 2 - 1.4
     const maxZ = room.rz * CELL + CELL / 2 - 1.4
     const used: [number, number][] = []
-    for (let tries = 0; tries < 40 && used.length < n; tries++) {
+    for (let tries = 0; tries < gen.coverTries && used.length < n; tries++) {
       const ox = (rand() * 2 - 1) * maxX
       const oz = (rand() * 2 - 1) * maxZ
       // corridors enter on the centre row and column: keep those lanes open
       if (Math.abs(ox) < 2.4 || Math.abs(oz) < 2.4) continue
-      if (used.some(([ux, uz]) => Math.hypot(ux - ox, uz - oz) < 3.2)) continue
+      if (used.some(([ux, uz]) => Math.hypot(ux - ox, uz - oz) < gen.coverGap)) continue
       used.push([ox, oz])
-      const [piece, scale] = pick(PROPS)
+      // G4: intact cover more often the further in (one extra rand(), only where a place has any)
+      const intact = !!gen.intact && rand() < p
+      const [piece, want] = pick(intact ? gen.intact! : PROPS)
+      // INV: nothing in a room stands above the barrier's reach; a tall piece is scaled to fit
+      const scale = Math.min(want, gen.coverMaxH / pieceData(piece).height)
       const x = room.center.x + ox
       const z = room.center.z + oz
       const rotY = rand() * Math.PI * 2
@@ -607,6 +733,7 @@ export function generateLevel(
       } else {
         placements.push({ piece, x, z, rotY, scale })
       }
+      made.props.push({ piece, x, z, top: pieceData(piece).height * scale, p, breakable: BREAKABLE.has(piece), intact })
     }
   }
 
@@ -644,7 +771,10 @@ export function generateLevel(
   }
 
   // --- the beyond ---
-  const { minI, maxI, minJ, maxJ, spanX, spanZ } = buildBeyond(cells, floor, rand, kit, placements)
+  const machines: MachinePlacement[] = []
+  const { minI, maxI, minJ, maxJ, spanX, spanZ } = buildBeyond(cells, floor, rand, kit, placements, undefined, {
+    machines: gen.machines, stream: stream(seed, SALT.machine), out: machines, made, clearEdges: gen.coverMaxH < Infinity,
+  })
 
   // --- packs: one per main and side room, sized by depth, never in the entrance or exit ---
   const makeTerrainNow = makeTerrain(floor, boxes, circles)
@@ -662,6 +792,19 @@ export function generateLevel(
     const mains = packRooms.filter((r) => r.kind === 'main' && r !== swarmLesson)
     const n = 1 + (rand() < 0.5 ? 1 : 0)
     while (d4Rooms.size < Math.min(n, mains.length)) d4Rooms.add(mains.splice(Math.floor(rand() * mains.length), 1)[0]!)
+  }
+  // the Works' slag heap: a second brood after the lesson, asleep as a mound (its own stream)
+  let heapRoom: Room | null = null
+  if (depth === 4 && place.id === 'works') {
+    const hs = stream(seed, SALT.heap)
+    const after = (r: Room) => r !== swarmLesson && progress.of(r) > (swarmLesson ? progress.of(swarmLesson) : -1)
+    // a main room first: one without the rams, else one of two ram rooms (the level keeps its other), else a side
+    const mains = packRooms.filter((r) => r.kind === 'main' && after(r))
+    const plain = mains.filter((r) => !d4Rooms.has(r))
+    const rams = d4Rooms.size >= 2 ? mains.filter((r) => d4Rooms.has(r)) : []
+    const sides = packRooms.filter((r) => r.kind === 'side' && after(r))
+    const pool = plain.length ? plain : rams.length ? rams : sides
+    if (hs() < HEAP.chance && pool.length) heapRoom = pool[Math.floor(hs() * pool.length)]!
   }
   const caps = CAPS(depth)
   let chargerPacks = 0
@@ -685,6 +828,7 @@ export function generateLevel(
     const lesson = room === lessonRoom || room === swarmLesson
     if (room === lessonRoom) tpl = ['C', 'H']
     else if (room === swarmLesson) tpl = ['M8']
+    else if (room === heapRoom) tpl = fill(['M6', 'H'], size, caps.kinds)
     else if (d4Rooms.has(room)) tpl = fill(pickWeighted(D4, rand).members ?? [], size, Infinity)
     else if (depth >= 5) {
       const rows = (depth >= 7 ? D7 : D5).map((row) => (row.today ? row : { ...row, members: shrink(row.members, size) })).filter((row) => {
@@ -706,6 +850,9 @@ export function generateLevel(
       // mites first, as a nest round the spot; then everyone else a little out from it, so a
       // ram has room to stand and show its lane. The first listed member still leads.
       const order = [...want.keys()].sort((a, b) => Number(want[b] === 'swarm') - Number(want[a] === 'swarm'))
+      const heap = room === heapRoom
+      const nestR = heap ? HEAP.nestR : BROOD.nestR
+      const nestGap = heap ? HEAP.nestGap : BROOD.nestGap
       for (const i of order) {
         const kind = want[i]!
         const mite = kind === 'swarm'
@@ -714,7 +861,7 @@ export function generateLevel(
         for (let tries = 0; tries < (mite ? 48 : 24); tries++) {
           const a = rand() * Math.PI * 2
           const wide = tries >= 12
-          const r = mite ? rand() * BROOD.nestR * (1 + Math.max(0, tries - 12) / 24) : wide ? 0.8 + rand() * 3.7 : 1.8 + rand() * 1.2
+          const r = mite ? rand() * nestR * (1 + Math.max(0, tries - 12) / 24) : wide ? 0.8 + rand() * 3.7 : 1.8 + rand() * 1.2
           const x = cx + Math.cos(a) * r
           const z = cz + Math.sin(a) * r
           if (makeTerrainNow.blocked(x, z, mite ? 0.4 : kind === 'charger' ? 0.8 : 0.7)) continue
@@ -722,7 +869,7 @@ export function generateLevel(
             if (!o) return false
             const d = Math.hypot(o.x - x, o.z - z)
             const other = want[j] === 'swarm'
-            return mite ? d < (other ? BROOD.nestGap : 1.0) : d < (other ? 1.0 : 1.3)
+            return mite ? d < (other ? nestGap : 1.0) : d < (other ? 1.0 : 1.3)
           })
           if (clash) continue
           spots[i] = { x, z }
@@ -738,7 +885,7 @@ export function generateLevel(
       })
       if (members.some((m) => m.kind === 'charger')) chargerPacks++
       if (members.some((m) => m.kind === 'swarm')) swarmPacks++
-      if (members.length) packs.push({ room, members, lesson: lesson || undefined, budget: size, template: tpl.join('+') })
+      if (members.length) packs.push({ room, members, lesson: lesson || undefined, budget: size, template: tpl.join('+'), look: heap ? 'heap' : undefined })
       return
     }
     for (let n = 0; n < size; n++) {
@@ -773,6 +920,19 @@ export function generateLevel(
     p.elite = { mod, name: `${pick(FIRST)}${second} ${TITLES[mod]}` }
   }
 
+  // --- G7 slag cores: area II's hulks, rams and sentinels, never a lesson's or a leader's (its drop mustn't sit in a puddle) ---
+  if (Object.keys(gen.slag).length) {
+    const ss = stream(seed, SALT.slag)
+    for (const p of packs) {
+      if (p.lesson) continue
+      p.members.forEach((m, i) => {
+        if (p.elite && i === 0) return
+        const chance = gen.slag[m.kind as 'chaser' | 'charger' | 'ranged']
+        if (chance && ss() < chance) m.slag = true
+      })
+    }
+  }
+
   // --- a shrine, most levels: one bargain, in a main room ---
   const shrines: Shrine[] = []
   const shrineParts: THREE.Object3D[] = []
@@ -801,7 +961,15 @@ export function generateLevel(
     }
   }
 
+  // what stands at a floor edge besides the wall and its columns (the checks: none, in area II)
+  for (const p of placements) {
+    if (p.piece === kit.wall || p.piece === kit.column || p.piece.startsWith('floor')) continue
+    if (nearEdge(floor, p.x, p.z)) made.edge.push({ piece: p.piece, x: p.x, z: p.z, top: (p.y ?? 0) + pieceData(p.piece).height * (p.scale ?? 1) })
+  }
+  for (const m of machines) if (nearEdge(floor, m.x, m.z)) made.edge.push({ piece: m.kind, x: m.x, z: m.z, top: machineTop(m) })
+
   const group = buildInstanced(placements)
+  if (machines.length) group.add(buildMachines(machines))
   for (const b of breakables) group.add(b.mesh)
   for (const o of shrineParts) group.add(o)
 
@@ -844,6 +1012,11 @@ export function generateLevel(
 
   return {
     depth,
+    place: place.id,
+    floor,
+    progressOf: progress.of,
+    spineAt: progress.spineAt,
+    made,
     group,
     terrain: makeTerrainNow,
     boss: bossSpot,
@@ -885,7 +1058,8 @@ export function generateLevel(
       cold?.dispose()
       warm?.dispose()
       for (const sh of shrines) sh.rune.dispose()
-      for (const o of group.children) if (o instanceof THREE.InstancedMesh) o.dispose()
+      // the machines' shapes are shared; only their instance buffers are this level's
+      group.traverse((o) => { if (o instanceof THREE.InstancedMesh) o.dispose() })
     },
   }
 }
@@ -1005,6 +1179,12 @@ export function generateWalkHome(seed: number, place: PlaceDef): Level {
   const yard: Room = { kind: 'exit', ci: -7, cj: -5, rx: 1, rz: 1, center: new THREE.Vector3(-28, 0, -20) }
   return {
     depth: RUN_DEPTHS_WALK,
+    place: place.id,
+    floor,
+    // the last of the day: all the way along
+    progressOf: () => 1,
+    spineAt: () => null,
+    made: { props: [], tall: [], floors: [], edge: [] },
     group,
     terrain: makeTerrain(floor, boxes, circles),
     exitOpen: false,
@@ -1106,6 +1286,15 @@ function buildWalls(
  */
 function buildBeyond(
   cells: [number, number][], floor: Set<string>, rand: () => number, kit: KitPreset, placements: Placement[], avoid?: (x: number, z: number) => boolean,
+  more: {
+    /** G6: this share of the tall picks become machinery (the Works), drawn from `stream`. */
+    machines?: { kinds: MachineKind[]; share: number }
+    stream?: () => number
+    out?: MachinePlacement[]
+    made?: LevelMade
+    /** Nothing of the beyond right against a floor edge (area II: the walls stay the only thing there). Costs no rand(). */
+    clearEdges?: boolean
+  } = {},
 ) {
   const pick = <T>(list: readonly T[]) => list[Math.floor(rand() * list.length)]!
   let minI = Infinity, maxI = -Infinity, minJ = Infinity, maxJ = -Infinity
@@ -1122,8 +1311,9 @@ function buildBeyond(
   }
   // The camera looks from +x,+z. A tall ruin hides whatever lies behind it along
   // (-1,-1), so it's only allowed where that shadow falls on no floor.
-  const hidesFloor = (x: number, z: number) => {
-    for (let s = 0; s <= 7; s += 0.75) {
+  // `reach`: how far behind it the camera's line is blocked; 7 u covers the kit's walls, a chimney needs more
+  const hidesFloor = (x: number, z: number, reach = 7) => {
+    for (let s = 0; s <= reach; s += 0.75) {
       for (const side of [-1.8, 0, 1.8]) {
         const px = x - s * Math.SQRT1_2 + side * Math.SQRT1_2
         const pz = z - s * Math.SQRT1_2 - side * Math.SQRT1_2
@@ -1140,13 +1330,28 @@ function buildBeyond(
     const x = (minI - 5) * CELL + rand() * spanX
     const z = (minJ - 5) * CELL + rand() * spanZ
     if (nearFloor(x, z, 0) || (nearFloor(x, z, 1) && rand() < 0.7)) continue
+    const edge = !!more.clearEdges && nearEdge(floor, x, z)
     if (hidesFloor(x, z)) {
       const piece = rand() < 0.5 ? kit.beyondLow[0]! : kit.beyondLow[1]!
       const place = { piece, x, z, rotY: rand() * 6.3, y: -2.4 - rand() * 0.6, scale: 0.8 + rand() * 0.4 }
-      if (!avoid?.(x, z)) placements.push(place)
+      if (!avoid?.(x, z) && !edge) placements.push(place)
     } else {
       const place = { piece: pick(TALL), x, z, rotY: rand() * 6.3, y: -rand() * 1.6, scale: 0.8 + rand() * 0.5 }
-      if (!avoid?.(x, z)) placements.push(place)
+      if (avoid?.(x, z) || edge) continue
+      const mc = more.machines
+      if (mc && more.stream && more.out && more.stream() < mc.share) {
+        // machinery instead, from its own stream: only where its taller shadow still falls on no floor
+        const kind = mc.kinds[Math.floor(more.stream() * mc.kinds.length)]!
+        const h = kind === 'chimney' ? CHIMNEY_H[0] + more.stream() * (CHIMNEY_H[1] - CHIMNEY_H[0]) : undefined
+        const m: MachinePlacement = { kind, x, z, y: place.y, rotY: place.rotY, scale: place.scale, h }
+        // the camera's 38 degrees: a top h high blocks the floor about 1.28 h behind it
+        if (hidesFloor(x, z, machineTop(m) * 1.28 + 1)) continue
+        more.out.push(m)
+        more.made?.tall.push({ what: kind, x, z, hides: false })
+        continue
+      }
+      placements.push(place)
+      more.made?.tall.push({ what: place.piece, x, z, hides: hidesFloor(x, z) })
     }
   }
   for (let n = 0; n < ruinCount / 3; n++) {

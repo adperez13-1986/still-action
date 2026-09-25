@@ -17,43 +17,77 @@ export const PIECES = [
   'rubble_half', 'rubble_large', 'crates_stacked', 'barrel_large', 'box_large', 'box_stacked',
   // the Workshop
   'wall_doorway', 'wall_window_open', 'table_long', 'stool',
+  // the Works
+  'floor_tile_big_grate', 'keg', 'wall_gated', 'wall_scaffold',
 ] as const
 export type Piece = (typeof PIECES)[number]
 
-export type Surface = 'paving' | 'rock' | 'wood' | 'ground'
-const SURFACE_TEX: Record<Surface, { id: string; scale: number; gain: number }> = {
-  paving: { id: 'PavingStones142', scale: 7, gain: 0.62 },
-  rock: { id: 'Rock035', scale: 3, gain: 1 },
-  wood: { id: 'Planks023A', scale: 2, gain: 0.9 },
+/** What a piece is skinned as. 'grate' is the Works' walkways; elsewhere it wears the paving. */
+export type Surface = 'paving' | 'rock' | 'wood' | 'ground' | 'grate'
+/**
+ * Per ambientCG set: units per texture tile, and its gain. Keyed by set, not role, so
+ * a place that swaps a role's set swaps its tiling with it.
+ */
+const SURFACE_TEX: Record<string, { scale: number; gain: number; tint?: [number, number, number] }> = {
+  PavingStones142: { scale: 7, gain: 0.62 },
+  Rock035: { scale: 3, gain: 1 },
+  Planks023A: { scale: 2, gain: 0.9 },
   // the beyond should recede, not compete with the room
-  ground: { id: 'Ground108', scale: 6, gain: 0.32 },
+  Ground108: { scale: 6, gain: 0.32 },
+  // The Works: plate underfoot, sheet iron on everything built, rusted walkway. The two
+  // clean steels are tinted toward rust and kept dark: out of the box they read as new
+  // grey paint, and the Works is the end of a long shift.
+  MetalPlates006: { scale: 4, gain: 0.58, tint: [0.95, 0.84, 0.74] },
+  Metal063: { scale: 3, gain: 0.6, tint: [1, 0.74, 0.58] },
+  // already rust; darkened a little so a grate reads as rust, not as a warm pink patch on the plate
+  MetalWalkway014: { scale: 3, gain: 0.62, tint: [0.95, 0.86, 0.8] },
 }
 function surfaceOf(name: string): Surface {
+  if (/grate/.test(name)) return 'grate'
+  if (/^floor_wood/.test(name)) return 'wood'
+  if (/table|chair|stool|cabinet|couch|keg/.test(name)) return 'wood'
   if (name.startsWith('floor_dirt')) return 'ground'
   if (name.startsWith('floor')) return 'paving'
-  if (/crate|box|barrel|table|stool/.test(name)) return 'wood'
+  if (/crate|box|barrel/.test(name)) return 'wood'
   return 'rock'
 }
 
-/** Which ambientCG set each role wears now, and every material's handle on it, so an area can swap them. */
-const surfaceIds: Record<Surface, string> = { paving: 'PavingStones142', rock: 'Rock035', wood: 'Planks023A', ground: 'Ground108' }
-const skinned: Record<Surface, { uAlb: { value: THREE.Texture }; uNrm: { value: THREE.Texture } }[]> = { paving: [], rock: [], wood: [], ground: [] }
+/** Which ambientCG set each role wears now, and every material's handle on it, so a place can swap them. */
+const surfaceIds: Record<Surface, string> = { paving: 'PavingStones142', rock: 'Rock035', wood: 'Planks023A', ground: 'Ground108', grate: 'PavingStones142' }
+interface Skinned {
+  uAlb: { value: THREE.Texture }
+  uNrm: { value: THREE.Texture }
+  uScale: { value: number }
+  uGain: { value: number }
+  /** The set's colour cast (white for the ruin's). */
+  uTint: { value: THREE.Color }
+  /** A one-use tune (the Workshop's boards) keeps its own tiling whatever the set. */
+  tuned: boolean
+}
+const skinned: Record<Surface, Skinned[]> = { paving: [], rock: [], wood: [], ground: [], grate: [] }
 
 /**
- * An area's surfaces: each role whose texture set differs is swapped on every material
- * wearing it (textures load on first use). Area I and II share one set today, so this is
- * a no-op until the content step gives area II its own.
+ * A place's surfaces: each role whose set differs is swapped on every material wearing
+ * it, with that set's tiling and gain (textures load on first use, from the SW's cache).
  */
 export function setSurfaces(ids: Record<Surface, string>) {
   for (const role of Object.keys(ids) as Surface[]) {
     if (surfaceIds[role] === ids[role]) continue
     surfaceIds[role] = ids[role]
+    const t = SURFACE_TEX[ids[role]]!
     for (const u of skinned[role]) {
       u.uAlb.value = tex(`${ids[role]}_Color`, true)
       u.uNrm.value = tex(`${ids[role]}_NormalGL`, false)
+      u.uTint.value.setRGB(...(t.tint ?? [1, 1, 1]))
+      if (u.tuned) continue
+      u.uScale.value = 1 / t.scale
+      u.uGain.value = t.gain
     }
   }
 }
+
+/** Which set a role wears now (checks, the look test). */
+export const surfaceNow = (role: Surface) => surfaceIds[role]
 
 /** Look-test values. Shared uniforms, so they can still be tuned live. */
 export const SURF = {
@@ -84,19 +118,22 @@ function tex(file: string, color: boolean) {
  * the Workshop's boards are wider and darker than a crate's.
  */
 export function skin(m: THREE.MeshStandardMaterial, surface: Surface, tune: { scale?: number; gain?: number } = {}) {
-  const scale = tune.scale ?? SURFACE_TEX[surface].scale
-  const gain = tune.gain ?? SURFACE_TEX[surface].gain
-  const own = {
+  const set = SURFACE_TEX[surfaceIds[surface]]!
+  const scale = tune.scale ?? set.scale
+  const gain = tune.gain ?? set.gain
+  const own: Skinned = {
     uAlb: { value: tex(`${surfaceIds[surface]}_Color`, true) },
     uNrm: { value: tex(`${surfaceIds[surface]}_NormalGL`, false) },
     uScale: { value: 1 / scale },
     uGain: { value: gain },
+    uTint: { value: new THREE.Color(...(set.tint ?? [1, 1, 1])) },
+    tuned: tune.scale !== undefined || tune.gain !== undefined,
   }
   skinned[surface].push(own)
   m.roughness = 1
   m.metalness = 0
   m.onBeforeCompile = (shader) => {
-    Object.assign(shader.uniforms, SURF, own)
+    Object.assign(shader.uniforms, SURF, { uAlb: own.uAlb, uNrm: own.uNrm, uScale: own.uScale, uGain: own.uGain, uTint: own.uTint })
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', '#include <common>\nvarying vec3 vWPos;\nvarying vec3 vWNrm;')
       .replace('#include <project_vertex>', `#include <project_vertex>
@@ -112,6 +149,7 @@ export function skin(m: THREE.MeshStandardMaterial, surface: Surface, tune: { sc
         varying vec3 vWPos;
         varying vec3 vWNrm;
         uniform float uGrime, uContact, uPhotoGain, uRelief, uCool, uScale, uGain;
+        uniform vec3 uTint;
         uniform sampler2D uAlb;
         uniform sampler2D uNrm;
         float h2(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
@@ -143,7 +181,7 @@ export function skin(m: THREE.MeshStandardMaterial, surface: Surface, tune: { sc
           return normalize(tx.zyx * b.x + ty.xzy * b.y + tz.xyz * b.z);
         }`)
       .replace('#include <map_fragment>', `#include <map_fragment>
-        diffuseColor.rgb = triAlb() * uPhotoGain * uGain * mix(vec3(1.0), vec3(0.78, 0.88, 1.08), uCool);
+        diffuseColor.rgb = triAlb() * uPhotoGain * uGain * uTint * mix(vec3(1.0), vec3(0.78, 0.88, 1.08), uCool);
         float g = triN(0.9) * 0.55 + triN(4.5) * 0.45;
         diffuseColor.rgb *= mix(1.0, 0.4 + 0.95 * g, uGrime);
         float side = 1.0 - abs(normalize(vWNrm).y);
@@ -169,11 +207,63 @@ const loaded = new Map<Piece, PieceData>()
 /** wall_doorway's own door leaf, kept apart from the frame (the kids' door swings on it). */
 let doorLeafData: PieceData | null = null
 
+/**
+ * A piece whose file fails to load is built from this instead: another piece's shape,
+ * or primitives. INV: pieceData(p) never throws for a piece in FALLBACK, so a missing
+ * file never blocks boot. It's skinned as the piece's own role.
+ */
+export const FALLBACK: Partial<Record<Piece, Piece | (() => THREE.BufferGeometry)>> = {
+  floor_tile_big_grate: 'floor_tile_large',
+  keg: 'barrel_large',
+  wall_gated: 'wall',
+  wall_scaffold: 'wall_broken',
+}
+
+/** Floor pieces are one 4 u cell: a file a little off is scaled to fit at load. */
+const FLOOR_SIZE = 4
+
+function register(name: Piece, geometry: THREE.BufferGeometry, material: THREE.MeshStandardMaterial) {
+  geometry.computeBoundingBox()
+  let bb = geometry.boundingBox!
+  const sx = bb.max.x - bb.min.x
+  const sz = bb.max.z - bb.min.z
+  if (name.startsWith('floor') && (Math.abs(sx - FLOOR_SIZE) > 0.2 || Math.abs(sz - FLOOR_SIZE) > 0.2)) {
+    geometry.scale(FLOOR_SIZE / sx, 1, FLOOR_SIZE / sz)
+    geometry.computeBoundingBox()
+    bb = geometry.boundingBox!
+  }
+  loaded.set(name, {
+    geometry,
+    material,
+    radius: Math.max(bb.max.x - bb.min.x, bb.max.z - bb.min.z) / 2,
+    height: bb.max.y,
+    box: bb.clone(),
+  })
+}
+
+/** Stand in for a piece that didn't load, once whatever it stands in for has. */
+function fallBack(name: Piece) {
+  const f = FALLBACK[name]
+  if (!f) throw new Error(`kit piece ${name} failed and has no fallback`)
+  const material = new THREE.MeshStandardMaterial({ color: 0xffffff })
+  skin(material, surfaceOf(name))
+  const geometry = typeof f === 'function' ? f() : pieceData(f).geometry.clone()
+  register(name, geometry, material)
+}
+
 /** Loads every piece once. Call before building the first level. */
 export async function loadKit(): Promise<void> {
   const loader = new GLTFLoader()
+  const failed: Piece[] = []
   await Promise.all(PIECES.map(async (name) => {
-    const scene = (await loader.loadAsync(`${import.meta.env.BASE_URL}kaykit/${name}.glb`)).scene
+    let scene: THREE.Group
+    try {
+      scene = (await loader.loadAsync(`${import.meta.env.BASE_URL}kaykit/${name}.glb`)).scene
+    } catch (err) {
+      console.warn(`kit: ${name} didn't load, using its fallback`, err)
+      failed.push(name)
+      return
+    }
     let mesh: THREE.Mesh | null = null
     scene.traverse((o) => {
       // the first mesh is the piece; wall_doorway's leaf is its child, and kept separately below
@@ -183,8 +273,6 @@ export async function loadKit(): Promise<void> {
     if (!m) throw new Error(`kit piece ${name} has no mesh`)
     m.updateWorldMatrix(true, false)
     const geometry = m.geometry.clone().applyMatrix4(m.matrixWorld)
-    geometry.computeBoundingBox()
-    const bb = geometry.boundingBox!
     const material = (m.material as THREE.MeshStandardMaterial).clone()
     // Every KayKit file embeds its own copy of the colour atlas. The photo skin
     // replaces it, so never upload it: 16 unused copies is ~90MB of GPU memory,
@@ -193,13 +281,7 @@ export async function loadKit(): Promise<void> {
     material.map = null
     ;(m.material as THREE.MeshStandardMaterial).map?.dispose()
     skin(material, surfaceOf(name))
-    loaded.set(name, {
-      geometry,
-      material,
-      radius: Math.max(bb.max.x - bb.min.x, bb.max.z - bb.min.z) / 2,
-      height: bb.max.y,
-      box: bb.clone(),
-    })
+    register(name, geometry, material)
     if (name === 'wall_doorway') {
       const leaf = scene.getObjectByName('wall_doorway_door')
       if (leaf instanceof THREE.Mesh) {
@@ -214,6 +296,8 @@ export async function loadKit(): Promise<void> {
       }
     }
   }))
+  // after the rest: a fallback can be another piece's shape
+  for (const name of failed) fallBack(name)
 }
 
 /** wall_doorway's door leaf, in the doorway's own frame (null if the file had none). */

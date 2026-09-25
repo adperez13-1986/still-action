@@ -13,6 +13,8 @@ export const COLD = new THREE.Color(0xcfe4ff)
 export const COLD_DEEP = new THREE.Color(0x6f9bd0)
 export const EMBER = new THREE.Color(0xff6a3a)
 export const EMBER_DEEP = new THREE.Color(0x8a1f12)
+/** Slag: hotter than an ember, toward orange, never white. */
+export const SLAG_DROP = new THREE.Color(0xff8a3c)
 
 // --- shared time, for every animated material ---
 export const VFX_TIME = { value: 0 }
@@ -291,6 +293,17 @@ export class Vfx {
     }
   }
 
+  /** A molten drop falling off a slag core: it runs down, hits the floor and skitters. Heavy, where embers float. */
+  drip(at: THREE.Vector3) {
+    const c = SLAG_DROP.clone().multiplyScalar(rnd(0.8, 1.1))
+    this.glow.spawn({
+      x: at.x + rnd(-0.12, 0.12), y: at.y, z: at.z + rnd(-0.12, 0.12),
+      vx: rnd(-0.2, 0.2), vy: rnd(-0.4, 0), vz: rnd(-0.2, 0.2),
+      max: rnd(0.55, 0.8), size: rnd(0.06, 0.09), gravity: 9, drag: 0.5,
+      r: c.r, g: c.g, b: c.b,
+    })
+  }
+
   /** A bright pop: a hot core and a soft bloom around it. */
   flash(at: THREE.Vector3, color: THREE.Color, size = 1) {
     this.glow.spawn({ x: at.x, y: at.y, z: at.z, max: 0.12, size: size * 0.9, grow: size * 3, r: 1, g: 1, b: 1 })
@@ -434,6 +447,7 @@ const TELL_FRAG = /* glsl */ `
   uniform float uStrip;
   uniform float uRadius;
   uniform float uCold;
+  uniform float uMolten;
   varying vec2 vUv;
   varying vec3 vPos;
   float h(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
@@ -474,6 +488,19 @@ const TELL_FRAG = /* glsl */ `
         cut = mix(1.0, 0.15 + 0.85 * dash, smoothstep(0.8, 0.95, r));
       }
     }
+    if (uMolten > 0.5) {
+      // metal on the floor, not a telegraph: a dark crust with hot veins cracking through it,
+      // slowly crawling. No rings (it isn't coming, it's here) and nothing past full heat.
+      float crust = fbm(w * 1.7 + vec2(uTime * 0.08, -uTime * 0.05));
+      float vein = 1.0 - smoothstep(0.0, 0.13, abs(crust - 0.5));
+      float glow = smoothstep(0.5, 0.85, fbm(w * 0.8 - uTime * 0.12));
+      float hot = clamp(vein + glow * 0.6, 0.0, 1.0);
+      float r = length(w) / uRadius;
+      // the hottest veins a touch past full, for the bloom; still orange, never white
+      vec3 col = mix(uDeep, uHot, hot) * (1.0 + 0.3 * vein * glow);
+      gl_FragColor = vec4(col, uOpacity * (0.82 + 0.18 * crust) * smoothstep(1.0, 0.9, r));
+      return;
+    }
     float heat = clamp(noise * 0.8 + pattern * 0.45 + edge * 0.9, 0.0, 1.6);
     vec3 col = mix(uDeep, uHot, clamp(heat, 0.0, 1.0)) + uHot * max(0.0, heat - 1.0) * 0.6;
     float a = uOpacity * clamp(0.35 + noise * 0.5 + pattern * 0.35 + edge * 0.8, 0.0, 1.0) * cut;
@@ -501,6 +528,7 @@ export function tellMaterial(style: TellStyle, radius = 1, hot = EMBER, deep = E
       uStrip: { value: style === 'strip' ? 1 : 0 },
       uRadius: { value: radius },
       uCold: { value: opts.cold ? 1 : 0 },
+      uMolten: { value: 0 },
     },
     transparent: true,
     depthWrite: false,

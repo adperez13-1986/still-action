@@ -1,4 +1,5 @@
 import { ambienceContext } from './audio'
+import { beatClock } from './music'
 
 /**
  * The dungeon's room tone, under the music. Mostly synthesis, since air and
@@ -11,10 +12,15 @@ import { ambienceContext } from './audio'
  *   machinery   a far clank, or a chain of them, now and then
  *   foundry     boss levels only: a hum and steam, before you see it
  *
+ * The Works (depth 4) is the foundry at the end of the shift: a shorter, brighter
+ * iron room, the foundry hum always under it, steam, and a forge thump on every
+ * second beat of the score, so the place and the music keep one time.
+ *
  * And home, the Workshop: the stone goes, and a small wooden room is left with
  * a clock ticking in it and Grace's tone under everything, never ending.
  */
-export type AmbienceMood = 'crawl' | 'boss' | 'workshop'
+/** The content steps add 'quarter' | 'square'. */
+export type AmbienceMood = 'crawl' | 'boss' | 'workshop' | 'works'
 
 interface Engine {
   ctx: AudioContext
@@ -22,6 +28,10 @@ interface Engine {
   noise: AudioBuffer
   play: NonNullable<ReturnType<typeof ambienceContext>>['play']
   room: AudioNode
+  /** The Works' iron room: shorter and brighter than the stone one. */
+  worksRoom: AudioNode
+  /** The stone hum: halved in the Works, where the foundry is the room tone. */
+  toneGain: GainNode
   draft: GainNode
   foundry: GainNode
   /** Everything of the maze's stone: faded out at home. */
@@ -38,18 +48,20 @@ interface Engine {
   nextClank: number
   nextGust: number
   nextSteam: number
+  /** The last beat a forge thump was scheduled on. */
+  thumpBeat: number
 }
 
 let engine: Engine | null = null
 let mood: AmbienceMood = 'crawl'
 
-/** A small stone room: short, dark reflections, generated once. */
-function stoneRoom(ctx: AudioContext, seconds: number) {
+/** A small stone room: short, dark reflections, generated once. `fall` is how steeply it dies (iron: 2.2, brighter). */
+function stoneRoom(ctx: AudioContext, seconds: number, fall = 3.2) {
   const len = Math.floor(ctx.sampleRate * seconds)
   const buf = ctx.createBuffer(2, len, ctx.sampleRate)
   for (let ch = 0; ch < 2; ch++) {
     const d = buf.getChannelData(ch)
-    for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 3.2) * (i < 40 ? 0 : 1)
+    for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, fall) * (i < 40 ? 0 : 1)
   }
   const conv = ctx.createConvolver()
   conv.buffer = buf
@@ -87,6 +99,10 @@ function build(a: NonNullable<ReturnType<typeof ambienceContext>>): Engine {
   const wet = ctx.createGain()
   wet.gain.value = 0.7
   room.connect(wet).connect(out)
+  const worksRoom = stoneRoom(ctx, 1.1, 2.2)
+  const worksWet = ctx.createGain()
+  worksWet.gain.value = 0.6
+  worksRoom.connect(worksWet).connect(out)
 
   // room tone: brownish noise through a low filter that drifts
   const tone = loopNoise(a)
@@ -176,8 +192,8 @@ function build(a: NonNullable<ReturnType<typeof ambienceContext>>): Engine {
 
   const t = ctx.currentTime
   return {
-    ...a, out: stone, room, draft, foundry, stone, home, wood, rainBed, nextDrop: t, nextTick: t + 1, tickN: 0,
-    nextDrip: t + 1.5, nextClank: t + 5, nextGust: t + 2, nextSteam: t + 3,
+    ...a, out: stone, room, worksRoom, toneGain, draft, foundry, stone, home, wood, rainBed, nextDrop: t, nextTick: t + 1, tickN: 0,
+    nextDrip: t + 1.5, nextClank: t + 5, nextGust: t + 2, nextSteam: t + 3, thumpBeat: -1,
   }
 }
 
@@ -205,12 +221,15 @@ function clockTick(e: Engine, when: number) {
   e.tickN++
 }
 
+/** The reverb the mood is in: the Works' iron room, or the stone one. */
+const roomOf = (e: Engine) => (mood === 'works' ? e.worksRoom : e.room)
+
 function drip(e: Engine) {
   const { ctx } = e
   const t = ctx.currentTime
   const pan = ctx.createStereoPanner()
   pan.pan.value = Math.random() * 1.6 - 0.8
-  pan.connect(e.room)
+  pan.connect(roomOf(e))
   const g = ctx.createGain()
   g.connect(pan)
   const dry = ctx.createGain()
@@ -238,7 +257,7 @@ function clank(e: Engine) {
   const pan = ctx.createStereoPanner()
   pan.pan.value = Math.random() * 1.4 - 0.7
   lp.connect(pan)
-  pan.connect(e.room)
+  pan.connect(roomOf(e))
   const dry = ctx.createGain()
   dry.gain.value = 0.25
   pan.connect(dry).connect(e.out)
@@ -271,9 +290,44 @@ function steam(e: Engine) {
   g.gain.exponentialRampToValueAtTime(0.0001, t + 1.4)
   const pan = ctx.createStereoPanner()
   pan.pan.value = Math.random() * 1.2 - 0.6
-  s.connect(hp).connect(g).connect(pan).connect(e.room)
+  s.connect(hp).connect(g).connect(pan).connect(roomOf(e))
   s.start(t, Math.random() * 0.4)
   s.stop(t + 1.5)
+}
+
+/** The forge, somewhere past the walls, at `when`: a low sine falling, and a plate struck far off, mostly echo. */
+function thump(e: Engine, when: number) {
+  const { ctx } = e
+  const o = ctx.createOscillator()
+  o.type = 'sine'
+  o.frequency.setValueAtTime(55, when)
+  o.frequency.exponentialRampToValueAtTime(38, when + 0.35)
+  const g = ctx.createGain()
+  g.gain.setValueAtTime(0.0001, when)
+  g.gain.linearRampToValueAtTime(0.1, when + 0.01)
+  g.gain.exponentialRampToValueAtTime(0.0001, when + 0.36)
+  o.connect(g).connect(e.out)
+  o.start(when)
+  o.stop(when + 0.4)
+  const lp = ctx.createBiquadFilter()
+  lp.type = 'lowpass'
+  lp.frequency.value = 400
+  lp.connect(e.worksRoom)
+  e.play('plateHeavy', lp, 0.12, 0.45, Math.max(0, when - ctx.currentTime))
+}
+
+/** Every second beat of the score, a little ahead on the audio clock, never twice on one beat. */
+function forge(e: Engine) {
+  const clock = beatClock()
+  if (!clock) return
+  const now = e.ctx.currentTime
+  for (let k = -1; k <= 1; k++) {
+    const beat = clock.beat + k
+    const at = clock.next + k * clock.len
+    if (beat <= e.thumpBeat || beat % 2 !== 1 || at < now + 0.01 || at > now + 0.35) continue
+    thump(e, at)
+    e.thumpBeat = beat
+  }
 }
 
 function tick() {
@@ -296,9 +350,12 @@ function tick() {
   }
   e.nextTick = t + 1
   const boss = mood === 'boss'
+  const works = mood === 'works'
+  if (works) forge(e)
   if (t >= e.nextDrip) {
     drip(e)
-    e.nextDrip = t + 1.8 + Math.random() * 5
+    // the Works is dry: a drip now and then, far fewer than the stone
+    e.nextDrip = t + (works ? 6 + Math.random() * 12 : 1.8 + Math.random() * 5)
   }
   if (t >= e.nextClank) {
     clank(e)
@@ -308,7 +365,7 @@ function tick() {
     gust(e)
     e.nextGust = t + 6 + Math.random() * 8
   }
-  if (boss && t >= e.nextSteam) {
+  if ((boss || works) && t >= e.nextSteam) {
     steam(e)
     e.nextSteam = t + 3 + Math.random() * 5
   }
@@ -354,7 +411,9 @@ export function updateAmbience(next: AmbienceMood) {
   if (next !== mood) {
     mood = next
     const t = engine.ctx.currentTime
-    engine.foundry.gain.setTargetAtTime(next === 'boss' ? 1 : 0, t, 1.5)
+    // the Works hums with the foundry at 0.6, over half the stone's tone
+    engine.foundry.gain.setTargetAtTime(next === 'boss' ? 1 : next === 'works' ? 0.6 : 0, t, 1.5)
+    engine.toneGain.gain.setTargetAtTime(next === 'works' ? 0.035 : 0.07, t, 1.5)
     // home: the stone fades out over about 1.2 s, and the room comes up under it
     const home = next === 'workshop'
     engine.stone.gain.setTargetAtTime(home ? 0 : 1, t, 0.4)

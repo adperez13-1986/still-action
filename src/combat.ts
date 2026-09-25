@@ -273,6 +273,10 @@ export class Combat {
   get hazards(): readonly Hazard[] {
     return this.live
   }
+  /** Whether a body carries a slag core (the run drips embers from it). */
+  isSlagged(e: Enemy) {
+    return this.slagged.has(e)
+  }
   /** Enemies a hazard killed: they never spill slag, so hazards never chain. */
   private readonly hazardKilled = new WeakSet<Enemy>()
   /** Bodies carrying a slag core: they leave a burning puddle where they die. */
@@ -1912,22 +1916,32 @@ export class Combat {
   }
 
   /** `face`: where a member looks while it sleeps; without one the pack faces a random way together. */
-  /** `slag`: the member carries a slag core (area II) and spills a puddle where it dies. */
-  addPack(members: { kind: Archetype; x: number; z: number; face?: { x: number; z: number }; slag?: true }[], side: boolean, elite?: { mod: EliteMod; name: string }): Pack {
+  /**
+   * `slag`: the member carries a slag core (area II) and spills a puddle where it dies.
+   * `look: 'heap'`: its mites sleep under a slag heap (the Works).
+   */
+  addPack(
+    members: { kind: Archetype; x: number; z: number; face?: { x: number; z: number }; slag?: true }[], side: boolean,
+    elite?: { mod: EliteMod; name: string }, look?: 'heap',
+  ): Pack {
     const pack: Pack = {
       members: [], state: 'asleep', side, dropped: false, size: members.length, homes: new Map(), gaze: new Map(), hpSeen: 0,
       weight: members.reduce((a, m) => a + KILL_WEIGHT[m.kind], 0), token: null,
     }
-    const look = Math.random() * Math.PI * 2
+    const gazeAt = Math.random() * Math.PI * 2
     for (const m of members) {
       const e = this.make(m.kind, m.x, m.z)
-      if (m.slag) this.slagged.add(e)
+      // mites never carry one: eight puddles would be noise
+      if (m.slag && e.kind !== 'swarm') {
+        this.slagged.add(e)
+        e.setSlag?.()
+      }
       this.scene.add(e.group, e.tellGroup)
       this.enemies.push(e)
       e.setAsleep(true)
       pack.members.push(e)
       pack.homes.set(e, new THREE.Vector3(m.x, 0, m.z))
-      const a = look + (Math.random() - 0.5) * 1.2
+      const a = gazeAt + (Math.random() - 0.5) * 1.2
       pack.gaze.set(e, m.face ? new THREE.Vector3(m.face.x, 0, m.face.z) : new THREE.Vector3(m.x + Math.sin(a), 0, m.z + Math.cos(a)))
       this.packOf.set(e, pack)
       e.idle(0, pack.gaze.get(e)!)
@@ -1937,6 +1951,7 @@ export class Combat {
     if (mites.length) {
       pack.brood = new Brood(pack, this.broodIndex++, this.scene)
       for (const m of mites) pack.brood.add(m)
+      if (look === 'heap') pack.brood.bury(this.scene)
       this.broods.push(pack.brood)
     }
     if (elite && pack.members[0]) this.crown(pack, pack.members[0], elite.mod, elite.name)
@@ -2151,7 +2166,8 @@ export class Combat {
     // awake bodies don't stack on each other: each pair keeps its two radii apart.
     // A rushing ram is committed to its line, so nothing nudges it off it.
     // Nor a lunging mite: it's landing where the bite is.
-    const moving = this.enemies.filter((e) => this.packOf.get(e)?.state !== 'asleep' && !(e instanceof Charger && e.rushing) && !(e instanceof Mite && e.phase === 'strike'))
+    // Nor a mite still under its slag heap: it's waiting its turn, where it lay.
+    const moving = this.enemies.filter((e) => this.packOf.get(e)?.state !== 'asleep' && !(e instanceof Charger && e.rushing) && !(e instanceof Mite && (e.phase === 'strike' || e.buried)))
     for (let a = 0; a < moving.length; a++) {
       for (let b = a + 1; b < moving.length; b++) {
         const p = moving[a]!.pos
@@ -2196,7 +2212,10 @@ export class Combat {
    * The nearest brood picks first.
    */
   private tickBroods(dt: number) {
-    for (const b of this.broods) if (b.pack.state !== 'awake' && b.isActive) b.reset()
+    for (const b of this.broods) {
+      b.heap?.update(dt)
+      if (b.pack.state !== 'awake' && b.isActive) b.reset()
+    }
     const awake = this.broods.filter((b) => b.pack.state === 'awake')
     if (!awake.length) return
     const cap = { used: awake.reduce((n, b) => n + (b.isActive ? b.innerCount() : 0), 0) }
