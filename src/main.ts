@@ -5,7 +5,7 @@ import { Still } from './still'
 import { createHud } from './hud'
 import { createGradePanel } from './grade'
 import { Combat, ELITE_LINE, type Archetype, type CastResult, type EliteMod, type Pack } from './combat'
-import { STARTING, PARTS, READY, byId, type AbilityDef, type AbilityShape, type BeatKey } from './abilities'
+import { STARTING, PARTS, byId, type AbilityDef, type AbilityShape, type BeatKey } from './abilities'
 import { SLOT_NAMES, type SlotName } from './still'
 import type { Enemy } from './enemy'
 import type { Assembler } from './boss'
@@ -249,6 +249,25 @@ const combat = new Combat(world.scene, OPEN, {
       sfx.slowEnd(panOf(ev.enemy.pos))
     }
     if (ev.kind === 'throw') vfx.sparks(still.jawL.getWorldPosition(new THREE.Vector3()), COLD, 6, 4)
+    if (ev.kind === 'decoy' && ev.state === 'burst') {
+      // the decoy bursts and shatters into cold chunks: never Still's own breaking
+      const at = at3(ev.at, 1.0)
+      vfx.flash(at, COLD, 1.4)
+      vfx.sparks(at, COLD, 30, 8)
+      vfx.dust(ev.at, 12, 1.5, undefined, 4)
+      vfx.chunks(at, 8, new THREE.Color(0x9fc0ff), 4, 0.1)
+      sfx.decoyBurst(panOf(ev.at))
+      shake = Math.max(shake, 0.25)
+    }
+    if (ev.kind === 'anchor') {
+      const at = at3(ev.at, 0.5)
+      if (ev.state === 'snap') vfx.sparks(at, COLD, 12, 5)
+      if (ev.state === 'fade') {
+        vfx.frost(at, 6, 0.3)
+        sfx.anchorFade()
+      }
+    }
+    if (ev.kind === 'cooldownStart') hud.startCooldown(ev.slot)
   },
   onShot: () => {
     sfx.shot(0)
@@ -389,6 +408,26 @@ function moveFx(to: THREE.Vector3, beat: BeatKey) {
       vfx.dust(still.pos, 6, 0.3, undefined, 2.5)
       shake = Math.max(shake, 0.06)
       break
+    case 'frost': {
+      // frost scraped along the whole path, a little cold dust; the strip itself is drawn from the zone
+      const d = Math.hypot(to.x - still.pos.x, to.z - still.pos.z)
+      for (let s = 0; s <= d; s += 0.3) {
+        const k = d > 0 ? s / d : 0
+        vfx.frost(new THREE.Vector3(still.pos.x + (to.x - still.pos.x) * k, 0.3, still.pos.z + (to.z - still.pos.z) * k), 1, 0.4)
+      }
+      vfx.dust(still.pos, 5, 0.5, new THREE.Color(0x8fa3b8), 2)
+      shake = Math.max(shake, 0.12)
+      break
+    }
+    case 'snap':
+      // a fast pull, with a wake behind it
+      partFx.beam(still.pos, to, 1.0, 0.25)
+      shake = Math.max(shake, 0.16)
+      break
+    case 'rewind':
+      vfx.flash(still.core.getWorldPosition(new THREE.Vector3()), COLD, 0.7)
+      vfx.embers(at3(still.pos, 1.2), 8, 0.4)
+      break
     case 'spring':
       vfx.dust(still.pos, 8, 0.4, undefined, 3)
       shake = Math.max(shake, 0.08)
@@ -404,6 +443,17 @@ function moveFx(to: THREE.Vector3, beat: BeatKey) {
 
 /** Touchdown: a hop lands light, a vault lands heavy with its stick lock. */
 still.onLand = (m) => {
+  if (m.kind === 'snap') {
+    vfx.flash(at3(still.pos, 1.0), COLD, 0.8)
+    sfx.snapArrive()
+    return
+  }
+  if (m.kind === 'rewind') {
+    // the afterimage merges back into him
+    vfx.gather(still.core.getWorldPosition(new THREE.Vector3()), 12, 0.8, COLD)
+    sfx.rewindArrive()
+    return
+  }
   if (m.kind !== 'hop') return
   if (m.vault) {
     vfx.dust(still.pos, 12, 0.8, undefined, 4)
@@ -495,7 +545,7 @@ function fillEmpty(taken: readonly AbilityDef[]): AbilityDef | null {
   const empty = hud.slots.filter((s) => !s.def).map((s) => s.slot)
   if (empty.length === 0 || Math.random() > FILL_EMPTY_CHANCE) return null
   const ids = new Set(taken.map((p) => p.id))
-  const options = PARTS.filter((p) => p.tier === 'white' && READY.has(p.id) && empty.includes(p.slot) && !ids.has(p.id))
+  const options = PARTS.filter((p) => p.tier === 'white' && empty.includes(p.slot) && !ids.has(p.id))
   return options[Math.floor(Math.random() * options.length)] ?? null
 }
 
@@ -611,9 +661,15 @@ hud.onCompare(() => {
   }, resume)
 })
 
+/** A swap: what the outgoing part had running ends first, and a live anchor hands on a full cooldown (R8). */
+function swapIn(def: AbilityDef): AbilityDef | null {
+  const anchorLive = def.slot === 'legs' && !!combat.parts.anchor
+  combat.clearSlot(def.slot)
+  return hud.equip(def, anchorLive ? 1 : undefined)
+}
+
 function takePart(g: GroundPart) {
-  combat.clearSlot(g.def.slot)
-  const old = hud.equip(g.def)
+  const old = swapIn(g.def)
   loot.remove(g)
   // an empty slot filled: nothing falls out
   if (old) loot.drop(old, still.pos)
@@ -724,6 +780,8 @@ function startRun() {
   // Still begins with one random plain part; the rest he finds. Starting deeper
   // (?depth=) skips the levels where he'd have found them, so he gets all four.
   const start = START_DEPTH > 1 ? STARTING : [STARTING[Math.floor(Math.random() * STARTING.length)]!]
+  // the last run's anchor or decoy goes before the new loadout arrives, so nothing carries over onto its buttons
+  combat.reset()
   hud.resetLoadout(start)
   for (const slot of SLOT_NAMES) still.setEquipped(slot, start.some((p) => p.slot === slot))
   enterLevel(START_DEPTH)
@@ -809,10 +867,16 @@ const MOVES = new Set<AbilityShape>(['dash', 'hop', 'anchor', 'rewind'])
 
 function cast(def: AbilityDef, pushed: boolean): CastResult {
   castHits = 0
+  const hpBefore = combat.hp
   const r = combat.useAbility(def, {
     origin: still.pos, facing: still.facing, moveX: hud.moveX, moveZ: hud.moveZ, pushed, strain: run.strain,
   })
-  if (r.cooldown === 'refused') return r
+  if (r.cooldown === 'refused') {
+    sfx.denied()
+    return r
+  }
+  // a rewind gave integrity back: the fill is seen, not just counted
+  if (combat.hp > hpBefore + 0.5) hud.healing()
   // Snap the body to the target, or the swing plays sideways out of his shoulder.
   if (r.aim !== null) still.facing = r.aim
   sfx.ability(r.beat, pushed, r.power)
@@ -958,6 +1022,15 @@ function castFx(def: AbilityDef, r: CastResult, pushed: boolean) {
     case 'anvil':
       vfx.flash(still.jawL.getWorldPosition(new THREE.Vector3()), COLD, 0.4)
       break
+    case 'lure':
+      vfx.flash(still.core.getWorldPosition(new THREE.Vector3()), COLD, 0.8)
+      vfx.flash(lens, COLD, 0.5)
+      break
+    case 'plant':
+      // the bob let go at knee height
+      vfx.flash(at3(still.pos, 0.5), COLD, 0.4)
+      vfx.dust(still.pos, 5, 0.4, undefined, 2)
+      break
     // movement fx ride on the move event
     default:
       break
@@ -968,6 +1041,9 @@ function castFx(def: AbilityDef, r: CastResult, pushed: boolean) {
 /** Patient Lens has banked a full shot, and the button has said so once. */
 let patientFull = false
 let patientMotes = 0
+/** The anchor was out of snap reach last frame (the tick sounds once as it crosses). */
+let anchorFar = false
+let beaconT = 0
 /** Ricochet's ready tick is recomputed this often, not every frame. */
 let bankT = 0
 /** Frayed Cleaver's width tier last frame; null while it isn't on a button. */
@@ -981,6 +1057,34 @@ function partFaces(dt: number) {
   const [head, , arms] = hud.slots.map((s) => s.def)
   // LIVE: something of his is out in the world, drawn as a lit ring that drains
   for (const slot of SLOT_NAMES) hud.live(slot, combat.liveFrac(slot))
+  const legs = hud.slots[3]!.def
+  // Plumb Line: the button becomes the snap while the anchor is out, and dims when a snap would be refused
+  if (legs?.shape === 'anchor') {
+    const a = combat.parts.anchor
+    hud.iconState('legs', a ? 'snap' : null)
+    const far = !!a && Math.hypot(a.pos.x - still.pos.x, a.pos.z - still.pos.z) > legs.range
+    hud.setClass('legs', 'far', far)
+    if (far && !anchorFar) sfx.tetherFar()
+    anchorFar = far
+  } else {
+    anchorFar = false
+  }
+  // Borrowed Time: the pale segment on integrity, and the afterimage where a rewind would take him
+  if (legs?.shape === 'rewind') {
+    hud.recentDamage(combat.history.recentDamage((legs.windowMs ?? 1500) / 1000) / 100)
+    partFx.echo(hud.isReady('legs') && run.phase === 'crawl' ? combat.history.at((legs.windowMs ?? 1500) / 1000) : null)
+  } else {
+    hud.recentDamage(0)
+    partFx.echo(null)
+  }
+  // the decoy calling, panned to where it stands
+  const d = combat.parts.decoy
+  if (d && (beaconT -= dt) <= 0) {
+    beaconT = 0.75
+    sfx.decoyBeacon(panOf(d.pos))
+  } else if (!d) {
+    beaconT = 0
+  }
   // Ricochet, ready, and the nearest target is behind cover: one tick where it would bank
   if (head?.mod?.kind === 'bounce' && hud.isReady('head') && run.phase === 'crawl') {
     if ((bankT -= dt) <= 0) {
@@ -1286,8 +1390,7 @@ if (import.meta.env.DEV) {
     /** Put a part on its button without the ground. */
     __equip: (id: string) => {
       const def = byId(id)
-      combat.clearSlot(def.slot)
-      hud.equip(def)
+      swapIn(def)
       still.setEquipped(def.slot, true)
     },
     __stick: (x: number, z: number) => hud.setStick(x, z),

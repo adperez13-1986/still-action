@@ -8,7 +8,7 @@ import type { Terrain } from './terrain'
 import type { Breakable } from './dungeon'
 import type { AbilityDef, BeatKey } from './abilities'
 import type { SlotName } from './still'
-import { PART, bankShot, type EnemyStatus, type Flip, type Held, type PartEvent, type PartRuntime, type StillMove } from './parts'
+import { PART, History, bankShot, type EnemyStatus, type Flip, type Held, type PartEvent, type PartRuntime, type StillMove, type Zone } from './parts'
 
 const AUTO_RANGE = 7.6
 const AUTO_INTERVAL = 0.62
@@ -216,6 +216,12 @@ export class Combat {
   private readonly status = new Map<Enemy, EnemyStatus>()
   /** Enemies in the clamp's throw. While held, an enemy doesn't think. */
   private readonly held = new Map<Enemy, Held>()
+  /** Floor strips (Frost Trail): they slow what stands on them, and never shove. */
+  readonly zones: Zone[] = []
+  /** Where Still stood and what he lost over the last 1.5 s, recorded whether or not Borrowed Time is on. */
+  readonly history = new History()
+  /** HP actually lost this tick, for the history. A caught or converted hit is 0. */
+  private tickDamage = 0
   /** What parts have out in the world. Each window, decoy and anchor joins this as its part is built. */
   readonly parts: PartRuntime = { guard: null, anvil: null, decoy: null, anchor: null, patientSince: PATIENT_START }
 
@@ -255,6 +261,7 @@ export class Combat {
       // statuses tick for everyone, sleepers included
       const st = this.status.get(e)
       if (st) this.tickStatus(e, st, dt)
+      this.applyZones(e)
       const h = this.held.get(e)
       if (h) {
         // in the clamp's throw: carried for a beat, then lobbed. It doesn't think.
@@ -278,13 +285,18 @@ export class Combat {
         e.idle(dt, pack.state === 'returning' ? pack.homes.get(e)! : pack.gaze.get(e)!)
         continue
       }
+      // a decoy draws awake enemies near it; waking, leashing and sleeping still read Still
+      const target = this.targetFor(e, player)
       const before = e.phase
-      const action = e.update(dt, player, this.terrain)
+      const action = e.update(dt, target, this.terrain)
       if (e.phase !== before) {
         if (e.phase === 'windup') this.events.onWindup(e, e.windupMs)
         if (e.phase === 'strike') this.events.onStrike(e)
       }
-      if (action?.kind === 'melee') this.hurtPlayer(action.damage, 'melee')
+      // a strike aimed at the decoy whose ring also covers Still still lands on him
+      if (action?.kind === 'melee' && (target === player || Math.hypot(e.pos.x - player.x, e.pos.z - player.z) <= (action.reach ?? 0))) {
+        this.hurtPlayer(action.damage, 'melee')
+      }
       if (action?.kind === 'shot') this.fireShot(e.pos, action.dir, action.damage, e, action.bounces ?? 0)
       if (action?.kind === 'shots') {
         for (const d of action.dirs) this.fireShot(action.from, d, action.damage, e)
@@ -423,6 +435,10 @@ export class Combat {
         this.fx.splice(i, 1)
       }
     }
+
+    // last: where he stood this tick and what he lost, for Borrowed Time
+    this.history.push(player.x, player.z, this.tickDamage, dt)
+    this.tickDamage = 0
   }
 
   /**
@@ -583,8 +599,15 @@ export class Combat {
     this.parts.patientSince = PATIENT_START
     this.parts.guard = null
     this.parts.anvil = null
+    // a new level: the decoy vanishes without bursting, and a live anchor fades (its cooldown starts)
+    this.clearSlot('torso')
+    this.clearSlot('legs')
     this.status.clear()
     this.held.clear()
+    this.zones.length = 0
+    // a rewind must never cross levels
+    this.history.clear()
+    this.tickDamage = 0
   }
 
   // --- statuses: marks and slows, the same hooks for every archetype ---
@@ -699,6 +722,9 @@ export class Combat {
     p.patientSince += dt
     if (p.guard && (p.guard.t -= dt) <= 0) this.endGuard()
     if (p.anvil && (p.anvil.t -= dt) <= 0) this.endAnvil()
+    if (p.decoy && (p.decoy.t -= dt) <= 0) this.burstDecoy()
+    if (p.anchor && (p.anchor.t -= dt) <= 0) this.fadeAnchor()
+    for (let i = this.zones.length - 1; i >= 0; i--) if ((this.zones[i]!.t -= dt) <= 0) this.zones.splice(i, 1)
     // the cover comes back
     const closed = this.terrain.tickBreaches(dt)
     if (closed.length) this.events.onPart({ kind: 'breach', holes: closed, open: false })
@@ -723,7 +749,9 @@ export class Combat {
   liveFrac(slot: SlotName): number | null {
     const p = this.parts
     if (slot === 'torso' && p.guard) return Math.max(0, p.guard.t / p.guard.max)
+    if (slot === 'torso' && p.decoy) return Math.max(0, p.decoy.t / p.decoy.max)
     if (slot === 'arms' && p.anvil) return Math.max(0, p.anvil.t / p.anvil.max)
+    if (slot === 'legs' && p.anchor) return Math.max(0, p.anchor.t / p.anchor.max)
     return null
   }
 
@@ -735,8 +763,73 @@ export class Combat {
     // a swapped-in Patient Lens starts ready but uncharged, so a swap can't bank a full shot
     if (slot === 'head') this.parts.patientSince = PATIENT_START
     // a window ends quietly, as if it ran out
-    if (slot === 'torso') this.endGuard()
+    if (slot === 'torso') {
+      this.endGuard()
+      // a swap can't buy a free burst: the decoy just goes
+      const d = this.parts.decoy
+      if (d) {
+        this.parts.decoy = null
+        this.events.onPart({ kind: 'decoy', state: 'gone', at: d.pos.clone() })
+      }
+    }
     if (slot === 'arms') this.endAnvil()
+    // swapping out a live anchor counts as it fading: the cooldown starts
+    if (slot === 'legs') this.fadeAnchor()
+  }
+
+  /** Lure: whoever is drawn to the decoy aims at it. The Assembler is never fooled; its adds are. */
+  targetFor(e: Enemy, player: THREE.Vector3): THREE.Vector3 {
+    const d = this.parts.decoy
+    if (!d || e.kind === 'boss') return player
+    return Math.hypot(e.pos.x - d.pos.x, e.pos.z - d.pos.z) <= d.def.range ? d.pos : player
+  }
+
+  /** The decoy's time is up (or a push recast it): it bursts, shoving and hurting what it drew. */
+  private burstDecoy() {
+    const d = this.parts.decoy
+    if (!d) return
+    this.parts.decoy = null
+    for (const e of this.enemies) {
+      if (!this.inBlast(d.pos, e, d.def.radius) || this.shaded(d.pos, e)) continue
+      this.hitPart(e, d.def.damage)
+      this.shoveFrom(e, d.pos.x, d.pos.z, d.def.shove ?? 0)
+    }
+    for (const b of this.breakables) {
+      if (!b.broken && Math.hypot(b.x - d.pos.x, b.z - d.pos.z) <= d.def.radius + b.r) this.events.onSmash(b)
+    }
+    this.ring(d.pos, 0.3, d.def.radius, 0.4, 0x8fb8e8)
+    this.events.onPart({ kind: 'decoy', state: 'burst', at: d.pos.clone() })
+  }
+
+  /** The anchor ran out (or was swapped out, or the level ended): it goes, and the cooldown starts now. */
+  private fadeAnchor() {
+    const a = this.parts.anchor
+    if (!a) return
+    this.parts.anchor = null
+    this.events.onPart({ kind: 'anchor', state: 'fade', at: a.pos.clone() })
+    this.events.onPart({ kind: 'cooldownStart', slot: 'legs' })
+  }
+
+  /** Frost strips slow whatever stands on them, lingering a moment after it steps off. */
+  private applyZones(e: Enemy) {
+    const z = this.zoneAt(e.pos.x, e.pos.z, e.radius * 0.5)
+    if (z) this.applySlow(e, PART.zoneLinger, z.mul)
+  }
+
+  /** The floor strip under a point (grown by `r`), if any. */
+  zoneAt(x: number, z: number, r = 0): Readonly<Zone> | null {
+    for (const zn of this.zones) {
+      if (this.distToSegment(x, z, zn.ax, zn.az, zn.bx, zn.bz) <= zn.halfW + r) return zn
+    }
+    return null
+  }
+
+  /**
+   * The trip hook: a rushing enemy (the charger, when it exists) asks this as it
+   * rushes. True means it's crossing a Frost strip and should fall. Nothing trips yet.
+   */
+  tripAt(e: Enemy): boolean {
+    return this.zoneAt(e.pos.x, e.pos.z, e.radius * 0.5) !== null
   }
 
   /** Anvil: the blow that would have hit him lands on the clamp, and he hammers back. */
@@ -774,7 +867,9 @@ export class Combat {
       this.events.onPart({ kind: 'strain', amount: Math.ceil(damage / g.perStrain), at: this.lastPlayer.clone() })
       return
     }
+    const before = this.hp
     this.hp = Math.max(0, this.hp - damage)
+    this.tickDamage += before - this.hp
     this.hurtCooldown = 0.35
     this.events.onPlayerHurt(damage, source)
   }
@@ -1042,6 +1137,60 @@ export class Combat {
         break
       }
 
+      case 'decoy': {
+        // Lure: a pushed recast bursts the old one first; there's only ever one
+        if (this.parts.decoy) this.burstDecoy()
+        const dir = this.steer(ctx)
+        const back = def.offset ?? 1.5
+        // behind him, opposite the stick (or his facing), and never inside a wall
+        const p = this.terrain.clampMove(o.x, o.z, o.x - dir.x * back, o.z - dir.z * back, PLAYER_RADIUS)
+        const s = (def.windowMs ?? 3000) / 1000
+        this.parts.decoy = { pos: new THREE.Vector3(p.x, 0, p.z), t: s, max: s, def }
+        this.events.onPart({ kind: 'decoy', state: 'spawn', at: new THREE.Vector3(p.x, 0, p.z) })
+        break
+      }
+
+      case 'anchor': {
+        const a = this.parts.anchor
+        if (!a || ctx.pushed) {
+          // plant: the button stays tappable for the snap ('hold'), the anchor lasts a few seconds
+          const s = (def.windowMs ?? 5000) / 1000
+          this.parts.anchor = { pos: o.clone(), t: s, max: s, def }
+          r.cooldown = 'hold'
+          r.beat = 'plant'
+          this.events.onPart({ kind: 'anchor', state: 'plant', at: o.clone() })
+          break
+        }
+        // snap: refused past its range (no snap, no cooldown, no strain, the anchor stays)
+        if (Math.hypot(a.pos.x - o.x, a.pos.z - o.z) > def.range) {
+          r.cooldown = 'refused'
+          this.events.onPart({ kind: 'anchor', state: 'denied', at: a.pos.clone() })
+          break
+        }
+        // back along the straight line, stopping at a wall, running over what's in the way
+        const end = this.terrain.clampMove(o.x, o.z, a.pos.x, a.pos.z, PLAYER_RADIUS)
+        const ms = def.travelMs ?? 240
+        this.runOver(o, end, def.radius, def.damage, def.shove ?? 0, ms, null)
+        this.parts.anchor = null
+        this.emitMove({ kind: 'snap', path: [new THREE.Vector3(end.x, 0, end.z)], ms, vault: false, lockMs: 0 }, 'snap')
+        this.events.onPart({ kind: 'anchor', state: 'snap', at: a.pos.clone() })
+        r.beat = 'snap'
+        break
+      }
+
+      case 'rewind': {
+        // Borrowed Time: back along where he stood, with the HP he lost there. Strain is its own (def.strain).
+        const w = this.history.window((def.windowMs ?? 1500) / 1000)
+        this.hp = Math.min(PLAYER_MAX_HP, this.hp + w.damage)
+        // given back once: the same damage can never come back twice
+        this.history.zero(w.slots)
+        // the recorded path, oldest last; thinned so the move reads as travel, not jitter
+        const path = w.points.filter((_, i) => i % 4 === 3 || i === w.points.length - 1)
+        // a fresh level has nothing to go back to: no move, but it still costs its strain, honestly
+        if (path.length > 0) this.emitMove({ kind: 'rewind', path, ms: def.travelMs ?? 250, vault: false, lockMs: 0 }, r.beat)
+        break
+      }
+
       case 'catch': {
         // Anvil: the next body strike inside the window is caught (hurtPlayer), then countered
         const s = (def.windowMs ?? 900) / 1000
@@ -1124,42 +1273,17 @@ export class Combat {
         const dir = this.steer(ctx)
         // the dash stops at the first wall, it never carries you over one
         const end = this.terrain.clampMove(o.x, o.z, o.x + dir.x * range, o.z + dir.z * range, PLAYER_RADIUS)
-        const sx = o.x
-        const sz = o.z
         const ex = end.x
         const ez = end.z
-
-        // everything near the line gets run over, at the moment Still reaches it, not on the press
-        if (damage > 0) {
-          const lenSq = (ex - sx) ** 2 + (ez - sz) ** 2
-          // the charge throws them aside, off the path, instead of ahead of it
-          const nx = -dir.z
-          const nz = dir.x
-          for (const e of this.enemies) {
-            if (this.distToSegment(e.pos.x, e.pos.z, sx, sz, ex, ez) > width + e.radius) continue
-            const along = lenSq > 0 ? Math.max(0, Math.min(1, ((e.pos.x - sx) * (ex - sx) + (e.pos.z - sz) * (ez - sz)) / lenSq)) : 0
-            // the dash eases out, so the time to reach a point isn't linear in distance
-            const reachT = 1 - Math.sqrt(1 - along)
-            this.later.push({
-              t: reachT * (ms / 1000),
-              run: () => {
-                if (e.dead || this.distToSegment(e.pos.x, e.pos.z, sx, sz, ex, ez) > width + 1.1) return
-                this.hitPart(e, damage)
-                if (over) {
-                  const side = Math.sign((e.pos.x - sx) * nx + (e.pos.z - sz) * nz) || 1
-                  e.knock.addScaledVector(shoveVelocity(nx * side, nz * side, knock), e.knockMul)
-                } else {
-                  this.shoveFrom(e, sx, sz, knock)
-                }
-              },
-            })
-          }
-        }
-        for (const b of this.breakables) {
-          if (!b.broken && this.distToSegment(b.x, b.z, sx, sz, ex, ez) <= width + b.r) this.events.onSmash(b)
-        }
+        // the charge throws them aside, off the path, instead of ahead of it
+        this.runOver(o, end, width, damage, knock, ms, over ? dir : null)
         this.ring(o, 0.3, 1.6, 0.3, 0xbcd6ff)
         this.emitMove({ kind: 'dash', path: [new THREE.Vector3(ex, 0, ez)], ms, vault: false, lockMs: 0 }, r.beat)
+        if (mod?.kind === 'strip') {
+          // Frost Trail: a cold track along the path, live from the cast. It slows; it never shoves.
+          const s = mod.ms / 1000
+          this.zones.push({ ax: o.x, az: o.z, bx: ex, bz: ez, halfW: mod.width / 2, t: s, max: s, mul: mod.mul })
+        }
 
         if (mod?.kind === 'slam') {
           // Skid Plates: the landing blast. Shoves, so it clears space where you stop.
@@ -1323,6 +1447,46 @@ export class Combat {
       if (!this.terrain.blocked(p.x, p.z, 0.01)) return p
     }
     return o.clone()
+  }
+
+  /**
+   * Everything near the line from `o` to `end` gets run over at the moment Still
+   * reaches it, not on the press. Knocked away from the start, or sideways off the
+   * path when `sideways` is the travel direction (Overrun's charge). No line check:
+   * the path is already clamped at the first wall. Crates on it break either way.
+   */
+  private runOver(o: THREE.Vector3, end: { x: number; z: number }, width: number, damage: number, knock: number, ms: number, sideways: { x: number; z: number } | null) {
+    const sx = o.x
+    const sz = o.z
+    const ex = end.x
+    const ez = end.z
+    if (damage > 0) {
+      const lenSq = (ex - sx) ** 2 + (ez - sz) ** 2
+      for (const e of this.enemies) {
+        if (this.distToSegment(e.pos.x, e.pos.z, sx, sz, ex, ez) > width + e.radius) continue
+        const along = lenSq > 0 ? Math.max(0, Math.min(1, ((e.pos.x - sx) * (ex - sx) + (e.pos.z - sz) * (ez - sz)) / lenSq)) : 0
+        // the move eases out, so the time to reach a point isn't linear in distance
+        const reachT = 1 - Math.sqrt(1 - along)
+        this.later.push({
+          t: reachT * (ms / 1000),
+          run: () => {
+            if (e.dead || this.distToSegment(e.pos.x, e.pos.z, sx, sz, ex, ez) > width + 1.1) return
+            this.hitPart(e, damage)
+            if (sideways) {
+              const nx = -sideways.z
+              const nz = sideways.x
+              const side = Math.sign((e.pos.x - sx) * nx + (e.pos.z - sz) * nz) || 1
+              e.knock.addScaledVector(shoveVelocity(nx * side, nz * side, knock), e.knockMul)
+            } else {
+              this.shoveFrom(e, sx, sz, knock)
+            }
+          },
+        })
+      }
+    }
+    for (const b of this.breakables) {
+      if (!b.broken && this.distToSegment(b.x, b.z, sx, sz, ex, ez) <= width + b.r) this.events.onSmash(b)
+    }
   }
 
   /** Arm reach: whatever body reaches the blade, not just its centre. */

@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import { DECAL_Y } from './world'
-import { PARTS, READY, type AbilityDef, type DropGate, type Tier } from './abilities'
+import { PARTS, type AbilityDef, type DropGate, type Tier } from './abilities'
 import type { SlotName } from './still'
 import type { Archetype, Pack } from './combat'
 import type { Terrain } from './terrain'
@@ -83,7 +83,7 @@ export function dropChance(
 export function rollPart(from: Archetype, taken: readonly AbilityDef[], source: DropSource, excludeSlot?: SlotName): AbilityDef | null {
   const on = new Set(taken.map((p) => p.id))
   const gates = GATES[source]
-  const pool = PARTS.filter((p) => READY.has(p.id) && !on.has(p.id) && gates.includes(p.drops) && p.slot !== excludeSlot)
+  const pool = PARTS.filter((p) => !on.has(p.id) && gates.includes(p.drops) && p.slot !== excludeSlot)
   if (pool.length === 0) return null
 
   // tier first, then fall back through the others if that tier has nothing left

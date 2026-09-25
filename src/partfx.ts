@@ -1,7 +1,8 @@
 import * as THREE from 'three'
 import { DECAL_Y } from './world'
 import { tellMaterial, releaseTell, COLD, COLD_DEEP, EMBER, VFX_TIME, type Vfx } from './vfx'
-import { PART, type BreachHole, type EnemyStatus, type PartEvent, type PartRuntime } from './parts'
+import { PART, type BreachHole, type EnemyStatus, type PartEvent, type PartRuntime, type Zone } from './parts'
+import type { Terrain } from './terrain'
 import type { Enemy } from './enemy'
 import type { Still } from './still'
 
@@ -22,11 +23,17 @@ interface Landing {
 }
 
 /** What PartFx may read of Combat. Nothing here writes. */
-export interface StatusReader {
+export interface CombatView {
   statuses(): Iterable<[Enemy, Readonly<EnemyStatus>]>
   statusOf(e: Enemy): Readonly<EnemyStatus> | undefined
   shotPositions(): Iterable<THREE.Vector3>
+  readonly zones: readonly Readonly<Zone>[]
+  /** The level's solids, for where the anchor's tether would stop (movement rules, never see mode). */
+  readonly terrain: Terrain
 }
+
+/** A contracting cold ring on the floor that fades as it closes: the decoy's call, its burst warning. */
+interface Pulse { mesh: THREE.Mesh; mat: THREE.ShaderMaterial; t: number; T: number; from: number; to: number }
 
 /** N6: a breached piece's cold rim, burning shorter as the hole closes. */
 interface Rim { hole: BreachHole; t: number; max: number; group: THREE.Group; mat: THREE.MeshBasicMaterial; flare: number }
@@ -59,6 +66,9 @@ const WALL_TOP = 1.0
 const PATH_S = 0.15
 const FLARE_S = 0.1
 const RIM_COLD = new THREE.Color(0xcfe4ff)
+/** The decoy glows less than a dash afterimage: additive on a lit floor, anything brighter reads as a white slab. */
+const DECOY_OPACITY = 0.35
+const FROST = new THREE.Color(0xa9c6e6)
 const RIM_EMBER = new THREE.Color(0xff7a55)
 /** The glob leaves from about lens height. */
 const LOB_FROM_Y = 1.9
@@ -123,6 +133,20 @@ export class PartFx {
   private landings: Landing[] = []
   private badges = new Map<Enemy, Badge>()
   private motesT = 0
+  private strips = new Map<Readonly<Zone>, { mesh: THREE.Mesh; mat: THREE.ShaderMaterial }>()
+  private pulses: Pulse[] = []
+  /** N7: the decoy, a cold copy of him in the pose he left it in. */
+  private decoy: { obj: THREE.Object3D; mat: THREE.MeshBasicMaterial; pulseT: number; warned: boolean } | null = null
+  /** Plumb Line: the bob, its draining ring, and the tether back to Still. */
+  private readonly bob = new THREE.Mesh(new THREE.ConeGeometry(0.16, 0.34, 8), new THREE.MeshBasicMaterial({ color: 0xdfeeff, blending: THREE.AdditiveBlending, transparent: true }))
+  private readonly bobMat = tellMaterial('radial', 1, COLD, COLD_DEEP, { cold: true })
+  private readonly bobRing = new THREE.Mesh(new THREE.RingGeometry(0.85, 1, 32), this.bobMat)
+  private readonly tetherMat = tellMaterial('strip', 1, COLD, COLD_DEEP, { cold: true })
+  private readonly tether = new THREE.Mesh(unitStrip(), this.tetherMat)
+  private readonly tetherTick = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.3, 0.12), new THREE.MeshBasicMaterial({ color: 0xeef6ff, blending: THREE.AdditiveBlending, transparent: true }))
+  private bobT = 0
+  /** Borrowed Time's afterimage: where a rewind would take him, 1.5 s behind. */
+  private echoGhost: { obj: THREE.Object3D; mat: THREE.MeshBasicMaterial } | null = null
   private rims = new Map<number, Rim>()
   private readonly edgeGeo = new THREE.BoxGeometry(1, 0.05, 0.05)
   /** Ricochet's ready tick: one cold mark on the wall where it would bounce. */
@@ -160,15 +184,20 @@ export class PartFx {
     private readonly still: Still,
     /** Combat's part runtime: windows, decoy, anchor. Read every frame, never written. */
     private readonly parts: Readonly<PartRuntime>,
-    /** Combat's marks and slows, read-only. */
-    private readonly status: StatusReader,
+    /** Combat's statuses, zones and shots, read-only. */
+    private readonly status: CombatView,
   ) {
     this.shell.visible = false
     this.anvilRing.rotation.x = -Math.PI / 2
     this.anvilRing.visible = false
     this.anvilMat.opacity = 0.8
     this.bankMark.visible = false
-    scene.add(this.shell, this.anvilRing, this.bankMark)
+    this.bobRing.rotation.x = -Math.PI / 2
+    this.bobMat.opacity = 0.8
+    this.tetherMat.opacity = 0.3
+    this.bob.rotation.x = Math.PI
+    for (const m of [this.bob, this.bobRing, this.tether, this.tetherTick]) m.visible = false
+    scene.add(this.shell, this.anvilRing, this.bankMark, this.bob, this.bobRing, this.tether, this.tetherTick)
   }
 
   /** One instant from Combat's onPart. */
@@ -202,6 +231,17 @@ export class PartFx {
       for (const h of ev.holes) {
         if (ev.open) this.openRim(h, ev.seconds ?? 4)
         else this.closeRim(h.id)
+      }
+    } else if (ev.kind === 'decoy') {
+      if (ev.state === 'spawn') {
+        this.dropDecoy()
+        // spawned in his exact pose, turned the way he faces
+        const g = this.still.makeGhost(DECOY_OPACITY)
+        g.obj.position.set(ev.at.x, 0, ev.at.z)
+        this.scene.add(g.obj)
+        this.decoy = { ...g, pulseT: 0, warned: false }
+      } else {
+        this.dropDecoy()
       }
     } else if (ev.kind === 'mark') {
       const b = this.badges.get(ev.enemy)
@@ -245,6 +285,21 @@ export class PartFx {
     this.drawBadges(dt)
     this.drawFrost(dt)
     this.drawRims(dt)
+    this.drawStrips()
+    this.drawDecoy(dt)
+    this.drawAnchor(dt)
+    for (let i = this.pulses.length - 1; i >= 0; i--) {
+      const p = this.pulses[i]!
+      p.t += dt
+      const k = Math.min(1, p.t / p.T)
+      p.mesh.scale.setScalar(p.from + (p.to - p.from) * k)
+      p.mat.opacity = 0.8 * (1 - k * 0.6)
+      if (k >= 1) {
+        this.scene.remove(p.mesh)
+        releaseTell(p.mat)
+        this.pulses.splice(i, 1)
+      }
+    }
 
     for (let i = this.beams.length - 1; i >= 0; i--) {
       const b = this.beams[i]!
@@ -302,8 +357,34 @@ export class PartFx {
     if (at) this.bankMark.position.set(at.x, WALL_TOP * 0.9, at.z)
   }
 
+  /** Where a rewind would take him (1.5 s behind), or null while it isn't available. */
+  echo(at: THREE.Vector3 | null) {
+    if (!at) {
+      if (this.echoGhost) {
+        this.scene.remove(this.echoGhost.obj)
+        this.echoGhost.mat.dispose()
+        this.echoGhost = null
+      }
+      return
+    }
+    if (!this.echoGhost) {
+      this.echoGhost = this.still.makeGhost(0.14)
+      this.scene.add(this.echoGhost.obj)
+    }
+    this.echoGhost.obj.position.set(at.x, 0, at.z)
+    this.echoGhost.obj.rotation.y = this.still.facing
+  }
+
   clear() {
     this.bankTick(null)
+    this.echo(null)
+    this.dropDecoy()
+    for (const z of [...this.strips.keys()]) this.dropStrip(z)
+    for (const p of this.pulses) {
+      this.scene.remove(p.mesh)
+      releaseTell(p.mat)
+    }
+    this.pulses.length = 0
     for (const id of [...this.rims.keys()]) this.closeRim(id)
     while (this.landings.length) this.dropLanding(0)
     for (const e of [...this.badges.keys()]) this.dropBadge(e)
@@ -410,6 +491,97 @@ export class PartFx {
       const left = r.t / r.max
       r.mat.opacity = r.t < 1 ? 0.35 + Math.random() * 0.6 : 0.9
       if (h.kind === 'wall') for (const e of r.group.children) e.scale.x = Math.max(0.05, (e.userData.len as number) * left)
+    }
+  }
+
+  /** Frost strips: static rime along the path, thinning from its edges as it runs out (G2). */
+  private drawStrips() {
+    const live = new Set(this.status.zones)
+    for (const z of [...this.strips.keys()]) if (!live.has(z)) this.dropStrip(z)
+    for (const z of this.status.zones) {
+      let s = this.strips.get(z)
+      if (!s) {
+        // frost, not a white slab: a colder blue, and see-through
+        const mat = tellMaterial('strip', 1, FROST, COLD_DEEP, { cold: true })
+        mat.opacity = 0.45
+        s = { mesh: new THREE.Mesh(this.stripGeo, mat), mat }
+        this.scene.add(s.mesh)
+        this.strips.set(z, s)
+      }
+      const a = new THREE.Vector3(z.ax, 0, z.az)
+      const b = new THREE.Vector3(z.bx, 0, z.bz)
+      this.pose(s.mesh, a, b, Math.max(0.05, z.halfW * 2 * (z.t / z.max)), DECAL_Y + 0.012)
+    }
+  }
+
+  private dropStrip(z: Readonly<Zone>) {
+    const s = this.strips.get(z)
+    if (!s) return
+    this.scene.remove(s.mesh)
+    releaseTell(s.mat)
+    this.strips.delete(z)
+  }
+
+  private pulse(at: THREE.Vector3, from: number, to: number, T: number) {
+    const mat = tellMaterial('radial', 1, COLD, COLD_DEEP, { cold: true })
+    const mesh = new THREE.Mesh(this.ringGeo, mat)
+    mesh.rotation.x = -Math.PI / 2
+    mesh.position.set(at.x, DECAL_Y + 0.02, at.z)
+    mesh.scale.setScalar(from)
+    this.scene.add(mesh)
+    this.pulses.push({ mesh, mat, t: 0, T, from, to })
+  }
+
+  /** N7: the decoy breathes, calls every 0.75 s, and in its last 0.6 s shows where it will burst. */
+  private drawDecoy(dt: number) {
+    const d = this.parts.decoy
+    const g = this.decoy
+    if (!d || !g) return
+    g.mat.opacity = DECOY_OPACITY + 0.07 * Math.sin(d.t * Math.PI * 2 * 1.3)
+    if ((g.pulseT -= dt) <= 0) {
+      g.pulseT = 0.75
+      this.pulse(d.pos, 1.0, 0.3, 0.5)
+    }
+    if (!g.warned && d.t <= 0.6) {
+      g.warned = true
+      // the burst area closing to its true size: harmless to Still, and the cold says so
+      this.pulse(d.pos, d.def.radius * PREVIEW_WIDE, d.def.radius, Math.max(0.05, d.t))
+    }
+  }
+
+  private dropDecoy() {
+    if (!this.decoy) return
+    this.scene.remove(this.decoy.obj)
+    this.decoy.mat.dispose()
+    this.decoy = null
+  }
+
+  /**
+   * The anchor: a cold bob at knee height over a draining ring, and a faint tether
+   * back to Still. Past its reach the tether goes grey (a snap would be refused);
+   * where a wall cuts the straight line it ends at the wall with a tick, because
+   * that's where the snap would stop. Solid mode: a snap is movement, not sight.
+   */
+  private drawAnchor(dt: number) {
+    const a = this.parts.anchor
+    for (const m of [this.bob, this.bobRing, this.tether]) m.visible = !!a
+    this.tetherTick.visible = false
+    if (!a) return
+    this.bobT += dt
+    this.bob.position.set(a.pos.x, 0.5 + Math.sin(this.bobT * 3) * 0.06, a.pos.z)
+    this.bobRing.position.set(a.pos.x, DECAL_Y + 0.012, a.pos.z)
+    this.bobRing.scale.setScalar(0.25 + 0.55 * Math.max(0, a.t / a.max))
+    const s = this.still.pos
+    const far = Math.hypot(a.pos.x - s.x, a.pos.z - s.z) > a.def.range
+    const stop = this.status.terrain.clampMove(s.x, s.z, a.pos.x, a.pos.z, 0.42)
+    const cut = Math.hypot(stop.x - a.pos.x, stop.z - a.pos.z) > 0.3
+    const end = new THREE.Vector3(stop.x, 0, stop.z)
+    this.pose(this.tether, s, cut ? end : a.pos, 0.06, 0.45)
+    ;(this.tetherMat.uniforms.uHot!.value as THREE.Color).copy(far ? new THREE.Color(0x6a7480) : COLD)
+    ;(this.bob.material as THREE.MeshBasicMaterial).color.setHex(far ? 0x6a7480 : 0xdfeeff)
+    if (cut) {
+      this.tetherTick.visible = true
+      this.tetherTick.position.set(end.x, 0.9, end.z)
     }
   }
 

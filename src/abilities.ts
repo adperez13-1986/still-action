@@ -157,7 +157,7 @@ const I = {
 
 /**
  * The whole pool: 30 parts, 12 shapes. Numbers are the balancer's, words and icons
- * the translator's (design/parts). Only the ids in READY can drop yet.
+ * the translator's (design/parts).
  */
 export const PARTS: AbilityDef[] = [
   // ---------------- HEAD: reaches far ----------------
@@ -363,20 +363,3 @@ export const byId = (id: string): AbilityDef => PARTS.find((p) => p.id === id)!
 
 /** The kit `?depth=` hands out, and the pool the random first part comes from. */
 export const STARTING: AbilityDef[] = ['focusing-lens', 'pressure-vent', 'scrap-cleaver', 'kickstart'].map(byId)
-
-/**
- * Parts whose code is in. Only these drop. Each build step (§6) adds its ids;
- * at step 6 it's every id, and the set can be deleted.
- */
-export const READY = new Set<string>([
-  // step 1: today's parts, ported
-  'focusing-lens', 'cracked-lens', 'pressure-vent', 'backdraft-vent', 'scrap-cleaver', 'kickstart', 'skid-plates',
-  // step 2: the parts that fit the existing shapes, plus the lob and the hop
-  'piston', 'rusted-hook', 'frayed-cleaver', 'skitter', 'spring-heels', 'overrun', 'patient-lens', 'overclocked-coil', 'flare',
-  // step 3: the windows
-  'ward', 'mirror-ward', 'brace', 'anvil',
-  // step 4: statuses, the interrupt, the throw
-  'signal-flare', 'chill-vent', 'parry-clamp', 'clamp-toss',
-  // step 5: bounce and breach
-  'ricochet-lens', 'through-line',
-])

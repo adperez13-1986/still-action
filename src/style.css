@@ -110,6 +110,10 @@ html, body {
 }
 #hp { left: 50%; bottom: calc(env(safe-area-inset-bottom, 0px) + 14px); width: 168px; margin-left: -84px; }
 #hp i { background: var(--hp); }
+/* N10: the last moments' damage, pale, just past the fill: what a rewind would give back */
+#hp u { position: absolute; top: 0; bottom: 0; left: 100%; width: 0; background: rgba(214, 235, 255, .35); text-decoration: none; }
+/* the anchor out of reach: the snap's tether half goes dim */
+.btn.far .lbl path[stroke-dasharray] { opacity: .35; }
 #strain { left: 50%; top: calc(env(safe-area-inset-top, 0px) + 12px); width: 210px; margin-left: -105px; }
 #strain i { background: linear-gradient(90deg, #8a6a2f, var(--strain)); }
 #strain.high { border-color: var(--strain); animation: strain-pulse 1.1s ease-in-out infinite; }

@@ -7,7 +7,6 @@ import type { Enemy } from './enemy'
 /**
  * What parts leave out in the world, and the engine numbers that aren't any one
  * part's own. A part's own numbers live on its def in PARTS; these are the glue.
- * The 1.5 s history ring joins this file with Borrowed Time.
  */
 
 /** Engine constants: not any one part's number. */
@@ -85,6 +84,72 @@ export interface StillMove {
   vault: boolean
   /** Stick lock after landing (a vault only). */
   lockMs: number
+}
+
+/** 1.5 s of where Still stood and what he lost. A fixed ring, no allocation per tick. */
+export class History {
+  private readonly x = new Float32Array(PART.historyCap)
+  private readonly z = new Float32Array(PART.historyCap)
+  private readonly dmg = new Float32Array(PART.historyCap)
+  private readonly dt = new Float32Array(PART.historyCap)
+  private head = 0
+  private n = 0
+
+  push(x: number, z: number, dmg: number, dt: number) {
+    this.x[this.head] = x
+    this.z[this.head] = z
+    this.dmg[this.head] = dmg
+    this.dt[this.head] = dt
+    this.head = (this.head + 1) % PART.historyCap
+    this.n = Math.min(this.n + 1, PART.historyCap)
+  }
+
+  /**
+   * Newest → oldest samples covering `seconds` of game time (or everything held).
+   * `points` is the rewind path in travel order; `damage` is the HP lost in it; `slots` are the ring indices.
+   */
+  window(seconds: number): { points: THREE.Vector3[]; damage: number; slots: number[] } {
+    const points: THREE.Vector3[] = []
+    const slots: number[] = []
+    let damage = 0
+    let t = 0
+    for (let k = 0; k < this.n && t < seconds; k++) {
+      const i = (this.head - 1 - k + PART.historyCap) % PART.historyCap
+      points.push(new THREE.Vector3(this.x[i], 0, this.z[i]))
+      slots.push(i)
+      damage += this.dmg[i]!
+      t += this.dt[i]!
+    }
+    return { points, damage, slots }
+  }
+
+  /** The sample `seconds` ago (Borrowed Time's afterimage), or null if the ring is empty. */
+  at(seconds: number): THREE.Vector3 | null {
+    const w = this.window(seconds).points
+    return w[w.length - 1] ?? null
+  }
+
+  /** HP lost in the last `seconds` (the N10 pale segment). */
+  recentDamage(seconds: number): number {
+    let damage = 0
+    let t = 0
+    for (let k = 0; k < this.n && t < seconds; k++) {
+      const i = (this.head - 1 - k + PART.historyCap) % PART.historyCap
+      damage += this.dmg[i]!
+      t += this.dt[i]!
+    }
+    return damage
+  }
+
+  /** A rewind gave this damage back: it can never come back twice. */
+  zero(slots: number[]) {
+    for (const s of slots) this.dmg[s] = 0
+  }
+
+  clear() {
+    this.head = 0
+    this.n = 0
+  }
 }
 
 export interface BreachHole {

@@ -65,7 +65,13 @@ export interface Hud {
    * slot was empty. The new part inherits the slot's cooldown as a fraction, so
    * swapping never resets anything.
    */
-  equip: (def: AbilityDef) => AbilityDef | null
+  equip: (def: AbilityDef, forceFrac?: number) => AbilityDef | null
+  /** Start a slot's full cooldown now (an anchor that faded). */
+  startCooldown: (slot: SlotName) => void
+  /** A state class on one button: 'far' dims the snap when the anchor is out of reach. */
+  setClass: (slot: SlotName, cls: 'far', on: boolean) => void
+  /** N10: the last moments' damage as a pale segment trailing the integrity fill, 0..1 of the bar. */
+  recentDamage: (frac: number) => void
   /** A new run: these parts on their buttons, every other slot empty. */
   resetLoadout: (parts: readonly AbilityDef[]) => void
   /** The boss's health across the top. Null hides it. */
@@ -108,7 +114,7 @@ export function createHud(root: HTMLElement): Hud {
     <div id="stickZone"></div>
     <div id="stickBase"><div id="stickKnob"></div></div>
     <div class="meter" id="strain"><i style="width:0%"></i><b>STRAIN</b></div>
-    <div class="meter" id="hp"><i style="width:100%"></i><b>INTEGRITY</b></div>
+    <div class="meter" id="hp"><u></u><i style="width:100%"></i><b>INTEGRITY</b></div>
     <div id="offer">
       <div class="info">
         <div class="head"><span class="slot"></span><b class="name"></b></div>
@@ -134,6 +140,9 @@ export function createHud(root: HTMLElement): Hud {
   const strainMeter = root.querySelector<HTMLElement>('#strain')!
   const strainFill = strainMeter.querySelector<HTMLElement>('i')!
   const hpFill = root.querySelector<HTMLElement>('#hp i')!
+  /** N10's pale segment: what a rewind would give back, sitting just past the fill. */
+  const hpGhost = root.querySelector<HTMLElement>('#hp u')!
+  let recent = 0
   const offerEl = root.querySelector<HTMLElement>('#offer')!
   const offerSlot = offerEl.querySelector<HTMLElement>('.slot')!
   const offerName = offerEl.querySelector<HTMLElement>('.name')!
@@ -332,6 +341,8 @@ export function createHud(root: HTMLElement): Hud {
       strainFill.style.width = `${Math.min(100, (state.strain / 20) * 100)}%`
       strainMeter.classList.toggle('high', state.strain >= 14)
       hpFill.style.width = `${Math.max(0, state.integrity * 100)}%`
+      hpGhost.style.left = `${Math.max(0, state.integrity * 100)}%`
+      hpGhost.style.width = `${Math.max(0, Math.min(1 - state.integrity, recent)) * 100}%`
     },
 
     onFire(cb) { listeners.push(cb) },
@@ -339,12 +350,13 @@ export function createHud(root: HTMLElement): Hud {
     get loadout() { return buttons.flatMap((b) => (b.def ? [b.def] : [])) },
     get slots() { return buttons.map((b) => ({ slot: b.slot, def: b.def })) },
 
-    equip(def) {
+    equip(def, forceFrac) {
       const b = buttons.find((x) => x.slot === def.slot)!
       const old = b.def
       const now = state.clock
-      // a filled slot keeps its cooldown fraction; a newly filled one arrives ready
-      const frac = old ? Math.max(0, b.readyAt - now) / old.cooldownMs : 0
+      // a filled slot keeps its cooldown fraction; a newly filled one arrives ready.
+      // `forceFrac` overrides it: swapping out a live anchor hands on a full cooldown, not a free button.
+      const frac = forceFrac ?? (old ? Math.max(0, b.readyAt - now) / old.cooldownMs : 0)
       b.def = def
       b.readyAt = now + frac * def.cooldownMs
       paint(b)
@@ -419,6 +431,17 @@ export function createHud(root: HTMLElement): Hud {
       if (!b.def || b.icon === st) return
       b.icon = st
       b.el.querySelector('.lbl')!.innerHTML = svg((st && b.def.iconStates?.[st]) ?? b.def.icon)
+    },
+    startCooldown(slot) {
+      const b = buttons.find((x) => x.slot === slot)!
+      if (b.def) b.readyAt = state.clock + b.def.cooldownMs
+    },
+    setClass(slot, cls, on) {
+      const el = buttons.find((x) => x.slot === slot)!.el
+      if (el.classList.contains(cls) !== on) el.classList.toggle(cls, on)
+    },
+    recentDamage(frac) {
+      recent = frac
     },
     isReady(slot) {
       const b = buttons.find((x) => x.slot === slot)!

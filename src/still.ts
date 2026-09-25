@@ -68,6 +68,7 @@ type Pose =
   | 'ward' | 'brace' | 'mirror' | 'anvil' | 'anvil-slam'
   | 'signal' | 'chill' | 'parry' | 'toss'
   | 'ricochet' | 'through'
+  | 'lure' | 'frost' | 'plant' | 'snap' | 'rewind'
 
 /**
  * Beat -> pose and duration. The ported parts borrow their shape's pose until
@@ -102,6 +103,11 @@ const POSES: Partial<Record<AttackSpec['beat'], { pose: Pose; dur: number; yaw?:
   'overrun-charge': { pose: 'ram', dur: 0.3 },
   skitter: { pose: 'hop', dur: 0.26 },
   spring: { pose: 'spring', dur: 0.4 },
+  frost: { pose: 'frost', dur: 0.3 },
+  plant: { pose: 'plant', dur: 0.3 },
+  snap: { pose: 'snap', dur: 0.24 },
+  rewind: { pose: 'rewind', dur: 0.3 },
+  lure: { pose: 'lure', dur: 0.35 },
   // stances: the rise, then held for the window (holdS), then a 0.1 s release
   ward: { pose: 'ward', dur: 0.35 },
   brace: { pose: 'brace', dur: 0.4 },
@@ -304,8 +310,9 @@ export class Still {
       at.push(total)
       prev = p
     }
+    // he faces where he's going, except on a rewind: that one pulls him backwards, still looking ahead
     const first = m.path[0]
-    if (first && Math.hypot(first.x - from.x, first.z - from.z) > 0.01) this.facing = Math.atan2(first.x - from.x, first.z - from.z)
+    if (m.kind !== 'rewind' && first && Math.hypot(first.x - from.x, first.z - from.z) > 0.01) this.facing = Math.atan2(first.x - from.x, first.z - from.z)
     this.move = {
       from, path: m.path.map((p) => new THREE.Vector3(p.x, 0, p.z)), at, total, T: Math.max(0.001, m.ms / 1000), t: 0,
       hopH: m.hopH, dash: m.kind === 'dash', vault: m.vault, lockMs: m.lockMs, ghostEvery: m.ghostEvery ?? GHOST_EVERY, src: m,
@@ -333,9 +340,15 @@ export class Still {
       m.t = Math.min(m.T, m.t + dt)
       const k = m.t / m.T
       this.placeOnPath(m, (1 - (1 - k) * (1 - k)) * m.total)
-      this.bob += dt * 22
+      // a rewind un-walks: the bob runs backwards, so the legs play the walk in reverse
+      const back = m.src.kind === 'rewind'
+      this.bob += dt * (back ? -13 : 22)
       this.parts.torso.rotation.x = 0.16
-      if (m.dash) {
+      if (back) {
+        const swing = Math.sin(this.bob) * 0.45
+        this.legL.rotation.x = swing
+        this.legR.rotation.x = -swing
+      } else if (m.dash) {
         // leaning into the dash, legs tucked; the short step leans half as far
         const lean = this.anim?.pose === 'step' ? 0.5 : 1
         this.parts.torso.rotation.x = 0.16 + 0.4 * lean
@@ -409,15 +422,24 @@ export class Still {
   private spawnGhost() {
     const scene = this.group.parent
     if (!scene) return
+    const { obj, mat } = this.makeGhost(0.45)
+    scene.add(obj)
+    this.ghosts.push({ obj, mat, life: GHOST_LIFE })
+  }
+
+  /**
+   * A cold copy of him in his pose right now: the decoy (N7), Borrowed Time's echo,
+   * the dash afterimages. The caller adds it to the scene and owns it (dispose `mat`).
+   */
+  makeGhost(opacity: number): { obj: THREE.Object3D; mat: THREE.MeshBasicMaterial } {
     const mat = new THREE.MeshBasicMaterial({
-      color: 0x9fc0ff, transparent: true, opacity: 0.45, depthWrite: false, blending: THREE.AdditiveBlending,
+      color: 0x9fc0ff, transparent: true, opacity, depthWrite: false, blending: THREE.AdditiveBlending,
     })
     const obj = this.group.clone(true)
     obj.traverse((o) => {
       if (o instanceof THREE.Mesh) o.material = mat
     })
-    scene.add(obj)
-    this.ghosts.push({ obj, mat, life: GHOST_LIFE })
+    return { obj, mat }
   }
 
   private updateGhosts(dt: number) {
@@ -535,6 +557,45 @@ export class Still {
         head.rotation.x = -0.55 * fire * big
         torso.rotation.x = 0.16 - 0.16 * fire
         this.recoil = 0.15 * fire * big
+        break
+      }
+      case 'lure': {
+        // he leaves something behind: the cage opens, the lens flares, he dips his head and settles smaller
+        const e = Math.sin(k * Math.PI)
+        torso.scale.setScalar(1 + 0.2 * e)
+        head.rotation.x = 0.3 * e
+        this.lift = -0.04 * e
+        break
+      }
+      case 'frost':
+        // the dash lean, with the trailing leg dragging, scraping frost
+        this.legR.rotation.x = 0.4
+        this.armL.rotation.x = 0.9 * (1 - k)
+        this.armR.rotation.x = 0.9 * (1 - k)
+        break
+      case 'plant': {
+        // the clamp drops the bob, jaws opening, as he stomps
+        const drop = Math.min(1, k / 0.5)
+        this.armL.rotation.x = -0.8 * (1 - drop)
+        const open = JAW_OPEN * 0.6 * drop * (1 - k)
+        this.jawL.position.x = JAW_X - JAW_OPEN - open
+        this.jawR.position.x = JAW_X + JAW_OPEN + open
+        this.legR.rotation.x = k < 0.4 ? -0.5 * (k / 0.4) : -0.5 * (1 - (k - 0.4) / 0.6)
+        this.lift = k > 0.4 && k < 0.7 ? -0.05 : 0
+        break
+      }
+      case 'snap':
+        // pitched forward toward the anchor, arms trailing; a squash on arrival
+        torso.rotation.x = 0.16 + (0.5 - 0.16) * (k < 0.8 ? 1 : (1 - k) / 0.2)
+        this.armL.rotation.x = this.armR.rotation.x = 1.0 * (k < 0.8 ? 1 : (1 - k) / 0.2)
+        this.lift = k > 0.85 ? -0.05 : 0
+        break
+      case 'rewind': {
+        // yanked from the chest: arching back, arms trailing forward
+        const e = k < 0.8 ? 1 : (1 - k) / 0.2
+        head.rotation.x = -0.4 * e
+        torso.rotation.x = 0.16 - 0.2 * e
+        this.armL.rotation.x = this.armR.rotation.x = -0.6 * e
         break
       }
       case 'coil': {

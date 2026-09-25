@@ -682,6 +682,38 @@ export function ability(beat: BeatKey, pushed: boolean, power = 0) {
       tone(c, lowpass(c, d, 900), 'sawtooth', t, 65 * r, 190 * r, 0.2, 0.6 * k, 0.01)
       hiss(c, d, t, 0.22, 0.6 * k, 'bandpass', 400, 2400, 1.4, 0.02)
       break
+    case 'frost':
+      // the dash voice with icy air for its hiss, and ice forming behind him
+      tone(c, lowpass(c, d, 900), 'sawtooth', t, 65 * r, 190 * r, 0.2, 0.6 * k, 0.01)
+      hiss(c, d, t, 0.22, 0.4 * k, 'highpass', 5000, 3000, 0.7, 0.02)
+      for (let i = 0; i < 6; i++) {
+        const f = 2000 + Math.random() * 1500
+        tone(c, d, 'triangle', t + 0.05 + i * 0.025, f, f, 0.03, 0.04)
+      }
+      break
+    case 'plant':
+      // the bob let go: a heavy clink and a soft pluck
+      sample(c, 'metalMedium', d, 0.6, 0.7)
+      tone(c, d, 'sine', t, 220, 220, 0.4, 0.1)
+      break
+    case 'snap':
+      // the dash voice turned around: pulled back, not pushing off
+      tone(c, lowpass(c, d, 900), 'sawtooth', t, 190 * r, 65 * r, 0.2, 0.6 * k, 0.01)
+      hiss(c, d, t, 0.2, 0.5 * k, 'bandpass', 2400, 400, 1.4, 0.01)
+      break
+    case 'rewind': {
+      // a reverse swell against a falling hiss, and a grind every time: it always costs strain
+      tone(c, d, 'sine', t, 80 * r, 400 * r, 0.25, 0.5 * k, 0.02)
+      hiss(c, d, t, 0.25, 0.4 * k, 'bandpass', 3000, 500, 1.5, 0.01)
+      if (!pushed) grind(c, d, t)
+      break
+    }
+    case 'lure':
+      // two of him: a doubled voice, a slow beat between them
+      tone(c, d, 'sine', t, 660 * r, 660 * r, 0.4, 0.12 * k, 0.02)
+      tone(c, d, 'sine', t, 663 * r, 663 * r, 0.4, 0.12 * k, 0.02)
+      hiss(c, d, t, 0.15, 0.2, 'highpass', 5000, 6000, 0.7)
+      break
     case 'overrun-step':
       sample(c, 'step', d, 0.5, 1.2)
       hiss(c, d, t, 0.1, 0.3, 'bandpass', 600, 1800, 1.2, 0.01)
@@ -798,6 +830,64 @@ export function breachClose(pan: number) {
   const d = out(c, 'abilities', pan)
   sample(c, 'generic', d, 0.25, 0.8)
   hiss(c, d, c.currentTime, 0.2, 0.2, 'lowpass', 800, 200, 0.7, 0.01)
+}
+
+/** The decoy calling, panned to where it stands. */
+export function decoyBeacon(pan: number) {
+  const c = live()
+  if (!c) return
+  tone(c, out(c, 'abilities', pan), 'sine', c.currentTime, 1318, 1318, 0.08, 0.06)
+}
+
+/**
+ * The decoy bursts: a nova with a bell in it. Never the triangle cluster of
+ * shatter(), the HP death: the decoy breaking must never sound like Still breaking.
+ */
+export function decoyBurst(pan: number) {
+  const c = live()
+  if (!c) return
+  const t = c.currentTime
+  const d = out(c, 'abilities', pan)
+  tone(c, d, 'sine', t, 120, 38, 0.42, 0.9)
+  hiss(c, d, t, 0.45, 0.6, 'lowpass', 5000, 250, 0.7, 0.004)
+  sample(c, 'bell', d, 0.4, 1.1)
+  sample(c, 'tin', d, 0.3)
+}
+
+/** Arriving at the end of a snap: a plate landing. */
+export function snapArrive() {
+  const c = live()
+  if (!c) return
+  sample(c, 'plateHeavy', out(c, 'abilities', 0), 0.5)
+}
+
+/** Back from a rewind: a small bell as the afterimage merges into him. */
+export function rewindArrive() {
+  const c = live()
+  if (!c) return
+  sample(c, 'bell', out(c, 'abilities', 0), 0.2, 1.8)
+}
+
+/** The anchor crossed out of snap reach: one soft descending tick. */
+export function tetherFar() {
+  const c = live()
+  if (!c) return
+  tone(c, out(c, 'abilities', 0), 'triangle', c.currentTime, 880, 660, 0.05, 0.05)
+}
+
+/** The anchor faded unused: quiet. */
+export function anchorFade() {
+  const c = live()
+  if (!c) return
+  tone(c, out(c, 'abilities', 0), 'sine', c.currentTime, 440, 330, 0.2, 0.08)
+}
+
+/** A press that did nothing (a snap past reach): a soft denied tick. */
+export function denied() {
+  const c = live()
+  if (!c) return
+  const d = out(c, 'abilities', 0)
+  tone(c, d, 'square', c.currentTime, 220, 180, 0.05, 0.08, 0.002)
 }
 
 /** A shot destroyed on the Ward: a ting. */

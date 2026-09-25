@@ -11,7 +11,12 @@ export type EnemyPhase = 'approach' | 'windup' | 'strike' | 'recover'
 
 /** What an enemy does to the world on the tick it strikes. Combat resolves it. */
 export type EnemyAction =
-  | { kind: 'melee'; damage: number }
+  /**
+   * `reach`: the strike's own radius around the striker. A strike aimed at something
+   * else (the decoy) still lands on Still if he's inside it. Without it, only the
+   * target is hit.
+   */
+  | { kind: 'melee'; damage: number; reach?: number }
   /** `bounces`: an answer shot reflects off walls this many times, retracing a banked bolt. */
   | { kind: 'shot'; dir: THREE.Vector3; damage: number; bounces?: number }
   /** A fan of shots from one point (the boss's cannon). */
@@ -326,7 +331,7 @@ export class Chaser implements Enemy {
         if (this.timer <= 0) {
           this.phase = 'strike'
           // committed: the strike lands where the ring is, whether you left or not
-          if (dist <= CHASER.strikeRadius) action = { kind: 'melee', damage: CHASER.damage }
+          if (dist <= CHASER.strikeRadius) action = { kind: 'melee', damage: CHASER.damage, reach: CHASER.strikeRadius }
           this.timer = 90
         }
         break
