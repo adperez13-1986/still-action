@@ -25,3 +25,19 @@ export type ExitKind = 'cold' | 'warm'
 export function exitsAfterBoss(depth: number): ExitKind[] {
   return depth < RUN_DEPTHS ? ['cold', 'warm'] : ['warm']
 }
+
+/** The hour the Workshop window shows when he comes home. */
+export type HomeHour = 'morning' | 'noon' | 'afternoon' | 'dusk' | 'night'
+
+/**
+ * §4.13. Broken or Stopped: whatever hour it happened. Home before the last
+ * depth is the afternoon, the kids awake; home from the last depth is night,
+ * the kids asleep. Going home early is a different homecoming, not a lesser one.
+ */
+export function hourAtEnd(kind: 'broken' | 'stopped' | 'home', depth: number): HomeHour {
+  if (kind === 'home') return depth >= RUN_DEPTHS ? 'night' : 'afternoon'
+  if (depth <= 2) return 'morning'
+  if (depth === 3) return 'noon'
+  if (depth <= 5) return 'afternoon'
+  return 'dusk'
+}

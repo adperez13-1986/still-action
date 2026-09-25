@@ -60,12 +60,12 @@ function stats(d: AbilityDef, other?: AbilityDef) {
   ].join('')
 }
 
-function card(d: AbilityDef, tag: string, other?: AbilityDef, conflict?: string | null) {
+function card(d: AbilityDef, tag: string, other?: AbilityDef, conflict?: string | null, fresh = false) {
   // the price on every cast, the same pips the button carries, so the card and the button agree
   const pips = d.pips ? ` <span class="ppips">${(d.pips.hollow ? '\u25cb' : '\u25cf').repeat(d.pips.n)}</span>` : ''
   return `
     <div class="pcard tier-${d.tier}">
-      <div class="tag">${tag}</div>
+      <div class="tag">${tag}${fresh ? ' <span class="new">new</span>' : ''}</div>
       <div class="pname">${d.name}${pips}</div>
       <p class="pline">${d.line}</p>
       <div class="stats">${stats(d, other)}</div>
@@ -86,7 +86,10 @@ export interface PauseScreen {
   readonly open: boolean
   loadout: (slots: readonly { slot: SlotName; def: AbilityDef | null }[], onResume: () => void) => void
   /** `equipped` is everything on Still, for the conflict line under the incoming card. */
-  compare: (current: AbilityDef | null, incoming: AbilityDef, equipped: readonly AbilityDef[], onTake: () => void, onLeave: () => void) => void
+  /** `fresh`: the incoming part has never been found, and its card says so. */
+  compare: (
+    current: AbilityDef | null, incoming: AbilityDef, equipped: readonly AbilityDef[], onTake: () => void, onLeave: () => void, fresh?: boolean,
+  ) => void
   hide: () => void
 }
 
@@ -113,13 +116,13 @@ export function createPauseScreen(root: HTMLElement): PauseScreen {
       )
     },
 
-    compare(current, incoming, equipped, onTake, onLeave) {
+    compare(current, incoming, equipped, onTake, onLeave, fresh = false) {
       show(
         `<h2>${SLOT_LABEL[incoming.slot]} slot</h2>
          <div class="row two">
            ${current ? card(current, 'on Still now', incoming) : emptyCard(incoming.slot, 'on Still now')}
            <div class="arrow">&rarr;</div>
-           ${card(incoming, 'on the floor', current ?? undefined, conflictLine(incoming, equipped))}
+           ${card(incoming, 'on the floor', current ?? undefined, conflictLine(incoming, equipped), fresh)}
          </div>`,
         [['leave', 'leave it', onLeave], ['take', 'take it', onTake]],
       )

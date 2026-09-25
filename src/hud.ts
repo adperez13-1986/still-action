@@ -81,8 +81,8 @@ export interface Hud {
   /** A generic prompt in the card's place (shrines). Null hides it. */
   prompt: (p: { title: string; line: string; action: string } | null) => void
   onPrompt: (cb: () => void) => void
-  /** The pickup card. Null hides it. */
-  offer: (incoming: AbilityDef | null) => void
+  /** The pickup card. Null hides it. `fresh`: never found before, and the card says so. */
+  offer: (incoming: AbilityDef | null, fresh?: boolean) => void
   onTake: (cb: () => void) => void
   onCompare: (cb: () => void) => void
   onPause: (cb: () => void) => void
@@ -120,7 +120,13 @@ export interface Hud {
 const TIER_CSS = { white: 'var(--tier-white)', blue: 'var(--tier-blue)', gold: 'var(--tier-gold)' }
 const SLOT_LABEL = { head: 'Head', torso: 'Torso', arms: 'Arms', legs: 'Legs' }
 
-export function createHud(root: HTMLElement): Hud {
+/** Where the push hints are remembered: the save, so a hint is shown once per save, not per session. */
+export interface HintStore {
+  hinted: (id: string) => boolean
+  markHinted: (id: string) => void
+}
+
+export function createHud(root: HTMLElement, hints: HintStore): Hud {
   root.innerHTML = `
     <div id="stickZone"></div>
     <div id="stickBase"><div id="stickKnob"></div></div>
@@ -128,7 +134,7 @@ export function createHud(root: HTMLElement): Hud {
     <div class="meter" id="hp"><u></u><i style="width:100%"></i><b>INTEGRITY</b></div>
     <div id="offer">
       <div class="info">
-        <div class="head"><span class="slot"></span><b class="name"></b></div>
+        <div class="head"><span class="slot"></span><b class="name"></b><span class="new">new</span></div>
         <p class="line"></p>
         <p class="replaces"></p>
       </div>
@@ -159,6 +165,7 @@ export function createHud(root: HTMLElement): Hud {
   const offerName = offerEl.querySelector<HTMLElement>('.name')!
   const offerLine = offerEl.querySelector<HTMLElement>('.line')!
   const offerReplaces = offerEl.querySelector<HTMLElement>('.replaces')!
+  const offerNew = offerEl.querySelector<HTMLElement>('.new')!
   const takeBtn = offerEl.querySelector<HTMLElement>('.take')!
   const compareBtn = offerEl.querySelector<HTMLElement>('.compare')!
   const pauseBtn = root.querySelector<HTMLElement>('#pauseBtn')!
@@ -246,24 +253,7 @@ export function createHud(root: HTMLElement): Hud {
   }
 
   /** Once per save, a push-shaped part's pushed half pulses the first time it starts recharging. */
-  const hintKey = (id: string) => `still.pushHint.${id}`
-  const hintedNow = new Set<string>()
-  const hinted = (id: string) => {
-    if (hintedNow.has(id)) return true
-    try {
-      return localStorage.getItem(hintKey(id)) === '1'
-    } catch {
-      return false
-    }
-  }
-  const markHinted = (id: string) => {
-    hintedNow.add(id)
-    try {
-      localStorage.setItem(hintKey(id), '1')
-    } catch {
-      // no storage (a private window): it just won't be remembered past this session
-    }
-  }
+  const { hinted, markHinted } = hints
 
   /**
    * N8b: ticks on the strain meter where a part changes with strain (Frayed
@@ -477,8 +467,9 @@ export function createHud(root: HTMLElement): Hud {
     },
     onPrompt(cb) { promptListeners.push(cb) },
 
-    offer(incoming) {
+    offer(incoming, fresh = false) {
       offered = incoming
+      offerNew.style.display = incoming && fresh ? '' : 'none'
       // the button that would change pulses, so "which slot" needs no reading
       for (const b of buttons) b.el.classList.toggle('target', !!incoming && b.slot === incoming.slot)
       if (!incoming) {

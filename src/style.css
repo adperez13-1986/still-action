@@ -152,6 +152,8 @@ html, body {
 #offer .name, #prompt .name { font: 700 15px/1.2 var(--display); letter-spacing: .02em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #offer p, #prompt p { margin: 3px 0 0; font-size: 12.5px; line-height: 1.25; color: #9fb2c6; }
 #offer .replaces { color: #6f8196; }
+/* never found before: a small plain tag, not a tier colour */
+#offer .new, .pcard .new { font: 700 9px/1 var(--ui); letter-spacing: .14em; text-transform: uppercase; color: #cbd7e6; border: 1px solid #3a4a5e; border-radius: 4px; padding: 2px 5px; flex: none; }
 #offer .take, #prompt .take {
   appearance: none; flex: none; width: 58px; height: 58px; border-radius: 50%;
   border: 2px solid #6f9bd0; background: #16202d; color: #e6f0fb;

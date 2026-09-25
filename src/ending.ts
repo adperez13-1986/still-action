@@ -6,7 +6,9 @@
  *
  * DRAFT COPY. The words are placeholders to feel the shape of the moment.
  */
-export type EndingKind = 'broken' | 'stopped' | 'home'
+import type { EndingKind } from './save'
+
+export type { EndingKind }
 
 const COPY: Record<EndingKind, { title: string; body: string }> = {
   broken: {

@@ -5,6 +5,7 @@ import type { SlotName } from './still'
 import { centred, DISPLAY_EYE, EYE_ON, FLOOR_SCALE, partModel } from './partmodels'
 import type { Archetype, Pack } from './combat'
 import type { Terrain } from './terrain'
+import { POOL_RULES, type PoolView } from './pool'
 
 /**
  * D2's structure, not D2's maths. Each archetype has a treasure class that
@@ -94,14 +95,32 @@ export function dropChance(
 /**
  * Null when nothing is left to find at any tier. `taken` is everything on Still
  * or on the floor; `excludeSlot` keeps a boss's second drop off the first one's slot.
+ *
+ * `pool` is what the save knows (§4.9). A part turned to the wall never comes.
+ * A moment (an elite, a bargain, the Assembler) past the first depth sometimes
+ * reaches into the parts never found, only in the tiers that moment may give;
+ * everything else, and every fall-through, is drawn from the found ones exactly
+ * as before.
  */
-export function rollPart(from: Archetype, taken: readonly AbilityDef[], source: DropSource, excludeSlot?: SlotName): AbilityDef | null {
+export function rollPart(
+  from: Archetype, taken: readonly AbilityDef[], source: DropSource, pool: PoolView, excludeSlot?: SlotName,
+): AbilityDef | null {
   const on = new Set(taken.map((p) => p.id))
   const gates = GATES[source]
-  const pool = PARTS.filter((p) => !on.has(p.id) && gates.includes(p.drops) && p.slot !== excludeSlot)
-  if (pool.length === 0) return null
+  const base = PARTS.filter((p) => !on.has(p.id) && !pool.turned.has(p.id) && gates.includes(p.drops) && p.slot !== excludeSlot)
+  const wantUnfound = pool.depth >= POOL_RULES.minDepth && Math.random() < POOL_RULES.unfound[source]
+  if (wantUnfound) {
+    const tiers = POOL_RULES.unfoundTiers[source]
+    const unfound = base.filter((p) => !pool.found.has(p.id) && tiers.includes(p.tier))
+    const def = pickPart(from, unfound, source)
+    if (def) return def
+  }
+  return pickPart(from, base.filter((p) => pool.found.has(p.id)), source)
+}
 
-  // tier first, then fall back through the others if that tier has nothing left
+/** Today's draw: tier first, falling back through the others if that tier has nothing left, then slot by treasure class. */
+function pickPart(from: Archetype, pool: readonly AbilityDef[], source: DropSource): AbilityDef | null {
+  if (pool.length === 0) return null
   const first: Tier = source === 'boss-blue' ? 'blue' : source === 'boss-gold' ? 'gold' : pickWeighted(LOOT.odds[source])
   const order: Tier[] = source === 'boss-gold' ? ['gold', 'blue', 'white'] : [first, 'blue', 'white', 'gold']
   for (const tier of order) {
@@ -137,6 +156,8 @@ export interface GroundPart {
   settle: number
   /** 0 dim .. 1 lit, eased over OFFER_S. */
   lit: number
+  /** Never found: drawn bare and unpowered, its glass stays dark. The tier shows in the beam only. */
+  bare: boolean
 }
 
 const FLY = 0.42
@@ -158,6 +179,8 @@ export class Loot {
   terrain: Terrain | null = null
   /** The part the pickup card is showing: it lights up and turns to face him. */
   private offered: GroundPart | null = null
+  /** What the save has found. A part not in it lands bare. */
+  isFound: (id: string) => boolean = () => true
 
   constructor(private readonly scene: THREE.Scene) {}
 
@@ -170,13 +193,17 @@ export class Loot {
     const color = TIER_COLOR[def.tier]
     const group = new THREE.Group()
 
-    const model = partModel(def)
+    const bare = !this.isFound(def.id)
+    const model = partModel(def, bare ? 'unfound' : 'found')
     const eye = DISPLAY_EYE.clone()
     // the copy must be disposable: clone() carries the shared flag over
     eye.userData = {}
-    model.root.traverse((o) => {
-      if (o instanceof THREE.Mesh && o.userData.eye) o.material = eye
-    })
+    // a bare part keeps its dead glass; only a found one's lights when offered
+    if (!bare) {
+      model.root.traverse((o) => {
+        if (o instanceof THREE.Mesh && o.userData.eye) o.material = eye
+      })
+    }
     const { group: spinner, half } = centred(model.root, FLOOR_SCALE[def.slot])
 
     const beamMat = new THREE.MeshBasicMaterial({
@@ -208,7 +235,7 @@ export class Loot {
     this.scene.add(group)
     this.ground.push({
       def, pos, group, fly: FLY, from: at.clone(), bob: Math.random() * 10,
-      spinner, eye, half, yaw: Math.random() * Math.PI * 2, settle: 0, lit: 0,
+      spinner, eye, half, yaw: Math.random() * Math.PI * 2, settle: 0, lit: 0, bare,
       tumble: new THREE.Vector3(Math.random() * 16 - 8, Math.random() * 10 - 5, Math.random() * 16 - 8),
     })
   }
@@ -331,5 +358,7 @@ export class Loot {
       if (o instanceof THREE.Mesh && !(o.material as THREE.Material).userData.shared) own.add(o.material as THREE.Material)
     })
     for (const m of own) m.dispose()
+    // a bare part's glass copy was never put on the model
+    if (g.bare) g.eye.dispose()
   }
 }

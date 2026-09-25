@@ -910,7 +910,7 @@ export function generateLevel(depth: number, seed = Math.floor(Math.random() * 1
     const a = new THREE.Vector3(away.z, 0, -away.x)
     const side = a.x + a.z <= -a.x - a.z ? a : a.negate()
     home = c.clone().addScaledVector(side, WARM_OFFSET)
-    warm = makeBeam(WARM_BEAM, BEAM_H)
+    warm = makeHomeBeam(BEAM_H)
     warm.group.name = 'beam:warm'
     warm.group.position.copy(home)
     warm.group.visible = false
@@ -972,9 +972,8 @@ export function generateLevel(depth: number, seed = Math.floor(Math.random() * 1
  * stripe across the room behind it (the locked camera looks from +x,+z).
  */
 const BEAM_H = 9
-/** Cold is the way on. Warm is Grace's light: the only warm thing in the maze besides her. */
+/** Cold is the way on. */
 const COLD_BEAM = 0xcfe0ff
-const WARM_BEAM = 0xffb26b
 /** How far the warm beam stands from the arena centre, where the cold one is. */
 const WARM_OFFSET = 4.5
 
@@ -1024,6 +1023,165 @@ function makeBeam(color: number, height: number): Beam {
       for (const o of [beam, core, pad]) o.geometry.dispose()
       for (const m of [beamMat, coreMat, padMat]) m.dispose()
       fadeUp.dispose()
+    },
+  }
+}
+
+/**
+ * Home: Grace's light, standing where he can walk into it. Not a second exit beam
+ * tinted: flat additive peach over her lit floor went cream through ACES and the
+ * grade. It's a thinner column in a deep amber that keeps its hue, soft at its
+ * sides, with streaks drifting up it, motes rising through it, and a warm pool
+ * breathing on the floor. The warmest thing on screen after her.
+ */
+const HOME_AMBER = new THREE.Color(0xff7a22)
+const HOME_HOT = new THREE.Color(0xffb866)
+const HOME_MOTES = 34
+
+const HOME_NOISE = /* glsl */ `
+  float hash3(vec3 p) { return fract(sin(dot(p, vec3(12.9898, 78.233, 37.719))) * 43758.5453); }
+  float vnoise(vec3 p) {
+    vec3 i = floor(p), f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+    float a = mix(mix(hash3(i), hash3(i + vec3(1, 0, 0)), f.x), mix(hash3(i + vec3(0, 1, 0)), hash3(i + vec3(1, 1, 0)), f.x), f.y);
+    float b = mix(mix(hash3(i + vec3(0, 0, 1)), hash3(i + vec3(1, 0, 1)), f.x), mix(hash3(i + vec3(0, 1, 1)), hash3(i + vec3(1, 1, 1)), f.x), f.y);
+    return mix(a, b, f.z);
+  }
+`
+
+function makeHomeBeam(height: number): Beam {
+  const uniforms = {
+    uTime: { value: 0 },
+    uGlow: { value: 1 },
+    uAmber: { value: HOME_AMBER.clone() },
+    uHot: { value: HOME_HOT.clone() },
+  }
+  // the column: brightest where it faces the camera, gone at its silhouette, so it reads round, not a slab
+  const columnMat = (strength: number, grain: number) => new THREE.ShaderMaterial({
+    uniforms: { ...uniforms, uStrength: { value: strength }, uGrain: { value: grain } },
+    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+    vertexShader: /* glsl */ `
+      varying vec2 vUv;
+      varying float vFace;
+      varying vec3 vLocal;
+      void main() {
+        vUv = uv;
+        vLocal = position;
+        vFace = abs(normalize(normalMatrix * normal).z);
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: /* glsl */ `
+      uniform float uTime, uGlow, uStrength, uGrain;
+      uniform vec3 uAmber, uHot;
+      varying vec2 vUv;
+      varying float vFace;
+      varying vec3 vLocal;
+      ${HOME_NOISE}
+      void main() {
+        float y = vUv.y;
+        // fades as it climbs, and sets down softly instead of cutting at the floor
+        float fall = pow(1.0 - y, 1.7) * smoothstep(0.0, 0.05, y);
+        float edge = pow(vFace, 1.2);
+        // streaks drifting upward, sampled round the column so there's no seam
+        vec2 ring = normalize(vLocal.xz + 1e-4);
+        float streak = vnoise(vec3(ring * 2.6, y * 5.0 - uTime * 0.55));
+        float fine = vnoise(vec3(ring * 6.0 + 3.1, y * 14.0 - uTime * 1.3));
+        float tex = mix(1.0, 0.35 + 1.0 * streak * (0.55 + 0.45 * fine), uGrain);
+        float breathe = 0.85 + 0.15 * sin(uTime * 1.3);
+        float a = fall * edge * tex * breathe * uGlow * uStrength;
+        vec3 col = mix(uAmber, uHot, edge * edge * (1.0 - y));
+        gl_FragColor = vec4(col, a);
+      }
+    `,
+  })
+  const shellMat = columnMat(1.35, 1)
+  const coreMat = columnMat(1.6, 0.6)
+  const shell = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.78, height, 24, 1, true), shellMat)
+  shell.position.y = height / 2
+  const core = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.2, height * 0.8, 12, 1, true), coreMat)
+  core.position.y = height * 0.4
+
+  // motes: each rises on its own slow spiral and fades out high up; all of it in the vertex shader
+  const seeds = new Float32Array(HOME_MOTES * 3)
+  for (let i = 0; i < HOME_MOTES; i++) seeds.set([Math.random(), Math.random(), Math.random()], i * 3)
+  const moteGeo = new THREE.BufferGeometry()
+  moteGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(HOME_MOTES * 3), 3))
+  moteGeo.setAttribute('aSeed', new THREE.BufferAttribute(seeds, 3))
+  // the positions are computed on the GPU: a fixed box keeps the motes from being culled
+  moteGeo.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, height / 2, 0), height)
+  const moteMat = new THREE.ShaderMaterial({
+    uniforms: { ...uniforms, uH: { value: height * 0.7 }, uPx: { value: 4.5 * Math.min(window.devicePixelRatio, 1.5) } },
+    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+    vertexShader: /* glsl */ `
+      attribute vec3 aSeed;
+      uniform float uTime, uH, uPx;
+      varying float vA;
+      void main() {
+        float k = fract(uTime * (0.07 + 0.08 * aSeed.x) + aSeed.y);
+        float ang = aSeed.z * 6.2832 + uTime * (0.3 + aSeed.x * 0.5);
+        float r = 0.1 + 0.55 * aSeed.x * (1.0 - 0.4 * k);
+        vec3 p = vec3(sin(ang) * r, 0.15 + k * uH, cos(ang) * r);
+        vA = smoothstep(0.0, 0.08, k) * (1.0 - smoothstep(0.45, 1.0, k));
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
+        gl_PointSize = uPx * (0.7 + 0.6 * aSeed.y);
+      }
+    `,
+    fragmentShader: /* glsl */ `
+      uniform float uGlow;
+      uniform vec3 uHot;
+      varying float vA;
+      void main() {
+        float d = length(gl_PointCoord - 0.5) * 2.0;
+        float a = (1.0 - smoothstep(0.2, 1.0, d)) * vA * 0.8 * min(uGlow, 1.5);
+        gl_FragColor = vec4(uHot, a);
+      }
+    `,
+  })
+  const motes = new THREE.Points(moteGeo, moteMat)
+
+  // the pool on the floor: warm light spilling round its foot, with a slow ripple going out
+  const poolMat = new THREE.ShaderMaterial({
+    uniforms,
+    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+    vertexShader: /* glsl */ `
+      varying vec2 vP;
+      void main() {
+        vP = position.xy;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: /* glsl */ `
+      uniform float uTime, uGlow;
+      uniform vec3 uAmber, uHot;
+      varying vec2 vP;
+      void main() {
+        float r = length(vP) / 1.7;
+        float pool = pow(1.0 - smoothstep(0.0, 1.0, r), 2.0);
+        float wave = fract(uTime * 0.35);
+        float ripple = exp(-pow((r - wave) * 9.0, 2.0)) * (1.0 - wave);
+        float a = (pool * 0.5 + ripple * 0.3) * uGlow;
+        gl_FragColor = vec4(mix(uAmber, uHot, pool * 0.6), a);
+      }
+    `,
+  })
+  const pool = new THREE.Mesh(new THREE.CircleGeometry(1.7, 48), poolMat)
+  pool.rotation.x = -Math.PI / 2
+  pool.position.y = DECAL_Y
+
+  const group = new THREE.Group()
+  group.add(shell, core, motes, pool)
+  return {
+    group,
+    update(t, glow = 1) {
+      // one uniforms object is shared by every material here
+      uniforms.uTime.value = t
+      uniforms.uGlow.value = glow
+    },
+    dispose() {
+      for (const o of [shell, core, pool]) o.geometry.dispose()
+      moteGeo.dispose()
+      for (const m of [shellMat, coreMat, moteMat, poolMat]) m.dispose()
     },
   }
 }

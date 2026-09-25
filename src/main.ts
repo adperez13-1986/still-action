@@ -18,14 +18,17 @@ import { updateMusic } from './music'
 import { updateAmbience } from './ambience'
 import { Loot, LOOT, dropChance, rollPart, type GroundPart } from './loot'
 import { createPauseScreen } from './pause'
-import { createOverlay, type EndingKind } from './ending'
+import { createOverlay } from './ending'
 import { loadKit } from './kit'
 import { generateLevel, makeTerrain, key, type Box, type Breakable, type Circle, type Level, type Shrine } from './dungeon'
 import type { Terrain } from './terrain'
 import { Vfx, syncTells, COLD, COLD_DEEP, EMBER } from './vfx'
 import { PartFx } from './partfx'
 import type { PartEvent } from './parts'
-import { RUN_DEPTHS, BOSS_EVERY, LEAN_HOME, exitsAfterBoss } from './areas'
+import { RUN_DEPTHS, BOSS_EVERY, LEAN_HOME, exitsAfterBoss, hourAtEnd, type HomeHour } from './areas'
+import { openSave, freshTally, localDate, drawerFor, trimCards, CARD_KEEP, CARD_LINES, LEADERS_MAX, type EndingKind, type RunTally, type SaveV1 } from './save'
+import { poolView, markFound, hookCandidates, facingOutWhites, type PoolView } from './pool'
+import type { DropSource } from './loot'
 
 const canvas = document.querySelector<HTMLCanvasElement>('#view')!
 const hudRoot = document.querySelector<HTMLElement>('#hud')!
@@ -39,12 +42,32 @@ checkOrientation()
 window.addEventListener('resize', checkOrientation)
 window.addEventListener('orientationchange', checkOrientation)
 
+const params = new URLSearchParams(location.search)
+/** `?depth=3` starts a run there: the fastest way to the boss while tuning it. Never past the last depth. */
+const DEPTH_PARAM = params.get('depth')
+const START_DEPTH = Math.min(RUN_DEPTHS, Math.max(1, Number(DEPTH_PARAM) || 1))
+
+/**
+ * The save. A dev run (?depth=) reads it and never writes, so tuning at the boss
+ * can't find parts or leave cards; ?save=memory does the same without a dev run.
+ */
+const store = openSave({ memory: DEPTH_PARAM !== null || params.get('save') === 'memory' })
+const save = store.data
+
 const world = createWorld(canvas, { arena: false })
-const hud = createHud(hudRoot)
+const hud = createHud(hudRoot, {
+  hinted: (id) => save.hints.includes(id),
+  markHinted: (id) => {
+    if (save.hints.includes(id)) return
+    save.hints.push(id)
+    store.write()
+  },
+})
 createGradePanel(hudRoot, world)
 const overlay = createOverlay(hudRoot)
 const rig = createCameraRig(world)
 const loot = new Loot(world.scene)
+loot.isFound = (id) => save.found.includes(id)
 const pause = createPauseScreen(hudRoot)
 const vfx = new Vfx(world.scene)
 /** Dev only: every onPart event, for headless checks to read back. */
@@ -367,7 +390,7 @@ const combat = new Combat(world.scene, OPEN, {
     const roll = Math.random()
     if (roll < LOOT.crateParts) {
       const taken = [...hud.loadout, ...loot.ground.map((g) => g.def)]
-      const def = fillEmpty(taken) ?? rollPart('chaser', taken, 'crate')
+      const def = fillEmpty(taken) ?? rollPart('chaser', taken, 'crate', pool())
       if (def) {
         loot.drop(def, at, still.pos)
         sfx.drop(def.tier, panOf(at))
@@ -866,7 +889,9 @@ const run = {
   dev: false,
   /** The ending is kept at its trigger, once: the first terminal thing in a tick wins. */
   committed: false,
-  ending: null as { kind: EndingKind } | null,
+  ending: null as { kind: EndingKind; hour: HomeHour; cardId: string } | null,
+  /** What this run did to its parts, kept at the ending (history counts runs for now). */
+  tally: freshTally() as RunTally,
   depth: 1, strain: 0, t: 0, swapped: false, fought: false, quietT: 0, killed: false, ramStunSeen: false,
   stats: [] as DepthStats[],
 }
@@ -890,23 +915,27 @@ function maybeDrop(at: THREE.Vector3, kind: Archetype, pack: Pack, wasElite: boo
   // a side room's pack always pays out (the last kill drops if nothing else did), elites always do
   if (Math.random() >= dropChance(pack, wasElite, summoned, weight)) return
   const taken = [...hud.loadout, ...loot.ground.map((g) => g.def)]
-  const def = wasElite ? rollPart(kind, taken, 'elite') : fillEmpty(taken) ?? rollPart(kind, taken, 'kill')
+  const def = wasElite ? rollPart(kind, taken, 'elite', pool()) : fillEmpty(taken) ?? rollPart(kind, taken, 'kill', pool())
   if (!def) return
   pack.dropped = true
   loot.drop(def, at, still.pos)
   sfx.drop(def.tier, panOf(at))
 }
 
+/** What the save has found and turned, at this depth: every drop reads it. */
+const pool = (): PoolView => poolView(save, run.depth)
+
 /**
  * Still starts incomplete. While a slot is empty, most drops are a plain part for
  * one of the empty slots, so the first level is spent putting yourself together.
+ * Only found whites facing out: a part turned to the wall never fills a slot.
  */
 const FILL_EMPTY_CHANCE = 0.6
-function fillEmpty(taken: readonly AbilityDef[]): AbilityDef | null {
-  const empty = hud.slots.filter((s) => !s.def).map((s) => s.slot)
+function fillEmpty(taken: readonly AbilityDef[], empty: readonly SlotName[] = hud.slots.filter((s) => !s.def).map((s) => s.slot)): AbilityDef | null {
   if (empty.length === 0 || Math.random() > FILL_EMPTY_CHANCE) return null
   const ids = new Set(taken.map((p) => p.id))
-  const options = PARTS.filter((p) => p.tier === 'white' && empty.includes(p.slot) && !ids.has(p.id))
+  const out = new Set(facingOutWhites(save))
+  const options = PARTS.filter((p) => out.has(p.id) && empty.includes(p.slot) && !ids.has(p.id))
   return options[Math.floor(Math.random() * options.length)] ?? null
 }
 
@@ -947,7 +976,7 @@ hud.onPrompt(() => {
     combat.wakeNearest(at)
   } else {
     const taken = [...hud.loadout, ...loot.ground.map((g) => g.def)]
-    const def = rollPart('chaser', taken, 'plenty')
+    const def = rollPart('chaser', taken, 'plenty', pool())
     if (def) {
       loot.drop(def, at, still.pos)
       sfx.drop(def.tier, 0)
@@ -1005,7 +1034,7 @@ function updateOffer() {
   const next = under && !offerHeld ? under : null
   if (next !== offered) {
     offered = next
-    hud.offer(next?.def ?? null)
+    hud.offer(next?.def ?? null, !!next && !save.found.includes(next.def.id))
     loot.offer(next)
   }
 }
@@ -1022,7 +1051,7 @@ hud.onCompare(() => {
   pause.compare(current, g.def, hud.loadout, () => {
     resume()
     takePart(g)
-  }, resume)
+  }, resume, !save.found.includes(g.def.id))
 })
 
 /** A swap: what the outgoing part had running ends first, and a live anchor hands on a full cooldown (R8). */
@@ -1033,6 +1062,9 @@ function swapIn(def: AbilityDef): AbilityDef | null {
 }
 
 function takePart(g: GroundPart) {
+  // found the moment it's taken, and saved in the same call: closing the tab can't lose it
+  if (markFound(save, g.def.id)) store.write()
+  carry(g.def.id)
   const old = swapIn(g.def)
   loot.remove(g)
   // an empty slot filled: nothing falls out
@@ -1108,8 +1140,8 @@ function bossDown(at: THREE.Vector3) {
   navigator.vibrate?.([60, 40, 120])
   // one blue and one gold, never for the same slot
   const taken = [...hud.loadout, ...loot.ground.map((g) => g.def)]
-  const blue = rollPart('boss', taken, 'boss-blue')
-  const gold = rollPart('boss', blue ? [...taken, blue] : taken, 'boss-gold', blue?.slot)
+  const blue = rollPart('boss', taken, 'boss-blue', pool())
+  const gold = rollPart('boss', blue ? [...taken, blue] : taken, 'boss-gold', pool(), blue?.slot)
   for (const def of [blue, gold]) if (def) loot.drop(def, at, still.pos)
   loot.dropScrap(new THREE.Vector3(at.x + 1.2, 0, at.z))
   loot.dropScrap(new THREE.Vector3(at.x - 1.2, 0, at.z))
@@ -1141,20 +1173,24 @@ function enterLevel(depth: number) {
   overlay.banner(level.boss ? `Depth ${depth} \u00b7 something is waiting` : `Depth ${depth}`)
 }
 
-/** `?depth=3` starts a run there: the fastest way to the boss while tuning it. Never past the last depth. */
-const DEPTH_PARAM = new URLSearchParams(location.search).get('depth')
-const START_DEPTH = Math.min(RUN_DEPTHS, Math.max(1, Number(DEPTH_PARAM) || 1))
-
 function startRun() {
   still.reassemble()
   Object.assign(run, {
     phase: 'crawl', strain: 0, t: 0, swapped: false, ramStunSeen: false,
-    id: newRunId(), dev: DEPTH_PARAM !== null, committed: false, ending: null, stats: [],
+    id: newRunId(), dev: DEPTH_PARAM !== null, committed: false, ending: null, stats: [], tally: freshTally(),
   })
+  if (!run.dev) {
+    // the first night: the doorframe's marks grow from here, in calendar time
+    save.firstRunAt ??= new Date().toISOString()
+    // the last ending's hook choice has been made by now (the Workshop's, later)
+    save.pendingHook = null
+    store.write()
+  }
   loot.clear()
   // Still begins with one random plain part; the rest he finds. Starting deeper
   // (?depth=) skips the levels where he'd have found them, so he gets all four.
   const start = START_DEPTH > 1 ? STARTING : [STARTING[Math.floor(Math.random() * STARTING.length)]!]
+  for (const p of start) carry(p.id)
   // the last run's anchor or decoy goes before the new loadout arrives, so nothing carries over onto its buttons
   combat.reset()
   hud.resetLoadout(start)
@@ -1190,16 +1226,43 @@ function descend() {
   stopAllWindups()
 }
 
+/** A part went on Still this run: its history counts the run at the ending. */
+function carry(id: string) {
+  if (!run.tally.carried.includes(id)) run.tally.carried.push(id)
+}
+
 /**
  * The ending is kept the moment it's triggered (HP out, strain full, the warm beam),
  * never at the button: a tab closed during the words must still keep the run.
- * Once per run. The save writes the card from the next step; for now it's the flag.
+ * Once per run, and one write: the card, the parts' history, what can go on the
+ * hook, and the ending the Workshop will replay. A dev run keeps the ending in
+ * memory and nothing else.
  */
 function commit(kind: EndingKind) {
   if (run.committed) return
   run.committed = true
-  run.ending = { kind }
   closeStats()
+  const worn = hud.slots.map((s) => s.def?.id ?? null)
+  const hour = hourAtEnd(kind, run.depth)
+  run.ending = { kind, hour, cardId: run.id }
+  if (run.dev) {
+    save.lastEnding = { kind, hour, depth: run.depth, worn, cardId: run.id, arrived: false }
+    return
+  }
+  save.runs += 1
+  save.cards.push({ id: run.id, n: save.runs, date: localDate(), end: kind, depth: run.depth, hour, by: drawerFor(save.runs), worn })
+  trimCards(save)
+  // what he came home wearing is found, whatever happened to the rest
+  for (const id of worn) if (id) markFound(save, id)
+  for (const id of run.tally.carried) {
+    const h = save.history[id] ?? [0, 0, 0, 0, 0, 0]
+    h[0] += 1
+    save.history[id] = h
+  }
+  save.pendingHook = { candidates: hookCandidates(save, worn) }
+  save.lastEnding = { kind, hour, depth: run.depth, worn, cardId: run.id, arrived: false }
+  save.run = null
+  store.write()
 }
 
 function end(kind: EndingKind) {
@@ -1985,7 +2048,102 @@ if (import.meta.env.DEV) {
       return b
     },
     __enter: enterLevel,
-    __lootRules: { rollPart, dropChance },
+    /**
+     * The loot rules as the older checks call them: (from, taken, source, excludeSlot?).
+     * With no pool given, every part counts as found and nothing reaches for the
+     * unfound, which is exactly the draw before the pool existed. __rollMany tests the pool.
+     */
+    __lootRules: {
+      rollPart: (from: Archetype, taken: readonly AbilityDef[], source: DropSource, excludeSlot?: SlotName, view?: PoolView) =>
+        rollPart(from, taken, source, view ?? { found: new Set(PARTS.map((p) => p.id)), turned: new Set(), depth: 1 }, excludeSlot),
+      dropChance,
+    },
+    /** A deep copy of the live save. */
+    __save: () => JSON.parse(JSON.stringify(save)) as SaveV1,
+    /** Merge a patch into the live save and write it; null starts a fresh one (the stored copy too). */
+    __setSave: (patch: Partial<SaveV1> | null) => {
+      if (patch === null) store.reset()
+      else {
+        Object.assign(save, patch)
+        store.write()
+      }
+    },
+    __store: () => store.mode,
+    /**
+     * n draws from one source at one depth through the real rollPart and the live
+     * pool. source 'fill' is fillEmpty with every slot empty (only its hits count).
+     */
+    __rollMany: (o: { source: DropSource | 'fill'; depth: number; n: number; from?: Archetype }) => {
+      const view = poolView(save, o.depth)
+      const ids: Record<string, number> = {}
+      let unfound = 0, got = 0
+      for (let i = 0; i < o.n; i++) {
+        const def = o.source === 'fill'
+          ? fillEmpty([], SLOT_NAMES)
+          : rollPart(o.from ?? (o.source.startsWith('boss') ? 'boss' : 'chaser'), [], o.source, view)
+        if (!def) continue
+        got++
+        ids[def.id] = (ids[def.id] ?? 0) + 1
+        if (!view.found.has(def.id)) unfound++
+      }
+      return { ids, unfound, got }
+    },
+    /** A part on the floor exactly at (x, z), flying in from just beside it. */
+    __dropAt: (id: string, x: number, z: number) => {
+      loot.drop(byId(id), new THREE.Vector3(x + 0.6, 0, z))
+      loot.ground[loot.ground.length - 1]!.pos.set(x, 0, z)
+    },
+    /** The pickup card's take. */
+    __take: () => {
+      const g = offered
+      if (g) takePart(g)
+      return !!g
+    },
+    /** What the pickup card is offering. history arrives with "parts remember". */
+    __offer: () => (offered ? { id: offered.def.id, name: offered.def.name, tag: save.found.includes(offered.def.id) ? null : 'new', history: null } : null),
+    /**
+     * The largest save the rules allow: every part found, all 43 of still's roster
+     * met (its real ids), six leaders of the longest name the generator can make on
+     * each elite page, 36 cards, a snapshot.
+     */
+    __fillSave: () => {
+      const all = PARTS.map((p) => p.id)
+      const hist = Object.fromEntries(all.map((id) => [id, [999, 6, 999, 999, 999, 999]])) as SaveV1['history']
+      const line = (n: number) => 'k'.repeat(n)
+      const ROSTER_IDS = [
+        'wandering-drone', 'rust-guard', 'corroded-sentry', 'fracture-mite', 'iron-crawler', 'glitch-node', 'sentinel-shard', 'hollow-repeater',
+        'drifting-frame', 'echo-construct', 'thermal-scanner', 'signal-jammer', 'vault-keeper', 'corrupted-overseer', 'fracture-titan',
+        'the-first-warden', 'thermal-leech', 'wire-jammer', 'slag-heap', 'feedback-loop', 'phase-drone', 'furnace-tick', 'static-frame',
+        'conduit-spider', 'overcharge-sentinel', 'lockdown-warden', 'meltdown-core', 'the-thermal-arbiter', 'thorn-sentinel', 'feedback-drone',
+        'strain-siphon', 'overload-core', 'fracture-fragment', 'fracture-host', 'echo-shell', 'void-leech', 'strain-parasite', 'fury-core',
+        'ward-pylon', 'raging-hull', 'phase-wraith', 'drain-frame', 'martyr-shell',
+      ]
+      const ELITE_PAGES = new Set(['vault-keeper', 'corrupted-overseer', 'fracture-titan', 'overcharge-sentinel', 'lockdown-warden', 'meltdown-core'])
+      const notebook: SaveV1['notebook'] = {}
+      for (const id of ROSTER_IDS) {
+        notebook[id] = { f: '2026-09-25', m: 9999, k: 99999, d: 6 }
+        if (ELITE_PAGES.has(id)) notebook[id]!.l = Array.from({ length: LEADERS_MAX }, () => 'Guttermother the Warden')
+      }
+      const cards = Array.from({ length: CARD_KEEP }, (_, i) => ({
+        id: newRunId(), n: 900 + i, date: '2026-09-25', end: 'stopped' as const, depth: 6, hour: 'afternoon' as const, by: drawerFor(i + 1),
+        worn: ['through-line', 'mirror-ward', 'frayed-cleaver', 'borrowed-time'],
+        ...(i >= CARD_KEEP - CARD_LINES ? { line: line(96), marks: [0, 16, 32, 48, 64, 80] } : {}),
+      }))
+      const tally: RunTally = {
+        ...freshTally(), carried: all, deepest: Object.fromEntries(all.map((id) => [id, 6])), assemblers: Object.fromEntries(all.map((id) => [id, 2])),
+        line: line(191), marks: [0, 32, 64, 96, 128, 160], win: 20, winT: 4.99, pushes: 9999, quiets: 9999,
+      }
+      Object.assign(save, {
+        firstRunAt: new Date().toISOString(), runs: 9999, found: all, turned: ['flare', 'ward', 'piston', 'skitter'], hook: 'focusing-lens',
+        pendingHook: { candidates: ['focusing-lens', 'pressure-vent', 'scrap-cleaver', 'kickstart'] }, history: hist, notebook, cards,
+        lastEnding: { kind: 'stopped', hour: 'afternoon', depth: 6, worn: cards[0]!.worn, cardId: cards[0]!.id, arrived: true },
+        run: {
+          s: 1, build: new Date().toISOString(), id: newRunId(), startedAt: new Date().toISOString(), depth: 6, seed: 999999999,
+          bossFelled: true, bossLoot: ['through-line', 'borrowed-time'], strain: 19, loadout: cards[0]!.worn, tally,
+        },
+        hints: all, doorMarks: 48,
+      } satisfies Partial<SaveV1>)
+    },
     __mode: () => run.phase,
     /** The level's beams, read off its scene: a beam that was never built is null. */
     __exits: () => {
