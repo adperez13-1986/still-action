@@ -6,8 +6,9 @@ const CACHE = 'still-action-v1'
 self.addEventListener('install', () => self.skipWaiting())
 self.addEventListener('activate', (e) => {
   e.waitUntil(
+    // every project on this Pages origin shares the cache storage: only clear our own old versions
     caches.keys()
-      .then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
+      .then((keys) => Promise.all(keys.filter((k) => k.startsWith('still-action-') && k !== CACHE).map((k) => caches.delete(k))))
       .then(() => self.clients.claim()),
   )
 })
