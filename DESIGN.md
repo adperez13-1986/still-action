@@ -36,7 +36,7 @@ ability with a cooldown — loot rewires your buttons. Ported from the deckbuild
 `EquipmentDefinition`, which carried one `BodyAction` and no stat block.
 
 **Strain.** Hold a *cooling* button to push it: fires now at full power, +2 strain.
-Persists across fights, decays 4 per fight cleared, forfeits the run at 20. HP is
+Persists across fights, decays 2 per fight cleared (the quiet), forfeits the run at 20. HP is
 the fight; strain is the run. You can win every fight and still stop.
 
 **Endings.** Two, deliberately different. HP death is sudden. Strain forfeit is
@@ -148,7 +148,7 @@ button again. Second criterion, equally binding: is building it still fun.
 - **Endings copy is draft.** Both endings work; the words in `src/ending.ts` are
   placeholders to be rewritten by hand.
 - **No win condition.** Fights escalate (3 + n chasers) until one of the two endings.
-  Strain decay (−4/fight) may make two pushes per fight free forever — watch it.
+  Strain decay (−2/fight) makes one push per fight free forever. See `design/strain/PITCHES.md`.
 - **Ranged archetype built** (`src/ranged.ts`). Holds 6–10 units, just past auto
   reach; aim line tracks for 60% of a 760ms windup, then freezes and clicks. Walls
   block projectiles from both sides, and the auto attack only takes clear shots.
