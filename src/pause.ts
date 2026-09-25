@@ -90,6 +90,11 @@ export interface PauseScreen {
   compare: (
     current: AbilityDef | null, incoming: AbilityDef, equipped: readonly AbilityDef[], onTake: () => void, onLeave: () => void, fresh?: boolean,
   ) => void
+  /**
+   * The look-back screen: every run's card, large, newest first, with the arrows to
+   * page through them and close. `render` draws card i (0 is the newest).
+   */
+  lookBack: (count: number, render: (i: number) => Promise<HTMLCanvasElement>, onClose: () => void) => void
   hide: () => void
 }
 
@@ -126,6 +131,39 @@ export function createPauseScreen(root: HTMLElement): PauseScreen {
          </div>`,
         [['leave', 'leave it', onLeave], ['take', 'take it', onTake]],
       )
+    },
+
+    lookBack(count, render, onClose) {
+      let i = 0
+      show(
+        `<h2>The corkboard</h2>
+         <div class="look">
+           <button type="button" class="prev" aria-label="newer">&larr;</button>
+           <div class="lcard"></div>
+           <button type="button" class="next" aria-label="older">&rarr;</button>
+         </div>
+         <p class="lcount"></p>`,
+        [['close', 'close', onClose]],
+      )
+      const slot = el.querySelector<HTMLElement>('.lcard')!
+      const label = el.querySelector<HTMLElement>('.lcount')!
+      const paint = async () => {
+        const at = i
+        label.textContent = `${count - at} of ${count}`
+        const c = await render(at)
+        // a page turned meanwhile: this one's too late
+        if (at !== i || !isOpen) return
+        slot.replaceChildren(c)
+      }
+      el.querySelector('.prev')!.addEventListener('click', () => {
+        if (i > 0) i--
+        void paint()
+      })
+      el.querySelector('.next')!.addEventListener('click', () => {
+        if (i < count - 1) i++
+        void paint()
+      })
+      void paint()
     },
 
     hide() {

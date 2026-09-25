@@ -8,10 +8,12 @@ import { PARTS, type AbilityDef, type Tier } from './abilities'
 import { partModel, centred, WALL_SCALE, DISPLAY_EYE, EYE_OFF } from './partmodels'
 import { canTurn, hookOffers } from './pool'
 import { presetOf, applyDay, WINDOW, GRACE_REACH, BASE_HEMI, BASE_KEY, type HomeHour } from './areas'
-import type { EndingKind, PartId, SaveV1 } from './save'
+import type { EndingKind, PartId, RunCard, SaveV1 } from './save'
 import { COLD, type Vfx } from './vfx'
 import * as sfx from './audio'
 import { setRain } from './ambience'
+import { composeCard, caption } from './cards'
+import { seedOf, type Drawings } from './crayon'
 
 /**
  * Home: the Workshop. A small iso room in the same engine, built once at boot and
@@ -82,6 +84,8 @@ export interface Workshop {
   cardFor(id: 'hook' | `wall:${SlotName}`, s: SaveV1, selected: PartId | null): ChooserSpec
   /** The zones as built (the wall's sections are sized from the models): for checks. */
   readonly zones: readonly Interactable[]
+  /** How many marks each child's post shows. */
+  readonly markCounts: { yanah: number; yuri: number }
   readonly near: InteractId | null
   readonly traces: TraceSet
   readonly arrival: ArrivalState
@@ -128,6 +132,16 @@ const CRAYONS = { x: -3.8, z: 3.0 }
 const SHOES = { x: 5.3, z: -4.4 }
 /** The kids' door, in the west wall: their room is never entered. */
 const KIDS_DOOR = { x: -6, z: -4 }
+/**
+ * The doorframe (§5.9): each child's marks on their post of that door, on the room's
+ * face, one a month since the first night. Starts are placeholders (Adrian's), and the
+ * step is about 4x real growth, so a month shows on a phone.
+ */
+const DOORFRAME = { yanah: { z: -5.15, start: 1.45 }, yuri: { z: -2.85, start: 1.2 } }
+const MARK_STEP = 0.025
+export const MARKS_MAX = 48
+/** The newest cards the corkboard holds. */
+const BOARD_CARDS = 12
 
 /** Arrivals (§5.5). */
 const SPOT = {
@@ -331,7 +345,7 @@ const woodMat = () => {
 
 // --- the room ----------------------------------------------------------------------
 
-export function createWorkshop(world: World, still: Still, vfx: Vfx): Workshop {
+export function createWorkshop(world: World, still: Still, vfx: Vfx, drawings: Drawings): Workshop {
   const group = new THREE.Group()
   group.visible = false
   group.name = 'workshop'
@@ -556,6 +570,50 @@ export function createWorkshop(world: World, still: Still, vfx: Vfx): Workshop {
     t.position.set(-6 + wallDepth + 0.06, y, z)
     group.add(t)
   }
+  // the cards pinned on it: the newest twelve, four across, newest top left as he faces it
+  const boardGroup = new THREE.Group()
+  boardGroup.name = 'board:cards'
+  group.add(boardGroup)
+  const corkFace = -6 + wallDepth + 0.1
+  const pinMat = new THREE.MeshStandardMaterial({ color: 0x7d8aa6, roughness: 0.4, metalness: 0.3 })
+  const pinGeo = new THREE.SphereGeometry(0.03, 8, 6)
+  const cardGeo = new THREE.PlaneGeometry(0.6, 0.45)
+  const cardTex = new Map<string, { tex: THREE.CanvasTexture; drawn: boolean; card: RunCard }>()
+  let boardIds = ''
+  /** A pinned card gets its drawing when IndexedDB has it: at once, or when it's stored. */
+  const paintCard = (slot: { tex: THREE.CanvasTexture; drawn: boolean; card: RunCard }) => {
+    void drawings.get(slot.card.id).then(async (blob) => {
+      if (!blob || slot.drawn) return
+      try {
+        const bmp = await createImageBitmap(blob)
+        slot.tex.image = composeCard(slot.card, bmp, 256, 192)
+        slot.tex.needsUpdate = true
+        slot.drawn = true
+        bmp.close()
+      } catch {
+        // no drawing: the line alone
+      }
+    })
+  }
+  drawings.onStored((id) => {
+    const slot = cardTex.get(id)
+    if (slot && !slot.drawn) paintCard(slot)
+  })
+
+  // --- the doorframe: pencil marks for Yanah and Yuri, one a month since the first night ---
+  // §5.9's 0.015 u is under a pixel on a phone: a pencil line a child's height can be read at is thicker
+  const markGeo = new THREE.PlaneGeometry(0.26, 0.035)
+  const markMat = new THREE.MeshBasicMaterial({ color: 0x2e3036, transparent: true, opacity: 0.85, fog: false })
+  // on the face of the kids' doorframe, which stands proud of the wall
+  const frameFace = -6 + pieceData('wall_doorway').box.max.z + 0.06
+  const marks: Record<'yanah' | 'yuri', THREE.InstancedMesh> = {
+    yanah: new THREE.InstancedMesh(markGeo, markMat, MARKS_MAX),
+    yuri: new THREE.InstancedMesh(markGeo, markMat, MARKS_MAX),
+  }
+  for (const m of Object.values(marks)) {
+    m.count = 0
+    group.add(m)
+  }
 
   // the notebook, lying on the bench's end
   const cover = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.07, 0.36), new THREE.MeshStandardMaterial({ color: 0x3b4656, roughness: 0.85 }))
@@ -772,6 +830,63 @@ export function createWorkshop(world: World, still: Still, vfx: Vfx): Workshop {
         hookHolder.position.set(HOOK.x, HOOK.y - 0.08 - (v.y * WALL_S) / 2, wallFace + 0.13 + (Math.max(v.x, v.z) / 2) * WALL_S + 0.05)
       }
     }
+  }
+
+  /** Mark k of each child, on their post of the kids' door, a little higher each month. */
+  function refreshMarks(n: number) {
+    const m4 = new THREE.Matrix4()
+    const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 2)
+    const one = new THREE.Vector3(1, 1, 1)
+    for (const kid of ['yanah', 'yuri'] as const) {
+      const post = DOORFRAME[kid]
+      const mesh = marks[kid]
+      mesh.count = Math.min(MARKS_MAX, n)
+      for (let k = 0; k < mesh.count; k++) {
+        // a pencil held a little differently each time
+        const jitter = (((Math.sin((k + 1) * 12.9898 + post.z) * 43758.5453) % 1) + 1) % 1
+        m4.compose(new THREE.Vector3(frameFace, post.start + k * MARK_STEP, post.z + (jitter - 0.5) * 0.04), q, one)
+        mesh.setMatrixAt(k, m4)
+      }
+      mesh.instanceMatrix.needsUpdate = true
+      mesh.computeBoundingSphere()
+    }
+  }
+
+  /** The newest twelve cards on the cork, each tilted a little, pinned; drawings arrive as IndexedDB answers. */
+  function refreshBoard(sv: SaveV1) {
+    const cards = sv.cards.slice(-BOARD_CARDS).reverse()
+    const ids = cards.map((c) => c.id).join()
+    if (ids === boardIds) return
+    boardIds = ids
+    boardGroup.clear()
+    const keep = new Set(cards.map((c) => c.id))
+    for (const [id, t] of cardTex) {
+      if (keep.has(id)) continue
+      t.tex.dispose()
+      cardTex.delete(id)
+    }
+    cards.forEach((card, i) => {
+      let t = cardTex.get(card.id)
+      if (!t) {
+        const tex = new THREE.CanvasTexture(composeCard(card, null, 256, 192))
+        tex.colorSpace = THREE.SRGBColorSpace
+        t = { tex, drawn: false, card }
+        cardTex.set(card.id, t)
+        paintCard(t)
+      }
+      const col = i % 4
+      const row = Math.floor(i / 4)
+      // paper a step under white: this close to the lamp a white card burns out and loses its drawing
+      const mat = new THREE.MeshStandardMaterial({ map: t.tex, roughness: 1, color: 0xa39a8c })
+      const m = new THREE.Mesh(cardGeo, mat)
+      const tilt = (seedOf(card.id) / 100 - 0.5) * 2 * (4 * Math.PI) / 180
+      m.position.set(corkFace, 2.85 - row * 0.56, 3.9 + 1.02 - col * 0.68)
+      // turned to face the room, then tilted about its own face, as a pin lets it hang
+      m.rotation.set(0, Math.PI / 2, tilt, 'YXZ')
+      const pin = new THREE.Mesh(pinGeo, pinMat)
+      pin.position.set(corkFace + 0.02, m.position.y + 0.19, m.position.z)
+      boardGroup.add(m, pin)
+    })
   }
 
   const ws: Workshop = {
@@ -1005,6 +1120,12 @@ export function createWorkshop(world: World, still: Still, vfx: Vfx): Workshop {
       save = sv
       refreshWall(group.visible)
       syncBody()
+      refreshBoard(sv)
+      refreshMarks(sv.doorMarks)
+    },
+
+    get markCounts() {
+      return { yanah: marks.yanah.count, yuri: marks.yuri.count }
     },
 
     get zones() { return zones },
@@ -1057,7 +1178,7 @@ export function createWorkshop(world: World, still: Still, vfx: Vfx): Workshop {
       // the wall's sections and the hook have their chooser (cardFor), not a card
       if (id === 'board') {
         const last = s.cards[s.cards.length - 1]
-        return { title: `The corkboard · ${s.runs} runs`, line: last ? caption(last) : 'Nothing pinned up yet.', action: null }
+        return { title: `The corkboard · ${s.runs} runs`, line: last ? caption(last) : 'Nothing pinned up yet.', action: s.cards.length ? 'look' : null }
       }
       if (id === 'notebook') {
         const n = Object.keys(s.notebook).length
@@ -1071,9 +1192,3 @@ export function createWorkshop(world: World, still: Still, vfx: Vfx): Workshop {
 }
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-const END_WORD: Record<EndingKind, string> = { broken: 'broke', stopped: 'stopped', home: 'home' }
-/** "25 Sep · home · depth 3": the number goes in the caption, never the headline (PLACEHOLDER words). */
-function caption(c: { date: string; end: EndingKind; depth: number }) {
-  const [, m, d] = c.date.split('-').map(Number)
-  return `${d} ${MONTHS[(m ?? 1) - 1]} · ${END_WORD[c.end]} · depth ${c.depth}`
-}

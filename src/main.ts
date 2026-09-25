@@ -29,7 +29,9 @@ import {
   RUN_DEPTHS, BOSS_EVERY, LEAN_HOME, FIRST_RUN_IN_MAZE, DAY, DEPTH_DAY, exitsAfterBoss, hourAtEnd, bossFor, areaOf,
   applyDay, dayNow, currentSat, currentGrace, fogAt, dayAt, AREAS, WALK_AREA, type HomeHour,
 } from './areas'
-import { createWorkshop, type ArrivalKind, type InteractId, type Workshop } from './workshop'
+import { createWorkshop, MARKS_MAX, type ArrivalKind, type InteractId, type Workshop } from './workshop'
+import { createDrawings, HANDS, CARD_ASPECT, type Moment } from './crayon'
+import { composeCard } from './cards'
 import { openSave, freshTally, localDate, drawerFor, trimCards, CARD_KEEP, CARD_LINES, LEADERS_MAX, type EndingKind, type RunTally, type SaveV1 } from './save'
 import { poolView, markFound, hookCandidates, facingOutWhites, toggleTurn, hang, applyHookDefault, startPart, type PoolView } from './pool'
 import type { DropSource } from './loot'
@@ -59,6 +61,8 @@ const store = openSave({ memory: DEPTH_PARAM !== null || params.get('save') === 
 const save = store.data
 
 const world = createWorld(canvas, { arena: false })
+/** The kids' drawings: captured off the canvas at each ending, kept in IndexedDB. */
+const drawings = createDrawings(world.renderer)
 const hud = createHud(hudRoot, {
   hinted: (id) => save.hints.includes(id),
   markHinted: (id) => {
@@ -965,6 +969,11 @@ function updateShrinePrompt() {
 }
 
 hud.onPrompt(() => {
+  // in the room, the board's card opens the look-back screen
+  if (run.phase === 'workshop' && workshop.near === 'board') {
+    void lookBack()
+    return
+  }
   const sh = atShrine
   if (!sh || sh.used || run.phase !== 'crawl') return
   sh.used = true
@@ -1089,6 +1098,8 @@ function takePart(g: GroundPart) {
 // --- pause: the world stops, cooldowns included; the music keeps going, quieter ---
 
 let paused = false
+/** Dev only: the rAF loop renders and nothing steps (async checks). */
+let held = false
 /** Game time in ms. Cooldowns run on this, so pausing can't be used to wait them out. */
 let clock = 0
 
@@ -1180,6 +1191,8 @@ function enterLevel(depth: number, o: { seed?: number } = {}) {
   run.depth = depth
   closeStats()
   run.stats.push({ depth, pushes: 0, quiets: 0, strainIn: run.strain, strainOut: null })
+  // the card's line gets a tick where this depth began
+  run.tally.marks.push(run.tally.line.length)
   overlay.banner(level.boss ? `Depth ${depth} \u00b7 something is waiting` : `Depth ${depth}`)
 }
 
@@ -1248,10 +1261,72 @@ function carry(id: string) {
  * hook, and the ending the Workshop will replay. A dev run keeps the ending in
  * memory and nothing else.
  */
+/** A world point as a share of the canvas, 0..1 across and down. */
+function onCanvas(p: { x: number; y?: number; z: number }) {
+  const v = new THREE.Vector3(p.x, p.y ?? 0, p.z).project(world.camera)
+  return { x: v.x * 0.5 + 0.5, y: -v.y * 0.5 + 0.5 }
+}
+
+/** What the kid draws of this ending, besides the frame: him, where he was, how it ended, the house, the sky. */
+function momentOf(kind: EndingKind): Moment {
+  const day = dayNow().key
+  const night = day === 'night' || day === 'dusk'
+  const house = level?.house ? onCanvas({ x: level.house.door.x - 1.2, z: level.house.door.z - 1.2 }) : undefined
+  return {
+    still: onCanvas(still.pos),
+    pose: kind === 'broken' ? 'broken' : kind === 'stopped' ? 'slumped' : 'stand',
+    house,
+    sky: night ? 'moon' : 'sun',
+    light: kind === 'home' && !level?.house ? 'warm' : undefined,
+  }
+}
+
+/** The strain line's samples: 0-20 as one character each. */
+const SAMPLE = '0123456789abcdefghijk'
+/** Past this, pairs merge into their max and the step doubles: a long run still fits. */
+const LINE_MAX = 192
+const LINE_KEEP = 96
+
+/**
+ * §4.18. The run's strain as a line: over each window (5 s at first) the highest strain
+ * is one sample. When the line gets long, neighbouring pairs merge into their max and
+ * the window doubles, so a long run keeps its whole shape, just coarser.
+ */
+function sampleStrain(dt: number) {
+  const t = run.tally
+  t.win = Math.max(t.win, run.strain)
+  t.winT += dt
+  if (t.winT < t.lineStep) return
+  pushSample(t.win)
+  t.win = run.strain
+  t.winT = 0
+}
+function pushSample(v: number) {
+  const t = run.tally
+  t.line += SAMPLE[Math.max(0, Math.min(20, Math.round(v)))]
+  if (t.line.length >= LINE_MAX) halveLine()
+}
+function halveLine() {
+  const t = run.tally
+  let out = ''
+  for (let i = 0; i < t.line.length; i += 2) {
+    const a = SAMPLE.indexOf(t.line[i]!)
+    const b = i + 1 < t.line.length ? SAMPLE.indexOf(t.line[i + 1]!) : a
+    out += SAMPLE[Math.max(a, b)]
+  }
+  t.line = out
+  t.lineStep *= 2
+  t.marks = t.marks.map((m) => Math.floor(m / 2))
+}
+
 function commit(kind: EndingKind) {
   if (run.committed) return
   run.committed = true
   closeStats()
+  // the line's last sample is the ending's own strain, then it's made to fit the card
+  const t = run.tally
+  pushSample(Math.max(t.win, run.strain))
+  while (t.line.length > LINE_KEEP) halveLine()
   const worn = hud.slots.map((s) => s.def?.id ?? null)
   const hour = hourAtEnd(kind, run.depth)
   run.ending = { kind, hour, cardId: run.id }
@@ -1260,8 +1335,10 @@ function commit(kind: EndingKind) {
     return
   }
   save.runs += 1
-  save.cards.push({ id: run.id, n: save.runs, date: localDate(), end: kind, depth: run.depth, hour, by: drawerFor(save.runs), worn })
+  const card = { id: run.id, n: save.runs, date: localDate(), end: kind, depth: run.depth, hour, by: drawerFor(save.runs), worn, line: t.line, marks: [...t.marks] }
+  save.cards.push(card)
   trimCards(save)
+  drawings.putCard(card)
   // what he came home wearing is found, whatever happened to the rest
   for (const id of worn) if (id) markFound(save, id)
   for (const id of run.tally.carried) {
@@ -1277,6 +1354,9 @@ function commit(kind: EndingKind) {
 
 function end(kind: EndingKind) {
   run.phase = 'ending'
+  // the kid draws this frame: the one under the words
+  const card = save.cards.find((c) => c.id === run.ending?.cardId)
+  if (!run.dev && card) drawings.request(card.id, card.by, momentOf(kind))
   overlay.show(kind, run.depth, continueHome)
   // the silence after the ending is held a moment, then the bell comes back under the words
   sfx.restore(3)
@@ -1378,6 +1458,7 @@ function enterRoom(arrival: ArrivalKind, hour: HomeHour, worn: (string | null)[]
   hud.setStick(0, 0)
   rig.reset()
   sfx.restore(1)
+  updateDoorMarks()
   workshop.refresh(save)
   workshop.enter({ arrival, hour, worn })
   fade.style.opacity = '1'
@@ -1455,6 +1536,43 @@ function chooserAction() {
   renderChooser()
 }
 hud.onChooserAction(chooserAction)
+
+/** "Now", for the doorframe: the clock, or a dev override. */
+let nowOverride: Date | null = null
+const now = () => nowOverride ?? new Date()
+
+/**
+ * §5.9. A mark a month since the first night, for each child, never fewer than
+ * before (a clock set back can't take a mark away), at most MARKS_MAX.
+ */
+function updateDoorMarks() {
+  if (!save.firstRunAt) return
+  const day = (d: Date) => Date.UTC(d.getFullYear(), d.getMonth(), d.getDate())
+  const days = Math.floor((day(now()) - day(new Date(save.firstRunAt))) / 86400000)
+  const n = Math.min(MARKS_MAX, Math.max(save.doorMarks, 1 + Math.floor(Math.max(0, days) / 30)))
+  if (n === save.doorMarks) return
+  save.doorMarks = n
+  store.write()
+}
+
+/** The corkboard's look: every card, newest first, from IndexedDB when it has them. */
+async function lookBack() {
+  const all = (await drawings.allCards()) ?? save.cards
+  const cards = [...(all.length ? all : save.cards)].reverse()
+  if (!cards.length) return
+  hud.enabled = false
+  hud.prompt(null)
+  pause.lookBack(cards.length, async (i) => {
+    const card = cards[i]!
+    const blob = await drawings.get(card.id)
+    const bmp = blob ? await createImageBitmap(blob).catch(() => null) : null
+    return composeCard(card, bmp, 512, 384)
+  }, () => {
+    pause.hide()
+    hud.enabled = true
+    if (workshop.near) showCard(workshop.near)
+  })
+}
 
 /** Out of the room without the door (dev hooks, and a run started some other way). */
 function leaveRoom() {
@@ -1899,6 +2017,8 @@ function simulate(realDt: number) {
     return
   }
 
+  if (run.phase === 'crawl') sampleStrain(dt)
+
   if (combat.awake.length > 0) {
     run.fought = true
     run.quietT = 0
@@ -2089,7 +2209,7 @@ function frame(nowMs: number) {
   const elapsed = Math.min(MAX_FRAME, now - last)
   last = now
 
-  if (paused) {
+  if (paused || held) {
     // frozen: render only
   } else if (hitstop > 0) {
     hitstop -= elapsed
@@ -2184,6 +2304,8 @@ function frame(nowMs: number) {
   syncTells()
   combat.miteBatch.sync(world.camera, now)
   world.render()
+  // straight after the render, while the drawing buffer is still there
+  drawings.afterRender(world.renderer.domElement)
   requestAnimationFrame(frame)
 }
 
@@ -2348,6 +2470,40 @@ if (import.meta.env.DEV) {
       enterRoom(o.arrival ?? 'idle', o.hour ?? 'afternoon', hud.slots.map((sl) => sl.def?.id ?? null))
     },
     __near: () => workshop.near,
+    __hold: (on: boolean) => { held = on },
+    __drawings: () => ({ available: drawings.available, pending: drawings.pending }),
+    __idbKeys: () => drawings.keys(),
+    __idbBlob: (id: string) => drawings.get(id).then((b) => (b ? { size: b.size, type: b.type } : null)),
+    /** A stored card, composed as the board draws it (with its drawing, when there is one). */
+    __cardCanvas: async (id: string, w = 256, h = 192) => {
+      const card = save.cards.find((c) => c.id === id)
+      if (!card) return null
+      const blob = await drawings.get(id)
+      const bmp = blob ? await createImageBitmap(blob).catch(() => null) : null
+      return composeCard(card, bmp, w, h)
+    },
+    /** The crayon pass on the current frame, by a child, now (look checks). Returns a data URL. */
+    __crayonNow: (by: 'yanah' | 'yuri', seed = 1, kind: EndingKind = 'home') => {
+      world.render()
+      const c = world.renderer.domElement
+      const src = document.createElement('canvas')
+      const crop = HANDS[by].crop
+      const sh = Math.min(c.height * crop, (c.width * crop) / CARD_ASPECT), sw = sh * CARD_ASPECT
+      src.width = 512
+      src.height = Math.round((512 * sh) / sw)
+      src.getContext('2d')!.drawImage(c, (c.width - sw) / 2, (c.height - sh) / 2, sw, sh, 0, 0, src.width, src.height)
+      const m0 = momentOf(kind)
+      const fx = sw / c.width, fy = sh / c.height
+      const into = (p: { x: number; y: number }) => ({ x: (p.x - (1 - fx) / 2) / fx, y: (p.y - (1 - fy) / 2) / fy })
+      const m = { ...m0, still: into(m0.still), house: m0.house ? into(m0.house) : undefined }
+      return { drawn: drawings.draw(src, by, seed, m).toDataURL('image/png'), frame: src.toDataURL('image/png') }
+    },
+    __now: (iso: string | null) => { nowOverride = iso ? new Date(iso + (iso.length <= 10 ? 'T12:00:00' : '')) : null },
+    __marks: () => {
+      updateDoorMarks()
+      workshop.refresh(save)
+      return workshop.markCounts
+    },
     /** The hour on now, and what it set. */
     __day: () => ({
       day: dayNow().key, hour: dayNow().hour, sat: world.gradePass.uniforms.uSaturation!.value, fogNear: world.fog.near, fogFar: world.fog.far,
@@ -2537,7 +2693,7 @@ if (import.meta.env.DEV) {
  * opens the room as he left it. Resuming a run at its last beam comes later.
  */
 void loadKit().then(() => {
-  workshop = createWorkshop(world, still, vfx)
+  workshop = createWorkshop(world, still, vfx, drawings)
   const last = save.lastEnding
   if (DEPTH_PARAM !== null || (save.runs === 0 && FIRST_RUN_IN_MAZE)) startRun()
   else if (last && !last.arrived) enterRoom(last.kind, last.hour, last.worn)

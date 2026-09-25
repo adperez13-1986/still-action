@@ -98,8 +98,10 @@ export function createOverlay(root: HTMLElement): Overlay {
       shownAt = performance.now()
       title.textContent = COPY[kind].title
       body.textContent = COPY[kind].body
-      // stays until the run's card carries the depth (the corkboard step)
-      count.textContent = `reached depth ${depth}`
+      // the depth is the card's caption now, never the headline
+      count.textContent = ''
+      count.style.display = 'none'
+      void depth
       closing.textContent = CLOSING
       banner.classList.remove('show')
       end.className = kind

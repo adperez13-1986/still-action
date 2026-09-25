@@ -144,6 +144,17 @@ html, body {
 #strain .notch { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: rgba(203, 215, 230, .55); text-decoration: none; }
 @keyframes strain-pulse { 50% { box-shadow: 0 0 12px rgba(200, 69, 47, .55); } }
 
+/* --- the look-back screen: the cards, large, one at a time --- */
+#pause .look { display: flex; align-items: center; justify-content: center; gap: 14px; }
+#pause .look button {
+  appearance: none; width: 44px; height: 44px; border-radius: 50%; border: 1px solid #3a3026;
+  background: #1a1612; color: #e0d6ca; font: 600 18px/1 var(--ui);
+}
+/* sized by what's left of the screen's height: a landscape phone is short */
+#pause .lcard { height: min(384px, calc(100dvh - 150px)); width: auto; max-width: 62vw; aspect-ratio: 4 / 3; border-radius: 4px; overflow: hidden; box-shadow: 0 6px 24px rgba(0, 0, 0, .55); background: #eae4d6; }
+#pause .lcard canvas { width: 100%; height: 100%; display: block; }
+#pause .lcount { text-align: center; margin: 8px 0 0; color: #8a7c6e; font: 600 12px/1 var(--ui); letter-spacing: .1em; }
+
 /* --- the Workshop's chooser: the wall's parts or the hook's, one picked, one action --- */
 #chooser {
   position: absolute; display: none; flex-direction: column; gap: 8px; pointer-events: auto;
@@ -193,6 +204,8 @@ html, body {
 #offer .name, #prompt .name { font: 700 15px/1.2 var(--display); letter-spacing: .02em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #offer p, #prompt p { margin: 3px 0 0; font-size: 12.5px; line-height: 1.25; color: #9fb2c6; }
 #offer .replaces { color: #6f8196; }
+/* a prompt's title may take two lines rather than hide behind its button */
+#prompt .name { white-space: normal; }
 /* never found before: a small plain tag, not a tier colour */
 #offer .new, .pcard .new { font: 700 9px/1 var(--ui); letter-spacing: .14em; text-transform: uppercase; color: #cbd7e6; border: 1px solid #3a4a5e; border-radius: 4px; padding: 2px 5px; flex: none; }
 #offer .take, #prompt .take {
