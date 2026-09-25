@@ -13,6 +13,12 @@ export const RUN_DEPTHS = 6
 export const BOSS_EVERY = 3
 /** Grace's light leans toward the warm beam once an Assembler falls. It nudges the one decision (Adrian's call). */
 export const LEAN_HOME = true
+/**
+ * The first boot goes straight into the maze, as in the genesis opening: he wakes
+ * alone there, and the first ending, however it goes, is the first time he's
+ * brought home. False opens the Workshop first (Adrian's call).
+ */
+export const FIRST_RUN_IN_MAZE = true
 
 /** The two beams. INV: never a third. */
 export type ExitKind = 'cold' | 'warm'

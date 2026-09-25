@@ -157,6 +157,13 @@ export class Still {
   readonly nudge = new THREE.Vector3()
   private eyeFlash = 0
   private slowdown = 0
+  /** 0 is the eye dark, 1 lit: Broken's homecoming lights it last. */
+  private eyeLit = 1
+  /** Broken, being put back: where each part lies, and how far the order has got. */
+  private assembly: {
+    order: SlotName[]; each: number; gap: number; t: number; seated: number
+    from: Map<SlotName, { p: THREE.Vector3; q: THREE.Quaternion }>
+  } | null = null
   private ghostTimer = 0
 
   private move: Move | null = null
@@ -292,7 +299,84 @@ export class Still {
       o.scale.copy(r.s)
     }
     for (const m of Object.values(this.models)) m.reset?.()
+    this.assembly = null
+    this.eyeLit = 1
     this.setSlowdown(0)
+  }
+
+  /** The eye's light on its own, 0..1: the last thing to come back after he's put together. */
+  setEyeLit(k: number) {
+    this.eyeLit = k
+    EYE.color.copy(EYE_OFF).lerp(EYE_ON, k)
+  }
+
+  get reassembling(): boolean {
+    return this.assembly !== null
+  }
+
+  /**
+   * Broken, played backwards. Each part starts lying where `from` says (a point on
+   * a surface, world space, and a yaw), and flies to its seat in `order`: an ease
+   * out, arcing up at mid-flight. Drive it with `updateReassembly`; `update` is
+   * not called meanwhile, so nothing else writes the four roots.
+   */
+  beginReassembly(from: Record<SlotName, { at: THREE.Vector3; yaw: number }>, o: { order: SlotName[]; each: number; gap: number }) {
+    this.reassemble()
+    this.setEyeLit(0)
+    this.group.position.set(this.pos.x, 0, this.pos.z)
+    this.group.rotation.set(0, this.facing, 0)
+    this.group.updateMatrixWorld(true)
+    const toLocal = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -this.facing)
+    const box = new THREE.Box3()
+    const c = new THREE.Vector3()
+    const lying = new Map<SlotName, { p: THREE.Vector3; q: THREE.Quaternion }>()
+    for (const slot of SLOT_NAMES) {
+      const part = this.parts[slot]
+      const spot = from[slot]
+      // on its side at the given yaw (in world terms), then moved so its bounds sit on the surface at the spot
+      const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(Math.PI / 2, spot.yaw - this.facing, 0, 'YXZ'))
+      part.quaternion.copy(q)
+      part.updateMatrixWorld(true)
+      box.setFromObject(part)
+      box.getCenter(c)
+      const d = new THREE.Vector3(spot.at.x - c.x, spot.at.y - box.min.y, spot.at.z - c.z).applyQuaternion(toLocal)
+      part.position.add(d)
+      lying.set(slot, { p: part.position.clone(), q })
+    }
+    this.assembly = { order: o.order, each: o.each, gap: o.gap, t: 0, seated: 0, from: lying }
+  }
+
+  /** One step of the reassembly. Returns the slots that seated this step (a click and sparks each). */
+  updateReassembly(dt: number): SlotName[] {
+    const a = this.assembly
+    if (!a) return []
+    a.t += dt
+    this.group.position.set(this.pos.x, 0, this.pos.z)
+    this.group.rotation.set(0, this.facing, 0)
+    const seated: SlotName[] = []
+    a.order.forEach((slot, i) => {
+      const part = this.parts[slot]
+      const home = this.rest.get(part)!
+      const from = a.from.get(slot)!
+      const k = Math.min(1, Math.max(0, (a.t - i * (a.each + a.gap)) / a.each))
+      const e = 1 - Math.pow(1 - k, 3)
+      part.position.lerpVectors(from.p, home.p, e)
+      part.position.y += 0.6 * Math.sin(Math.PI * e)
+      part.quaternion.slerpQuaternions(from.q, home.q, e)
+      if (k >= 1 && i >= a.seated) {
+        a.seated = i + 1
+        seated.push(slot)
+      }
+    })
+    if (a.seated >= a.order.length) {
+      for (const slot of a.order) {
+        const r = this.rest.get(this.parts[slot])!
+        this.parts[slot].position.copy(r.p)
+        this.parts[slot].quaternion.copy(r.q)
+      }
+      this.assembly = null
+    }
+    return seated
   }
 
   /** The seam that makes visible loot free later. */
@@ -527,7 +611,7 @@ export class Still {
     }
 
     this.eyeFlash = Math.max(0, this.eyeFlash - dt * 5)
-    if (this.slowdown <= 0) EYE.color.copy(EYE_ON).lerp(new THREE.Color(0xffffff), this.eyeFlash)
+    if (this.slowdown <= 0) EYE.color.copy(EYE_ON).lerp(new THREE.Color(0xffffff), this.eyeFlash).lerp(EYE_OFF, 1 - this.eyeLit)
 
     const a = this.anim
     if (!a) return

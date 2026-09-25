@@ -25,7 +25,8 @@ import type { Terrain } from './terrain'
 import { Vfx, syncTells, COLD, COLD_DEEP, EMBER } from './vfx'
 import { PartFx } from './partfx'
 import type { PartEvent } from './parts'
-import { RUN_DEPTHS, BOSS_EVERY, LEAN_HOME, exitsAfterBoss, hourAtEnd, type HomeHour } from './areas'
+import { RUN_DEPTHS, BOSS_EVERY, LEAN_HOME, FIRST_RUN_IN_MAZE, exitsAfterBoss, hourAtEnd, type HomeHour } from './areas'
+import { createWorkshop, type ArrivalKind, type Workshop } from './workshop'
 import { openSave, freshTally, localDate, drawerFor, trimCards, CARD_KEEP, CARD_LINES, LEADERS_MAX, type EndingKind, type RunTally, type SaveV1 } from './save'
 import { poolView, markFound, hookCandidates, facingOutWhites, type PoolView } from './pool'
 import type { DropSource } from './loot'
@@ -872,11 +873,12 @@ const EXIT_RADIUS = 1.4
 const HOMING_SECONDS = 0.6
 
 /**
- * boot until the kit is in; crawl and descending as ever; broken, stopping and
- * homing are the three terminal sequences (the ending is already kept by then);
- * ending is the words.
+ * boot until the kit is in; workshop is the room, leaving the fade out of it into
+ * a run; crawl and descending as ever; broken, stopping and homing are the three
+ * terminal sequences (the ending is already kept by then); ending is the words,
+ * and arriving the way into the room.
  */
-type Phase = 'boot' | 'crawl' | 'descending' | 'broken' | 'stopping' | 'homing' | 'ending'
+type Phase = 'boot' | 'workshop' | 'leaving' | 'crawl' | 'descending' | 'broken' | 'stopping' | 'homing' | 'ending' | 'arriving'
 
 /** One depth of a run, for __runStats: the phone test measures whether Stopped is reachable at all. */
 interface DepthStats { depth: number; pushes: number; quiets: number; strainIn: number; strainOut: number | null }
@@ -1174,6 +1176,7 @@ function enterLevel(depth: number) {
 }
 
 function startRun() {
+  leaveRoom()
   still.reassemble()
   Object.assign(run, {
     phase: 'crawl', strain: 0, t: 0, swapped: false, ramStunSeen: false,
@@ -1267,7 +1270,7 @@ function commit(kind: EndingKind) {
 
 function end(kind: EndingKind) {
   run.phase = 'ending'
-  overlay.show(kind, run.depth, startRun)
+  overlay.show(kind, run.depth, continueHome)
   // the silence after the ending is held a moment, then the bell comes back under the words
   sfx.restore(3)
 }
@@ -1325,6 +1328,86 @@ function beginHoming(to: THREE.Vector3) {
   stopAllWindups()
   // the world goes soft around him rather than silent: nothing broke
   sfx.pauseDuck(true)
+  sfx.homeBeam()
+}
+
+// --- home: the Workshop, between runs ---
+
+/** Built once the kit is in, hidden during runs. */
+let workshop!: Workshop
+/** Seconds left of the fade in to a run leaving the room. */
+let fadeInT = 0
+
+/** The words' button: everything fades, then the room, and the way into it this ending had. */
+function continueHome() {
+  if (run.phase !== 'ending') return
+  run.phase = 'arriving'
+  run.t = 0
+  run.swapped = false
+  hud.enabled = false
+  overlay.leave()
+}
+
+/** The room now: the run's world is put away and Still arrives the way `arrival` says (the fade in is the room's). */
+function enterRoom(arrival: ArrivalKind, hour: HomeHour, worn: (string | null)[]) {
+  overlay.hide()
+  stopAllWindups()
+  level?.dispose()
+  level = null
+  loot.clear()
+  combat.reset()
+  partFx.clear()
+  combat.terrain = workshop.terrain
+  loot.terrain = workshop.terrain
+  offered = null
+  atShrine = null
+  hud.offer(null)
+  hud.prompt(null)
+  hud.bossBar(null)
+  hud.mode('workshop')
+  hud.enabled = false
+  hud.setStick(0, 0)
+  rig.reset()
+  sfx.restore(1)
+  workshop.enter({ arrival, hour, worn })
+  fade.style.opacity = '1'
+  run.phase = arrival === 'idle' ? 'workshop' : 'arriving'
+  run.swapped = true
+  if (arrival === 'idle') hud.enabled = true
+}
+
+/** In the room (or fading out of it): its light, its camera, its sounds. */
+const inRoom = () => run.phase === 'workshop' || run.phase === 'leaving' || (run.phase === 'arriving' && run.swapped)
+
+/** One step of the room, and what came of it. */
+function roomStep(dt: number) {
+  for (const ev of workshop.update(dt, hud.moveX, hud.moveZ)) {
+    if (ev.kind === 'arrived') {
+      run.phase = 'workshop'
+      hud.enabled = true
+      // a reload from here on opens the room as it is, rather than replaying the way in
+      if (save.lastEnding && !save.lastEnding.arrived) {
+        save.lastEnding.arrived = true
+        store.write()
+      }
+    }
+    if (ev.kind === 'near') hud.prompt(ev.id ? workshop.promptFor(ev.id, save) : null)
+    if (ev.kind === 'door' && run.phase === 'workshop') {
+      run.phase = 'leaving'
+      run.t = 0
+      hud.enabled = false
+      hud.prompt(null)
+    }
+  }
+  fade.style.opacity = String(workshop.blackout)
+}
+
+/** Out of the room without the door (dev hooks, and a run started some other way). */
+function leaveRoom() {
+  if (!workshop?.group.visible) return
+  workshop.leave()
+  hud.mode('run')
+  hud.prompt(null)
 }
 
 hud.onFire((def, pushed) => {
@@ -1652,6 +1735,35 @@ function simulate(realDt: number) {
 
   if (run.phase === 'ending' || run.phase === 'boot') return
 
+  if (run.phase === 'arriving' && !run.swapped) {
+    // the words and the world fade out together; then the room
+    run.t += realDt
+    fade.style.opacity = String(Math.min(1, run.t / DESCEND_OUT))
+    if (run.t >= DESCEND_OUT) {
+      const e = run.ending ?? { kind: 'broken' as const, hour: 'afternoon' as const }
+      enterRoom(e.kind, e.hour, save.lastEnding?.worn ?? hud.slots.map((sl) => sl.def?.id ?? null))
+    }
+    return
+  }
+  if (run.phase === 'arriving' || run.phase === 'workshop') {
+    roomStep(realDt)
+    return
+  }
+  if (run.phase === 'leaving') {
+    run.t += realDt
+    roomStep(realDt)
+    fade.style.opacity = String(Math.min(1, run.t / DESCEND_OUT))
+    if (run.t >= DESCEND_OUT) {
+      startRun()
+      fadeInT = DESCEND_IN
+    }
+    return
+  }
+  if (fadeInT > 0) {
+    fadeInT = Math.max(0, fadeInT - realDt)
+    fade.style.opacity = String(fadeInT / DESCEND_IN)
+  }
+
   if (run.phase === 'homing') {
     homing(realDt)
     return
@@ -1800,10 +1912,12 @@ const stepTimes: number[] = []
 const STEP_WINDOW = 0.12
 const STEPS_MAX = 3
 function footsteps(now: number) {
-  // his own steps into the warm beam still land; the held world's don't
-  if (run.phase !== 'crawl' && run.phase !== 'homing') return
+  // his own steps into the warm beam, and at home, still land; the held world's don't
+  const home = inRoom()
+  if (run.phase !== 'crawl' && run.phase !== 'homing' && !home) return
   const k = Math.floor(still.stride / Math.PI)
-  if (still.walking && k !== lastStep.get(still)) sfx.step('still', 0)
+  // at home the boards start at the threshold; outside it is still stone
+  if (still.walking && k !== lastStep.get(still)) sfx.step('still', 0, 1, home && still.pos.z >= -6 ? 'wood' : 'stone')
   lastStep.set(still, k)
   if (run.phase !== 'crawl') return
   while (stepTimes.length && now - stepTimes[0]! > STEP_WINDOW) stepTimes.shift()
@@ -1879,15 +1993,24 @@ function frame(nowMs: number) {
     const k = Math.min(1, d / 6) * GRACE_LEAN
     graceLean.lerp(tmpLean.set(d > 0.01 ? (ex / d) * k : 0, 0, d > 0.01 ? (ez / d) * k : 0), Math.min(1, elapsed * 2))
   }
-  world.graceLight.position.set(x + graceLean.x, GRACE_Y, z + graceLean.z)
+  // in the room Grace's light is the lamp, and stays where it hangs
+  const home = inRoom()
+  if (!home) world.graceLight.position.set(x + graceLean.x, GRACE_Y, z + graceLean.z)
   level?.update(now)
 
   shake = Math.max(0, shake - elapsed * 3.2)
-  camTarget.set(x, 0, z)
   const awake = combat.awake
   const fighting = run.phase === 'crawl' && awake.length > 0
-  // a locked or rushing lane's end is a threat too: an 11 u lane must never end off screen
-  rig.update(elapsed, camTarget, [...awake.map((e) => e.pos), ...combat.laneEnds()], !fighting)
+  if (home) {
+    // a little toward the room's middle, and halfway to what he's standing at
+    camTarget.copy(workshop.focus)
+    rig.hold = workshop.hold
+    rig.update(elapsed, camTarget, [], true)
+  } else {
+    camTarget.set(x, 0, z)
+    // a locked or rushing lane's end is a threat too: an 11 u lane must never end off screen
+    rig.update(elapsed, camTarget, [...awake.map((e) => e.pos), ...combat.laneEnds()], !fighting)
+  }
   world.camera.position.copy(camTarget).add(camOffset)
   if (shake > 0) {
     const k = shake * shake * 0.9
@@ -1897,7 +2020,7 @@ function frame(nowMs: number) {
   }
   world.camera.lookAt(camTarget)
 
-  updateAmbience(level?.boss ? 'boss' : 'crawl')
+  updateAmbience(home ? 'workshop' : level?.boss ? 'boss' : 'crawl')
   const bossAwake = !!combat.boss && !combat.boss.dead && awake.includes(combat.boss)
   updateMusic({
     boss: bossAwake,
@@ -1905,6 +2028,7 @@ function frame(nowMs: number) {
     fighting,
     calm: !fighting,
     strain: run.strain / 20,
+    home,
   })
   if (!paused) clock += elapsed * 1000
   drawEliteLabels()
@@ -1999,6 +2123,8 @@ if (import.meta.env.DEV) {
      * Nothing else in the world; Still at (0, 0) facing +z, whole, unstrained, every button ready.
      */
     __arena: (o: { boxes?: Box[]; circles?: Circle[]; auto?: boolean } = {}) => {
+      leaveRoom()
+      fadeInT = 0
       const floor = new Set<string>()
       for (let i = -3; i <= 3; i++) for (let j = -3; j <= 3; j++) floor.add(key(i, j))
       const terrain = makeTerrain(floor, o.boxes ?? [], o.circles ?? [])
@@ -2047,7 +2173,23 @@ if (import.meta.env.DEV) {
       combat.breakables.push(b)
       return b
     },
-    __enter: enterLevel,
+    /** A level at this depth, now. From the room, it walks out first (no door, no fade). */
+    __enter: (depth: number) => {
+      if (inRoom() || run.phase === 'arriving' || run.phase === 'ending') {
+        leaveRoom()
+        overlay.hide()
+        Object.assign(run, { phase: 'crawl', committed: false, ending: null })
+        hud.enabled = true
+        fade.style.opacity = '0'
+      }
+      enterLevel(depth)
+    },
+    /** Into the room now: an arrival (default idle) at an hour, wearing what he has on. */
+    __workshop: (o: { arrival?: ArrivalKind; hour?: HomeHour } = {}) => {
+      enterRoom(o.arrival ?? 'idle', o.hour ?? 'afternoon', hud.slots.map((sl) => sl.def?.id ?? null))
+    },
+    __near: () => workshop.near,
+    __traces: () => workshop.traces,
     /**
      * The loot rules as the older checks call them: (from, taken, source, excludeSlot?).
      * With no pool given, every part counts as found and nothing reaches for the
@@ -2192,7 +2334,16 @@ if (import.meta.env.DEV) {
   })
 }
 
+/**
+ * Boot (§3.1): a dev run goes straight to its depth; the very first boot goes into
+ * the maze; an ending whose way in never finished plays it again; anything else
+ * opens the room as he left it. Resuming a run at its last beam comes later.
+ */
 void loadKit().then(() => {
-  startRun()
+  workshop = createWorkshop(world, still, vfx)
+  const last = save.lastEnding
+  if (DEPTH_PARAM !== null || (save.runs === 0 && FIRST_RUN_IN_MAZE)) startRun()
+  else if (last && !last.arrived) enterRoom(last.kind, last.hour, last.worn)
+  else enterRoom('idle', last?.hour ?? 'afternoon', last?.worn ?? [null, null, null, null])
   requestAnimationFrame(frame)
 })

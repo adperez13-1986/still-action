@@ -15,10 +15,12 @@ export const PIECES = [
   'floor_tile_large', 'floor_tile_large_rocks', 'floor_dirt_large', 'floor_dirt_large_rocky',
   'barrier', 'column', 'pillar', 'wall', 'wall_broken', 'barrier_column',
   'rubble_half', 'rubble_large', 'crates_stacked', 'barrel_large', 'box_large', 'box_stacked',
+  // the Workshop
+  'wall_doorway', 'wall_window_open', 'table_long', 'stool',
 ] as const
 export type Piece = (typeof PIECES)[number]
 
-type Surface = 'paving' | 'rock' | 'wood' | 'ground'
+export type Surface = 'paving' | 'rock' | 'wood' | 'ground'
 const SURFACE_TEX: Record<Surface, { id: string; scale: number; gain: number }> = {
   paving: { id: 'PavingStones142', scale: 7, gain: 0.62 },
   rock: { id: 'Rock035', scale: 3, gain: 1 },
@@ -29,7 +31,7 @@ const SURFACE_TEX: Record<Surface, { id: string; scale: number; gain: number }> 
 function surfaceOf(name: string): Surface {
   if (name.startsWith('floor_dirt')) return 'ground'
   if (name.startsWith('floor')) return 'paving'
-  if (/crate|box|barrel/.test(name)) return 'wood'
+  if (/crate|box|barrel|table|stool/.test(name)) return 'wood'
   return 'rock'
 }
 
@@ -56,9 +58,15 @@ function tex(file: string, color: boolean) {
   return t
 }
 
-/** Re-skin a material with its surface. Works for plain and instanced meshes. */
-export function skin(m: THREE.MeshStandardMaterial, surface: Surface) {
-  const { id, scale, gain } = SURFACE_TEX[surface]
+/**
+ * Re-skin a material with its surface. Works for plain and instanced meshes.
+ * `tune` overrides the surface's scale (units per texture tile) or gain for one use:
+ * the Workshop's boards are wider and darker than a crate's.
+ */
+export function skin(m: THREE.MeshStandardMaterial, surface: Surface, tune: { scale?: number; gain?: number } = {}) {
+  const { id } = SURFACE_TEX[surface]
+  const scale = tune.scale ?? SURFACE_TEX[surface].scale
+  const gain = tune.gain ?? SURFACE_TEX[surface].gain
   const own = {
     uAlb: { value: tex(`${id}_Color`, true) },
     uNrm: { value: tex(`${id}_NormalGL`, false) },
@@ -131,9 +139,15 @@ export interface PieceData {
   material: THREE.MeshStandardMaterial
   /** Footprint radius on the floor, for props that block. */
   radius: number
+  /** The top of its bounds: a bench's top, a wall's height. Times its scale where placed. */
+  height: number
+  /** Its bounds, unscaled: collision boxes come from these, never from guessed numbers. */
+  box: THREE.Box3
 }
 
 const loaded = new Map<Piece, PieceData>()
+/** wall_doorway's own door leaf, kept apart from the frame (the kids' door swings on it). */
+let doorLeafData: PieceData | null = null
 
 /** Loads every piece once. Call before building the first level. */
 export async function loadKit(): Promise<void> {
@@ -142,6 +156,7 @@ export async function loadKit(): Promise<void> {
     const scene = (await loader.loadAsync(`${import.meta.env.BASE_URL}kaykit/${name}.glb`)).scene
     let mesh: THREE.Mesh | null = null
     scene.traverse((o) => {
+      // the first mesh is the piece; wall_doorway's leaf is its child, and kept separately below
       if (!mesh && o instanceof THREE.Mesh) mesh = o
     })
     const m = mesh as THREE.Mesh | null
@@ -162,8 +177,41 @@ export async function loadKit(): Promise<void> {
       geometry,
       material,
       radius: Math.max(bb.max.x - bb.min.x, bb.max.z - bb.min.z) / 2,
+      height: bb.max.y,
+      box: bb.clone(),
     })
+    if (name === 'wall_doorway') {
+      const leaf = scene.getObjectByName('wall_doorway_door')
+      if (leaf instanceof THREE.Mesh) {
+        leaf.updateWorldMatrix(true, false)
+        const g = leaf.geometry.clone().applyMatrix4(leaf.matrixWorld)
+        g.computeBoundingBox()
+        const lm = (leaf.material as THREE.MeshStandardMaterial).clone()
+        lm.map = null
+        skin(lm, 'wood')
+        const lb = g.boundingBox!
+        doorLeafData = { geometry: g, material: lm, radius: Math.max(lb.max.x - lb.min.x, lb.max.z - lb.min.z) / 2, height: lb.max.y, box: lb.clone() }
+      }
+    }
   }))
+}
+
+/** wall_doorway's door leaf, in the doorway's own frame (null if the file had none). */
+export function doorLeaf(): PieceData | null {
+  return doorLeafData
+}
+
+/** A piece's material wearing a different surface: the Workshop's floor and walls are wood. One copy per pair, shared. */
+const reskinned = new Map<string, THREE.MeshStandardMaterial>()
+export function materialAs(name: Piece, surface: Surface, tune: { scale?: number; gain?: number } = {}): THREE.MeshStandardMaterial {
+  const k = `${name}:${surface}:${tune.scale ?? ''}:${tune.gain ?? ''}`
+  let m = reskinned.get(k)
+  if (!m) {
+    m = pieceData(name).material.clone()
+    skin(m, surface, tune)
+    reskinned.set(k, m)
+  }
+  return m
 }
 
 export function pieceData(name: Piece): PieceData {
@@ -181,8 +229,14 @@ export interface Placement {
   scale?: number
 }
 
-/** One InstancedMesh per piece type. The shared geometry and material are never disposed. */
-export function buildInstanced(placements: readonly Placement[]): THREE.Group {
+/**
+ * One InstancedMesh per piece type. The shared geometry and material are never disposed.
+ * `surface` re-skins chosen pieces (the Workshop's wooden floor and walls).
+ */
+export function buildInstanced(
+  placements: readonly Placement[],
+  opts: { surface?: Partial<Record<Piece, Surface>>; tune?: { scale?: number; gain?: number } } = {},
+): THREE.Group {
   const group = new THREE.Group()
   const byPiece = new Map<Piece, Placement[]>()
   for (const p of placements) {
@@ -196,7 +250,9 @@ export function buildInstanced(placements: readonly Placement[]): THREE.Group {
   const pos = new THREE.Vector3()
   const scl = new THREE.Vector3()
   for (const [name, list] of byPiece) {
-    const { geometry, material } = pieceData(name)
+    const { geometry } = pieceData(name)
+    const surface = opts.surface?.[name]
+    const material = surface ? materialAs(name, surface, opts.tune) : pieceData(name).material
     const inst = new THREE.InstancedMesh(geometry, material, list.length)
     list.forEach((p, i) => {
       q.setFromAxisAngle(up, p.rotY ?? 0)

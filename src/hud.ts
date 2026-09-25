@@ -78,8 +78,13 @@ export interface Hud {
   resetLoadout: (parts: readonly AbilityDef[]) => void
   /** The boss's health across the top. Null hides it. */
   bossBar: (b: { name: string; frac: number; overloaded: boolean; stunned: boolean } | null) => void
-  /** A generic prompt in the card's place (shrines). Null hides it. */
-  prompt: (p: { title: string; line: string; action: string } | null) => void
+  /** A generic prompt in the card's place (shrines, the Workshop's things). Null hides it; a null action hides its button. */
+  prompt: (p: { title: string; line: string; action: string | null } | null) => void
+  /**
+   * run: the fight's HUD. workshop and walk: the stick, the prompt and the chips only;
+   * no ability buttons, meters or pause, so nothing there can cost strain.
+   */
+  mode: (m: 'run' | 'workshop' | 'walk') => void
   onPrompt: (cb: () => void) => void
   /** The pickup card. Null hides it. `fresh`: never found before, and the card says so. */
   offer: (incoming: AbilityDef | null, fresh?: boolean) => void
@@ -463,7 +468,12 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
       if (!p) return
       promptEl.querySelector('.name')!.textContent = p.title
       promptEl.querySelector('.line')!.textContent = p.line
-      promptEl.querySelector('.take')!.textContent = p.action
+      const act = promptEl.querySelector<HTMLElement>('.take')!
+      act.textContent = p.action ?? ''
+      act.style.display = p.action === null ? 'none' : ''
+    },
+    mode(m) {
+      root.dataset.mode = m
     },
     onPrompt(cb) { promptListeners.push(cb) },
 

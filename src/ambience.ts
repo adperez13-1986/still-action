@@ -10,8 +10,11 @@ import { ambienceContext } from './audio'
  *   drips       water, somewhere in the stereo field, in a stone room
  *   machinery   a far clank, or a chain of them, now and then
  *   foundry     boss levels only: a hum and steam, before you see it
+ *
+ * And home, the Workshop: the stone goes, and a small wooden room is left with
+ * a clock ticking in it and Grace's tone under everything, never ending.
  */
-export type AmbienceMood = 'crawl' | 'boss'
+export type AmbienceMood = 'crawl' | 'boss' | 'workshop'
 
 interface Engine {
   ctx: AudioContext
@@ -21,6 +24,13 @@ interface Engine {
   room: AudioNode
   draft: GainNode
   foundry: GainNode
+  /** Everything of the maze's stone: faded out at home. */
+  stone: GainNode
+  /** Everything of home: the clock, Grace's tone, the wooden room. */
+  home: GainNode
+  wood: AudioNode
+  nextTick: number
+  tickN: number
   nextDrip: number
   nextClank: number
   nextGust: number
@@ -51,8 +61,25 @@ function loopNoise(e: { ctx: AudioContext; noise: AudioBuffer }) {
   return s
 }
 
+/** A small wooden room: shorter and brighter than stone (0.6 s, a steep fall). */
+function woodRoom(ctx: AudioContext) {
+  const len = Math.floor(ctx.sampleRate * 0.6)
+  const buf = ctx.createBuffer(2, len, ctx.sampleRate)
+  for (let ch = 0; ch < 2; ch++) {
+    const d = buf.getChannelData(ch)
+    for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 4) * (i < 25 ? 0 : 1)
+  }
+  const conv = ctx.createConvolver()
+  conv.buffer = buf
+  return conv
+}
+
 function build(a: NonNullable<ReturnType<typeof ambienceContext>>): Engine {
-  const { ctx, out } = a
+  const { ctx } = a
+  // the maze's layers all run through `stone`, so home can fade them as one
+  const stone = ctx.createGain()
+  stone.connect(a.out)
+  const out = stone
   const room = stoneRoom(ctx, 1.6)
   const wet = ctx.createGain()
   wet.gain.value = 0.7
@@ -101,11 +128,63 @@ function build(a: NonNullable<ReturnType<typeof ambienceContext>>): Engine {
     o.start()
   }
 
+  // home: silent until the mood says so
+  const home = ctx.createGain()
+  home.gain.value = 0
+  home.connect(a.out)
+  const wood = woodRoom(ctx)
+  const woodWet = ctx.createGain()
+  woodWet.gain.value = 0.5
+  wood.connect(woodWet).connect(home)
+  // Grace's tone: two low sines, a fifth apart, breathing slowly by a quarter
+  const breath = ctx.createGain()
+  breath.gain.value = 1
+  breath.connect(home)
+  const lfo = ctx.createOscillator()
+  lfo.frequency.value = 0.08
+  const lfoDepth = ctx.createGain()
+  lfoDepth.gain.value = 0.25
+  lfo.connect(lfoDepth).connect(breath.gain)
+  lfo.start()
+  for (const f of [146.83, 220.0]) {
+    const o = ctx.createOscillator()
+    o.type = 'sine'
+    o.frequency.value = f
+    const g = ctx.createGain()
+    g.gain.value = 0.01
+    o.connect(g).connect(breath)
+    o.start()
+  }
+
   const t = ctx.currentTime
   return {
-    ...a, room, draft, foundry,
+    ...a, out: stone, room, draft, foundry, stone, home, wood, nextTick: t + 1, tickN: 0,
     nextDrip: t + 1.5, nextClank: t + 5, nextGust: t + 2, nextSteam: t + 3,
   }
+}
+
+/** One tick of the clock, scheduled at `when`: bandpassed noise, 12 ms, the two sides of the escapement. */
+function clockTick(e: Engine, when: number) {
+  const { ctx } = e
+  const s = ctx.createBufferSource()
+  s.buffer = e.noise
+  const bp = ctx.createBiquadFilter()
+  bp.type = 'bandpass'
+  bp.frequency.value = e.tickN % 2 ? 1700 : 2200
+  bp.Q.value = 6
+  const g = ctx.createGain()
+  g.gain.setValueAtTime(0.0001, when)
+  // a narrow band keeps about a sixth of white noise's level: this lands the tick near 0.018
+  g.gain.linearRampToValueAtTime(0.018 * 6, when + 0.002)
+  g.gain.exponentialRampToValueAtTime(0.0001, when + 0.012)
+  const pan = ctx.createStereoPanner()
+  pan.pan.value = -0.3
+  s.connect(bp).connect(g).connect(pan)
+  pan.connect(e.home)
+  pan.connect(e.wood)
+  s.start(when, Math.random() * 0.5)
+  s.stop(when + 0.03)
+  e.tickN++
 }
 
 function drip(e: Engine) {
@@ -183,6 +262,15 @@ function tick() {
   const e = engine
   if (!e) return
   const t = e.ctx.currentTime
+  if (mood === 'workshop') {
+    // the clock is scheduled ahead on the audio clock, so a slow frame never makes it limp
+    while (e.nextTick < t + 0.3) {
+      if (e.nextTick >= t) clockTick(e, e.nextTick)
+      e.nextTick += 1
+    }
+    return
+  }
+  e.nextTick = t + 1
   const boss = mood === 'boss'
   if (t >= e.nextDrip) {
     drip(e)
@@ -212,6 +300,11 @@ export function updateAmbience(next: AmbienceMood) {
   }
   if (next !== mood) {
     mood = next
-    engine.foundry.gain.setTargetAtTime(next === 'boss' ? 1 : 0, engine.ctx.currentTime, 1.5)
+    const t = engine.ctx.currentTime
+    engine.foundry.gain.setTargetAtTime(next === 'boss' ? 1 : 0, t, 1.5)
+    // home: the stone fades out over about 1.2 s, and the room comes up under it
+    const home = next === 'workshop'
+    engine.stone.gain.setTargetAtTime(home ? 0 : 1, t, 0.4)
+    engine.home.gain.setTargetAtTime(home ? 1 : 0, t, home ? 0.4 : 0.25)
   }
 }

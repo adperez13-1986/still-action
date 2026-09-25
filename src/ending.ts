@@ -27,13 +27,18 @@ const COPY: Record<EndingKind, { title: string; body: string }> = {
 }
 
 const CLOSING = 'You showed up. That was enough.'
+/** PLACEHOLDER label, Adrian's word: every ending's button leads home, to the Workshop. */
+const CONTINUE = 'home'
 /** The button ignores taps this long after the words go up: a thumb still pressing from the fight can't skip them. */
 const GUARD_MS = 1200
 
 export interface Overlay {
   banner: (text: string) => void
-  show: (kind: EndingKind, depth: number, onAgain: () => void) => void
+  /** The words, and the button that goes on from them (home). */
+  show: (kind: EndingKind, depth: number, onContinue: () => void) => void
   hide: () => void
+  /** The words fade out on the way home (the room fades in behind). */
+  leave: () => void
   /** The button, without the finger guard (dev checks have no real time between frames). */
   press: () => void
 }
@@ -50,7 +55,7 @@ export function createOverlay(root: HTMLElement): Overlay {
       <p class="body"></p>
       <p class="count"></p>
       <p class="closing"></p>
-      <button type="button">again</button>
+      <button type="button">${CONTINUE}</button>
     </div>
   `
   const title = end.querySelector('h1')!
@@ -93,6 +98,11 @@ export function createOverlay(root: HTMLElement): Overlay {
     hide() {
       onAgain = null
       end.className = ''
+    },
+
+    leave() {
+      onAgain = null
+      end.classList.add('leaving')
     },
 
     press() {

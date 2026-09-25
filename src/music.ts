@@ -38,6 +38,8 @@ export interface MusicState {
   calm: boolean
   /** 0..1 */
   strain: number
+  /** The Workshop: the pad and drone drop back, no pulse or drums, the bell alone over them. */
+  home?: boolean
 }
 
 interface Engine {
@@ -48,14 +50,14 @@ interface Engine {
   arp: GainNode
   bell: GainNode
   tension: GainNode
-  padOut: AudioNode
+  padOut: GainNode
   nextBeat: number
   beat: number
   bellStep: number
 }
 
 let engine: Engine | null = null
-let last = { fighting: false, calm: false, strain: -1, boss: false, overloaded: false }
+let last = { fighting: false, calm: false, strain: -1, boss: false, overloaded: false, home: false }
 let boss = false
 let overloaded = false
 const beatLen = () => 60 / (boss ? BOSS_BPM : BPM)
@@ -281,13 +283,20 @@ export function updateMusic(state: MusicState) {
   const strain = Math.round(state.strain * 20) / 20
   if (
     state.fighting === last.fighting && state.calm === last.calm && strain === last.strain &&
-    state.boss === last.boss && state.overloaded === last.overloaded
+    state.boss === last.boss && state.overloaded === last.overloaded && !!state.home === last.home
   ) return
-  last = { fighting: state.fighting, calm: state.calm, strain, boss: state.boss, overloaded: state.overloaded }
+  last = { fighting: state.fighting, calm: state.calm, strain, boss: state.boss, overloaded: state.overloaded, home: !!state.home }
   boss = state.boss
   overloaded = state.overloaded
 
   const t = engine.ctx.currentTime
+  if (state.home) {
+    engine.padOut.gain.setTargetAtTime(0.55, t, 1.5)
+    for (const g of [engine.pulse, engine.drums, engine.drive, engine.arp, engine.tension]) g.gain.setTargetAtTime(0, t, 0.8)
+    engine.bell.gain.setTargetAtTime(1, t, 1.5)
+    return
+  }
+  engine.padOut.gain.setTargetAtTime(1, t, 1.5)
   // the boss fight replaces the gentle pulse with its own drums and drive
   engine.pulse.gain.setTargetAtTime(state.fighting && !state.boss ? 1 : 0, t, state.fighting ? 1.2 : 0.8)
   engine.drums.gain.setTargetAtTime(state.boss ? 1 : 0, t, state.boss ? 0.4 : 1.2)

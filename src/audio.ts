@@ -84,6 +84,7 @@ const SAMPLE_FILES: Record<string, [string, number]> = {
   bell: ['impactBell_heavy', 2],
   tin: ['impactTin_medium', 4],
   step: ['footstep_concrete', 5],
+  woodStep: ['footstep_wood', 5],
 }
 export type SampleName = keyof typeof SAMPLE_FILES
 const samples = new Map<string, AudioBuffer[]>()
@@ -121,13 +122,24 @@ function sample(c: AudioContext, name: SampleName, dest: AudioNode, gain: number
   src.start(c.currentTime + when)
 }
 
+/** What a foot lands on. The Workshop's floor is wood; the maze is stone. */
+export type FootSurface = 'stone' | 'wood' | 'plate'
+
 /** Footsteps. Who's walking sets the weight; distance sets how loud. */
-export function step(who: 'still' | 'hulk' | 'tripod' | 'ram' | 'boss', pan: number, loudness = 1) {
+export function step(who: 'still' | 'hulk' | 'tripod' | 'ram' | 'boss', pan: number, loudness = 1, surface: FootSurface = 'stone') {
   const c = live()
   if (!c || loudness <= 0.02) return
   const d = out(c, who === 'still' ? 'auto' : 'enemy', pan)
   switch (who) {
     case 'still':
+      if (surface === 'wood') {
+        // home: a hollow board under him, and the thin metal of his foot on it
+        if (samples.get('woodStep')?.length) sample(c, 'woodStep', d, 0.5 * loudness, 1.3)
+        else sample(c, 'plank', d, 0.3 * loudness, 1.8)
+        sample(c, 'plank', d, 0.05 * loudness, 1.6)
+        sample(c, 'tin', d, 0.05 * loudness, 2.2)
+        break
+      }
       // light and a little metallic: a thin machine on stone
       sample(c, 'step', d, 0.55 * loudness, 1.35)
       sample(c, 'tin', d, 0.07 * loudness, 2.2)
@@ -1582,4 +1594,109 @@ export function ambienceContext(): {
 export function musicContext(): { ctx: AudioContext; out: AudioNode } | null {
   const c = live()
   return c ? { ctx: c, out: buses.music } : null
+}
+
+// --- home: the Workshop's voices ---
+
+/**
+ * Stopped, coming back: windDown mirrored, a motor finding its pitch over the
+ * whole relight. It leaves the duck alone: the room is already quiet.
+ */
+export function windUp(seconds: number) {
+  const c = live()
+  if (!c) return
+  const t = c.currentTime
+  const d = out(c, 'abilities', 0)
+  const lp = c.createBiquadFilter()
+  lp.type = 'lowpass'
+  lp.frequency.setValueAtTime(90, t)
+  lp.frequency.exponentialRampToValueAtTime(1600, t + seconds)
+  lp.connect(d)
+  const o = c.createOscillator()
+  o.type = 'sawtooth'
+  o.frequency.setValueAtTime(18, t)
+  o.frequency.exponentialRampToValueAtTime(180, t + seconds)
+  const g = c.createGain()
+  g.gain.setValueAtTime(0.0001, t)
+  g.gain.exponentialRampToValueAtTime(0.2, t + seconds * 0.8)
+  g.gain.exponentialRampToValueAtTime(0.0001, t + seconds + 0.4)
+  o.connect(g).connect(lp)
+  o.start(t)
+  o.stop(t + seconds + 0.45)
+}
+
+/** Broken, put back: each part seating is a small click, a little higher each time. */
+export function reassembleClick(i: number) {
+  const c = live()
+  if (!c) return
+  const d = out(c, 'abilities', 0)
+  sample(c, 'tin', d, 0.2, 1.4 + 0.1 * i)
+  sample(c, 'metalLight', d, 0.12, 1.2 + 0.1 * i)
+}
+
+/** A plaque turned on the wall of parts. */
+export function plaqueTurn(pan: number) {
+  const c = live()
+  if (!c) return
+  sample(c, 'plank', out(c, 'ambience', pan), 0.25, 1.6)
+}
+
+/** The kids' door pulled to. */
+export function doorShut(pan: number) {
+  const c = live()
+  if (!c) return
+  const d = out(c, 'ambience', pan)
+  sample(c, 'woodHeavy', d, 0.35, 1.3)
+  sample(c, 'tin', d, 0.08, 1.9, 0.06)
+}
+
+/** Small feet running off, just out of frame: n light steps, 110 ms apart. */
+export function kidSteps(pan: number, n: number) {
+  const c = live()
+  if (!c) return
+  const d = out(c, 'ambience', pan)
+  const name: SampleName = samples.get('woodStep')?.length ? 'woodStep' : 'step'
+  for (let i = 0; i < n; i++) sample(c, name, d, 0.18 * (1 - i / (n + 2)), 2.1, i * 0.11)
+}
+
+/** Someone drawing in the next room: three short strokes of pencil on paper. */
+export function pencil(pan: number) {
+  const c = live()
+  if (!c) return
+  const t = c.currentTime
+  const d = out(c, 'ambience', pan)
+  for (let i = 0; i < 3; i++) {
+    const f = 2500 + Math.random() * 1500
+    hiss(c, d, t + i * (0.12 + Math.random() * 0.08), 0.09, 0.02, 'bandpass', f, f * 1.1, 2.2, 0.01)
+  }
+}
+
+/** The top block of a tower giving way: a small wooden knock and a roll. */
+export function blockTumble(pan: number) {
+  const c = live()
+  if (!c) return
+  const d = out(c, 'ambience', pan)
+  sample(c, 'plank', d, 0.14, 2.4)
+  sample(c, 'plank', d, 0.08, 2.8, 0.16)
+}
+
+/** Into the warm beam: a warm swell and a bell. Chosen, not ended. */
+export function homeBeam() {
+  const c = live()
+  if (!c) return
+  const t = c.currentTime
+  const d = out(c, 'abilities', 0)
+  for (const f of [587, 880]) {
+    const o = c.createOscillator()
+    o.type = 'triangle'
+    o.frequency.value = f
+    const g = c.createGain()
+    g.gain.setValueAtTime(0.0001, t)
+    g.gain.linearRampToValueAtTime(0.06, t + 0.4)
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 2.4)
+    o.connect(g).connect(d)
+    o.start(t)
+    o.stop(t + 2.5)
+  }
+  sample(c, 'bell', d, 0.25, 1.5, 0.05)
 }

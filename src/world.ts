@@ -103,6 +103,9 @@ export interface World {
   renderer: THREE.WebGLRenderer
   composer: EffectComposer
   graceLight: THREE.PointLight
+  /** The cold fill and the cold key: the Workshop and the hours set these. */
+  hemi: THREE.HemisphereLight
+  key: THREE.DirectionalLight
   fog: THREE.Fog
   bloom: UnrealBloomPass
   gradePass: ShaderPass
@@ -130,7 +133,8 @@ export function createWorld(canvas: HTMLCanvasElement, opts: { arena?: boolean }
   camera.lookAt(0, 0, 0)
 
   // --- lights: one warm source (Grace), everything else cold ---
-  scene.add(new THREE.HemisphereLight(0x53749c, 0x0b1119, 1.6))
+  const hemi = new THREE.HemisphereLight(0x53749c, 0x0b1119, 1.6)
+  scene.add(hemi)
 
   const key = new THREE.DirectionalLight(0x8fb0da, 1.15)
   key.position.set(-8, 14, -6)
@@ -205,7 +209,7 @@ export function createWorld(canvas: HTMLCanvasElement, opts: { arena?: boolean }
   })
 
   return {
-    scene, camera, renderer, composer, graceLight, fog, bloom, gradePass,
+    scene, camera, renderer, composer, graceLight, hemi, key, fog, bloom, gradePass,
     colliders,
     resize,
     render: () => composer.render(),

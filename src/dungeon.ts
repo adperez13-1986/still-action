@@ -971,13 +971,13 @@ export function generateLevel(depth: number, seed = Math.floor(Math.random() * 1
  * Tall enough to spot over waist-high barriers, short enough that it never paints a
  * stripe across the room behind it (the locked camera looks from +x,+z).
  */
-const BEAM_H = 9
+export const BEAM_H = 9
 /** Cold is the way on. */
-const COLD_BEAM = 0xcfe0ff
+export const COLD_BEAM = 0xcfe0ff
 /** How far the warm beam stands from the arena centre, where the cold one is. */
 const WARM_OFFSET = 4.5
 
-interface Beam {
+export interface Beam {
   group: THREE.Group
   /** `glow` scales the whole beam over its breathing (the walk into the warm one). */
   update(t: number, glow?: number): void
@@ -985,7 +985,7 @@ interface Beam {
 }
 
 /** A beam that rises well over the walls and fades out as it climbs, with a ring on the floor. */
-function makeBeam(color: number, height: number): Beam {
+export function makeBeam(color: number, height: number): Beam {
   const fadeUp = (() => {
     const data = new Uint8Array(64 * 4)
     for (let i = 0; i < 64; i++) {
