@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { HIDES, hideMaterials } from './hide'
 import type { Terrain } from './terrain'
 import type { AbilityDef } from './abilities'
 import type { GroundPart } from './loot'
@@ -67,9 +68,9 @@ export interface ThiefWorld {
   beams: readonly THREE.Vector3[]
 }
 
-/** A rusted shell, darker than a hulk's: it lives in the corners. */
-const BODY = 0x4e3a31
-const JOINT = 0x2a2224
+/** A rusted shell, the one small rusty thing among them: it lives in the corners. */
+const BODY = HIDES.thief.body
+const JOINT = HIDES.thief.joint
 /** Its one dim ember eye. A touch brighter while it's up and about. */
 const EYE_DIM = 0x6a2a1c
 const EYE_UP = 0x8a3622
@@ -179,8 +180,9 @@ export class Thief implements Enemy {
     this.pos.set(x, 0, z)
     this.nest = nest.clone()
     this.home = world.rooms.find((r) => inRoom(r, cellOf(nest.x), cellOf(nest.z))) ?? null
-    this.mat = new THREE.MeshStandardMaterial({ color: BODY, roughness: 0.85, metalness: 0.35 })
-    this.jointMat = new THREE.MeshStandardMaterial({ color: JOINT, roughness: 0.6, metalness: 0.5 })
+    const hide = hideMaterials('thief')
+    this.mat = hide.mat
+    this.jointMat = hide.jointMat
 
     // a low beetle: one flat box on four thin legs, knees out
     const shell = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.3, 0.8), this.mat)

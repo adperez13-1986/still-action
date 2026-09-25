@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { HIDES, hideMaterials } from './hide'
 import type { Terrain } from './terrain'
 import { DECAL_Y } from './world'
 import { tellMaterial, releaseTell, trackingDim, tellOrder, haloTexture } from './vfx'
@@ -28,9 +29,9 @@ export const LOBBER = {
   interruptReloadMs: 1500,
 }
 
-/** A cast crucible: darker and warmer than the sentinel's pale steel. */
-const BODY = 0x5b4038
-const JOINT = 0x2b2426
+/** A cast crucible of tarnished copper, gone to dark verdigris: the sentinel's tripod in another metal. */
+const BODY = HIDES.lobber.body
+const JOINT = HIDES.lobber.joint
 /** Where the shell leaves from: the crucible's mouth. */
 const MOUTH_Y = 1.45
 
@@ -87,8 +88,9 @@ export class Lobber implements Enemy {
 
   constructor(x: number, z: number) {
     this.pos.set(x, 0, z)
-    this.mat = new THREE.MeshStandardMaterial({ color: BODY, roughness: 0.7, metalness: 0.45 })
-    this.jointMat = new THREE.MeshStandardMaterial({ color: JOINT, roughness: 0.6, metalness: 0.5 })
+    const hide = hideMaterials('lobber')
+    this.mat = hide.mat
+    this.jointMat = hide.jointMat
 
     // the sentinel's tripod, squatter: knees at 0.9, feet splayed 0.9 out
     for (let i = 0; i < 3; i++) {

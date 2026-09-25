@@ -4,14 +4,16 @@ import { DECAL_Y } from './world'
 import { tellMaterial, releaseTell, trackingDim, tellOrder } from './vfx'
 import { PART, type Flip } from './parts'
 import { WALL_TOP } from './lane'
+import { HIDES, hideMaterials } from './hide'
 import { slide, statusTint, disposeBody, SLAG_CORE, SLAG_CORE_ASLEEP, type Enemy, type EnemyAction, type EnemyCtx, type EnemyPhase } from './enemy'
 
 /**
- * Pale steel, lighter than anything else in the room so the silhouette reads on
- * dark stone; the red lens and its halo are what you track across a room.
+ * Drawn gunmetal: the lightest body in the room so the silhouette reads on dark
+ * stone, but neutral and never pale (that's Still); the red lens and its halo are
+ * what you track across a room.
  */
-const BODY = 0x7a8592
-const JOINT = 0x3a414b
+const BODY = HIDES.sentinel.body
+const JOINT = HIDES.sentinel.joint
 const CORE = 0xff5a3c
 
 export function rod(a: THREE.Vector3, b: THREE.Vector3, r: number, mat: THREE.Material) {
@@ -114,8 +116,9 @@ export class Ranged implements Enemy {
 
     // A tripod sentinel: three long jointed legs, a small hub, a barrel and a red lens.
     // Reads as "points at you", not "runs at you".
-    this.mat = new THREE.MeshStandardMaterial({ color: BODY, roughness: 0.45, metalness: 0.55, emissive: 0x141a22 })
-    this.jointMat = new THREE.MeshStandardMaterial({ color: JOINT, roughness: 0.6, metalness: 0.5 })
+    const hide = hideMaterials('sentinel')
+    this.mat = hide.mat
+    this.jointMat = hide.jointMat
 
     const legs = this.legs
     for (let i = 0; i < 3; i++) {

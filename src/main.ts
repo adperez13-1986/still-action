@@ -15,7 +15,8 @@ import type { HazardSpec } from './hazard'
 import { RANGED } from './ranged'
 import { LOBBER } from './lobber'
 import { Thief, type ThiefEvent, type ThiefWorld } from './thief'
-import { Charger, CHARGER } from './charger'
+import { Charger, CHARGER, PLATE as RAM_PLATE } from './charger'
+import { HIDES, debrisColor } from './hide'
 import { Mite, BROOD, type Brood } from './swarm'
 import * as sfx from './audio'
 import { createCameraRig } from './camera'
@@ -94,14 +95,26 @@ const enemyLog: { t: number; ev: EnemyEvent }[] = []
 
 /** Effect helpers: a point at a height, and the colours things break into. */
 const at3 = (p: { x: number; z: number }, y: number) => new THREE.Vector3(p.x, y, p.z)
-const RUST = new THREE.Color(0x5b3b35)
+/** Still's clamp: the steel a blow on it chips. */
 const STEEL = new THREE.Color(0x7a8592)
 const STONE = new THREE.Color(0x5a5550)
 /** The quarter's brick, for the chips off a cracking post. */
 const BRICK = new THREE.Color(0x6a3a2c)
 const WOOD = new THREE.Color(0x6b4a30)
-const JOINT_C = new THREE.Color(0x2b2426)
-const PLATE_C = new THREE.Color(0x6e5a50)
+/** What each body breaks into: its own metal (hide.ts). */
+const HULK_C = debrisColor('hulk')
+const SENTINEL_C = debrisColor('sentinel')
+const LOBBER_C = debrisColor('lobber')
+const RAM_C = debrisColor('ram')
+const RAM_JOINT_C = new THREE.Color(HIDES.ram.joint)
+const PLATE_C = new THREE.Color(RAM_PLATE)
+const MITE_C = debrisColor('mite')
+const THIEF_C = debrisColor('thief')
+function metalOf(e: Enemy | undefined): THREE.Color {
+  if (!e) return HULK_C
+  if (e.kind === 'ranged') return (e as { variant?: string }).variant === 'lobber' ? LOBBER_C : SENTINEL_C
+  return e.kind === 'charger' ? RAM_C : e.kind === 'swarm' ? MITE_C : e.kind === 'thief' ? THIEF_C : HULK_C
+}
 /** A sleeping ram's banked fire: a thin grey wisp, "asleep, not scrap". */
 const BANKED = new THREE.Color(0x4a4744)
 /** The heat coming off a spent clump of mites. */
@@ -215,8 +228,8 @@ const combat = new Combat(world.scene, OPEN, {
       return
     }
     if (kind === 'swarm') {
-      // a pop, not a crunch: a few rust flecks, embers, no dust. Eight of them are still one crunch.
-      vfx.chunks(at3(at, 0.2), 3, RUST, 3.5, 0.08)
+      // a pop, not a crunch: a few coal flecks, embers, no dust. Eight of them are still one crunch.
+      vfx.chunks(at3(at, 0.2), 3, MITE_C, 3.5, 0.08)
       vfx.sparks(at3(at, 0.25), EMBER, 5, 4)
       vfx.flash(at3(at, 0.25), EMBER, wasElite ? 0.6 : 0.35)
       sfx.pop(panOf(at), wasElite)
@@ -228,9 +241,9 @@ const combat = new Combat(world.scene, OPEN, {
     }
     sfx.kill(panOf(at))
     if (kind === 'charger') {
-      // the boiler's last breath: rust, the two hatch plates thrown high, smoke rising
-      vfx.chunks(at3(at, 0.8), 14, RUST, 5.5, 0.18)
-      vfx.chunks(at3(at, 1.0), 2, JOINT_C, 6, 0.3)
+      // the boiler's last breath: bronze, the two hatch plates thrown high, smoke rising
+      vfx.chunks(at3(at, 0.8), 14, RAM_C, 5.5, 0.18)
+      vfx.chunks(at3(at, 1.0), 2, RAM_JOINT_C, 6, 0.3)
       vfx.sparks(at3(at, 0.9), EMBER, 18, 6)
       vfx.flash(at3(at, 0.9), EMBER, 1.0)
       vfx.dust(at, 10, 1.0)
@@ -240,13 +253,13 @@ const combat = new Combat(world.scene, OPEN, {
       if (mod === 'plated') vfx.chunks(at3(at, 0.8), 4, PLATE_C, 5, 0.26)
       if (mod === 'splitting') {
         // it cracks along its seam into the two that were in it
-        vfx.chunks(at3(at, 0.8), 6, RUST, 5, 0.14)
+        vfx.chunks(at3(at, 0.8), 6, RAM_C, 5, 0.14)
         sfx.ramSplit(panOf(at))
       }
       shake = Math.max(shake, 0.3)
     } else {
       // it comes apart: chunks of its own metal, a burst of embers, a puff of grit
-      vfx.chunks(at3(at, 0.8), 12, kind === 'ranged' ? STEEL : RUST, 5.5, 0.18)
+      vfx.chunks(at3(at, 0.8), 12, metalOf(e), 5.5, 0.18)
       vfx.sparks(at3(at, 0.9), EMBER, 16, 6)
       vfx.flash(at3(at, 0.9), EMBER, 0.9)
       vfx.dust(at, 8, 0.8)
@@ -328,7 +341,7 @@ const combat = new Combat(world.scene, OPEN, {
         vfx.sparks(at3(still.pos, 1.0), COLD, 4, 2)
       }
     }
-    if (ev.kind === 'land') landFx(ev.at, ev.what)
+    if (ev.kind === 'land') landFx(ev.at, ev.what, ev.enemy)
     if (ev.kind === 'bounce') {
       // a cold flash on the wall top, and sparks thrown back off it; the answer pings the same
       const at = at3(ev.at, 1.0)
@@ -793,12 +806,12 @@ function ramFx(dt: number) {
   }
 }
 
-/** The face into a wall: stone off the wall, rust off the ram, a fan of sparks thrown back along the lane. */
+/** The face into a wall: stone off the wall, bronze off the ram, a fan of sparks thrown back along the lane. */
 function ramImpact(c: Charger, at: THREE.Vector3, wall: boolean) {
   const p = at3(at, 0.4)
   const back = aim3(c).negate()
   if (wall) vfx.chunks(p, 10, STONE, 5, 0.14)
-  vfx.chunks(p, 3, RUST, 4, 0.12)
+  vfx.chunks(p, 3, RAM_C, 4, 0.12)
   vfx.sparks(p, EMBER, 22, 8, back, 1.3)
   vfx.flash(p, EMBER, 1.3)
   vfx.dust(at, 14, 1.0, undefined, 5)
@@ -814,7 +827,7 @@ function ramImpact(c: Charger, at: THREE.Vector3, wall: boolean) {
 const partFx = new PartFx(world.scene, vfx, still, combat.parts, combat)
 
 /** Something a part put in the air comes down. Each kind lands in its own voice. */
-function landFx(at: THREE.Vector3, what: 'flare' | 'signal' | 'throw' | 'wall') {
+function landFx(at: THREE.Vector3, what: 'flare' | 'signal' | 'throw' | 'wall', e?: Enemy) {
   switch (what) {
     case 'flare':
       // the lob comes down: a small nova where it lands
@@ -834,7 +847,7 @@ function landFx(at: THREE.Vector3, what: 'flare' | 'signal' | 'throw' | 'wall') 
     case 'wall':
       vfx.flash(at3(at, 0.5), COLD_DEEP, 0.8)
       vfx.dust(at, 14, 1.0, undefined, 4)
-      vfx.chunks(at3(at, 0.4), 4, RUST, 4, 0.12)
+      vfx.chunks(at3(at, 0.4), 4, metalOf(e), 4, 0.12)
       if (what === 'wall') {
         vfx.sparks(at3(at, 0.8), COLD, 16, 7)
         vfx.chunks(at3(at, 0.6), 6, STONE, 5, 0.14)
@@ -2815,7 +2828,7 @@ function thiefEvent(ev: ThiefEvent) {
     case 'caught': {
       // the cage springs open: rust off the little body, and the part it had (only that) comes back down
       sfx.cageOpen(pan)
-      vfx.chunks(at3(at, 0.5), 6, RUST, 3.5, 0.1)
+      vfx.chunks(at3(at, 0.5), 6, THIEF_C, 3.5, 0.1)
       vfx.dust(at, 5, 0.5)
       if (ev.def) {
         vfx.flash(at3(at, 0.85), COLD, 0.8)

@@ -3,8 +3,9 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import { DECAL_Y } from './world'
 import { tellMaterial, releaseTell, haloTexture, tellOrder } from './vfx'
 import { skin } from './kit'
+import { HIDES, finish } from './hide'
 import {
-  slide, disposeBody, PLAYER_RADIUS, BODY, JOINT, CORE, CORE_ASLEEP, SLEEP_BODY, RIME,
+  slide, disposeBody, PLAYER_RADIUS, CORE, CORE_ASLEEP, SLEEP_BODY, RIME,
   type Enemy, type EnemyAction, type EnemyCtx, type EnemyPhase,
 } from './enemy'
 import type { Terrain } from './terrain'
@@ -203,12 +204,11 @@ const HALO = 0.4
 const WHITE = new THREE.Color(0xffffff)
 /**
  * A dome faces straight up into Grace's light, where the hulk's sides turn away
- * from it: at the hulk's red-brown a mite tone-mapped to a pink beetle. Matte, and
- * most of the way to the joints' neutral iron, it's dark metal, and the ember on
- * its back is what you see and count.
+ * from it: at a red-brown a mite tone-mapped to a pink beetle. Coal-black and
+ * matte, the ember on its back is what you see and count.
  */
-const BODY_C = new THREE.Color(BODY).lerp(new THREE.Color(JOINT), 0.75)
-const JOINT_C = new THREE.Color(JOINT)
+const BODY_C = new THREE.Color(HIDES.mite.body)
+const JOINT_C = new THREE.Color(HIDES.mite.joint)
 
 /**
  * One mite. It's a whole Enemy (autos, bolts, parts and marks work per body), but
@@ -413,7 +413,7 @@ export class Mite implements Enemy {
     const sac = new THREE.Mesh(new THREE.SphereGeometry(0.16, 10, 8), sacMat)
     sac.position.set(0, 0.08, -0.3)
     sac.scale.z = 1.35
-    const spineMat = new THREE.MeshStandardMaterial({ color: JOINT, roughness: 0.6, metalness: 0.5 })
+    const spineMat = new THREE.MeshStandardMaterial({ color: HIDES.mite.joint, roughness: HIDES.mite.jointRough, metalness: HIDES.mite.jointMetal })
     const spines = new THREE.Mesh(mergeGeometries([-0.1, 0.02, 0.14].map((z) => new THREE.ConeGeometry(0.03, 0.12, 5).translate(0, 0.17, z)))!, spineMat)
     const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: haloTexture(), blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, fog: false }))
     glow.position.copy(sac.position)
@@ -537,7 +537,7 @@ export class Mite implements Enemy {
   /** Sealed by a standing Warden, or its seal still breaking: the ember is lidded. */
   get isSealed() { return this.sealed || this.unsealT > 0 }
 
-  /** Shell colour: rust, dimmed asleep, frosted, shaded in the air, and the hit flash over it all. */
+  /** Shell colour: coal, dimmed asleep, frosted, shaded in the air, and the hit flash over it all. */
   shellColor(out: THREE.Color) {
     out.copy(BODY_C)
     if (this.asleep) out.multiply(SLEEP_BODY)
@@ -620,8 +620,10 @@ export class MiteBatch {
   private readonly c = new THREE.Color()
 
   constructor(scene: THREE.Scene) {
-    const shellMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.85, metalness: 0.3 })
-    const jointMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.6, metalness: 0.5 })
+    // white: each mite's colour is its instance's
+    const shellMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: HIDES.mite.rough, metalness: HIDES.mite.metal })
+    const jointMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: HIDES.mite.jointRough, metalness: HIDES.mite.jointMetal })
+    finish(shellMat, HIDES.mite.finish)
     // cores and halos ignore the fog (the lights-out rule)
     const coreMat = new THREE.MeshBasicMaterial({ color: 0xffffff, fog: false })
     const haloMat = new THREE.MeshBasicMaterial({ map: haloTexture(), blending: THREE.AdditiveBlending, transparent: true, depthWrite: false, fog: false })

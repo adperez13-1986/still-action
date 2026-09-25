@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { HIDES, hideMaterials, finish } from './hide'
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { DECAL_Y } from './world'
 import { tellMaterial, releaseTell, tellOrder, trackingDim, haloTexture, EMBER, type Vfx } from './vfx'
@@ -53,10 +54,11 @@ export type ArbiterState =
   | 'judder'
   | 'dead'
 
-/** Rusted iron, and a joint darker still; the lenses and boiler cores are its lights. */
-const SHELL = 0x4a3a36
-const JOINTS = 0x221c1e
-const HUSK = 0x2a2224
+/** Blackened steel, and a joint darker still; the lenses and boiler cores are its lights. */
+const SHELL = HIDES.arbiter.body
+const JOINTS = HIDES.arbiter.joint
+/** A dead tower: its steel gone dull and dark. */
+const HUSK = 0x202124
 const DEG = Math.PI / 180
 const COLLAR_Y = 3.7
 const HEAD_Y = 4.05
@@ -209,8 +211,9 @@ export class Arbiter implements Boss {
   private readonly gazeEnd = new THREE.Vector3()
 
   // rig
-  private readonly mat = new THREE.MeshStandardMaterial({ color: SHELL, roughness: 0.7, metalness: 0.5, transparent: true })
-  private readonly jointMat = new THREE.MeshStandardMaterial({ color: JOINTS, roughness: 0.6, metalness: 0.5, transparent: true })
+  private readonly hide = hideMaterials('arbiter', { transparent: true })
+  private readonly mat = this.hide.mat
+  private readonly jointMat = this.hide.jointMat
   /** The lenses and boiler cores: its lights, which ignore the fog (the lights-out rule). */
   private readonly lensMat = new THREE.MeshBasicMaterial({ color: CORE_ASLEEP, fog: false })
   private readonly backMat = new THREE.MeshBasicMaterial({ color: CORE_ASLEEP, fog: false })
@@ -691,7 +694,7 @@ export class Arbiter implements Boss {
     this.lift += (liftTo - this.lift) * k
     this.base.position.y = 0.15 + this.lift
 
-    // the body: rusted iron, dimmed asleep, the hit flash over it
+    // the body: blackened steel, dimmed asleep, the hit flash over it
     for (const [m, base] of [[this.mat, SHELL], [this.jointMat, JOINTS]] as const) {
       m.color.setHex(base)
       if (this.asleep) m.color.multiplyScalar(0.5)
@@ -805,7 +808,8 @@ const STEAM = new THREE.Color(0x6f7780)
 
 /** A dead tower: the lattice and base dark, the head tipped forward, no lenses. Solid where its footprint was. */
 export function arbiterHusk(x: number, z: number, headYaw: number): THREE.Group {
-  const mat = new THREE.MeshStandardMaterial({ color: HUSK, roughness: 0.8, metalness: 0.4 })
+  const mat = new THREE.MeshStandardMaterial({ color: HUSK, roughness: 0.8, metalness: 0.5 })
+  finish(mat, HIDES.arbiter.finish)
   const body = buildBody(mat, mat)
   const g = new THREE.Group()
   body.head.rotation.set(0.4, headYaw, 0)

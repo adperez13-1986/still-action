@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import { DECAL_Y } from './world'
 import { tellMaterial, releaseTell, tellOrder } from './vfx'
+import { HIDES, hideMaterials } from './hide'
 import type { Terrain } from './terrain'
 import type { EliteMod } from './combat'
 import type { Brood } from './swarm'
@@ -164,7 +165,7 @@ export interface Enemy {
   rime: number
   /**
    * 0..1: how high it's been thrown, set by Combat while it's in the air. Tint
-   * shades the body by it, so a hulk lifted toward Grace's light stays rusted
+   * shades the body by it, so a hulk lifted toward Grace's light stays dark
    * metal instead of blowing out white.
    */
   air: number
@@ -259,9 +260,9 @@ export const CORE_ASLEEP = 0x2a1512
 export const SLAG_CORE = 0xff8a3c
 export const SLAG_CORE_ASLEEP = 0x3a1a0e
 
-/** Dark rusted iron. Red belongs to the enemies: their cores and their tells. */
-export const BODY = 0x5b3b35
-export const JOINT = 0x2b2426
+/** Soot-black cast iron (hide.ts has every body's metal). Red belongs to the threat: cores and tells. */
+const BODY = HIDES.hulk.body
+const JOINT = HIDES.hulk.joint
 export const CORE = 0xff5a3c
 
 function cyl(r0: number, r1: number, len: number, mat: THREE.Material, y: number) {
@@ -334,8 +335,9 @@ export class Chaser implements Enemy {
     this.pos.set(x, 0, z)
 
     // A headless hulk: broad, low, heavy fists. The core in its chest is its face.
-    this.mat = new THREE.MeshStandardMaterial({ color: BODY, roughness: 0.7, metalness: 0.45 })
-    this.jointMat = new THREE.MeshStandardMaterial({ color: JOINT, roughness: 0.6, metalness: 0.5 })
+    const hide = hideMaterials('hulk')
+    this.mat = hide.mat
+    this.jointMat = hide.jointMat
 
     for (const [leg, side] of [[this.legL, -1], [this.legR, 1]] as const) {
       leg.position.set(side * 0.26, 0.5, 0)

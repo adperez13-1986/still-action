@@ -2,10 +2,11 @@ import * as THREE from 'three'
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { haloTexture, trackingDim, tellOrder } from './vfx'
 import {
-  slide, statusTint, disposeBody, turn, distToSegment, PLAYER_RADIUS, BODY, JOINT, CORE, CORE_ASLEEP, SLEEP_BODY, SLAG_CORE, SLAG_CORE_ASLEEP,
+  slide, statusTint, disposeBody, turn, distToSegment, PLAYER_RADIUS, CORE, CORE_ASLEEP, SLEEP_BODY, SLAG_CORE, SLAG_CORE_ASLEEP,
   type Enemy, type EnemyAction, type EnemyCtx, type EnemyPhase,
 } from './enemy'
 import { LaneTell, type LaneEnd } from './lane'
+import { HIDES, hideMaterials, finish } from './hide'
 import type { Terrain } from './terrain'
 import type { EliteMod } from './combat'
 
@@ -73,10 +74,13 @@ export const CHARGER = {
   splitSize: 0.72,
 }
 
-/** Bare iron where it hits things: the plough's lip and the tusks catch Grace's light. */
-const WORN = 0x8a6a5a
+/** Dull dark bronze gone to patina (hide.ts). */
+const BODY = HIDES.ram.body
+const JOINT = HIDES.ram.joint
+/** Bare bronze where it hits things: the plough's lip and the tusks catch Grace's light, dully. */
+const WORN = 0x6f6b44
 /** Plated's bare plate: a shade lighter than the body. */
-const PLATE = 0x6e5a50
+export const PLATE = 0x5e5b34
 /** The seam's flash at the lock: hot, not white. */
 const LOCK_FLASH = new THREE.Color(0xffc49a)
 const CORE_C = new THREE.Color(CORE)
@@ -86,8 +90,14 @@ const JOINT_C = new THREE.Color(JOINT)
 const SEAL_RIM = new THREE.Color(CORE).multiplyScalar(0.4)
 const WHITE = new THREE.Color(0xffffff)
 const GLOW = new THREE.Color(0.5, 0.42, 0.38)
-/** The open firebox at the top of its pulse: hot amber, so the core reads apart from the rust around it. */
+/** The open firebox at the top of its pulse: hot amber, so the core reads apart from the bronze around it. */
 const FIRE_HOT = new THREE.Color(0xff8a3c)
+
+/** Bare metal: grain and a little pitting, no patina. */
+function finished(m: THREE.MeshStandardMaterial, grain: number) {
+  finish(m, { scale: [7, 7, 7], grain, roughVar: 0.18, tone: [1, 1, 1], mask: 1, toneRough: 0, toneMetal: 0, bump: 0.25 })
+  return m
+}
 
 const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v))
 /** Ease-out-back: overshoots a little and settles. The hatches flying open. */
@@ -226,10 +236,11 @@ export class Charger implements Enemy {
   readonly laneTell = new LaneTell()
 
   // --- the rig ---
-  private readonly mat = new THREE.MeshStandardMaterial({ color: BODY, roughness: 0.7, metalness: 0.45 })
-  private readonly jointMat = new THREE.MeshStandardMaterial({ color: JOINT, roughness: 0.6, metalness: 0.5 })
-  private readonly wornMat = new THREE.MeshStandardMaterial({ color: WORN, roughness: 0.5, metalness: 0.6 })
-  private readonly plateMat = new THREE.MeshStandardMaterial({ color: PLATE, roughness: 0.5, metalness: 0.55 })
+  private readonly hide = hideMaterials('ram')
+  private readonly mat = this.hide.mat
+  private readonly jointMat = this.hide.jointMat
+  private readonly wornMat = finished(new THREE.MeshStandardMaterial({ color: WORN, roughness: 0.42, metalness: 0.78 }), 0.1)
+  private readonly plateMat = finished(new THREE.MeshStandardMaterial({ color: PLATE, roughness: 0.5, metalness: 0.7 }), 0.14)
   // its lights ignore the fog (the lights-out rule): lamp, firebox, seams and their glow
   private readonly coreMat = new THREE.MeshBasicMaterial({ color: CORE, fog: false })
   private readonly fireMat = new THREE.MeshBasicMaterial({ color: CORE, fog: false })
@@ -238,7 +249,7 @@ export class Charger implements Enemy {
   private coreOff = CORE_OFF
   private readonly seamMats = Array.from({ length: 5 }, () => new THREE.MeshBasicMaterial({ color: CORE, fog: false }))
   /**
-   * Heat over the seam. Additive over lit rust, the halo at full strength washed the
+   * Heat over the seam. Additive over lit metal, the halo at full strength washed the
    * whole back flat pink, seams and core included; dimmed, it stays a glow.
    */
   private readonly glowMat = new THREE.MeshBasicMaterial({
@@ -267,7 +278,7 @@ export class Charger implements Enemy {
   constructor(x: number, z: number) {
     this.pos.set(x, 0, z)
 
-    // A rusted boiler on its side: narrow end forward, one stack at the back, a
+    // A bronze boiler on its side: narrow end forward, one stack at the back, a
     // plough for a face. From 38° its back is what you see, so the direction lives there.
     // the boiler itself is built by setStacks: an elite may rebuild it with other stacks
     this.hull = new THREE.Mesh(new THREE.BufferGeometry(), this.mat)

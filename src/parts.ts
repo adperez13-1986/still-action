@@ -167,7 +167,7 @@ export type PartEvent =
   | { kind: 'mark'; enemy: Enemy; state: 'on' | 'consumed' | 'expired' }
   | { kind: 'slow'; enemy: Enemy; state: 'on' | 'off' }
   | { kind: 'lob'; from: THREE.Vector3; to: THREE.Vector3; ms: number; radius: number; signal: boolean }
-  | { kind: 'land'; at: THREE.Vector3; radius: number; what: 'flare' | 'signal' | 'throw' | 'wall' }
+  | { kind: 'land'; at: THREE.Vector3; radius: number; what: 'flare' | 'signal' | 'throw' | 'wall'; enemy?: Enemy }
   | { kind: 'throw'; enemy: Enemy; to: THREE.Vector3; ms: number; short: boolean }
   | { kind: 'path'; points: THREE.Vector3[] }                          // Ricochet's cast-time path flash
   | { kind: 'bounce'; at: THREE.Vector3; side: 'still' | 'enemy'; n: number }

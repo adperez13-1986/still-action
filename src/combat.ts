@@ -884,7 +884,7 @@ export class Combat {
     }
     const blast = h.def.blast ?? 0
     const to = h.to
-    this.events.onPart({ kind: 'land', at: to.clone(), radius: blast, what: h.short ? 'wall' : 'throw' })
+    this.events.onPart({ kind: 'land', at: to.clone(), radius: blast, what: h.short ? 'wall' : 'throw', enemy: e })
     for (const o of this.enemies) {
       if (o === e || o.dead) continue
       if (Math.hypot(o.pos.x - to.x, o.pos.z - to.z) > blast + o.radius || !this.terrain.lineClear(to.x, to.z, o.pos.x, o.pos.z, PART.linePad)) continue

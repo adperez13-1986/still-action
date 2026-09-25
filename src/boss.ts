@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { HIDES, hideMaterials } from './hide'
 import { DECAL_Y } from './world'
 import { tellMaterial, releaseTell, tellOrder, COLD, COLD_DEEP, EMBER, type Vfx } from './vfx'
 import { slide, statusTint, disposeBody, distToSegment, type Enemy, type EnemyAction, type EnemyCtx, type EnemyPhase } from './enemy'
@@ -85,8 +86,9 @@ export const BOSS = {
 
 export type BossMove = 'sweep' | 'wave' | 'barrage' | 'charge' | 'summon' | 'magnet'
 
-const BODY = 0x4a3a36
-const JOINT = 0x221c1e
+/** Scrap: plates of iron, bronze and steel on one hull (hide.ts). */
+const BODY = HIDES.assembler.body
+const JOINT = HIDES.assembler.joint
 const CORE = 0xff5a3c
 const STONE = new THREE.Color(0x5a5550)
 const SOOT = new THREE.Color(0x3a2a24)
@@ -192,8 +194,9 @@ export class Assembler implements Boss {
 
   constructor(readonly def: BossDef, x: number, z: number) {
     this.pos.set(x, 0, z)
-    this.mat = new THREE.MeshStandardMaterial({ color: BODY, roughness: 0.7, metalness: 0.5 })
-    this.jointMat = new THREE.MeshStandardMaterial({ color: JOINT, roughness: 0.6, metalness: 0.5 })
+    const hide = hideMaterials('assembler')
+    this.mat = hide.mat
+    this.jointMat = hide.jointMat
     // cores ignore the fog: at first dark the lights are what's left of a machine
     this.coreMat = new THREE.MeshBasicMaterial({ color: CORE, fog: false })
 
