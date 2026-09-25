@@ -104,6 +104,11 @@ export interface Workshop {
 const BODY_R = 0.42
 /** The fade in from black before any arrival starts. */
 const FADE_IN = 0.6
+/** Every arrival opens as a close-up of him, whatever brought him home; the room opens out once he's here. */
+const ARRIVE_ZOOM = 3
+/** How slowly the view opens out after the arrival (s, the easing's time constant), and for how long it eases that slowly. */
+const OPEN_EASE = 0.9
+const OPEN_FOR = 2.5
 /** The door beam: walking into it starts the next run. The doorway is narrower than the zone, so there's no way round it. */
 const DOOR = { x: 4, z: -5.3, radius: 1.1 }
 /**
@@ -734,6 +739,17 @@ export function createWorkshop(world: World, still: Still, vfx: Vfx, drawings: D
   }
   const kidsPan = () => pan(KIDS_DOOR.x, KIDS_DOOR.z)
 
+  /** Where the arrival's close-up looks: at him, and for Broken between him and the bench his parts lie on. */
+  function arriveFocus(kind: ArrivalKind, out: THREE.Vector3) {
+    out.set(still.pos.x, 0, still.pos.z)
+    if (kind === 'broken') out.lerp(tmpBench.set(BENCH.x, 0, BENCH.z), 0.4)
+    return out
+  }
+  const tmpFocus = new THREE.Vector3()
+  const tmpBench = new THREE.Vector3()
+  /** Seconds since the arrival ended: the view opens out slowly at first. */
+  let openT = 0
+
   function place(kind: ArrivalKind) {
     const s = SPOT[kind]
     still.pos.set(s.x, 0, s.z)
@@ -955,8 +971,9 @@ export function createWorkshop(world: World, still: Still, vfx: Vfx, drawings: D
       const pe = traces.sounds.pencilEvery
       pencilT = pe ? pe[0] + Math.random() * (pe[1] - pe[0]) : -1
       stepsDone = !traces.sounds.steps
-      focus.set(-0.5, 0, 0).lerp(still.pos, 0.3)
-      hold = 1
+      arriveFocus(o.arrival, focus)
+      hold = o.arrival === 'idle' ? 1 : ARRIVE_ZOOM
+      openT = 0
       still.group.position.set(still.pos.x, 0, still.pos.z)
       still.group.rotation.y = still.facing
       if (o.arrival === 'idle') arrival.done = true
@@ -1052,16 +1069,23 @@ export function createWorkshop(world: World, still: Still, vfx: Vfx, drawings: D
         }
       }
 
-      // --- the camera: a little toward the room's middle, and toward what he's at ---
+      // --- the camera: close on him while he arrives; then a little toward the room's middle, and toward what he's at ---
       const zn = near ? zones.find((z) => z.id === near)! : null
       const fx = -0.5 + (still.pos.x + 0.5) * 0.3
       const fz = still.pos.z * 0.3
-      const tx = zn ? fx + (zn.focus.x - fx) * 0.5 : fx
-      const tz = zn ? fz + (zn.focus.z - fz) * 0.5 : fz
-      const e = 1 - Math.exp(-dt / 0.3)
+      let tx = zn ? fx + (zn.focus.x - fx) * 0.5 : fx
+      let tz = zn ? fz + (zn.focus.z - fz) * 0.5 : fz
+      let th = zn?.zoom ?? 1
+      if (!arrival.done) {
+        arriveFocus(kind, tmpFocus)
+        tx = tmpFocus.x
+        tz = tmpFocus.z
+        th = ARRIVE_ZOOM
+      } else openT += dt
+      const e = 1 - Math.exp(-dt / (arrival.done && openT < OPEN_FOR ? OPEN_EASE : 0.3))
       focus.x += (tx - focus.x) * e
       focus.z += (tz - focus.z) * e
-      hold += ((zn?.zoom ?? 1) - hold) * e
+      hold += (th - hold) * e
 
       // --- the traces ---
       const since = arrival.t - FADE_IN
