@@ -2,3 +2,4 @@ Textures from ambientCG (https://ambientcg.com), CC0 1.0 Universal.
 PavingStones142, Rock035, Planks023A, Ground108 — Color and NormalGL, downscaled to 512px.
 MetalPlates006, Metal063, MetalWalkway014 (the Works) — Color and NormalGL, downscaled to 512px.
 Tiles093, Bricks097 (the workers' quarter) — Color and NormalGL, downscaled to 512px.
+Gravel023 (the Line) — Color and NormalGL, downscaled to 512px.

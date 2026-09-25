@@ -1720,7 +1720,11 @@ function enterLevel(depth: number, o: { seed?: number; bossFelled?: boolean; res
   world.scene.add(level.group)
   combat.terrain = level.terrain
   loot.terrain = level.terrain
-  for (const p of level.packs) combat.addPack(p.members, p.room.kind === 'side', p.elite, p.look)
+  // the Line's own bodies and looks arrive in stage B: until then a Sleepers' brood sleeps as any brood does
+  for (const p of level.packs) {
+    const members = p.members.map((m) => ({ ...m, variant: m.variant === 'lobber' ? ('lobber' as const) : undefined }))
+    combat.addPack(members, p.room.kind === 'side', p.elite, p.look === 'heap' ? 'heap' : undefined)
+  }
   combat.breakables = level.breakables
   const boss = bossHere(depth)
   if (level.boss && boss && !run.bossFelled) combat.addBoss(level.boss.x, level.boss.z, level.boss.face, boss, level.posts)
@@ -1933,6 +1937,8 @@ function enterCrossroads(seed = Math.floor(Math.random() * 1e9)) {
   prev.copy(still.pos)
   graceLean.set(0, 0, 0)
   run.depth = 3
+  // a quiet room: the yard's "area cleared" stays in the yard
+  overlay.clearBanner()
 }
 
 /** §3.4: into a road's beam. The route is set, the save remembers it, and the swap goes to depth 4. */
@@ -3614,6 +3620,36 @@ if (import.meta.env.DEV) {
       still.pos.set(road.at.x, 0, road.at.z)
       for (let i = 0; i < 600 && !(run.phase === 'crawl' && run.depth === 4); i++) devTick()
       return run.route
+    },
+    /** The Line as a level is generated (design/area3/SPEC.md §12.2), thrown away. */
+    __genLine: (depth: number, seed: number) => {
+      const l = genFor(depth, seed, 'III')
+      const r2 = (v: number) => Math.round(v * 1e4) / 1e4
+      const out = {
+        place: l.place,
+        lanes: (l.lanes ?? []).map((ln) => ({
+          id: ln.id, kind: ln.kind, ax: ln.ax, az: ln.az, bx: ln.bx, bz: ln.bz, outA: { ...ln.outA }, outB: { ...ln.outB },
+          room: ln.room ? l.rooms.indexOf(ln.room) : null, corridor: ln.corridor, period: ln.period, phase: ln.phase, lesson: ln.lesson,
+        })),
+        sidings: (l.sidings ?? []).map((sd) => ({ id: sd.id, room: l.rooms.indexOf(sd.room), holds: sd.holds, ax: sd.ax, az: sd.az, bx: sd.bx, bz: sd.bz })),
+        packs: l.packs.map((p) => ({
+          room: l.rooms.indexOf(p.room), kind: p.room.kind, kinds: p.members.map((m) => m.kind), variants: p.members.map((m) => m.variant ?? null),
+          at: p.members.map((m) => [r2(m.x), r2(m.z)]), slag: p.members.some((m) => m.slag), elite: p.elite?.mod ?? null, lesson: !!p.lesson,
+          template: p.template ?? null, look: p.look ?? null,
+        })),
+        props: l.made.props.map((p) => ({ x: r2(p.x), z: r2(p.z), piece: p.piece, room: p.room })),
+        breakables: l.breakables.map((b) => ({ x: r2(b.x), z: r2(b.z) })),
+        shrines: l.shrines.map((sh) => ({ x: r2(sh.x), z: r2(sh.z) })),
+        gaps: l.made.gaps ?? [],
+        floor: [...l.floor],
+        rooms: l.rooms.map((rm) => ({
+          kind: rm.kind, ci: rm.ci, cj: rm.cj, rx: rm.rx, rz: rm.rz, p: l.progressOf(rm),
+          lane: !!l.lanes?.some((ln) => ln.room === rm), siding: !!l.sidings?.some((sd) => sd.room === rm),
+        })),
+        tall: l.made.tall.map((t) => ({ what: t.what, x: r2(t.x), z: r2(t.z) })),
+      }
+      l.dispose()
+      return out
     },
     /** The road labels showing now (text and alpha). */
     __beamLabels: () => hud.beamLabels.map((l) => ({ ...l })),

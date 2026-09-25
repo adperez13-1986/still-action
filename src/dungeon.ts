@@ -5,7 +5,8 @@ import type { Terrain, WallFace } from './terrain'
 import type { BreachHole } from './parts'
 import { ELITE_MODS, type Archetype, type EliteMod } from './combat'
 import { BROOD, HEAP } from './swarm'
-import { exitsAfterBoss, lookAt, type BossDef, type ExitKind, type KitPreset, type MachineKind, type PlaceDef, type PlaceId, type RouteId } from './areas'
+import { exitsAfterBoss, lookAt, type BossDef, type ExitKind, type KitPreset, type LinePreset, type MachineKind, type PlaceDef, type PlaceId, type RouteId } from './areas'
+import { LINE, SIDING, buildLinePieces, distToSpan, type LaneDef, type SidingDef } from './line'
 import { buildMachines, machineTop, CHIMNEY_H, type MachinePlacement } from './machines'
 import { THIEF } from './thief'
 
@@ -110,9 +111,12 @@ export interface PackSpec {
    * `face`: where a member looks while it sleeps; without one the pack faces a random way together.
    * `slag`: it carries a slag core (area II), and leaves a burning puddle where it dies.
    */
-  members: { kind: Archetype; variant?: 'lobber'; x: number; z: number; face?: { x: number; z: number }; slag?: true }[]
-  /** 'heap': a Works brood asleep as a slag heap, a mound with six coals (a look, not a rule). */
-  look?: 'heap'
+  members: { kind: Archetype; variant?: 'lobber' | 'signal' | 'handcar' | 'porter'; x: number; z: number; face?: { x: number; z: number }; slag?: true; siding?: number }[]
+  /**
+   * 'heap': a Works brood asleep as a slag heap, a mound with six coals (a look, not a rule).
+   * 'ballast': the Line's Sleepers, mites asleep under the gravel (the look comes in stage B3).
+   */
+  look?: 'heap' | 'ballast'
   /** The first member leads, named and with one modifier. */
   elite?: { mod: EliteMod; name: string }
   /** The pack that introduces an archetype: set up to be read, and never an elite. */
@@ -133,6 +137,8 @@ export interface LevelMade {
   edge: { piece: string; x: number; z: number; top: number }[]
   /** The far side's upright pieces (the quarter's door frames): p is the nearest room's progress, cells how far from floor. */
   far: { piece: Piece; x: number; z: number; p: number; hides: boolean; cells: number }[]
+  /** The Line: the wall edges left open for its rails ("i,j,dx,dz"). */
+  gaps?: string[]
 }
 
 export interface Level {
@@ -180,6 +186,11 @@ export interface Level {
   roads?: { route: RouteId; at: THREE.Vector3; label: string }[]
   /** The crossroads: no lean, no banner, no packs. */
   crossroads?: true
+  /** The Line (design/area3/SPEC.md §2.7): its live lanes and its dead sidings, when the place has them. */
+  lanes?: LaneDef[]
+  sidings?: SidingDef[]
+  /** The lanes' lamps (the trains light them, stage A4): lamp instances per lane id. */
+  lamps?: { mesh: THREE.InstancedMesh | null; of: Map<number, number[]> }
 }
 
 /** A grid cell's name in the floor set. */
@@ -195,7 +206,7 @@ export function rng(seed: number) {
  * Separate seeded streams for what area II adds (slag, the heap, machinery, the thief):
  * the main sequence never sees them, so the ruin builds exactly as it did.
  */
-const SALT = { slag: 0x51a6, heap: 0x4ea9, far: 0xfa51, machine: 0x3ac1, thief: 0x7417 }
+const SALT = { slag: 0x51a6, heap: 0x4ea9, far: 0xfa51, machine: 0x3ac1, thief: 0x7417, rail: 0x2a11 }
 /**
  * The salted seed is scrambled before it seeds its stream: rng's first draws follow its
  * seed almost linearly, so seeds 1, 2, 3 xor one salt would all open on the same roll.
@@ -340,7 +351,12 @@ function generateBossLayout(rand: () => number): Layout {
   return layout
 }
 
-function generateLayout(rand: () => number, sideRooms: number): Layout {
+/**
+ * `minCorridor`: the Line's corridors are never shorter than its rails need (RAIL_CELLS), so a
+ * lane along a room's row clears the rooms either side of it. One rand() per corridor either way.
+ */
+function generateLayout(rand: () => number, sideRooms: number, hallShare = 0.25, minCorridor = 1): Layout {
+  const corridorLen = () => Math.max(minCorridor, 1 + Math.floor(rand() * 2))
   for (let attempt = 0; attempt < 80; attempt++) {
     const layout: Layout = { floor: new Set(), rooms: [], corridors: new Set() }
     // entrance and exit stay small: you arrive and leave through them, you don't fight in them
@@ -354,12 +370,12 @@ function generateLayout(rand: () => number, sideRooms: number): Layout {
     let ok = true
     for (let n = 1; n < MAIN_ROOMS; n++) {
       const kind: RoomKind = n === MAIN_ROOMS - 1 ? 'exit' : 'main'
-      const size = kind === 'exit' ? SIZE.small : rand() < 0.25 ? SIZE.hall : SIZE.big
+      const size = kind === 'exit' ? SIZE.small : rand() < hallShare ? SIZE.hall : SIZE.big
       const turns = rand() < 0.55 ? [0, 1, 3] : [1, 3, 0]
       let placed: Room | null = null
       for (const t of turns) {
         const d = (heading + t) % 4
-        placed = tryAttach(layout, prev, DIRS[d]!, 1 + Math.floor(rand() * 2), kind, size)
+        placed = tryAttach(layout, prev, DIRS[d]!, corridorLen(), kind, size)
         if (placed) {
           heading = d
           break
@@ -378,7 +394,7 @@ function generateLayout(rand: () => number, sideRooms: number): Layout {
     let added = 0
     for (let tries = 0; tries < 30 && added < sideRooms; tries++) {
       const host = spine[Math.floor(rand() * spine.length)]!
-      if (tryAttach(layout, host, DIRS[Math.floor(rand() * 4)]!, 1 + Math.floor(rand() * 2), 'side', SIZE.small)) added++
+      if (tryAttach(layout, host, DIRS[Math.floor(rand() * 4)]!, corridorLen(), 'side', SIZE.small)) added++
     }
     return layout
   }
@@ -645,22 +661,34 @@ export function makeTerrain(floor: Set<string>, boxes: Box[], circles: Circle[])
 
 // --- pack templates: deeper levels mix archetypes at the same budget ---
 
-/** C ram, H hulk, S sentinel, L Lobber (a sentinel that lobs); M8/M6 a swarm of eight or six mites. */
-type Member = 'C' | 'H' | 'S' | 'L' | 'M8' | 'M6'
+/**
+ * C ram, H hulk, S sentinel, L Lobber (a sentinel that lobs); M8/M6 a swarm of eight or six mites.
+ * The Line's: G the Signalman (a ranged body), K the Handcar (a ram bound to a siding).
+ */
+type Member = 'C' | 'H' | 'S' | 'L' | 'M8' | 'M6' | 'G' | 'K'
 type Row = { today: true; weight: number; members?: undefined } | { today?: false; weight: number; members: Member[] }
 
 /**
  * Body-equivalents: what a member costs of a room's budget. A ram is half again a
  * hulk, a mite a quarter. Deeper is more varied, never more HP or damage.
  */
-const BE: Record<Member, number> = { C: 1.5, H: 1, S: 1, L: 1, M8: 2, M6: 1.5 }
+const BE: Record<Member, number> = { C: 1.5, H: 1, S: 1, L: 1, M8: 2, M6: 1.5, G: 1, K: 1.5 }
 const beOf = (ms: readonly Member[]) => ms.reduce((a, m) => a + BE[m], 0)
 /** The Lobber is a ranged body, for the kinds cap too. */
-const kindOf = (m: Member): Archetype => (m === 'C' ? 'charger' : m === 'S' || m === 'L' ? 'ranged' : m === 'H' ? 'chaser' : 'swarm')
+const kindOf = (m: Member): Archetype => (m === 'C' || m === 'K' ? 'charger' : m === 'S' || m === 'L' || m === 'G' ? 'ranged' : m === 'H' ? 'chaser' : 'swarm')
 /** A template's bodies, in order: a swarm member is its whole brood. */
 const bodies = (ms: readonly Member[]): Archetype[] => ms.flatMap((m) => (m === 'M8' ? Array(8).fill('swarm') : m === 'M6' ? Array(6).fill('swarm') : [kindOf(m)]))
-/** Which of those bodies are Lobbers, in the same order. */
-const lobbersOf = (ms: readonly Member[]): boolean[] => ms.flatMap((m) => (m === 'M8' ? Array(8).fill(false) : m === 'M6' ? Array(6).fill(false) : [m === 'L']))
+/** Each body's variant, in the same order: the Lobber, the Signalman, the Handcar. */
+type Variant = 'lobber' | 'signal' | 'handcar'
+const VARIANT: Partial<Record<Member, Variant>> = { L: 'lobber', G: 'signal', K: 'handcar' }
+const variantsOf = (ms: readonly Member[]): (Variant | undefined)[] =>
+  ms.flatMap((m) => (m === 'M8' ? Array(8).fill(undefined) : m === 'M6' ? Array(6).fill(undefined) : [VARIANT[m]]))
+/**
+ * The Line's own bodies, as they're built (stages B1, B2). Until then a row that names one is
+ * generated without it: the rest of the row, from the same draws.
+ */
+export const LINE_BODIES = { signal: false, handcar: false }
+const built = (m: Member) => (m !== 'G' || LINE_BODIES.signal) && (m !== 'K' || LINE_BODIES.handcar)
 /** A swarm too big for the room's budget comes as six. */
 const shrink = (ms: readonly Member[], budget: number): Member[] => (beOf(ms) > budget + 1 ? ms.map((m) => (m === 'M8' ? 'M6' : m)) : [...ms])
 
@@ -676,6 +704,23 @@ const D5: Row[] = [
   { members: ['C', 'H', 'L'], weight: 1 }, // the ram flushes you, the shell punishes hiding
   { today: true, weight: 2 },
 ]
+/** The Line (§6.5). Depth 5's rooms without a lane: D5 without the Lobber (no Lobbers, slag or heaps on the Line). */
+const D5L: Row[] = D5.filter((row) => row.today || !row.members.includes('L'))
+/** Depth 5's lane rooms: the Signalman calls the trains. The brood leads the last. INV: G is never first. */
+const D5L_LANE: Row[] = [
+  { members: ['H', 'H', 'G'], weight: 1 },
+  { members: ['C', 'H', 'G'], weight: 1 },
+  { members: ['M6', 'G'], weight: 1 },
+  { today: true, weight: 1 },
+]
+/** Depth 5's handcar sidings. INV: K is never first. */
+const D5L_HANDCAR: Row[] = [{ members: ['H', 'H', 'K'], weight: 1 }, { members: ['M6', 'K'], weight: 1 }]
+/** The Line's caps: at most this many packs with a Signalman. */
+const SIGNAL_PACKS = 2
+/** Sleepers (the ballast brood): the chance of a nest, by depth (depth 4's is the heap's). */
+const SLEEPERS_CHANCE = { 4: HEAP.chance, 5: 0.4 } as Record<number, number>
+/** A sleepers' nest in a siding's room sits this far off the siding, toward the room's middle. */
+const SLEEPERS_OFF = 2.5
 const D7: Row[] = [
   { members: ['C', 'M6', 'H', 'S'], weight: 1 },
   { members: ['C', 'C', 'M6'], weight: 1 },
@@ -712,12 +757,185 @@ function fill(members: readonly Member[], budget: number, kindsCap: number): Mem
   return out
 }
 
+/**
+ * §6.5: the Line's swarm lesson, never where a train runs: a main room with neither lane nor
+ * siding; if every one has rails, a wagon siding's room (the Handcar's is its own lesson).
+ */
+function lineLessonPool(rooms: Room[], laneRooms: ReadonlySet<Room>, sidings: readonly SidingDef[]): Room[] {
+  const sidingRooms = new Set(sidings.map((sd) => sd.room))
+  const bare = rooms.filter((r) => r.kind === 'main' && !laneRooms.has(r) && !sidingRooms.has(r))
+  if (bare.length) return bare
+  return sidings.filter((sd) => sd.holds === 'wagon' || sd.holds === 'empty').map((sd) => sd.room)
+}
+
 /** A lesson wants a full 5x5 main room; a hall will do if there's none. */
 function pickLessonRoom(rooms: Room[], rand: () => number): Room | null {
   const main = rooms.filter((r) => r.kind === 'main')
   const full = main.filter((r) => r.rx === 2 && r.rz === 2)
   const pool = full.length ? full : main.filter((r) => r.rx >= 2 || r.rz >= 2)
   return pool.length ? pool[Math.floor(rand() * pool.length)]! : null
+}
+
+// --- the Line (design/area3/SPEC.md §4.2, G-L2..G-L5) --------------------------------
+
+/** The rails' outward run in cells: every lane's line must cross no floor this far out. */
+const RAIL_CELLS = Math.ceil(LINE.railOut / CELL)
+
+interface LineLayout {
+  lanes: LaneDef[]
+  sidings: SidingDef[]
+  /** Wall edges left open for the rails ("i,j,dx,dz"). */
+  gaps: Set<string>
+  /** Station hall lanes: the side (across the lane, +1/−1) the platform is on. */
+  copings: Map<number, 1 | -1>
+  laneRooms: Set<Room>
+  sidingRooms: Set<Room>
+}
+
+/** A lane candidate in a room: the axis it runs along and its row offset from the room's centre. */
+type LaneCand = { axis: 'x' | 'z'; off: 1 | -1 }
+
+/**
+ * G-L2..G-L5, all from the rail stream: lanes across main rooms (never on the corridor row),
+ * crossings over corridor cells, dead sidings in lane-free main rooms, then each lane's
+ * timetable. The main rand() is never touched.
+ */
+function layLine(layout: Layout, progressOf: (r: Room) => number, line: LinePreset, depth: number, seed: number): LineLayout {
+  const rs = stream(seed, SALT.rail)
+  const floorAt = (i: number, j: number) => layout.floor.has(key(i, j))
+  const inRoom = (r: Room, i: number, j: number) => Math.abs(i - r.ci) <= r.rx && Math.abs(j - r.cj) <= r.rz
+  const shuffle = <T>(list: T[]) => {
+    for (let k = list.length - 1; k > 0; k--) {
+      const n = Math.floor(rs() * (k + 1))
+      ;[list[k], list[n]] = [list[n]!, list[k]!]
+    }
+    return list
+  }
+  /** The room's cells a candidate runs through: along its axis at row/column centre + off. */
+  const spanCells = (r: Room, c: LaneCand): [number, number][] => {
+    const out: [number, number][] = []
+    if (c.axis === 'x') for (let i = r.ci - r.rx; i <= r.ci + r.rx; i++) out.push([i, r.cj + c.off])
+    else for (let j = r.cj - r.rz; j <= r.cj + r.rz; j++) out.push([r.ci + c.off, j])
+    return out
+  }
+  const hall = (r: Room) => r.rx !== r.rz
+  const candidates = (r: Room): LaneCand[] => {
+    if (!hall(r)) return [{ axis: 'x', off: 1 }, { axis: 'x', off: -1 }, { axis: 'z', off: 1 }, { axis: 'z', off: -1 }]
+    // a hall: along its long axis, on the outer rows
+    const axis = r.rx > r.rz ? 'x' : 'z'
+    return [{ axis, off: 1 }, { axis, off: -1 }]
+  }
+  /**
+   * Valid: RAIL_CELLS cells out past both of its exit edges hold no floor, and no corridor joins
+   * the room on its row (a floor cell outside the room beside the span).
+   */
+  const valid = (r: Room, c: LaneCand) => {
+    const cells = spanCells(r, c)
+    const [di, dj] = c.axis === 'x' ? [1, 0] : [0, 1]
+    const first = cells[0]!, last = cells[cells.length - 1]!
+    for (let k = 1; k <= RAIL_CELLS; k++) {
+      if (floorAt(last[0] + di * k, last[1] + dj * k) || floorAt(first[0] - di * k, first[1] - dj * k)) return false
+    }
+    for (const [i, j] of cells) {
+      for (const [ni, nj] of [[i + dj, j + di], [i - dj, j - di]] as const) if (floorAt(ni, nj) && !inRoom(r, ni, nj)) return false
+    }
+    return true
+  }
+
+  const lanes: LaneDef[] = []
+  const gaps = new Set<string>()
+  const copings = new Map<number, 1 | -1>()
+  const laneRooms = new Set<Room>()
+  const addLane = (kind: LaneDef['kind'], axis: 'x' | 'z', cells: [number, number][], room: Room | null, corridor: string | null) => {
+    const first = cells[0]!, last = cells[cells.length - 1]!
+    const h = CELL / 2
+    const [di, dj] = axis === 'x' ? [1, 0] : [0, 1]
+    const ax = first[0] * CELL - di * h, az = first[1] * CELL - dj * h
+    const bx = last[0] * CELL + di * h, bz = last[1] * CELL + dj * h
+    gaps.add(`${first[0]},${first[1]},${-di},${-dj}`)
+    gaps.add(`${last[0]},${last[1]},${di},${dj}`)
+    const lane: LaneDef = {
+      id: lanes.length, kind, ax, az, bx, bz,
+      outA: { x: ax - di * LINE.railOut, z: az - dj * LINE.railOut }, outB: { x: bx + di * LINE.railOut, z: bz + dj * LINE.railOut },
+      room, corridor, period: 0, phase: 0, lesson: false,
+    }
+    lanes.push(lane)
+    return lane
+  }
+
+  // G-L2: room lanes. The station takes its halls first
+  const mains = shuffle(layout.rooms.filter((r) => r.kind === 'main'))
+  const order = line.alongHalls ? [...mains.filter(hall), ...mains.filter((r) => !hall(r))] : mains
+  for (const r of order) {
+    if (laneRooms.size >= line.lanes) break
+    const ok = candidates(r).filter((c) => valid(r, c))
+    if (!ok.length) continue
+    const c = ok[Math.floor(rs() * ok.length)]!
+    const lane = addLane('room', c.axis, spanCells(r, c), r, null)
+    laneRooms.add(r)
+    // a platform hall: the coping on the platform's side, toward the hall's middle
+    if (line.alongHalls && hall(r)) copings.set(lane.id, (c.axis === 'x' ? c.off : -c.off) as 1 | -1)
+  }
+
+  // G-L3: crossings, perpendicular to their corridor, never beside a room
+  const nearRoom = (i: number, j: number) => layout.rooms.some((r) => Math.abs(i - r.ci) <= r.rx + 1 && Math.abs(j - r.cj) <= r.rz + 1)
+  const corridorCells = shuffle([...layout.corridors].map((k) => k.split(',').map(Number) as [number, number]))
+  let crossings = 0
+  for (const [i, j] of corridorCells) {
+    if (crossings >= line.crossings) break
+    if (nearRoom(i, j)) continue
+    // the corridor runs along x when its neighbours are along x; the lane crosses it along z
+    const alongX = floorAt(i + 1, j) || floorAt(i - 1, j)
+    const [di, dj] = alongX ? [0, 1] : [1, 0]
+    let clear = true
+    for (let k = 1; k <= RAIL_CELLS && clear; k++) if (floorAt(i + di * k, j + dj * k) || floorAt(i - di * k, j - dj * k)) clear = false
+    if (!clear) continue
+    addLane('crossing', alongX ? 'z' : 'x', [[i, j]], null, key(i, j))
+    crossings++
+  }
+
+  // G-L4: sidings, in lane-free main rooms. A hall's runs along its long axis; never across a doorway
+  const sidings: SidingDef[] = []
+  const sidingRooms = new Set<Room>()
+  for (const r of shuffle(mains.filter((m) => !laneRooms.has(m)))) {
+    if (sidings.length >= line.sidings) break
+    const rolled: 'x' | 'z' = rs() < 0.5 ? 'x' : 'z'
+    const axis: 'x' | 'z' = hall(r) ? (r.rx > r.rz ? 'x' : 'z') : rolled
+    const first: 1 | -1 = rs() < 0.5 ? 1 : -1
+    const offs: (1 | -1)[] = [first, first === 1 ? -1 : 1]
+    const off = offs.find((o) => {
+      const cells = spanCells(r, { axis, off: o })
+      const [di, dj] = axis === 'x' ? [1, 0] : [0, 1]
+      return cells.every(([i, j]) => [[i + dj, j + di], [i - dj, j - di]].every(([ni, nj]) => !floorAt(ni!, nj!) || inRoom(r, ni!, nj!)))
+    })
+    if (off === undefined) continue
+    const [ux, uz] = axis === 'x' ? [1, 0] : [0, 1]
+    const cx = r.center.x + (axis === 'z' ? off * CELL : 0)
+    const cz = r.center.z + (axis === 'x' ? off * CELL : 0)
+    const holds: SidingDef['holds'] = depth === 4 ? (sidings.length === 0 ? 'handcar' : 'wagon') : rs() < 0.8 ? 'handcar' : 'wagon'
+    sidings.push({
+      id: sidings.length, room: r,
+      ax: cx - ux * SIDING.half, az: cz - uz * SIDING.half, bx: cx + ux * SIDING.half, bz: cz + uz * SIDING.half,
+      buffers: [
+        { x: cx - ux * SIDING.bufferAt, z: cz - uz * SIDING.bufferAt, r: SIDING.bufferR },
+        { x: cx + ux * SIDING.bufferAt, z: cz + uz * SIDING.bufferAt, r: SIDING.bufferR },
+      ],
+      holds,
+    })
+    sidingRooms.add(r)
+  }
+
+  // G-L5: each lane's timetable; depth 4's first room lane (lowest progress) is the lesson
+  for (const l of lanes) {
+    l.period = LINE.period[0] + (LINE.period[1] - LINE.period[0]) * rs()
+    l.phase = l.period * rs()
+  }
+  if (depth === 4) {
+    let lesson: LaneDef | null = null
+    for (const l of lanes) if (l.room && (!lesson || progressOf(l.room) < progressOf(lesson.room!))) lesson = l
+    if (lesson) lesson.lesson = true
+  }
+  return { lanes, sidings, gaps, copings, laneRooms, sidingRooms }
 }
 
 /** A floor cell's piece: the first whose cumulative threshold the cell's one roll is under. */
@@ -734,10 +952,16 @@ export function generateLevel(
   const kit = place.kit
   const gen = place.gen
   const rand = rng(seed)
-  const layout = opts.boss ? generateBossLayout(rand) : generateLayout(rand, 2 + Math.floor(rand() * 2))
+  const layout = opts.boss ? generateBossLayout(rand) : generateLayout(rand, 2 + Math.floor(rand() * 2), gen.hallShare, gen.line ? RAIL_CELLS : 1)
   const { floor } = layout
   const progress = progressMap(layout.rooms, !!opts.boss)
   const made: LevelMade = { props: [], tall: [], floors: [], edge: [], far: [] }
+  // G-L2..G-L5: the Line's rails, from their own stream (a boss level has none: the roundhouse is stage C)
+  const line = gen.line && !opts.boss ? layLine(layout, progress.of, gen.line, depth, seed) : null
+  if (line) made.gaps = [...line.gaps]
+  /** G-L6: a prop, shrine or sleeper stands clear of every room lane by `lanePad` and every siding by `sidingPad`. */
+  const offLine = (x: number, z: number, lanePad: number, sidingPad: number) => !line
+    || (line.lanes.every((l) => distToSpan(x, z, l.ax, l.az, l.bx, l.bz) >= lanePad) && line.sidings.every((sd) => distToSpan(x, z, sd.ax, sd.az, sd.bx, sd.bz) >= sidingPad))
   const placements: Placement[] = []
   const boxes: Box[] = []
   const circles: Circle[] = []
@@ -765,7 +989,7 @@ export function generateLevel(
     made.floors.push({ piece, p, corridor })
   }
 
-  buildWalls(cells, floor, kit, placements, boxes, circles)
+  buildWalls(cells, floor, kit, placements, boxes, circles, undefined, line?.gaps)
 
   // --- cover: a few props per room, kept off the lines between doorways ---
   const PROPS = kit.cover
@@ -785,6 +1009,8 @@ export function generateLevel(
       const oz = (rand() * 2 - 1) * maxZ
       // corridors enter on the centre row and column: keep those lanes open
       if (Math.abs(ox) < 2.4 || Math.abs(oz) < 2.4) continue
+      // G-L6: and off the rails
+      if (!offLine(room.center.x + ox, room.center.z + oz, LINE.halfW + 1.0, 1.8)) continue
       if (used.some(([ux, uz]) => Math.hypot(ux - ox, uz - oz) < gen.coverGap)) continue
       used.push([ox, oz])
       // G4: intact cover more often the further in (one extra rand(), only where a place has any)
@@ -809,6 +1035,18 @@ export function generateLevel(
         placements.push({ piece, x, z, rotY, scale })
       }
       made.props.push({ piece, x, z, top: pieceData(piece).height * scale, p, breakable: BREAKABLE.has(piece), intact, room: layout.rooms.indexOf(room) })
+    }
+  }
+
+  // G-L6: the sidings' buffers, and a dead wagon on each 'wagon' siding: solid
+  if (line) {
+    for (const sd of line.sidings) {
+      circles.push(...sd.buffers)
+      if (sd.holds !== 'wagon') continue
+      const len = Math.hypot(sd.bx - sd.ax, sd.bz - sd.az)
+      const ux = (sd.bx - sd.ax) / len, uz = (sd.bz - sd.az) / len
+      const cx = (sd.ax + sd.bx) / 2, cz = (sd.az + sd.bz) / 2
+      for (const s of [-1, 1]) circles.push({ x: cx + ux * s * SIDING.wagonAt, z: cz + uz * s * SIDING.wagonAt, r: SIDING.wagonR })
     }
   }
 
@@ -875,7 +1113,10 @@ export function generateLevel(
 
   // --- the beyond ---
   const machines: MachinePlacement[] = []
-  const { minI, maxI, minJ, maxJ, spanX, spanZ } = buildBeyond(cells, floor, rand, kit, placements, undefined, {
+  // G-L6: nothing of the beyond within 2.5 u of a lane's run into the fog
+  const onRails = line ? (x: number, z: number) => line.lanes.some((l) =>
+    distToSpan(x, z, l.outA.x, l.outA.z, l.ax, l.az) < 2.5 || distToSpan(x, z, l.bx, l.bz, l.outB.x, l.outB.z) < 2.5) : undefined
+  const { minI, maxI, minJ, maxJ, spanX, spanZ } = buildBeyond(cells, floor, rand, kit, placements, onRails, {
     machines: gen.machines, stream: stream(seed, SALT.machine), out: machines, made, clearEdges: gen.coverMaxH < Infinity,
     // the square is the end of the quarter: its far side at its most intact
     farSide: gen.farSide, farStream: stream(seed, SALT.far),
@@ -885,17 +1126,30 @@ export function generateLevel(
   // --- packs: one per main and side room, sized by depth, never in the entrance or exit ---
   const makeTerrainNow = makeTerrain(floor, boxes, circles)
   const packs: PackSpec[] = []
-  const packRooms = layout.rooms.filter((r) => r.kind === 'main' || r.kind === 'side')
+  // §6.5: the lesson lane's room has no pack (its first train is the lesson)
+  const lessonLaneRoom = line?.lanes.find((l) => l.lesson)?.room ?? null
+  const packRooms = layout.rooms.filter((r) => (r.kind === 'main' || r.kind === 'side') && r !== lessonLaneRoom)
+  const laneOf = (r: Room) => line?.lanes.find((l) => l.room === r) ?? null
+  const sidingOf = (r: Room) => line?.sidings.find((sd) => sd.room === r) ?? null
   // level 1: exactly one pack carries a ranged; deeper, more of them do
   const rangedPack = Math.floor(rand() * packRooms.length)
   // depth 2 meets the ram: one big main room holds a ram and a hulk, alone and easy to read
   const lessonRoom = depth === 2 ? pickLessonRoom(packRooms, rand) : null
   // depth 4 meets the swarm: eight mites alone in a big main room, so the rings can be seen before they bite
-  const swarmLesson = depth === 4 ? pickLessonRoom(packRooms, rand) : null
+  // on the Line, never in a lane's room: a room with neither lane nor siding, else a wagon siding's room
+  const swarmLesson = depth === 4
+    ? pickLessonRoom(line ? lineLessonPool(packRooms, line.laneRooms, line.sidings) : packRooms, rand)
+    : null
+  // §6.5, depth 4 on the Line: the first handcar siding's room meets the Handcar; the lane room second
+  // along meets the Signalman (the first is the lesson lane's, and empty)
+  const handcarLesson = line && depth === 4 ? line.sidings.find((sd) => sd.holds === 'handcar' && sd.room !== swarmLesson)?.room ?? null : null
+  const signalLesson = line && depth === 4
+    ? ([...line.laneRooms].filter((r) => r !== lessonLaneRoom).sort((a, b) => progress.of(a) - progress.of(b))[0] ?? null)
+    : null
   // and one or two other main rooms get a ram template; the rest are today's packs
   const d4Rooms = new Set<Room>()
   if (depth === 4) {
-    const mains = packRooms.filter((r) => r.kind === 'main' && r !== swarmLesson)
+    const mains = packRooms.filter((r) => r.kind === 'main' && r !== swarmLesson && r !== handcarLesson && r !== signalLesson)
     const n = 1 + (rand() < 0.5 ? 1 : 0)
     while (d4Rooms.size < Math.min(n, mains.length)) d4Rooms.add(mains.splice(Math.floor(rand() * mains.length), 1)[0]!)
   }
@@ -912,17 +1166,30 @@ export function generateLevel(
     const pool = plain.length ? plain : rams.length ? rams : sides
     if (hs() < HEAP.chance && pool.length) heapRoom = pool[Math.floor(hs() * pool.length)]!
   }
+  // §6.5 Sleepers: the Line's second brood, asleep under the ballast (the heap's stream and chance at 4)
+  let sleepersRoom: Room | null = null
+  if (line && SLEEPERS_CHANCE[depth] !== undefined) {
+    const hs = stream(seed, SALT.heap)
+    const lessons = new Set([swarmLesson, handcarLesson, signalLesson])
+    const pool = packRooms.filter((r) => r.kind === 'main' && !line.laneRooms.has(r) && !lessons.has(r)
+      && sidingOf(r)?.holds !== 'handcar' && (depth !== 4 || progress.of(r) > (swarmLesson ? progress.of(swarmLesson) : -1)))
+    const onSiding = pool.filter((r) => { const h = sidingOf(r)?.holds; return h === 'wagon' || h === 'empty' })
+    const from = onSiding.length ? onSiding : pool
+    if (hs() < SLEEPERS_CHANCE[depth]! && from.length) sleepersRoom = from[Math.floor(hs() * from.length)]!
+  }
   // depth 5 meets the Lobber: in the densest room, the main room furthest along (a full one, else a hall)
   let lobberLesson: Room | null = null
-  if (depth === 5) {
+  if (depth === 5 && !line) {
     const mains = packRooms.filter((r) => r.kind === 'main')
     const full = mains.filter((r) => r.rx === 2 && r.rz === 2)
     const pool = full.length ? full : mains.filter((r) => r.rx >= 2 || r.rz >= 2)
     for (const r of pool) if (!lobberLesson || progress.of(r) > progress.of(lobberLesson)) lobberLesson = r
   }
-  const caps = CAPS(depth)
+  // the Line: no Lobbers at all
+  const caps = line ? { ...CAPS(depth), lobberPacks: 0 } : CAPS(depth)
   let chargerPacks = 0
   let swarmPacks = 0
+  let signalPacks = 0
   // the lesson's Lobber counts from the start, wherever its room falls in the order
   let lobberPacks = lobberLesson ? 1 : 0
   packRooms.forEach((room, idx) => {
@@ -933,23 +1200,42 @@ export function generateLevel(
       ? (idx === rangedPack ? 1 : 0)
       : (rand() < Math.min(0.85, 0.3 * depth) ? 1 : 0) + (depth >= 4 && big && rand() < 0.5 ? 1 : 0)
     // gather off-centre, so the corridor lanes through the room aren't where they sleep
-    const ox = (rand() < 0.5 ? -1 : 1) * (room.rx * CELL * 0.45)
-    const oz = (rand() < 0.5 ? -1 : 1) * (room.rz * CELL * 0.45)
+    let ox = (rand() < 0.5 ? -1 : 1) * (room.rx * CELL * 0.45)
+    let oz = (rand() < 0.5 ? -1 : 1) * (room.rz * CELL * 0.45)
+    // the Line: on the side away from the room's rails (a lane's or a siding's), never on them
+    const railRow = line ? laneOf(room) ?? sidingOf(room) : null
+    if (railRow) {
+      const alongX = railRow.az === railRow.bz
+      const off = alongX ? railRow.az - room.center.z : railRow.ax - room.center.x
+      if (alongX) oz = -Math.sign(off) * Math.abs(oz)
+      else ox = -Math.sign(off) * Math.abs(ox)
+      // Sleepers in a siding's room nest just off the siding, toward the middle
+      if (room === sleepersRoom && sidingOf(room)) {
+        if (alongX) oz = off - Math.sign(off) * SLEEPERS_OFF
+        else ox = off - Math.sign(off) * SLEEPERS_OFF
+      }
+    }
     const cx = room.center.x + ox
     const cz = room.center.z + oz
+    /** §4.2 INV (K-G3): no sleeping body within halfW + 0.8 of a lane or 1.4 of a siding (the Handcar stands on its own). */
+    const clearOfRails = (x: number, z: number, variant?: Variant) => variant === 'handcar' || offLine(x, z, LINE.halfW + 0.85, 1.45)
     const members: PackSpec['members'] = []
 
     // which template, if any: the lesson, depth 4's rams, or a pick from the depth's list
     let tpl: Member[] | null = null
-    const lesson = room === lessonRoom || room === swarmLesson || room === lobberLesson
+    const lesson = room === lessonRoom || room === swarmLesson || room === lobberLesson || room === handcarLesson || room === signalLesson
     if (room === lessonRoom) tpl = ['C', 'H']
     else if (room === swarmLesson) tpl = ['M8']
     // the lesson: as it is, not filled, so the one new thing is what you read
     else if (room === lobberLesson) tpl = ['L', 'H', 'H']
-    else if (room === heapRoom) tpl = fill(['M6', 'H'], size, caps.kinds)
+    else if (room === handcarLesson) tpl = ['H', 'K']
+    else if (room === signalLesson) tpl = ['H', 'H', 'G']
+    else if (room === heapRoom || room === sleepersRoom) tpl = fill(['M6', 'H'], size, caps.kinds)
     else if (d4Rooms.has(room)) tpl = fill(pickWeighted(D4, rand).members ?? [], size, Infinity)
+    else if (line && depth >= 5 && sidingOf(room)?.holds === 'handcar') tpl = shrink(pickWeighted(D5L_HANDCAR, rand).members ?? [], size)
     else if (depth >= 5) {
-      const rows = (depth >= 7 ? D7 : D5).map((row) => (row.today ? row : { ...row, members: shrink(row.members, size) })).filter((row) => {
+      const table = line ? (laneOf(room) ? D5L_LANE : D5L) : depth >= 7 ? D7 : D5
+      const rows = table.map((row) => (row.today ? row : { ...row, members: shrink(row.members, size) })).filter((row) => {
         if (row.today) return true
         const kinds = bodies(row.members)
         const rams = kinds.filter((k) => k === 'charger').length
@@ -959,15 +1245,18 @@ export function generateLevel(
         const lobbers = row.members.filter((m) => m === 'L').length
         if (lobbers > 0 && lobberPacks >= caps.lobberPacks) return false
         if (kinds.filter((k) => k === 'ranged').length > SHOOTERS_MAX) return false
+        if (row.members.includes('G') && signalPacks >= SIGNAL_PACKS) return false
         return rams <= caps.chargersPerPack && new Set(kinds).size <= caps.kinds && beOf(row.members) <= size + 1
       })
       const row = rows.length ? pickWeighted(rows, rand) : null
       if (row && !row.today) tpl = fill(row.members, size, caps.kinds)
     }
 
-    if (tpl) {
+    // the Line's bodies that aren't built yet stay out of the row (stages B1, B2)
+    if (tpl) tpl = tpl.filter(built)
+    if (tpl && tpl.length) {
       const want = bodies(tpl)
-      const lobs = lobbersOf(tpl)
+      const vars = variantsOf(tpl)
       const spots: ({ x: number; z: number } | null)[] = want.map(() => null)
       // mites first, as a nest round the spot; then everyone else a little out from it, so a
       // ram has room to stand and show its lane. The first listed member still leads.
@@ -987,6 +1276,7 @@ export function generateLevel(
           const x = cx + Math.cos(a) * r
           const z = cz + Math.sin(a) * r
           if (makeTerrainNow.blocked(x, z, mite ? 0.4 : kind === 'charger' ? 0.8 : 0.7)) continue
+          if (!clearOfRails(x, z, vars[i])) continue
           const clash = spots.some((o, j) => {
             if (!o) return false
             const d = Math.hypot(o.x - x, o.z - z)
@@ -1003,12 +1293,14 @@ export function generateLevel(
         if (!at) return
         // the lesson ram sleeps facing into the room: you walk in on its side, not its face
         const face = room === lessonRoom && kind === 'charger' ? { x: room.center.x, z: room.center.z } : undefined
-        members.push({ kind, variant: lobs[i] ? 'lobber' : undefined, x: at.x, z: at.z, face })
+        members.push({ kind, variant: vars[i], x: at.x, z: at.z, face })
       })
       if (members.some((m) => m.kind === 'charger')) chargerPacks++
       if (members.some((m) => m.kind === 'swarm')) swarmPacks++
+      if (members.some((m) => m.variant === 'signal')) signalPacks++
       if (room !== lobberLesson && members.some((m) => m.variant === 'lobber')) lobberPacks++
-      if (members.length) packs.push({ room, members, lesson: lesson || undefined, budget: size, template: tpl.join('+'), look: heap ? 'heap' : undefined })
+      const look = heap ? 'heap' as const : room === sleepersRoom ? 'ballast' as const : undefined
+      if (members.length) packs.push({ room, members, lesson: lesson || undefined, budget: size, template: tpl.join('+'), look })
       return
     }
     for (let n = 0; n < size; n++) {
@@ -1018,6 +1310,7 @@ export function generateLevel(
         const x = cx + Math.cos(a) * r
         const z = cz + Math.sin(a) * r
         if (makeTerrainNow.blocked(x, z, 0.7)) continue
+        if (!clearOfRails(x, z)) continue
         if (members.some((m) => Math.hypot(m.x - x, m.z - z) < 1.3)) continue
         members.push({ kind: n < rangedCount ? 'ranged' : 'chaser', x, z })
         break
@@ -1093,6 +1386,8 @@ export function generateLevel(
       const x = room.center.x + (rand() * 2 - 1) * (room.rx * CELL * 0.5)
       const z = room.center.z + (rand() * 2 - 1) * (room.rz * CELL * 0.5)
       if (makeTerrainNow.blocked(x, z, 1.2)) continue
+      // G-L6: never on the rails
+      if (!offLine(x, z, LINE.halfW + 1.3, 1.8)) continue
       const kind: ShrineKind = rand() < 0.5 ? 'rest' : 'plenty'
       const stone = new THREE.Mesh(pieceData('pillar').geometry, pieceData('pillar').material)
       stone.scale.set(0.5, 0.3, 0.5)
@@ -1121,6 +1416,8 @@ export function generateLevel(
   const group = buildInstanced(placements)
   for (const m of postMeshes) group.add(m)
   if (machines.length) group.add(buildMachines(machines))
+  const linePieces = line ? buildLinePieces(line.lanes, line.sidings, line.copings) : null
+  if (linePieces) group.add(linePieces.group)
   for (const b of breakables) group.add(b.mesh)
   for (const o of shrineParts) group.add(o)
 
@@ -1174,6 +1471,9 @@ export function generateLevel(
     boss: bossSpot,
     posts: square ? posts : undefined,
     footprint,
+    lanes: line?.lanes,
+    sidings: line?.sidings,
+    lamps: linePieces ? { mesh: linePieces.lampMesh, of: linePieces.lamps } : undefined,
     exitOpen: !opts.boss,
     openExit() {
       if (!cold) return
@@ -1409,8 +1709,13 @@ const RUN_DEPTHS_WALK = 7
  */
 export function buildWalls(
   cells: [number, number][], floor: Set<string>, kit: KitPreset, placements: Placement[], boxes: Box[], circles: Circle[], solid?: Set<string>,
+  gaps?: ReadonlySet<string>,
 ) {
-  const open = (i: number, j: number) => !floor.has(key(i, j)) && !solid?.has(key(i, j))
+  // an edge in `gaps` ("i,j,dx,dz": the floor cell and its open side) gets no barrier and no box, so a
+  // column stands at each side of it. Off the floor is still solid: the gap is for the eye (the Line's rails)
+  const open0 = (i: number, j: number) => !floor.has(key(i, j)) && !solid?.has(key(i, j))
+  let at: [number, number] = [0, 0]
+  const open = (ni: number, nj: number) => open0(ni, nj) && !gaps?.has(`${at[0]},${at[1]},${ni - at[0]},${nj - at[1]}`)
   // vertices are grid corners; count wall edges meeting at each to place columns
   const vx = new Map<string, { along: number; across: number }>()
   const touch = (a: number, b: number, axis: 'along' | 'across') => {
@@ -1422,6 +1727,7 @@ export function buildWalls(
   for (const [i, j] of cells) {
     const x = i * CELL
     const z = j * CELL
+    at = [i, j]
     if (open(i + 1, j)) {
       placements.push({ piece: kit.wall, x: x + h, z, rotY: Math.PI / 2 })
       boxes.push({ minX: x + h - WALL_HALF, maxX: x + h + WALL_HALF, minZ: z - h, maxZ: z + h })

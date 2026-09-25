@@ -34,6 +34,8 @@ const GUARD_MS = 1200
 
 export interface Overlay {
   banner: (text: string) => void
+  /** Any banner showing goes at once (the crossroads: the yard's words don't follow him in). */
+  clearBanner: () => void
   /** The Workshop: any banner showing goes at once, and none are shown until it's off again. */
   quiet: (on: boolean) => void
   /** A banner that shows even in the room (the one thing the Workshop has to say). */
@@ -85,6 +87,11 @@ export function createOverlay(root: HTMLElement): Overlay {
       banner.classList.add('show')
       clearTimeout(bannerTimer)
       bannerTimer = window.setTimeout(() => banner.classList.remove('show'), 1800)
+    },
+
+    clearBanner() {
+      clearTimeout(bannerTimer)
+      banner.classList.remove('show')
     },
 
     notice(text) {

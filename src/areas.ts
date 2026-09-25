@@ -111,7 +111,7 @@ export type { AmbienceMood }
 /** A depth's look (design/content/SPEC.md §2.1): area II has two, the Works and the quarter. */
 export type PlaceId = 'ruin' | 'works' | 'quarter' | 'sidings' | 'station'
 /** The Works' beyond: code-built machinery standing in the fog (the Works step builds them). */
-export type MachineKind = 'chimney' | 'crucible' | 'press' | 'hopper'
+export type MachineKind = 'chimney' | 'crucible' | 'press' | 'hopper' | 'gantry'
 
 /** What a place builds with. The ruin's is exactly what the generator built before areas existed. */
 export interface KitPreset {
@@ -152,6 +152,21 @@ export interface GenPreset {
   machines?: { kinds: MachineKind[]; share: number }
   /** Chance a body carries a slag core, by archetype. ruin: {} (never). */
   slag: Partial<Record<'chaser' | 'charger' | 'ranged', number>>
+  /** Chance a main-spine room is a 5x3 hall. Absent: 0.25 (today's literal). One rand() either way. */
+  hallShare?: number
+  /** The Line's rails and pack rules (design/area3/SPEC.md §4, §6.5). Presence switches them on. */
+  line?: LinePreset
+}
+
+/** The Line's generator knobs. */
+export interface LinePreset {
+  /** Live lines laid across main rooms, and across corridor cells. */
+  lanes: number
+  crossings: number
+  /** Dead sidings inside lane-free main rooms. */
+  sidings: number
+  /** Station halls: a hall's lane runs along its long axis, on an outer row; halls are picked first. */
+  alongHalls: boolean
 }
 
 /** Everything a depth looks, sounds and generates like. */
@@ -255,12 +270,64 @@ const quarter: PlaceDef = {
 }
 
 /**
- * The Line (area III, design/area3/SPEC.md §4.1). Until its own kit lands (stage A3) each is
- * a copy of the area II place at the same depth, under its own id: the road is the same
- * afternoon on new plumbing.
+ * The Line (area III, design/area3/SPEC.md §4.1). Depth 4, the sidings: a goods yard, gravel
+ * and broken tile underfoot, brick retaining walls, crates and barrels for cover, dead signal
+ * gantries standing in the fog. Straight rails cross it wall to wall. INV: no bed, cot, crib,
+ * cradle, toy, swing or pram in any list.
+ * The room tone stays area II's (the Works', then the quarter's) until the Line's own lands
+ * (stage B4).
  */
-const sidings: PlaceDef = { ...works, id: 'sidings' }
-const station: PlaceDef = { ...quarter, id: 'station' }
+const sidings: PlaceDef = {
+  id: 'sidings',
+  kit: {
+    floorRoom: [['floor_dirt_large', 0.45], ['floor_tile_large_rocks', 0.6], ['floor_tile_large', 1]],
+    floorCorridor: [['floor_dirt_large', 0.6], ['floor_tile_large', 1]],
+    wall: 'barrier',
+    column: 'column',
+    cover: [['crates_stacked', 1], ['barrel_large', 0.7], ['box_large', 0.8], ['keg', 0.65], ['rubble_half', 0.42]],
+    breakable: ['barrel_large', 'box_large'],
+    beyondTall: ['wall_scaffold', 'wall_gated', 'pillar', 'wall_broken'],
+    beyondLow: ['rubble_half', 'floor_dirt_large_rocky'],
+    arenaCover: 'barrier_column',
+  },
+  surfaces: { paving: 'Gravel023', rock: 'Bricks097', wood: 'Planks023A', ground: 'Ground108', grate: 'Metal063' },
+  ambience: { crawl: 'works', boss: 'works' },
+  footsteps: 'stone',
+  music: 'II',
+  gen: {
+    cover: [0.25, 0.25], coverGap: 3.2, coverTries: 40, coverMaxH: 1.4, slag: {}, hallShare: 0.25,
+    machines: { kinds: ['gantry'], share: 0.3 },
+    line: { lanes: 2, crossings: 1, sidings: 2, alongHalls: false },
+  },
+}
+/**
+ * Depth 5 (and the roundhouse at 6, stage C): the goods station. Platform halls, each with its
+ * lane along an outer row and a coping at the platform's edge; tile floors, brick walls, and
+ * door frames still standing on the far side.
+ */
+const station: PlaceDef = {
+  id: 'station',
+  kit: {
+    floorRoom: [['floor_tile_large', 0.7], ['floor_tile_large_rocks', 1]],
+    floorCorridor: [['floor_tile_large_rocks', 0.5], ['floor_tile_large', 1]],
+    wall: 'barrier',
+    column: 'column',
+    cover: [['crates_stacked', 1], ['box_large', 0.8], ['keg', 0.65], ['table_long', 0.8], ['barrel_large', 0.7]],
+    breakable: ['barrel_large', 'box_large'],
+    beyondTall: ['wall', 'wall_doorway', 'wall_window_open', 'pillar'],
+    beyondLow: ['rubble_half', 'floor_dirt_large_rocky'],
+    arenaCover: 'barrier_column',
+  },
+  surfaces: { paving: 'Tiles093', rock: 'Bricks097', wood: 'Planks023A', ground: 'Gravel023', grate: 'Metal063' },
+  ambience: { crawl: 'quarter', boss: 'square' },
+  footsteps: 'stone',
+  music: 'II',
+  gen: {
+    cover: [0.2, 0.3], coverGap: 3.0, coverTries: 50, coverMaxH: 1.4, slag: {}, hallShare: 0.6,
+    farSide: { pieces: ['wall_doorway', 'wall_window_open'], chance: [0.1, 0.3] },
+    line: { lanes: 3, crossings: 0, sidings: 1, alongHalls: true },
+  },
+}
 
 export const PLACES: Record<PlaceId, PlaceDef> = { ruin, works, quarter, sidings, station }
 export const PLACE_OF: Record<number, PlaceId> = { 1: 'ruin', 2: 'ruin', 3: 'ruin', 4: 'works', 5: 'quarter', 6: 'quarter' }

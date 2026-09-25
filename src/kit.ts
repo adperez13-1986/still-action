@@ -48,13 +48,17 @@ const SURFACE_TEX: Record<string, { scale: number; gain: number; tint?: [number,
   // the quarter: flagstone streets and old brick
   Tiles093: { scale: 3, gain: 0.75 },
   Bricks097: { scale: 2.5, gain: 0.85 },
+  // the Line: the goods yard's ballast. The set is pale limestone, near twice PavingStones142's
+  // brightness, so its gain is the spec's 0.55 scaled to match, and warmed toward the ruin's stone
+  Gravel023: { scale: 4, gain: 0.3, tint: [1, 0.93, 0.84] },
 }
 /**
  * A set worn in a role it wasn't tuned for: the quarter's ground is the ruin's paving, and
  * the beyond has to recede as Ground108 does, not compete with the room as a floor.
  */
 const ROLE_TEX: Partial<Record<Surface, Record<string, { scale: number; gain: number }>>> = {
-  ground: { PavingStones142: { scale: 7, gain: 0.18 } },
+  // the station's beyond is ballast: it recedes as Ground108 does
+  ground: { PavingStones142: { scale: 7, gain: 0.18 }, Gravel023: { scale: 6, gain: 0.12 } },
 }
 const texOf = (role: Surface, id: string) => ({ ...SURFACE_TEX[id]!, ...ROLE_TEX[role]?.[id] })
 

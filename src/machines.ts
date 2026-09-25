@@ -13,6 +13,7 @@ import type { MachineKind } from './areas'
  *   crucible  a tapered pot with a dark mouth
  *   press     a block with its head over it
  *   hopper    an upturned cone on four legs
+ *   gantry    the Line's signal gantry: two iron posts, a beam, three signal heads, all unlit
  */
 
 export interface MachinePlacement {
@@ -28,13 +29,15 @@ export interface MachinePlacement {
 }
 
 /** Each kind's height before scale: what the generator needs to keep its shadow off the floor. */
-export const MACHINE_H: Record<MachineKind, number> = { chimney: 11, crucible: 2.6, press: 3.8, hopper: 4 }
+export const MACHINE_H: Record<MachineKind, number> = { chimney: 11, crucible: 2.6, press: 3.8, hopper: 4, gantry: 4.95 }
 /** A chimney's height is drawn from this range. */
 export const CHIMNEY_H: [number, number] = [9, 13]
 
 /** Vertex colour: most of a machine wears the skin as it is; mouths and joins are dark. */
 const LIT = 1
 const DARK = 0.18
+/** A signal head that isn't lit: near black on the iron (0x1a1614 over the skin). INV: never ember, never emissive. */
+const UNLIT_HEAD = 0.1
 
 function tinted(g: THREE.BufferGeometry, v: number) {
   const n = g.getAttribute('position').count
@@ -66,6 +69,12 @@ function shape(kind: MachineKind): THREE.BufferGeometry {
       add(new THREE.ConeGeometry(1.8, 2, 10).rotateX(Math.PI), 0, 4, 0)
       for (const [lx, lz] of [[1.1, 1.1], [-1.1, 1.1], [1.1, -1.1], [-1.1, -1.1]] as const) add(new THREE.BoxGeometry(0.25, 3, 0.25), lx, 1.5, lz)
       break
+    case 'gantry':
+      // two posts 4 u apart, a beam across at 4.8, three heads hung from it
+      for (const px of [-2, 2]) add(new THREE.BoxGeometry(0.25, 5, 0.25), px, 2.5, 0)
+      add(new THREE.BoxGeometry(4.4, 0.3, 0.3), 0, 4.8, 0)
+      for (const hx of [-1.3, 0, 1.3]) add(new THREE.BoxGeometry(0.4, 0.8, 0.3), hx, 4.25, 0.05, UNLIT_HEAD)
+      break
   }
   const g = mergeGeometries(parts)!
   g.computeBoundingBox()
@@ -73,29 +82,32 @@ function shape(kind: MachineKind): THREE.BufferGeometry {
 }
 
 /** Shared by every level: built once, never disposed. */
-let kit: { geo: Record<MachineKind, THREE.BufferGeometry>; mat: THREE.MeshStandardMaterial } | null = null
+let kit: { geo: Record<MachineKind, THREE.BufferGeometry>; mat: THREE.MeshStandardMaterial; grate: THREE.MeshStandardMaterial } | null = null
 function machineKit() {
   if (kit) return kit
   const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, vertexColors: true })
   // darker than the walls: shapes standing in the fog, not things to look at
   skin(mat, 'rock', { gain: 0.34 })
-  kit = { geo: { chimney: shape('chimney'), crucible: shape('crucible'), press: shape('press'), hopper: shape('hopper') }, mat }
+  // the gantry is iron, not brick: the grate's set (the Line's Metal063)
+  const grate = new THREE.MeshStandardMaterial({ color: 0xffffff, vertexColors: true, emissive: 0x000000 })
+  skin(grate, 'grate', { gain: 0.34 })
+  kit = { geo: { chimney: shape('chimney'), crucible: shape('crucible'), press: shape('press'), hopper: shape('hopper'), gantry: shape('gantry') }, mat, grate }
   return kit
 }
 
 /** One InstancedMesh per kind used. Its instance buffers are the level's; the shapes are shared. */
 export function buildMachines(list: readonly MachinePlacement[]): THREE.Group {
   const group = new THREE.Group()
-  const { geo, mat } = machineKit()
+  const { geo, mat, grate } = machineKit()
   const m = new THREE.Matrix4()
   const q = new THREE.Quaternion()
   const up = new THREE.Vector3(0, 1, 0)
   const pos = new THREE.Vector3()
   const scl = new THREE.Vector3()
-  for (const kind of ['chimney', 'crucible', 'press', 'hopper'] as const) {
+  for (const kind of ['chimney', 'crucible', 'press', 'hopper', 'gantry'] as const) {
     const of = list.filter((p) => p.kind === kind)
     if (!of.length) continue
-    const inst = new THREE.InstancedMesh(geo[kind], mat, of.length)
+    const inst = new THREE.InstancedMesh(geo[kind], kind === 'gantry' ? grate : mat, of.length)
     inst.name = `machine:${kind}`
     of.forEach((p, i) => {
       q.setFromAxisAngle(up, p.rotY)
