@@ -200,6 +200,15 @@ function out(c: AudioContext, bus: Bus, pan = 0): AudioNode {
   return p
 }
 
+/** At most one call per `gapS` for a name: a crowd of the same small sound becomes one. */
+const lastAt = new Map<string, number>()
+function limited(name: string, gapS: number, t: number) {
+  const l = lastAt.get(name) ?? -Infinity
+  if (t - l < gapS) return true
+  lastAt.set(name, t)
+  return false
+}
+
 /** A panner the caller keeps and moves: a voice that follows its source. */
 function livePan(c: AudioContext, bus: Bus, pan: number) {
   const p = c.createStereoPanner()
@@ -293,7 +302,8 @@ export function shot(pan: number) {
   hiss(c, d, t, 0.025, 0.25, 'highpass', 5000, 5000, 0.7)
 }
 
-export function hit(pan: number) {
+/** `gain` scales the whole hit: a plate soaks some of it. */
+export function hit(pan: number, gain = 1) {
   const c = live()
   if (!c) return
   const t = c.currentTime
@@ -302,11 +312,11 @@ export function hit(pan: number) {
   lastHit = t
   const d = out(c, 'hits', pan)
   const r = vary(1, 0.08)
-  tone(c, d, 'sine', t, 200 * r, 50 * r, 0.11, 0.9, 0.002)
+  tone(c, d, 'sine', t, 200 * r, 50 * r, 0.11, 0.9 * gain, 0.002)
   // the recording carries the crack now; the synth noise steps back
-  hiss(c, d, t, 0.05, 0.25, 'bandpass', 2200 * r, 900 * r, 1.2)
-  sample(c, 'metalMedium', d, 0.8, 0.9)
-  tone(c, d, 'square', t, 95 * r, 60 * r, 0.04, 0.12)
+  hiss(c, d, t, 0.05, 0.25 * gain, 'bandpass', 2200 * r, 900 * r, 1.2)
+  sample(c, 'metalMedium', d, 0.8 * gain, 0.9)
+  tone(c, d, 'square', t, 95 * r, 60 * r, 0.04, 0.12 * gain)
 }
 
 export function kill(pan: number) {
@@ -732,6 +742,59 @@ export function dazed(ms: number, pan: number): Voice {
   tone(c, g, 'square', t + dur, 1200, 700, 0.015, 0.2)
   sample(c, 'metalMedium', g, 0.5, 1.4, dur)
   return { stop: gate(g, c, t + dur + 0.05), pan: (v) => p.pan.setTargetAtTime(clampPan(v), c.currentTime, 0.03) }
+}
+
+/** A hit into an open hatch rings: the core struck. Layered on hit(). Louder on a Plated ram, whose plates are up too. */
+export function hitOpen(pan: number, gain = 1) {
+  const c = live()
+  if (!c) return
+  const t = c.currentTime
+  const d = out(c, 'hits', pan)
+  tone(c, d, 'sine', t, 1320, 1300, 0.25, 0.08 * gain)
+  sample(c, 'bell', d, 0.3 * gain, 2.0)
+}
+
+/** A hit on shut plate: dull, the blocked-shot layer. Layered on a quieter hit(). */
+export function plateDull(pan: number) {
+  const c = live()
+  if (!c) return
+  sample(c, 'generic', out(c, 'hits', pan), 0.4, 0.9)
+}
+
+/** An open rush skidding to a stop: iron grinding stone. */
+export function skid(pan: number) {
+  const c = live()
+  if (!c) return
+  const t = c.currentTime
+  const d = out(c, 'enemy', pan)
+  hiss(c, d, t, 0.4, 0.35, 'bandpass', 2800, 700, 2)
+  tone(c, distorted(c, d), 'square', t, 180, 90, 0.2, 0.08)
+  sample(c, 'mining', d, 0.25, 1.3)
+}
+
+/** A rush shouldering a body aside: one clank, however many it tramples at once. */
+export function trample(pan: number) {
+  const c = live()
+  if (!c || limited('trample', 0.08, c.currentTime)) return
+  sample(c, 'metalMedium', out(c, 'enemy', pan), 0.4, 1.1)
+}
+
+/** A ram's last breath, over kill(): steam escaping, a dying whistle, the plates falling. A sigh, not a buzzer. */
+export function ramDeath(pan: number) {
+  const c = live()
+  if (!c) return
+  const t = c.currentTime
+  const d = out(c, 'hits', pan)
+  hiss(c, d, t, 0.6, 0.2, 'highpass', 2500, 1200, 0.7)
+  tone(c, d, 'sine', t, 1800, 600, 0.5, 0.05)
+  sample(c, 'plateHeavy', d, 0.6, 0.6, 0.05)
+}
+
+/** A Many ram cracking along its seam as it comes apart. */
+export function ramSplit(pan: number) {
+  const c = live()
+  if (!c) return
+  sample(c, 'metalHeavy', out(c, 'hits', pan), 0.7, 1.1)
 }
 
 /** A pack noticing you: two sharp rising notes, so you know you've pulled them even off screen. */

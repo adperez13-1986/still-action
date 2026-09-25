@@ -4,7 +4,7 @@ import { createWorld, grade } from './world'
 import { Still } from './still'
 import { createHud } from './hud'
 import { createGradePanel } from './grade'
-import { Combat, ELITE_LINE, type Archetype, type CastResult, type EliteMod, type Pack } from './combat'
+import { Combat, eliteLine, type Archetype, type CastResult, type EliteMod, type Pack } from './combat'
 import { STARTING, PARTS, byId, type AbilityDef, type AbilityShape, type BeatKey } from './abilities'
 import { SLOT_NAMES, type SlotName } from './still'
 import type { Enemy, EnemyEvent } from './enemy'
@@ -57,6 +57,11 @@ const STEEL = new THREE.Color(0x7a8592)
 const STONE = new THREE.Color(0x5a5550)
 const WOOD = new THREE.Color(0x6b4a30)
 const JOINT_C = new THREE.Color(0x2b2426)
+const PLATE_C = new THREE.Color(0x6e5a50)
+/** A sleeping ram's banked fire: a thin grey wisp, "asleep, not scrap". */
+const BANKED = new THREE.Color(0x4a4744)
+/** The cold grit a near miss blows off Still's feet. */
+const COLD_GRIT = new THREE.Color(0x55606c)
 /** A ram's lane direction, on the floor. */
 const aim3 = (c: Charger) => new THREE.Vector3(Math.sin(c.aim), 0, Math.cos(c.aim))
 
@@ -112,14 +117,28 @@ let castHits = 0
 const HOP_H: Partial<Record<BeatKey, number>> = { skitter: 0.35, spring: 0.9 }
 
 const combat = new Combat(world.scene, OPEN, {
-  onHit: (at) => {
+  onHit: (at, e) => {
     castHits++
-    sfx.hit(panOf(at))
+    const pan = panOf(at)
     // cold sparks off the metal, thrown away from Still
     const away = new THREE.Vector3(at.x - still.pos.x, 0, at.z - still.pos.z)
-    vfx.sparks(at3(at, 1.0), COLD, 8, 6.5, away, 0.9)
+    if (e instanceof Charger && e.stunned) {
+      // into the open hatch: the core flares and rings, and the moment holds a beat longer
+      sfx.hit(pan)
+      sfx.hitOpen(pan, e.plated ? 1.3 : 1)
+      vfx.sparks(at3(at, 1.0), COLD, 12, 6.5, away, 0.9)
+      vfx.flash(e.fireboxPoint(new THREE.Vector3()), EMBER, 0.4)
+      hitstop = Math.max(hitstop, 0.06)
+    } else {
+      // shut plate soaks it: a quieter hit and a dull one under it
+      if (e instanceof Charger && e.plated) {
+        sfx.hit(pan, 0.7)
+        sfx.plateDull(pan)
+      } else sfx.hit(pan)
+      vfx.sparks(at3(at, 1.0), COLD, 8, 6.5, away, 0.9)
+      hitstop = Math.max(hitstop, 0.045)
+    }
     vfx.flash(at3(at, 1.0), COLD_DEEP, 0.35)
-    hitstop = Math.max(hitstop, 0.045)
     shake = Math.max(shake, 0.1)
   },
   onPlayerHurt: () => {
@@ -146,6 +165,14 @@ const combat = new Combat(world.scene, OPEN, {
       vfx.flash(at3(at, 0.9), EMBER, 1.0)
       vfx.dust(at, 10, 1.0)
       vfx.smokePuff(at3(at, 1.0), 3)
+      sfx.ramDeath(panOf(at))
+      const mod = wasElite ? pack.elite?.mod : undefined
+      if (mod === 'plated') vfx.chunks(at3(at, 0.8), 4, PLATE_C, 5, 0.26)
+      if (mod === 'splitting') {
+        // it cracks along its seam into the two that were in it
+        vfx.chunks(at3(at, 0.8), 6, RUST, 5, 0.14)
+        sfx.ramSplit(panOf(at))
+      }
       shake = Math.max(shake, 0.3)
     } else {
       // it comes apart: chunks of its own metal, a burst of embers, a puff of grit
@@ -400,9 +427,97 @@ function ramEvent(c: Charger, ev: EnemyEvent) {
       break
     }
     case 'stunEnd':
-      // dazed() plays its own hatch slam
+      // dazed() plays its own hatch slam; a few sparks off the back as it shuts
       loops.delete(c)
+      vfx.sparks(at3(c.pos, 0.9), EMBER, 4, 3)
+      vfx.dust(c.pos, 2, 0.5)
       break
+    case 'skid':
+      sfx.skid(pan)
+      break
+    case 'trample':
+      // shouldered aside: embers off the contact, grit off its feet
+      sfx.trample(panOf(ev.at))
+      vfx.sparks(at3(ev.at, 0.5), EMBER, 6, 5, ev.dir, 0.5)
+      vfx.dust(ev.at, 4, 0.5)
+      break
+    case 'nearMiss':
+      // the roar dips as it passes (a cheap Doppler), and he flinches back
+      loops.get(c)?.dip?.()
+      vfx.dust(still.pos, 4, 0.4, COLD_GRIT, 3)
+      rig.punch(-0.015)
+      break
+  }
+}
+
+/** What a ram does between its moments: banked smoke, stack embers, the rush's trail, the open hatch sparking. */
+interface RamFx { smoke: number; ember: number; walk: number; stun: number; frame: number; spent: number; rushed: boolean }
+const ramFxState = new WeakMap<Charger, RamFx>()
+const fxA = new THREE.Vector3()
+const fxB = new THREE.Vector3()
+function ramFx(dt: number) {
+  const rams = combat.enemies.filter((e): e is Charger => e instanceof Charger)
+  if (!rams.length) return
+  const awake = new Set(combat.awake)
+  for (const c of rams) {
+    let st = ramFxState.get(c)
+    if (!st) {
+      st = { smoke: 0.5 + Math.random() * 2, ember: 0, walk: Math.random() * 0.8, stun: 0, frame: 0, spent: 0, rushed: false }
+      ramFxState.set(c, st)
+    }
+    st.frame++
+    const mouth = c.stackMouth(fxA)
+    if (c.consumeWake()) vfx.smokePuff(mouth, 3)
+    if (c.isAsleep) {
+      // you can spot a sleeping ram across a room by its wisp
+      if (c.pos.distanceTo(still.pos) < 20 && (st.smoke -= dt) <= 0) {
+        st.smoke = 2.5 + (Math.random() * 2 - 1) * 0.8
+        vfx.smokePuff(mouth, 1, BANKED)
+      }
+      continue
+    }
+    if (c.phase === 'windup' && !c.locked && (st.ember -= dt) <= 0) {
+      st.ember = 0.09
+      vfx.embers(mouth, 1, 0.1)
+    }
+    if (c.walking) {
+      // one puff a stride, but two rams walking side by side don't fog the room
+      if ((st.walk -= dt) <= 0) {
+        st.walk = 0.8
+        if (!rams.some((o) => o !== c && awake.has(o) && o.pos.distanceTo(c.pos) < 6)) vfx.smokePuff(mouth, 1)
+      }
+      // Quick: its flared exhaust streams embers
+      if (c.elite === 'swift') vfx.embers(mouth, 1, 0.05)
+    }
+    if (c.rushing) {
+      if (!st.rushed) st.spent = 0
+      vfx.trail(mouth, EMBER, 0.22)
+      // grit and hoof sparks, capped per rush so two rams can't flood the pools
+      if (st.spent < 24) {
+        if (st.frame % 2 === 0) {
+          vfx.dust(c.rearMid(fxB), 1, 0.3, undefined, 2)
+          st.spent += 1
+        }
+        if (st.frame % 3 === 0) {
+          vfx.sparks(c.hoofMid(fxB), EMBER, 2, 4, aim3(c).negate(), 0.5)
+          st.spent += 2
+        }
+      }
+    }
+    st.rushed = c.rushing
+    if (c.skidding) {
+      const f = c.frontMid(fxB)
+      vfx.sparks(f, EMBER, 3, 5, aim3(c), 0.4)
+      vfx.dust(f, 2, 0.4, undefined, 4)
+    }
+    if (c.stunned && (st.stun -= dt) <= 0) {
+      st.stun = 0.09
+      vfx.sparks(c.fireboxPoint(fxB), EMBER, 2, 3)
+      for (const side of [-1, 1] as const) {
+        const p = c.flankPoint(side, fxB)
+        if (p) vfx.sparks(p, EMBER, 1, 3)
+      }
+    }
   }
 }
 
@@ -712,11 +827,11 @@ function drawEliteLabels() {
     const el = p.elite
     if (!el || el.leader.dead || run.phase !== 'crawl') continue
     if (p.state === 'asleep' && el.leader.pos.distanceTo(still.pos) > 14) continue
-    labelTmp.set(el.leader.pos.x, 2.3 * el.leader.size, el.leader.pos.z).project(world.camera)
+    labelTmp.set(el.leader.pos.x, el.leader.labelY * el.leader.size, el.leader.pos.z).project(world.camera)
     if (Math.abs(labelTmp.x) > 1 || Math.abs(labelTmp.y) > 1) continue
     const x = (labelTmp.x * 0.5 + 0.5) * window.innerWidth
     const y = (-labelTmp.y * 0.5 + 0.5) * window.innerHeight
-    html.push(`<div class="elite" style="left:${x}px;top:${y}px"><b>${el.name}</b><span>${ELITE_LINE[el.mod]}</span></div>`)
+    html.push(`<div class="elite" style="left:${x}px;top:${y}px"><b>${el.name}</b><span>${eliteLine(el.leader.kind, el.mod)}</span></div>`)
   }
   eliteLabels.innerHTML = html.join('')
 }
@@ -1475,6 +1590,7 @@ function frame(nowMs: number) {
     vfx.update(elapsed, world.camera, world.renderer.domElement.height)
     ambientFx(elapsed)
     footsteps()
+    ramFx(elapsed)
     for (const [e, v] of loops) v.pan(panOf(e.pos))
   }
   syncTells()
@@ -1524,7 +1640,7 @@ if (import.meta.env.DEV) {
       const l = generateLevel(depth, seed, { boss: depth % BOSS_EVERY === 0 })
       const out = l.packs.map((p) => ({
         room: p.room.kind, rx: p.room.rx, rz: p.room.rz, kinds: p.members.map((m) => m.kind),
-        elite: p.elite?.mod ?? null, lesson: !!p.lesson, budget: p.budget ?? null,
+        elite: p.elite?.mod ?? null, name: p.elite?.name ?? null, lesson: !!p.lesson, budget: p.budget ?? null, template: p.template ?? null,
       }))
       l.dispose()
       return out

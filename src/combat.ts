@@ -150,6 +150,17 @@ export const ELITE_LINE: Record<EliteMod, string> = {
   splitting: 'breaks into two when it falls',
   warding: 'its pack takes little damage while it stands',
 }
+/** Which mods a leader of each kind may carry. A sentinel can't split: two of them is just two sentinels. */
+export const ELITE_MODS: Record<Exclude<Archetype, 'boss'>, EliteMod[]> = {
+  chaser: ['swift', 'plated', 'splitting', 'warding'],
+  ranged: ['swift', 'plated', 'warding'],
+  charger: ['swift', 'plated', 'splitting', 'warding'],
+}
+/** The line under an elite's name. A Plated ram's plate lifts in a stun, so it says so. */
+export function eliteLine(kind: Archetype, mod: EliteMod): string {
+  if (kind === 'charger' && mod === 'plated') return 'takes half damage, until it hits a wall'
+  return ELITE_LINE[mod]
+}
 export interface Elite {
   name: string
   mod: EliteMod
@@ -1671,13 +1682,16 @@ export class Combat {
     }
   }
 
-  /** Where each committed lane ends, for the camera: an 11 u lane must never end off screen. */
+  /** Where each committed lane ends, for the camera: an 11 u lane (or the boss's 25) must never end off screen. */
   laneEnds(): THREE.Vector3[] {
     const out: THREE.Vector3[] = []
     for (const e of this.enemies) {
       if (!(e instanceof Charger) || this.packOf.get(e)?.state !== 'awake') continue
       if ((e.phase === 'windup' && e.locked) || e.rushing) out.push(e.laneEnd(new THREE.Vector3()))
     }
+    // the Assembler's charge too: its lane runs the length of the arena
+    const b = this.boss
+    if (b && !b.dead && b.move === 'charge' && !b.stunned && ((b.phase === 'windup' && b.locked) || b.phase === 'strike')) out.push(b.laneEnd(new THREE.Vector3()))
     return out
   }
 
@@ -1746,7 +1760,7 @@ export class Combat {
   /** The area's boss: its own pack, woken by walking into the arena, never leashed. */
   addBoss(x: number, z: number, face: THREE.Vector3): Assembler {
     const b = new Assembler(x, z)
-    this.scene.add(b.group, b.tellGroup, b.pileGroup)
+    this.scene.add(b.group, b.tellGroup, b.worldGroup)
     this.enemies.push(b)
     b.setAsleep(true)
     const pack: Pack = {

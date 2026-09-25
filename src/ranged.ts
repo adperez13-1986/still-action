@@ -3,6 +3,7 @@ import type { Terrain } from './terrain'
 import { DECAL_Y } from './world'
 import { tellMaterial, releaseTell } from './vfx'
 import { PART, type Flip } from './parts'
+import { WALL_TOP } from './lane'
 import { slide, statusTint, disposeBody, type Enemy, type EnemyAction, type EnemyCtx, type EnemyPhase } from './enemy'
 
 /**
@@ -49,6 +50,7 @@ function strip(width: number, length: number) {
 /** Keeps its distance, telegraphs a line, fires down it. Walls block the shot. */
 export class Ranged implements Enemy {
   readonly kind = 'ranged'
+  readonly labelY = 2.3
   get radius() { return RANGED.bodyRadius * this.size }
   readonly windupMs = RANGED.windupMs
   readonly knock = new THREE.Vector3()
@@ -402,7 +404,8 @@ export class Ranged implements Enemy {
       m.rotation.y = refl - this.aim
     }
     this.bendFill.scale.z = Math.max(0.001, k)
-    this.tick.position.set(0, 0.9, leg1)
+    // on the barrier's top, not inside it: the tell group sits at DECAL_Y, the box is 0.12 tall
+    this.tick.position.set(0, WALL_TOP + 0.06 - DECAL_Y, leg1)
   }
 
   interrupt() {

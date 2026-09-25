@@ -3,7 +3,7 @@ import { DECAL_Y } from './world'
 import { buildInstanced, pieceData, skin, type Piece, type Placement } from './kit'
 import type { Terrain, WallFace } from './terrain'
 import type { BreachHole } from './parts'
-import type { Archetype, EliteMod } from './combat'
+import { ELITE_MODS, type Archetype, type EliteMod } from './combat'
 
 /**
  * A D2-style crawl level on a 4-unit grid (KayKit's floor tile). A main path of
@@ -58,8 +58,10 @@ export interface PackSpec {
   elite?: { mod: EliteMod; name: string }
   /** The pack that introduces an archetype: set up to be read, and never an elite. */
   lesson?: boolean
-  /** The room's size budget, in bodies, for the checks. */
+  /** The room's size budget, in body-equivalents, for the checks. */
   budget?: number
+  /** The template it was built from (e.g. 'C+H+H'); today's packs have none. */
+  template?: string
 }
 
 export interface Level {
@@ -463,6 +465,59 @@ export function makeTerrain(floor: Set<string>, boxes: Box[], circles: Circle[])
 
 // --- building ---------------------------------------------------------------
 
+// --- pack templates: deeper levels mix archetypes at the same budget ---
+
+/** C ram, H hulk, S sentinel; M8/M6 a swarm of mites (Step 3: until then a row with mites is today's pack). */
+type Member = 'C' | 'H' | 'S' | 'M8' | 'M6'
+type Row = { today: true; weight: number; members?: undefined } | { today?: false; weight: number; members: Member[] }
+
+/**
+ * Body-equivalents: what a member costs of a room's budget. A ram is half again a
+ * hulk, a mite a quarter. Deeper is more varied, never more HP or damage.
+ */
+const BE: Record<Member, number> = { C: 1.5, H: 1, S: 1, M8: 2, M6: 1.5 }
+const beOf = (ms: readonly Member[]) => ms.reduce((a, m) => a + BE[m], 0)
+const kindOf = (m: Member): Archetype => (m === 'C' ? 'charger' : m === 'S' ? 'ranged' : 'chaser')
+
+/** The first listed member leads (it becomes the elite if the pack is picked). */
+const D4: Row[] = [{ members: ['C', 'H', 'H'], weight: 2 }, { members: ['C', 'H', 'S'], weight: 1 }]
+const D5: Row[] = [
+  { members: ['M8', 'S'], weight: 1 }, // the screen
+  { members: ['C', 'C', 'H'], weight: 1 }, // bulls
+  { members: ['C', 'H', 'H', 'S'], weight: 1 },
+  { members: ['M6', 'H', 'H'], weight: 1 },
+  { today: true, weight: 2 },
+]
+const D7: Row[] = [
+  { members: ['C', 'M6', 'H', 'S'], weight: 1 },
+  { members: ['C', 'C', 'M6'], weight: 1 },
+  { members: ['M8', 'S', 'S'], weight: 1 },
+  { members: ['C', 'H', 'H', 'H', 'S'], weight: 1 },
+  { today: true, weight: 2 },
+]
+/** Per level: how many packs may hold rams or mites, rams per pack, and distinct archetypes per pack. */
+const CAPS = (d: number) => d <= 4
+  ? { chargerPacks: 2, swarmPacks: 1, chargersPerPack: 1, kinds: 2 }
+  : d <= 6 ? { chargerPacks: 3, swarmPacks: 2, chargersPerPack: 2, kinds: 3 }
+  : { chargerPacks: 3, swarmPacks: 2, chargersPerPack: 2, kinds: 4 }
+
+function pickWeighted<T extends { weight: number }>(rows: T[], rand: () => number): T {
+  let r = rand() * rows.reduce((a, row) => a + row.weight, 0)
+  for (const row of rows) if ((r -= row.weight) <= 0) return row
+  return rows[rows.length - 1]!
+}
+
+/** Top a template up with hulks until it's within half a body of the budget, never past the kinds cap. */
+function fill(members: readonly Member[], budget: number, kindsCap: number): Member[] {
+  const out = [...members]
+  const kinds = new Set(out.map(kindOf))
+  while (beOf(out) < budget - 0.5 && (kinds.has('chaser') || kinds.size < kindsCap)) {
+    out.push('H')
+    kinds.add('chaser')
+  }
+  return out
+}
+
 /** A lesson wants a full 5x5 main room; a hall will do if there's none. */
 function pickLessonRoom(rooms: Room[], rand: () => number): Room | null {
   const main = rooms.filter((r) => r.kind === 'main')
@@ -661,8 +716,18 @@ export function generateLevel(depth: number, seed = Math.floor(Math.random() * 1
   const rangedPack = Math.floor(rand() * packRooms.length)
   // depth 2 meets the ram: one big main room holds a ram and a hulk, alone and easy to read
   const lessonRoom = depth === 2 ? pickLessonRoom(packRooms, rand) : null
+  // depth 4: one or two main rooms get a ram template; the rest are today's packs
+  const d4Rooms = new Set<Room>()
+  if (depth === 4) {
+    const mains = packRooms.filter((r) => r.kind === 'main')
+    const n = 1 + (rand() < 0.5 ? 1 : 0)
+    while (d4Rooms.size < Math.min(n, mains.length)) d4Rooms.add(mains.splice(Math.floor(rand() * mains.length), 1)[0]!)
+  }
+  const caps = CAPS(depth)
+  let chargerPacks = 0
   packRooms.forEach((room, idx) => {
     const big = room.rx >= 2 || room.rz >= 2
+    // the room's budget, in body-equivalents: today's size formula, unchanged
     const size = 2 + Math.floor(rand() * 2) + Math.floor((depth - 1) / 2) + (big && depth > 2 ? 1 : 0)
     const rangedCount = depth === 1
       ? (idx === rangedPack ? 1 : 0)
@@ -670,31 +735,55 @@ export function generateLevel(depth: number, seed = Math.floor(Math.random() * 1
     // gather off-centre, so the corridor lanes through the room aren't where they sleep
     const ox = (rand() < 0.5 ? -1 : 1) * (room.rx * CELL * 0.45)
     const oz = (rand() < 0.5 ? -1 : 1) * (room.rz * CELL * 0.45)
+    const cx = room.center.x + ox
+    const cz = room.center.z + oz
     const members: PackSpec['members'] = []
-    if (room === lessonRoom) {
-      // the ram leads; both sit further out, so it has room to stand up and a lane to show
-      for (const kind of ['charger', 'chaser'] as const) {
-        for (let tries = 0; tries < 12; tries++) {
+
+    // which template, if any: the lesson, depth 4's rams, or a pick from the depth's list
+    let tpl: Member[] | null = null
+    if (room === lessonRoom) tpl = ['C', 'H']
+    else if (d4Rooms.has(room)) tpl = fill(pickWeighted(D4, rand).members ?? [], size, Infinity)
+    else if (depth >= 5) {
+      const rows = (depth >= 7 ? D7 : D5).filter((row) => {
+        if (row.today) return true
+        const kinds = row.members.map(kindOf)
+        const rams = kinds.filter((k) => k === 'charger').length
+        if (rams > 0 && (room.kind === 'side' || chargerPacks >= caps.chargerPacks)) return false
+        return rams <= caps.chargersPerPack && new Set(kinds).size <= caps.kinds && beOf(row.members) <= size + 1
+      })
+      const row = rows.length ? pickWeighted(rows, rand) : null
+      // until the swarm exists, a row with mites stands in as today's pack
+      if (row && !row.today && !row.members.some((m) => m === 'M8' || m === 'M6')) tpl = fill(row.members, size, caps.kinds)
+    }
+
+    if (tpl) {
+      // the first member leads; everyone sits a little out from the spot, so a ram has room to stand and show its lane
+      for (const m of tpl) {
+        const kind = kindOf(m)
+        // 12 tries in the ring, then 12 more anywhere near the spot: a big template in a hall shouldn't lose members
+        for (let tries = 0; tries < 24; tries++) {
           const a = rand() * Math.PI * 2
-          const r = 1.8 + rand() * 1.2
-          const x = room.center.x + ox + Math.cos(a) * r
-          const z = room.center.z + oz + Math.sin(a) * r
+          const r = tries < 12 ? 1.8 + rand() * 1.2 : 0.8 + rand() * 3.7
+          const x = cx + Math.cos(a) * r
+          const z = cz + Math.sin(a) * r
           if (makeTerrainNow.blocked(x, z, kind === 'charger' ? 0.8 : 0.7)) continue
-          if (members.some((m) => Math.hypot(m.x - x, m.z - z) < 1.3)) continue
-          // asleep, it faces into the room: you walk in on its side, not its face
-          members.push({ kind, x, z, face: kind === 'charger' ? { x: room.center.x, z: room.center.z } : undefined })
+          if (members.some((o) => Math.hypot(o.x - x, o.z - z) < 1.3)) continue
+          // the lesson ram sleeps facing into the room: you walk in on its side, not its face
+          const face = room === lessonRoom && kind === 'charger' ? { x: room.center.x, z: room.center.z } : undefined
+          members.push({ kind, x, z, face })
           break
         }
       }
-      if (members.length) packs.push({ room, members, lesson: true, budget: size })
+      if (members.some((m) => m.kind === 'charger')) chargerPacks++
+      if (members.length) packs.push({ room, members, lesson: room === lessonRoom || undefined, budget: size, template: tpl.join('+') })
       return
     }
     for (let n = 0; n < size; n++) {
       for (let tries = 0; tries < 12; tries++) {
         const a = rand() * Math.PI * 2
         const r = 0.6 + rand() * 1.8
-        const x = room.center.x + ox + Math.cos(a) * r
-        const z = room.center.z + oz + Math.sin(a) * r
+        const x = cx + Math.cos(a) * r
+        const z = cz + Math.sin(a) * r
         if (makeTerrainNow.blocked(x, z, 0.7)) continue
         if (members.some((m) => Math.hypot(m.x - x, m.z - z) < 1.3)) continue
         members.push({ kind: n < rangedCount ? 'ranged' : 'chaser', x, z })
@@ -704,17 +793,21 @@ export function generateLevel(depth: number, seed = Math.floor(Math.random() * 1
     if (members.length) packs.push({ room, members, budget: size })
   })
 
-  // --- elites: one per level at first, one more every two depths; never in side rooms ---
+  // --- elites: one per level at first, one more every two depths; never in side rooms, never a lesson ---
   const FIRST = ['Rust', 'Hollow', 'Cinder', 'Grim', 'Ash', 'Pale', 'Iron', 'Gutter', 'Shard', 'Mourn']
   const SECOND = ['jaw', 'maw', 'grip', 'wake', 'hook', 'coil', 'heart', 'knell']
+  /** Half the time a leader is named for what it is: Cinderhorn, not Cindermaw. */
+  const POOL: Partial<Record<Archetype, string[]>> = { charger: ['horn', 'brow', 'skull', 'hoof'] }
   const TITLES: Record<EliteMod, string> = { swift: 'the Quick', plated: 'the Plated', splitting: 'the Many', warding: 'the Warden' }
   const mainPacks = packs.filter((p) => p.room.kind === 'main' && p.members.length >= 2 && !p.lesson)
   const eliteCount = Math.min(mainPacks.length, 1 + Math.floor((depth - 1) / 2))
   for (let n = 0; n < eliteCount; n++) {
     const p = mainPacks.splice(Math.floor(rand() * mainPacks.length), 1)[0]!
-    const mods: EliteMod[] = p.members[0]!.kind === 'chaser' ? ['swift', 'plated', 'splitting', 'warding'] : ['swift', 'plated', 'warding']
-    const mod = pick(mods)
-    p.elite = { mod, name: `${pick(FIRST)}${pick(SECOND)} ${TITLES[mod]}` }
+    const kind = p.members[0]!.kind as Exclude<Archetype, 'boss'>
+    const mod = pick(ELITE_MODS[kind])
+    const pool = POOL[kind]
+    const second = pool && rand() < 0.5 ? pick(pool) : pick(SECOND)
+    p.elite = { mod, name: `${pick(FIRST)}${second} ${TITLES[mod]}` }
   }
 
   // --- a shrine, most levels: one bargain, in a main room ---

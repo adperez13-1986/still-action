@@ -48,6 +48,11 @@ export const CHARGER = {
   bodyLanePad: 0.6,
   /** A rush that hasn't ended by then ends as open (a safety net, never the rule). */
   rushTimeoutMs: 1500,
+  /** An open rush eases over its last skidLen, from rushSpeed down to skidSpeed: a skid you can see (133 ms). */
+  skidLen: 1.5,
+  skidSpeed: 6,
+  /** The rush passing this close to Still without hitting him is a near miss. */
+  nearMiss: 2.0,
   damage: 14,
   stunMs: 1200,
   /** Damage taken while stunned: the hatch is open. */
@@ -70,6 +75,8 @@ export const CHARGER = {
 
 /** Bare iron where it hits things: the plough's lip and the tusks catch Grace's light. */
 const WORN = 0x8a6a5a
+/** Plated's bare plate: a shade lighter than the body. */
+const PLATE = 0x6e5a50
 /** The seam's flash at the lock: hot, not white. */
 const LOCK_FLASH = new THREE.Color(0xffc49a)
 const CORE_C = new THREE.Color(CORE)
@@ -98,6 +105,36 @@ function merged(parts: THREE.BufferGeometry[]) {
   return g
 }
 
+/** Where a stack stands on the boiler's back, leaning back. */
+function stackFrame(x: number) {
+  return new THREE.Matrix4().compose(new THREE.Vector3(x, 0.38, -0.55), new THREE.Quaternion().setFromEuler(new THREE.Euler(-0.35, 0, 0)), new THREE.Vector3(1, 1, 1))
+}
+
+interface Stack { x: number; flared: boolean }
+
+/**
+ * The boiler and its stacks, merged per material. One stack is a plain ram; a
+ * Quick one's flares into an exhaust; a Many has two, one for each of what it
+ * will split into.
+ */
+function hullGeometry(stacks: Stack[]) {
+  const shell = [baked(new THREE.CylinderGeometry(0.4, 0.46, 1.25, 12), 0, 0, -0.05, Math.PI / 2)]
+  const joint = [
+    baked(new THREE.TorusGeometry(0.45, 0.04, 6, 18), 0, 0, -0.45),
+    baked(new THREE.TorusGeometry(0.45, 0.04, 6, 18), 0, 0, 0.3),
+  ]
+  for (const st of stacks) {
+    const f = stackFrame(st.x)
+    // a flare opening at the mouth: a trumpet reads as exhaust, a taper as a chimney
+    if (st.flared) joint.push(baked(new THREE.CylinderGeometry(0.16, 0.08, 0.3, 10), 0, 0.15, 0, 0, f))
+    else {
+      joint.push(baked(new THREE.CylinderGeometry(0.08, 0.1, 0.34, 8), 0, 0.17, 0, 0, f))
+      shell.push(baked(new THREE.CylinderGeometry(0.11, 0.11, 0.05, 10), 0, 0.34, 0, 0, f))
+    }
+  }
+  return { shell: merged(shell), joint: merged(joint) }
+}
+
 /** Eased pose: everything the body does is a target it moves toward, or snaps to. */
 interface Pose { by: number; brx: number; brz: number; sx: number; sy: number; sz: number; prx: number; pry: number; gz: number; legs: number[]; splay: number }
 const REST: Pose = { by: 0.55, brx: 0, brz: 0, sx: 1, sy: 1, sz: 1, prx: 0, pry: 0, gz: 0, legs: [0, 0, 0, 0], splay: 0 }
@@ -110,6 +147,8 @@ export class Charger implements Enemy {
   /** Where Still's centre is hit: the rails. */
   get hitHalf() { return this.laneHalf + PLAYER_RADIUS }
   readonly windupMs = CHARGER.windupMs
+  /** Where an elite's name floats, before size. Long and low: under the hulk's. */
+  readonly labelY = 2.0
   readonly knock = new THREE.Vector3()
   readonly group = new THREE.Group()
   readonly tellGroup = new THREE.Group()
@@ -129,12 +168,16 @@ export class Charger implements Enemy {
   set knockMul(v: number) { this.baseKnock = v }
   /** Plated: the plate lifts in a stun, so a stunned Plated ram takes full damage × 1.5. */
   plated = false
+  /** Its elite mod, if it leads a pack: the body wears it. */
+  elite: EliteMod | null = null
 
   // read by Combat, main and the checks
   locked = false
   rushing = false
   stunned = false
   tripped = false
+  /** An open rush in its last skidLen: braced, sparking, slowing. */
+  skidding = false
   /** The lane's direction: frozen at the lock. */
   aim = 0
   /** Where the body points. Equal to aim from the windup to the end of the rush. */
@@ -153,6 +196,10 @@ export class Charger implements Enemy {
   private readonly endPt = new THREE.Vector3()
   rushLeft = 0
   hitDone = false
+  /** Decided at the rush's start: only a rush that ends in the open skids. */
+  private skidEase = false
+  /** Which side of Still the rush's front was on last tick: the tick it crosses is the pass. */
+  private passSign = 0
   /** This tick's swept segment, while rushing: Combat tramples along it. */
   sweep: { ax: number; az: number; bx: number; bz: number } | null = null
   readonly trampled = new Set<Enemy>()
@@ -166,6 +213,8 @@ export class Charger implements Enemy {
   private asleep = true
   /** Seconds left of the unfold on waking. */
   private wakeT = 0
+  /** It woke since the run last asked (a smoke puff from the stack). */
+  private woke = false
   /** The seam's white-hot flash at the lock, 1 → 0 over 100 ms. */
   private lockFlash = 0
   readonly laneTell = new LaneTell()
@@ -174,6 +223,7 @@ export class Charger implements Enemy {
   private readonly mat = new THREE.MeshStandardMaterial({ color: BODY, roughness: 0.7, metalness: 0.45 })
   private readonly jointMat = new THREE.MeshStandardMaterial({ color: JOINT, roughness: 0.6, metalness: 0.5 })
   private readonly wornMat = new THREE.MeshStandardMaterial({ color: WORN, roughness: 0.5, metalness: 0.6 })
+  private readonly plateMat = new THREE.MeshStandardMaterial({ color: PLATE, roughness: 0.5, metalness: 0.55 })
   private readonly coreMat = new THREE.MeshBasicMaterial({ color: CORE })
   private readonly fireMat = new THREE.MeshBasicMaterial({ color: CORE })
   private readonly seamMats = Array.from({ length: 5 }, () => new THREE.MeshBasicMaterial({ color: CORE }))
@@ -192,7 +242,14 @@ export class Charger implements Enemy {
   private readonly hatchR = new THREE.Group()
   private readonly firebox: THREE.Mesh
   private readonly glow: THREE.Mesh
-  private readonly mouth = new THREE.Object3D()
+  private readonly hull: THREE.Mesh
+  private readonly hullJoint: THREE.Mesh
+  /** One per stack: where its smoke and embers leave. */
+  private mouths: THREE.Object3D[] = []
+  /** Plated's side plates, hinged at their top edge: they flare in a stun. */
+  private flanks: THREE.Group[] = []
+  /** Warden's lamp glow: a sprite, so disposeBody doesn't reach it. */
+  private lampGlow: THREE.Sprite | null = null
   /** FL, FR, BL, BR. L is −x. */
   private readonly legs: THREE.Group[] = []
   private readonly pose: Pose = { ...REST, legs: [0, 0, 0, 0] }
@@ -202,16 +259,9 @@ export class Charger implements Enemy {
 
     // A rusted boiler on its side: narrow end forward, one stack at the back, a
     // plough for a face. From 38° its back is what you see, so the direction lives there.
-    const stackFrame = new THREE.Matrix4().compose(new THREE.Vector3(0, 0.38, -0.55), new THREE.Quaternion().setFromEuler(new THREE.Euler(-0.35, 0, 0)), new THREE.Vector3(1, 1, 1))
-    const hull = new THREE.Mesh(merged([
-      baked(new THREE.CylinderGeometry(0.4, 0.46, 1.25, 12), 0, 0, -0.05, Math.PI / 2),
-      baked(new THREE.CylinderGeometry(0.11, 0.11, 0.05, 10), 0, 0.34, 0, 0, stackFrame),
-    ]), this.mat)
-    const hullJoint = new THREE.Mesh(merged([
-      baked(new THREE.TorusGeometry(0.45, 0.04, 6, 18), 0, 0, -0.45),
-      baked(new THREE.TorusGeometry(0.45, 0.04, 6, 18), 0, 0, 0.3),
-      baked(new THREE.CylinderGeometry(0.08, 0.1, 0.34, 8), 0, 0.17, 0, 0, stackFrame),
-    ]), this.jointMat)
+    // the boiler itself is built by setStacks: an elite may rebuild it with other stacks
+    this.hull = new THREE.Mesh(new THREE.BufferGeometry(), this.mat)
+    this.hullJoint = new THREE.Mesh(new THREE.BufferGeometry(), this.jointMat)
 
     // the core lives under the hatch: seen only when it's stuck, and that's when to hit it
     this.firebox = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.04, 0.62), this.fireMat)
@@ -236,11 +286,6 @@ export class Charger implements Enemy {
     this.glow.position.set(0, 0.5, -0.14)
     this.glow.visible = false
 
-    const stack = new THREE.Object3D()
-    stack.applyMatrix4(stackFrame)
-    this.mouth.position.y = 0.37
-    stack.add(this.mouth)
-
     this.prow.position.set(0, -0.05, 0.58)
     const plough = new THREE.Mesh(new THREE.BoxGeometry(0.96, 0.52, 0.22), this.mat)
     plough.position.z = 0.12
@@ -255,7 +300,8 @@ export class Charger implements Enemy {
     this.prow.add(plough, edge, visor)
 
     this.body.position.y = 0.55
-    this.body.add(hull, hullJoint, this.firebox, this.hatchL, this.hatchR, ...seams, this.glow, stack, this.prow)
+    this.body.add(this.hull, this.hullJoint, this.firebox, this.hatchL, this.hatchR, ...seams, this.glow, this.prow)
+    this.setStacks([{ x: 0, flared: false }])
 
     for (const [lx, lz] of [[-0.36, 0.38], [0.36, 0.38], [-0.36, -0.42], [0.36, -0.42]] as const) {
       const leg = new THREE.Group()
@@ -275,6 +321,66 @@ export class Charger implements Enemy {
     this.tellGroup.add(this.laneTell.group)
   }
 
+  /** Rebuild the boiler for a stack layout, and put a mouth at the top of each stack. */
+  private setStacks(stacks: Stack[]) {
+    const geo = hullGeometry(stacks)
+    this.hull.geometry.dispose()
+    this.hullJoint.geometry.dispose()
+    this.hull.geometry = geo.shell
+    this.hullJoint.geometry = geo.joint
+    for (const m of this.mouths) this.body.remove(m.parent!)
+    this.mouths = stacks.map((st) => {
+      const frame = new THREE.Object3D()
+      frame.applyMatrix4(stackFrame(st.x))
+      const mouth = new THREE.Object3D()
+      mouth.position.y = st.flared ? 0.32 : 0.37
+      frame.add(mouth)
+      this.body.add(frame)
+      return mouth
+    })
+  }
+
+  /** Each mod adds one thing to the body, so the leader reads as different before you read its name. */
+  private buildEliteFeature(mod: EliteMod) {
+    if (mod === 'swift') this.setStacks([{ x: 0, flared: true }])
+    if (mod === 'plated') {
+      // bare plates hung down its flanks and over the plough: blockier, and in a stun they flare like a pinecone
+      for (const side of [-1, 1]) {
+        const pivot = new THREE.Group()
+        pivot.position.set(side * 0.46, 0.62, -0.05)
+        pivot.add(new THREE.Mesh(merged([-0.35, 0, 0.35].map((z) => baked(new THREE.BoxGeometry(0.05, 0.3, 0.32), 0, -0.15, z))), this.plateMat))
+        this.flanks.push(pivot)
+        this.body.add(pivot)
+      }
+      const face = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.46, 0.04), this.plateMat)
+      face.position.set(0, 0, 0.24)
+      face.rotation.x = -0.35
+      this.prow.add(face)
+    }
+    if (mod === 'splitting') {
+      // a dark seam down its length and a stack for each half: two of them, waiting
+      const band = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.96, 1.9), this.jointMat)
+      band.position.set(0, 0.01, -0.05)
+      this.body.add(band)
+      this.setStacks([{ x: -0.18, flared: false }, { x: 0.18, flared: false }])
+    }
+    if (mod === 'warding') {
+      // a mast with a caged lamp: the tallest light in its pack, the one to go for
+      const x = 0.16
+      const z = -0.42
+      const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.9, 6), this.jointMat)
+      mast.position.set(x, 0.9, z)
+      const cage = new THREE.Mesh(merged([[-1, -1], [-1, 1], [1, -1], [1, 1]].map(([a, b]) => baked(new THREE.BoxGeometry(0.02, 0.2, 0.02), a! * 0.08, 0, b! * 0.08))), this.jointMat)
+      cage.position.set(x, 1.45, z)
+      const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.07, 10, 8), this.coreMat)
+      lamp.position.set(x, 1.45, z)
+      this.lampGlow = new THREE.Sprite(new THREE.SpriteMaterial({ map: haloTexture(), blending: THREE.AdditiveBlending, depthWrite: false, transparent: true }))
+      this.lampGlow.scale.setScalar(0.5)
+      this.lampGlow.position.set(x, 1.45, z)
+      this.body.add(mast, cage, lamp, this.lampGlow)
+    }
+  }
+
   get walking() { return this.phase === 'approach' && this.mode !== 'hold' && !this.staggered && !this.asleep }
   /** One step per diagonal pair. */
   get gait() { return this.bob * 1.8 }
@@ -285,7 +391,24 @@ export class Charger implements Enemy {
     return o.localToWorld(out.set(x, y, z))
   }
   hoof(i: number, out: THREE.Vector3) { return this.at(this.legs[i]!, out, 0, -0.37, 0.04) }
-  stackMouth(out: THREE.Vector3) { return this.at(this.mouth, out) }
+  stackMouth(out: THREE.Vector3, i = 0) { return this.at(this.mouths[i] ?? this.mouths[0]!, out) }
+  get stacks() { return this.mouths.length }
+  /** Between the front hooves: where a skid grinds. */
+  frontMid(out: THREE.Vector3) { return this.at(this.grp, out, 0, 0.05, 0.38) }
+  /** Under its belly: where the hooves strike sparks as it runs. */
+  hoofMid(out: THREE.Vector3) { return this.at(this.grp, out, 0, 0.05, 0) }
+  /** The bottom of a Plated flank: -1 left, 1 right. Null without plates. */
+  flankPoint(side: -1 | 1, out: THREE.Vector3) {
+    const f = this.flanks[side < 0 ? 0 : 1]
+    return f ? this.at(f, out, 0, -0.3, 0) : null
+  }
+  get isAsleep() { return this.asleep }
+  /** True once after it wakes: the run puffs the stack. */
+  consumeWake() {
+    const w = this.woke
+    this.woke = false
+    return w
+  }
   fireboxPoint(out: THREE.Vector3) { return this.at(this.firebox, out) }
   prowPoint(out: THREE.Vector3) { return this.at(this.prow, out, 0, 0, 0.3) }
   /** Between the back hooves: where a rush kicks off from. */
@@ -419,8 +542,8 @@ export class Charger implements Enemy {
 
   /**
    * The lane preview and the rush length are one number: the nominal run, cut by
-   * the first solid a body this size would meet. The probe past the contact says
-   * what it meets: a Box or the void is a wall, a Circle (crate, column) a prop.
+   * the first solid a body this size would meet. One step past the contact, the
+   * body's circle says what it met: a Box or the void is a wall, a Circle (crate, column) a prop.
    */
   private cut(terrain: Terrain) {
     const fx = Math.sin(this.aim)
@@ -432,9 +555,9 @@ export class Charger implements Enemy {
     this.lane.len = Math.hypot(end.x - this.pos.x, end.z - this.pos.z)
     if (this.lane.len >= want - 0.05) this.lane.end = 'open'
     else {
-      const px = end.x + fx * (this.radius + 0.1)
-      const pz = end.z + fz * (this.radius + 0.1)
-      this.lane.end = terrain.blocker(px, pz, 0.05, false) === 'prop' ? 'prop' : 'wall'
+      // what the body itself meets one step on: a wide body can hit a crate off its centreline,
+      // and a box or the void anywhere in that circle makes it a wall
+      this.lane.end = terrain.blocker(end.x + fx * 0.21, end.z + fz * 0.21, this.radius, false) === 'prop' ? 'prop' : 'wall'
     }
   }
 
@@ -449,12 +572,23 @@ export class Charger implements Enemy {
     this.laneEnd(this.endPt)
     this.hitDone = false
     this.trampled.clear()
+    this.passSign = 0
+    // decided once: a rush that ends in something stops dead, only one in the open skids
+    this.skidEase = this.lane.end === 'open'
   }
 
   private rushTick(dt: number, terrain: Terrain, ctx: EnemyCtx): EnemyAction | null {
     const fx = Math.sin(this.aim)
     const fz = Math.cos(this.aim)
-    const step = Math.min(this.rushLeft, CHARGER.rushSpeed * dt)
+    // the last 1.5 u of an open rush ease down to 6 u/s: long enough to see it skid.
+    // It starts 2 u past where Still was at the lock, so contact timing never changes.
+    const easing = this.skidEase && this.rushLeft < CHARGER.skidLen
+    if (easing && !this.skidding) {
+      this.skidding = true
+      ctx.emit({ kind: 'skid', e: this })
+    }
+    const v = easing ? CHARGER.skidSpeed + (CHARGER.rushSpeed - CHARGER.skidSpeed) * (this.rushLeft / CHARGER.skidLen) : CHARGER.rushSpeed
+    const step = Math.min(this.rushLeft, v * dt)
     const ax = this.pos.x
     const az = this.pos.z
     const nx = ax + fx * step
@@ -478,6 +612,11 @@ export class Charger implements Enemy {
       this.hitDone = true
       action = { kind: 'melee', damage: CHARGER.damage, source: this, tested: true }
     }
+    // the near miss: the tick its front passes him, close, without having hit him
+    const ahead = (p.x - free.x) * fx + (p.z - free.z) * fz
+    const lateral = Math.abs((p.x - free.x) * fz - (p.z - free.z) * fx)
+    if (!this.hitDone && this.passSign > 0 && ahead <= 0 && lateral <= CHARGER.nearMiss) ctx.emit({ kind: 'nearMiss', e: this, at: p.clone() })
+    this.passSign = Math.sign(ahead)
 
     if (blocked) {
       const at = new THREE.Vector3(free.x + fx * this.radius, 0.4, free.z + fz * this.radius)
@@ -493,6 +632,7 @@ export class Charger implements Enemy {
 
   private endRush(recoverMs: number) {
     this.rushing = false
+    this.skidding = false
     this.phase = 'recover'
     this.t = 0
     this.timer = recoverMs
@@ -545,6 +685,7 @@ export class Charger implements Enemy {
   }
 
   setAsleep(asleep: boolean) {
+    if (this.asleep && !asleep) this.woke = true
     this.asleep = asleep
     if (!asleep) {
       this.flash = 1
@@ -556,12 +697,15 @@ export class Charger implements Enemy {
     this.t = 0
     this.locked = false
     this.rushing = false
+    this.skidding = false
     this.stunned = false
     this.tripped = false
   }
 
   setElite(mod: EliteMod) {
+    this.elite = mod
     if (mod === 'plated') this.plated = true
+    this.buildEliteFeature(mod)
   }
 
   idle(dt: number, face: THREE.Vector3) {
@@ -599,6 +743,11 @@ export class Charger implements Enemy {
     let heat = 0
     let glow = Math.max(0, this.glowMat.opacity - dt * 4)
     const seam: THREE.Color[] = Array.from({ length: 5 }, () => CORE_DIM)
+    const skidPose = () => {
+      tgt.brx = -0.18
+      tgt.prx = -0.05
+      tgt.legs = [-0.6, -0.6, 0.3, 0.3]
+    }
     const seamFade = () => {
       const c = CORE_C.clone().lerp(CORE_DIM, Math.min(1, tw / 300))
       for (let i = 0; i < 5; i++) seam[i] = c
@@ -648,6 +797,12 @@ export class Charger implements Enemy {
         for (let i = 0; i < 5; i++) seam[i] = c
         glow = 0.8
       }
+    } else if (this.skidding) {
+      // braced: front legs dug in ahead, rear sat down, head up
+      snap = true
+      skidPose()
+      for (let i = 0; i < 5; i++) seam[i] = CORE_C
+      glow = 0.8
     } else if (this.phase === 'strike') {
       const h = Math.sin(Math.PI * 2 * 14 * s) * 0.7
       legs[0] = legs[3] = h
@@ -688,8 +843,7 @@ export class Charger implements Enemy {
     } else if (this.timer === CHARGER.missRecoverMs) {
       // a miss: braced where it stopped, then it turns to find you and shakes its head
       if (tw < 250) {
-        tgt.brx = 0.14
-        tgt.prx = 0.28
+        skidPose()
         k *= 0.5
       } else if (tw < 750) {
         this.bob += dt * 5
@@ -729,6 +883,9 @@ export class Charger implements Enemy {
     })
     this.hatchL.rotation.z = hatch
     this.hatchR.rotation.z = -hatch
+    // Plated in a stun: the flank plates flare out with the hatch, and snap shut with it
+    const flare = this.stunned ? 0.6 * backOut(Math.min(1, s / 0.12)) : 0
+    this.flanks.forEach((f, i) => { f.rotation.z = (i === 0 ? -1 : 1) * flare })
     this.firebox.visible = this.stunned
     this.firebox.scale.setScalar(fire)
     this.fireMat.color.copy(CORE_C).lerp(FIRE_HOT, heat)
@@ -754,7 +911,7 @@ export class Charger implements Enemy {
   }
 
   private tint() {
-    for (const [m, base] of [[this.mat, BODY], [this.jointMat, JOINT], [this.wornMat, WORN]] as const) {
+    for (const [m, base] of [[this.mat, BODY], [this.jointMat, JOINT], [this.wornMat, WORN], [this.plateMat, PLATE]] as const) {
       m.color.setHex(base)
       if (this.asleep) m.color.multiply(SLEEP_BODY)
     }
@@ -773,5 +930,6 @@ export class Charger implements Enemy {
     this.tellGroup.remove(this.laneTell.group)
     this.laneTell.dispose()
     disposeBody(this.group, this.tellGroup)
+    this.lampGlow?.material.dispose()
   }
 }

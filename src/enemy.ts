@@ -91,9 +91,15 @@ export type EnemyEvent =
   | { kind: 'trample'; e: Enemy; victim: Enemy; at: THREE.Vector3; dir: THREE.Vector3 }
   /** The hatch slams: the stun window is over. */
   | { kind: 'stunEnd'; e: Enemy }
+  /** An open rush enters its last 1.5 u: braced, grinding. */
+  | { kind: 'skid'; e: Enemy }
+  /** The rush's front passed within 2.0 of Still without hitting him. `at` is where he stood. */
+  | { kind: 'nearMiss'; e: Enemy; at: THREE.Vector3 }
 
 export interface Enemy {
   readonly kind: 'chaser' | 'ranged' | 'charger' | 'boss'
+  /** Where an elite's name floats, before size. */
+  readonly labelY: number
   /**
    * Body radius for every hit check: base × size, so an elite is a bigger target
    * and a split half a smaller one. The boss is far bigger than a hulk.
@@ -240,6 +246,7 @@ export const CHASER = {
 /** Closes, telegraphs a ring, strikes where the ring is. */
 export class Chaser implements Enemy {
   readonly kind = 'chaser'
+  readonly labelY = 2.3
   get radius() { return CHASER.bodyRadius * this.size }
   readonly windupMs = CHASER.windupMs
   readonly knock = new THREE.Vector3()

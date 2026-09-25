@@ -1,7 +1,8 @@
 import * as THREE from 'three'
 import { DECAL_Y } from './world'
 import { tellMaterial, releaseTell, COLD, COLD_DEEP } from './vfx'
-import { slide, statusTint, disposeBody, type Enemy, type EnemyAction, type EnemyPhase } from './enemy'
+import { slide, statusTint, disposeBody, distToSegment, type Enemy, type EnemyAction, type EnemyCtx, type EnemyPhase } from './enemy'
+import { LaneTell, type LaneEnd } from './lane'
 import type { Terrain } from './terrain'
 
 /**
@@ -24,7 +25,11 @@ export const BOSS = {
   // gaps ~50 degrees, and never narrower than MIN_GAP units even close to the boss
   wave: { windupMs: 900, gaps: 3, gapWidth: 0.88, minGap: 2.2, damage: 14 },
   barrage: { windupMs: 620, volleys: 3, between: 330, spread: 0.55, damage: 7 },
-  charge: { windupMs: 950, lockAt: 0.55, speed: 21, width: 2.3, damage: 22, stunMs: 1700 },
+  /**
+   * The lane is drawn and hit honestly, like the ram's: the core is its body's
+   * width, the rails where Still's centre is hit (1.57 either side), once a charge.
+   */
+  charge: { windupMs: 950, lockAt: 0.55, speed: 21, coreHalf: 1.15, hitHalf: 1.57, reach: 30, damage: 22, stunMs: 1700 },
   summon: { windupMs: 1250, count: 3, maxAdds: 4 },
   magnet: { windupMs: 1500, strength: 3.3, radius: 3.6, damage: 20 },
 }
@@ -52,6 +57,7 @@ function strip(width: number, length: number) {
 
 export class Assembler implements Enemy {
   readonly kind = 'boss'
+  readonly labelY = 2.3
   get radius() { return BOSS.radius * this.size }
   /** The current move's windup, so its sound runs exactly as long as its tell. */
   get windupMs() {
@@ -87,14 +93,22 @@ export class Assembler implements Enemy {
   private asleep = false
   private facing = 0
   private aim = 0
-  private locked = false
+  /** The charge's aim is set: the lane stops following. Read by the camera and the checks. */
+  locked = false
   private last: BossMove | null = null
   private chain = false
   private volleysLeft = 0
   private volleyTimer = 0
   private gaps: number[] = []
   private summonPoints: THREE.Vector3[] = []
-  private chargeTo = new THREE.Vector3()
+  /** The charge's cut: from the body to the first solid, the same number drawn and run. */
+  private laneLen = 0
+  private laneKind: LaneEnd = 'open'
+  private readonly chargeFrom = new THREE.Vector3()
+  private readonly chargeEnd = new THREE.Vector3()
+  private chargeHit = false
+  /** How far the charge may still run: its full reach, not the drawn cut, so a lane cut by a wall always ends in it. */
+  private chargeLeft = 0
   private stunTimer = 0
   private pose = { lean: 0, hammer: 0, sweepYaw: 0, recoil: 0, squash: 1 }
 
@@ -114,7 +128,9 @@ export class Assembler implements Enemy {
   private readonly sectorEdge: THREE.Mesh
   private readonly lanes = new THREE.Group()
   private readonly fan = new THREE.Group()
-  private readonly lane: THREE.Mesh
+  readonly laneTell = new LaneTell()
+  /** World-space telegraphs, apart from the tell group that follows the body: the piles and the lane. */
+  private readonly worldTells = new THREE.Group()
   private readonly magnetDisc: THREE.Mesh
   private readonly magnetRing: THREE.Mesh
   private readonly piles = new THREE.Group()
@@ -205,10 +221,6 @@ export class Assembler implements Enemy {
     this.tells.push(fanMat)
     for (let i = 0; i < 5; i++) this.fan.add(new THREE.Mesh(strip(0.22, 16), fanMat))
 
-    const laneTell = tellMaterial('strip')
-    this.tells.push(laneTell)
-    this.lane = new THREE.Mesh(strip(BOSS.charge.width, 30), laneTell)
-
     const magMat = tellMaterial('radial', BOSS.magnet.radius)
     const magRingMat = tellMaterial('radial', 1)
     this.tells.push(magMat, magRingMat)
@@ -225,13 +237,19 @@ export class Assembler implements Enemy {
       this.piles.add(m)
     }
 
-    this.tellGroup.add(this.sector, this.sectorEdge, this.lanes, this.fan, this.lane, this.magnetDisc, this.magnetRing)
+    this.tellGroup.add(this.sector, this.sectorEdge, this.lanes, this.fan, this.magnetDisc, this.magnetRing)
+    this.worldTells.add(this.piles, this.laneTell.group)
     this.tellGroup.position.y = DECAL_Y
   }
 
-  /** Where the summoned piles glow: world space, so they live apart from the tell group. */
-  get pileGroup() {
-    return this.piles
+  /** Where the summoned piles glow and the charge lane lies: world space, apart from the tell group. */
+  get worldGroup() {
+    return this.worldTells
+  }
+
+  /** Where the charge's lane ends now. */
+  laneEnd(out: THREE.Vector3) {
+    return out.set(this.pos.x + Math.sin(this.aim) * this.laneLen, 0, this.pos.z + Math.cos(this.aim) * this.laneLen)
   }
 
   /** Nothing breaks the Assembler's windups: a Parry lands its damage and nothing else. */
@@ -250,7 +268,7 @@ export class Assembler implements Enemy {
     return false
   }
 
-  update(dt: number, target: THREE.Vector3, terrain: Terrain): EnemyAction | null {
+  update(dt: number, target: THREE.Vector3, terrain: Terrain, ctx: EnemyCtx): EnemyAction | null {
     this.timer -= dt * 1000
     this.bob += dt * 3
     this.flash = Math.max(0, this.flash - dt * 5)
@@ -303,7 +321,7 @@ export class Assembler implements Enemy {
           action = this.windup(dt, target, toward, terrain)
           break
         case 'strike':
-          action = this.strike(dt, target, terrain)
+          action = this.strike(dt, target, terrain, ctx)
           break
         case 'recover':
           if (this.timer <= 0) {
@@ -378,10 +396,14 @@ export class Assembler implements Enemy {
 
   private windup(_dt: number, target: THREE.Vector3, toward: number, terrain: Terrain): EnemyAction | null {
     const t = 1 - Math.max(0, this.timer) / this.windupTotal
-    if (this.move === 'charge' && !this.locked) {
-      this.aim = toward
-      this.facing = toward
-      if (t >= BOSS.charge.lockAt) this.locked = true
+    if (this.move === 'charge') {
+      if (!this.locked) {
+        this.aim = toward
+        this.facing = toward
+        if (t >= BOSS.charge.lockAt) this.locked = true
+      }
+      // every tick, tracking and locked: the lane is drawn to where the charge really stops
+      this.cut(terrain)
     }
     if (this.move === 'barrage') {
       this.aim = toward
@@ -410,7 +432,10 @@ export class Assembler implements Enemy {
         return null
       case 'charge': {
         this.timer = 99999
-        this.chargeTo.set(this.pos.x + Math.sin(this.aim) * 30, 0, this.pos.z + Math.cos(this.aim) * 30)
+        this.chargeFrom.copy(this.pos)
+        this.laneEnd(this.chargeEnd)
+        this.chargeHit = false
+        this.chargeLeft = BOSS.charge.reach
         return null
       }
       case 'summon':
@@ -427,7 +452,7 @@ export class Assembler implements Enemy {
 
   private pulled = false
 
-  private strike(dt: number, target: THREE.Vector3, terrain: Terrain): EnemyAction | null {
+  private strike(dt: number, target: THREE.Vector3, terrain: Terrain, ctx: EnemyCtx): EnemyAction | null {
     if (this.move === 'barrage') {
       this.volleyTimer -= dt * 1000
       if (this.volleyTimer <= 0 && this.volleysLeft > 0) {
@@ -452,15 +477,27 @@ export class Assembler implements Enemy {
     }
 
     if (this.move === 'charge') {
+      const fx = Math.sin(this.aim)
+      const fz = Math.cos(this.aim)
       const step = BOSS.charge.speed * dt
-      const nx = this.pos.x + Math.sin(this.aim) * step
-      const nz = this.pos.z + Math.cos(this.aim) * step
-      const free = terrain.clampMove(this.pos.x, this.pos.z, nx, nz, this.radius)
+      const ax = this.pos.x
+      const az = this.pos.z
+      const nx = ax + fx * step
+      const nz = az + fz * step
+      const free = terrain.clampMove(ax, az, nx, nz, this.radius)
       const blocked = Math.hypot(free.x - nx, free.z - nz) > 0.05
       this.pos.x = free.x
       this.pos.z = free.z
-      const hitYou = Math.hypot(target.x - this.pos.x, target.z - this.pos.z) < this.radius + 0.5
-      if (blocked || this.pos.distanceTo(this.chargeTo) < 0.5) {
+      this.chargeLeft -= Math.hypot(free.x - ax, free.z - az)
+      // burn-off: the lane shrinks to what's left in front of it
+      this.laneLen = Math.max(0, (this.chargeEnd.x - free.x) * fx + (this.chargeEnd.z - free.z) * fz)
+      // swept, once a charge: his centre within the rails of this tick's run, not behind where it started
+      const along = (target.x - this.chargeFrom.x) * fx + (target.z - this.chargeFrom.z) * fz
+      const hitYou = !this.chargeHit && along >= 0 && distToSegment(target.x, target.z, ax, az, free.x, free.z) <= BOSS.charge.hitHalf
+      if (hitYou) this.chargeHit = true
+      // like the ram, a charge into a crate breaks it on the way to being stuck there
+      if (blocked) ctx.emit({ kind: 'rushEnd', e: this, how: 'wall', at: new THREE.Vector3(free.x + fx * this.radius, 0.4, free.z + fz * this.radius) })
+      if (blocked || this.chargeLeft < 0.5) {
         // into the wall: stunned, grill open
         this.stunned = blocked
         this.stunTimer = BOSS.charge.stunMs
@@ -468,11 +505,26 @@ export class Assembler implements Enemy {
         if (!blocked) this.endMove()
         else this.move = 'charge'
       }
-      return hitYou ? { kind: 'melee', damage: BOSS.charge.damage } : null
+      return hitYou ? { kind: 'melee', damage: BOSS.charge.damage, source: this, tested: true } : null
     }
 
     if (this.timer <= 0) this.endMove()
     return null
+  }
+
+  /** The charge's lane: its full reach, cut by the first solid a body this big would meet. */
+  private cut(terrain: Terrain) {
+    const fx = Math.sin(this.aim)
+    const fz = Math.cos(this.aim)
+    const want = BOSS.charge.reach
+    const end = terrain.clampMove(this.pos.x, this.pos.z, this.pos.x + fx * want, this.pos.z + fz * want, this.radius)
+    this.laneLen = Math.hypot(end.x - this.pos.x, end.z - this.pos.z)
+    if (this.laneLen >= want - 0.05) this.laneKind = 'open'
+    else {
+      // what the body itself meets one step on: a wide body can hit a crate off its centreline,
+      // and a box or the void anywhere in that circle makes it a wall
+      this.laneKind = terrain.blocker(end.x + fx * 0.21, end.z + fz * 0.21, this.radius, false) === 'prop' ? 'prop' : 'wall'
+    }
   }
 
   private endMove() {
@@ -509,7 +561,6 @@ export class Assembler implements Enemy {
     this.sector.visible = this.sectorEdge.visible = this.move === 'sweep'
     this.lanes.visible = this.move === 'wave'
     this.fan.visible = this.move === 'barrage'
-    this.lane.visible = this.move === 'charge'
     this.magnetDisc.visible = this.magnetRing.visible = this.move === 'magnet'
     this.piles.visible = this.move === 'summon'
 
@@ -547,9 +598,6 @@ export class Assembler implements Enemy {
         break
       }
       case 'charge': {
-        this.lane.rotation.y = this.aim
-        const m = this.lane.material as THREE.MeshBasicMaterial
-        m.opacity = winding ? (this.locked ? 0.4 : 0.14) : 0
         target.lean = winding ? 0.35 * t : 0.45
         target.hammer = winding ? -0.6 : -0.3
         break
@@ -618,6 +666,16 @@ export class Assembler implements Enemy {
     this.group.position.set(this.pos.x, 0, this.pos.z)
     this.group.rotation.y = this.facing
     this.group.scale.setScalar(this.size * (1 + this.flash * 0.04))
+
+    const charging = this.move === 'charge' && !this.asleep
+    const lock = BOSS.charge.lockAt
+    this.laneTell.update(dt, {
+      stage: charging && winding ? (this.locked ? 'locked' : 'tracking') : charging && striking && !this.stunned ? 'rush' : 'off',
+      x: this.pos.x, z: this.pos.z, aim: this.aim, len: this.laneLen,
+      coreHalf: BOSS.charge.coreHalf, hitHalf: BOSS.charge.hitHalf, bodyR: this.radius, end: this.laneKind,
+      fill: striking ? 1 : (t - lock) / (1 - lock),
+      from: striking ? Math.hypot(this.pos.x - this.chargeFrom.x, this.pos.z - this.chargeFrom.z) : 0,
+    })
   }
 
   idle(dt: number, face: THREE.Vector3) {
@@ -637,8 +695,10 @@ export class Assembler implements Enemy {
   }
 
   dispose(scene: THREE.Scene) {
-    scene.remove(this.group, this.tellGroup, this.piles)
-    disposeBody(this.group, this.tellGroup, this.piles)
+    scene.remove(this.group, this.tellGroup, this.worldTells)
+    this.worldTells.remove(this.laneTell.group)
+    this.laneTell.dispose()
+    disposeBody(this.group, this.tellGroup, this.worldTells)
     for (const m of [this.mat, this.jointMat, this.coreMat]) m.dispose()
     for (const m of this.tells) releaseTell(m)
   }
