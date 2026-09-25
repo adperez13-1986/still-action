@@ -994,7 +994,9 @@ const STOP_SECONDS = 3.4
  * of speed with the eye going out, then time snaps back and they hit the stone for real.
  * Stopping owns the slow wind-down; this is one instant, stretched and dropped.
  */
-const BREAK = { freeze: 0.22, slow: 1.3, scale: 0.26, ramp: 0.2, after: 0.75, zoom: 0.45 }
+/** Every ending's frame is a close-up of him, whatever happened: the view closes in this much. */
+const END_ZOOM = 0.45
+const BREAK = { freeze: 0.22, slow: 1.3, scale: 0.26, ramp: 0.2, after: 0.75 }
 const BREAK_SECONDS = BREAK.slow + BREAK.ramp + BREAK.after
 /** Seconds between the cold sparks each flying part sheds while time is slow. */
 const BREAK_TRAIL = 0.05
@@ -2472,7 +2474,7 @@ function simulate(realDt: number) {
     const air = Math.min(1, run.t / BREAK.slow)
     still.eyeOut(air)
     // the view leans in while he's in the air, and stays there under the words
-    rig.hold = 1 + BREAK.zoom * air * air * (3 - 2 * air)
+    rig.hold = 1 + END_ZOOM * air * air * (3 - 2 * air)
     if (run.t < BREAK.slow) {
       breakTrailT -= realDt
       if (breakTrailT <= 0) {
@@ -2493,7 +2495,7 @@ function simulate(realDt: number) {
     const ease = k * k * (3 - 2 * k)
     dt = realDt * (1 - ease)
     still.setSlowdown(ease)
-    rig.hold = 1 + ease * 0.45
+    rig.hold = 1 + ease * END_ZOOM
     // the colour drains from the hour's, not the base's: a stop at dusk goes from dusk
     world.gradePass.uniforms.uSaturation!.value = currentSat() * (1 - ease * 0.8)
     if (run.t >= STOP_SECONDS + 0.5) {
@@ -2608,6 +2610,8 @@ function homing(dt: number) {
   still.group.scale.lerp(new THREE.Vector3(1, 1, 1), Math.min(1, dt * 9))
   if (level) level.homeGlow = 1 + ease
   world.graceLight.intensity = currentGrace() * (1 + 0.4 * ease)
+  // the words come next only before the last depth; after it, the walk home closes in at the door
+  if (run.depth < RUN_DEPTHS) rig.hold = 1 + ease * END_ZOOM
   if (run.t < HOMING_SECONDS) return
   // before the last depth, the words; after it, the walk home first
   if (run.depth < RUN_DEPTHS) {
@@ -2665,13 +2669,19 @@ function walkStep(dt: number) {
   still.group.scale.lerp(new THREE.Vector3(1, 1, 1), Math.min(1, dt * 9))
   // in at the door: the Home words (the room fades in behind them on continue)
   const h = level?.house
-  if (run.phase === 'walkHome' && h && Math.hypot(still.pos.x - h.door.x, still.pos.z - h.door.z) < WALK_DOOR_R) {
+  const toDoor = h ? Math.hypot(still.pos.x - h.door.x, still.pos.z - h.door.z) : Infinity
+  // the last few steps to the door, the view closes in: the words find him there
+  const near = Math.min(1, Math.max(0, 1 - (toDoor - WALK_DOOR_R) / WALK_CLOSE))
+  if (run.phase === 'walkHome') rig.hold = 1 + END_ZOOM * near * near * (3 - 2 * near)
+  if (run.phase === 'walkHome' && h && toDoor < WALK_DOOR_R) {
     hud.enabled = false
     end('home')
   }
 }
 /** The house's door zone (§4.25). */
 const WALK_DOOR_R = 1.3
+/** How far from the door zone the view starts closing in. */
+const WALK_CLOSE = 4
 
 /** Area II's day slows the score: 97 falling to 94.5 through depth 4, and 94.5 to 92 through depth 5. */
 function crawlBpm() {
