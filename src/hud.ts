@@ -26,12 +26,24 @@ const SLOT_ICON: Record<SlotName, string> = {
   legs: svg('<path d="M9 3l3 8-4 9"/><path d="M8 20h3"/><path d="M15 3l-1 8 3 9"/><path d="M16 20h3"/>'),
 }
 const PUSH_HOLD_MS = 180
+/** A dead tap's arc pulls back this fast; a second one within DEAD_TWICE_MS reaches further and holds. */
+const DEAD_BACK_MS = 90
+const DEAD_TWICE_MS = 500
+const DEAD_HOLD_MS = 250
+/** PLACEHOLDER words (Adrian's): once per save, over the first cooling button a tap is thrown at. */
+const DEAD_CAPTION = 'hold to push'
 /** PLACEHOLDER words (Adrian's): the one-time caption over the first button a lance ever heats. */
 const HEAT_CAPTION = 'hot \u00b7 hold to push'
 const HEAT_CAPTION_MS = 2400
 
 /** What the run tells the button after a press: start the cooldown, stay live, or nothing happened. */
 export type FireResult = Pick<CastResult, 'cooldown'>
+
+/**
+ * One press, down to up, for the playtest log. `ms` is wall time (a pause mid-press counts).
+ * dead: released on a cooling button before the push fired. refused: the run said no.
+ */
+export interface Press { slot: SlotName; ms: number; ready: boolean; result: 'cast' | 'push' | 'dead' | 'refused' }
 
 interface ButtonState {
   el: HTMLElement
@@ -47,7 +59,13 @@ interface ButtonState {
   hotMs: number
   pointerId: number | null
   downAt: number
+  /** The press's own timestamp, for how long a tap really lasts. */
+  downWall: number
+  readyAtDown: boolean
   pushed: boolean
+  /** The last dead tap (game ms), and the arc it drew: from this angle, held, then pulled back. */
+  deadAt: number
+  arc: { from: number; at: number; hold: number } | null
   /** Ready last frame: a part that just started recharging may owe its one-time push hint. */
   wasReady: boolean
 }
@@ -65,6 +83,8 @@ export interface Hud {
   update: (now: number) => void
   /** One listener: the run casts the part and answers how the button should react. */
   onFire: (cb: (def: AbilityDef, pushed: boolean) => FireResult) => void
+  /** Every press on a filled button, once it's let go: the run counts dead taps and logs how long taps last. */
+  onPress: (cb: (p: Press) => void) => void
   /** The parts on Still right now; empty slots are left out. */
   readonly loadout: readonly AbilityDef[]
   /** All four slots in button order, empty ones as null. */
@@ -135,6 +155,11 @@ export interface Hud {
   strainPips: (n: number, from: { x: number; y: number }) => void
   /** A button's centre on screen, for pips that leave from it. */
   buttonPoint: (slot: SlotName) => { x: number; y: number }
+  /**
+   * The free push, drawn: while a fight is awake, a cold tick at the strain it began at and a
+   * hollow segment `width` points above it, what the coming quiet pays back. Null clears both.
+   */
+  freePush: (w: { from: number; width: number } | null) => void
   /** 0..1 into the button's `.charge` fill (Patient Lens). */
   charge: (slot: SlotName, c: number) => void
   /** A short pulse on one button: something about it just changed. */
@@ -159,6 +184,7 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
     <div id="stickZone"></div>
     <div id="stickBase"><div id="stickKnob"></div></div>
     <div class="meter" id="strain"><i style="width:0%"></i><b>STRAIN</b></div>
+    <div id="strainFree"><s class="water"></s></div>
     <div class="meter" id="hp"><u></u><i style="width:100%"></i><b>INTEGRITY</b></div>
     <div id="offer">
       <div class="info">
@@ -193,6 +219,11 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
   const knob = root.querySelector<HTMLElement>('#stickKnob')!
   const strainMeter = root.querySelector<HTMLElement>('#strain')!
   const strainFill = strainMeter.querySelector<HTMLElement>('i')!
+  /** Over the meter, not in it: the meter clips, and the segment stands a pixel proud of the bar. */
+  const freeEl = root.querySelector<HTMLElement>('#strainFree')!
+  const waterEl = freeEl.querySelector<HTMLElement>('.water')!
+  let free: { from: number; width: number } | null = null
+  let freeCells: HTMLElement[] = []
   const hpFill = root.querySelector<HTMLElement>('#hp i')!
   /** N10's pale segment: what a rewind would give back, sitting just past the fill. */
   const hpGhost = root.querySelector<HTMLElement>('#hp u')!
@@ -247,23 +278,26 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
     b.el.className = b.def ? `btn tier-${b.def.tier}` : 'btn empty'
     b.icon = null
     b.el.querySelector('.lbl')!.innerHTML = b.def ? svg(b.def.icon) : SLOT_ICON[b.slot]
-    // the price of every cast, printed on the rim before you press it: ● always, ○ when it depends
+    // the price of every cast, printed on the rim before you press it: ● always, ○ when it depends.
+    // The push's own price sits beside it, shown only while a press would push.
     const pips = b.def?.pips
-    b.el.querySelector('.pips')!.textContent = pips ? (pips.hollow ? '\u25cb' : '\u25cf').repeat(pips.n) : ''
+    const own = pips ? `<i class="${pips.hollow ? 'h' : 'f'}"></i>`.repeat(pips.n) : ''
+    b.el.querySelector('.pips')!.innerHTML = b.def ? `${own ? `<span>${own}</span>` : ''}<span class="owed"><i class="h"></i><i class="h"></i></span>` : ''
   }
   const buttons: ButtonState[] = SLOT_NAMES.map((slot, i) => {
     const el = document.createElement('div')
-    el.innerHTML = `<div class="cd"></div><div class="heat"></div><div class="live"></div><span class="lbl" aria-label="${KEYS[slot]}"></span><span class="pips"></span>`
+    el.innerHTML = `<div class="cd"></div><div class="heat"></div><div class="live"></div><div class="arm"></div><span class="lbl" aria-label="${KEYS[slot]}"></span><span class="pips"></span>`
     const th = (ARC_DEG[i] ?? 0) * (Math.PI / 180)
     el.style.right = `calc(env(safe-area-inset-right, 0px) + ${PAD + ARC_R * Math.cos(th) - BTN / 2}px)`
     el.style.bottom = `calc(env(safe-area-inset-bottom, 0px) + ${PAD + ARC_R * Math.sin(th) - BTN / 2}px)`
     root.appendChild(el)
-    const b: ButtonState = { el, cdEl: el.querySelector<HTMLElement>('.cd')!, slot, def: null, icon: null, readyAt: 0, hotUntil: 0, hotMs: 0, pointerId: null, downAt: 0, pushed: false, wasReady: true }
+    const b: ButtonState = { el, cdEl: el.querySelector<HTMLElement>('.cd')!, slot, def: null, icon: null, readyAt: 0, hotUntil: 0, hotMs: 0, pointerId: null, downAt: 0, downWall: 0, readyAtDown: true, pushed: false, deadAt: -Infinity, arc: null, wasReady: true }
     paint(b)
     return b
   })
 
   const listeners: ((def: AbilityDef, pushed: boolean) => FireResult)[] = []
+  const pressListeners: ((p: Press) => void)[] = []
 
   /** Strain points still in the air as pips. The meter shows strain minus these. */
   let pending = 0
@@ -301,6 +335,18 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
 
   /** Once per save, a push-shaped part's pushed half pulses the first time it starts recharging. */
   const { hinted, markHinted } = hints
+
+  /** A one-time caption over a button, kept on screen whichever edge the button sits against. */
+  const caption = (b: ButtonState, text: string) => {
+    const cap = document.createElement('div')
+    cap.className = 'heatCaption'
+    cap.textContent = text
+    b.el.appendChild(cap)
+    const r = cap.getBoundingClientRect()
+    const shift = Math.min(0, window.innerWidth - 8 - r.right) + Math.max(0, 8 - r.left)
+    if (shift) cap.style.transform = `translateX(${shift}px)`
+    setTimeout(() => cap.remove(), HEAT_CAPTION_MS)
+  }
 
   /**
    * N8b: ticks on the strain meter where a part changes with strain (Frayed
@@ -379,7 +425,11 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
       b.el.setPointerCapture(e.pointerId)
       b.pointerId = e.pointerId
       b.downAt = state.clock
+      b.downWall = e.timeStamp
+      b.readyAtDown = isReadyAt(b, state.clock)
       b.pushed = false
+      // the hold ring takes over from any dead-tap arc still pulling back
+      b.arc = null
       b.el.classList.add('press')
     })
     for (const t of ['pointerup', 'pointercancel'] as const) {
@@ -387,28 +437,55 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
         if (b.pointerId !== e.pointerId) return
         b.pointerId = null
         b.el.classList.remove('press')
-        if (b.pushed) return
-        if (isReadyAt(b, state.clock)) fire(b, false)
+        let result: Press['result']
+        if (b.pushed) result = 'push'
+        else if (isReadyAt(b, state.clock)) result = fire(b, false) ? 'cast' : 'refused'
+        else {
+          // a tap thrown at a cooling button: never a push, but it answers
+          result = 'dead'
+          if (b.def && state.enabled) deadTap(b)
+        }
+        if (!b.def || !state.enabled) return
+        const p: Press = { slot: b.slot, ms: e.timeStamp - b.downWall, ready: b.readyAtDown, result }
+        for (const cb of pressListeners) cb(p)
       })
+    }
+  }
+
+  /**
+   * The dead tap answers: the ember arc jumps round the rim (at least as far as the hold got)
+   * and pulls back. A second within 500 ms reaches two thirds and holds, the push almost there.
+   */
+  function deadTap(b: ButtonState) {
+    const now = state.clock
+    const twice = now - b.deadAt <= DEAD_TWICE_MS
+    b.deadAt = now
+    const held = Math.min(360, ((now - b.downAt) / PUSH_HOLD_MS) * 360)
+    b.arc = { from: Math.max(held, twice ? 240 : 120), at: now, hold: twice ? DEAD_HOLD_MS : 0 }
+    if (!hinted('deadtap')) {
+      markHinted('deadtap')
+      caption(b, DEAD_CAPTION)
     }
   }
 
   /** Ready: its cooldown done, and not hot. */
   const isReadyAt = (b: ButtonState, now: number) => now >= b.readyAt && now >= b.hotUntil
 
-  function fire(b: ButtonState, pushed: boolean) {
-    if (!state.enabled || !b.def) return
+  /** True if it cast. */
+  function fire(b: ButtonState, pushed: boolean): boolean {
+    if (!state.enabled || !b.def) return false
     const r = listeners[0]?.(b.def, pushed) ?? { cooldown: 'start' }
     if (r.cooldown === 'refused') {
       // nothing happened, and the button says so
       b.el.classList.add('refused')
       setTimeout(() => b.el.classList.remove('refused'), 300)
-      return
+      return false
     }
     // a live part (a planted anchor) keeps its button ready for the second press; a hot one
     // pushed out of its heat still waits the heat out before it's ready again
     b.readyAt = Math.max(r.cooldown === 'hold' ? state.clock : state.clock + b.def.cooldownMs, b.hotUntil)
     navigator.vibrate?.(pushed ? [14, 26, 14] : 12)
+    return true
   }
 
   return {
@@ -461,6 +538,19 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
           b.pushed = true
           fire(b, true)
         }
+
+        // the hold's clock: a ring closing over PUSH_HOLD_MS, the push firing as it closes.
+        // Let go early and the dead-tap arc pulls back from where it got to.
+        let arm = 0
+        if (b.pointerId !== null && (b.pushed || !ready)) arm = b.pushed ? 360 : Math.min(360, ((now - b.downAt) / PUSH_HOLD_MS) * 360)
+        else if (b.arc) {
+          const t = now - b.arc.at - b.arc.hold
+          if (t < DEAD_BACK_MS) arm = b.arc.from * Math.min(1, 1 - t / DEAD_BACK_MS)
+          else b.arc = null
+        }
+        // at 0 the angle stays where it was, so the ring fades out whole rather than snapping empty
+        if (arm > 0) b.el.style.setProperty('--arm', `${arm.toFixed(1)}deg`)
+        if (b.el.classList.contains('arming') !== arm > 0) b.el.classList.toggle('arming', arm > 0)
       }
       const shown = Math.max(0, state.strain - pending)
       strainFill.style.width = `${Math.min(100, (shown / 20) * 100)}%`
@@ -468,12 +558,15 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
       // the stretch a last push would fill, outlined: a warning, never a block
       strainMeter.classList.toggle('brink', brink)
       strainMeter.style.setProperty('--brink', `${Math.max(0, 20 - state.strain) * 5}%`)
+      // the free push: its cells fill as the shown strain climbs through them
+      if (free) for (let i = 0; i < freeCells.length; i++) freeCells[i]!.classList.toggle('full', shown >= free.from + i + 1 - 1e-6)
       hpFill.style.width = `${Math.max(0, state.integrity * 100)}%`
       hpGhost.style.left = `${Math.max(0, state.integrity * 100)}%`
       hpGhost.style.width = `${Math.max(0, Math.min(1 - state.integrity, recent)) * 100}%`
     },
 
     onFire(cb) { listeners.push(cb) },
+    onPress(cb) { pressListeners.push(cb) },
 
     get loadout() { return buttons.flatMap((b) => (b.def ? [b.def] : [])) },
     get slots() { return buttons.map((b) => ({ slot: b.slot, def: b.def })) },
@@ -607,6 +700,25 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
         setTimeout(() => flyPip(from, worth), i * PIP_GAP_MS)
       }
     },
+    freePush(w) {
+      const next = w ? { from: w.from, width: Math.max(0, Math.min(w.width, 20 - w.from)) } : null
+      if (next?.from === free?.from && next?.width === free?.width) return
+      free = next
+      freeEl.classList.toggle('show', !!next)
+      if (!next) return
+      for (const c of freeCells) c.remove()
+      freeCells = Array.from({ length: Math.ceil(next.width) }, (_, i) => {
+        const c = document.createElement('em')
+        // a 1 px gap between cells, so it reads as two points, not a bar
+        c.style.left = `calc(${((next.from + i) / 20) * 100}% + .5px)`
+        c.style.width = `calc(${(Math.min(1, next.width - i) / 20) * 100}% - 1px)`
+        freeEl.appendChild(c)
+        return c
+      })
+      // strain 0: no tick, the outline alone at the bar's start
+      waterEl.style.left = `${(next.from / 20) * 100}%`
+      waterEl.style.display = next.from > 0 ? '' : 'none'
+    },
     buttonPoint(slot) {
       const r = buttons.find((x) => x.slot === slot)!.el.getBoundingClientRect()
       return { x: r.left + r.width / 2, y: r.top + r.height / 2 }
@@ -627,15 +739,7 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
       if (!hinted('heat')) {
         // the first heat ever: a caption over the button, once per save
         markHinted('heat')
-        const cap = document.createElement('div')
-        cap.className = 'heatCaption'
-        cap.textContent = HEAT_CAPTION
-        b.el.appendChild(cap)
-        // keep it on screen whichever edge the button sits against
-        const r = cap.getBoundingClientRect()
-        const shift = Math.min(0, window.innerWidth - 8 - r.right) + Math.max(0, 8 - r.left)
-        if (shift) cap.style.transform = `translateX(${shift}px)`
-        setTimeout(() => cap.remove(), HEAT_CAPTION_MS)
+        caption(b, HEAT_CAPTION)
       }
     },
     heatLeft(slot) {

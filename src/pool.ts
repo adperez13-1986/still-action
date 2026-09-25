@@ -12,7 +12,7 @@ import type { PartHistory, PartId, Save } from './save'
  */
 export const STARTER_POOL: PartId[] = [
   'focusing-lens', 'flare', 'pressure-vent', 'ward', 'scrap-cleaver', 'piston', 'kickstart', 'skitter',
-  'cracked-lens', 'backdraft-vent', 'rusted-hook', 'skid-plates',
+  'patient-lens', 'backdraft-vent', 'rusted-hook', 'overrun',
 ]
 
 /** Chance a drop is drawn from the unfound parts, by source. INV: 0 for kill and crate; 0 at depth < minDepth. */

@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto'
-import { readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import { join, relative, sep } from 'node:path'
-import { defineConfig, type Plugin } from 'vite'
+import type { ServerResponse } from 'node:http'
+import { defineConfig, type Connect, type Plugin } from 'vite'
 
 const SINKS = new Set(['grade', 'mix', 'zoom', 'kit'])
 
@@ -13,8 +14,36 @@ function gradeSink(): Plugin {
   return {
     name: 'grade-sink',
     configureServer(server) {
+      /**
+       * The playtest log: each run POSTs itself at every depth's end and at its end. Runs
+       * accumulate in playtest.json; a run's later POST replaces its own entry (by key), so
+       * the file holds each run once, as far as it got.
+       */
+      const file = new URL('./playtest.json', import.meta.url)
+      const playtest = (req: Connect.IncomingMessage, res: ServerResponse) => {
+        let body = ''
+        req.on('data', (chunk) => (body += chunk))
+        req.on('end', () => {
+          try {
+            const entry = JSON.parse(body) as { key: string }
+            const runs = existsSync(file) ? (JSON.parse(readFileSync(file, 'utf8')) as { key: string }[]) : []
+            const i = runs.findIndex((r) => r.key === entry.key)
+            if (i >= 0) runs[i] = entry
+            else runs.push(entry)
+            writeFileSync(file, JSON.stringify(runs, null, 1))
+            server.config.logger.info(`\n  playtest saved -> playtest.json (${runs.length} runs)\n`)
+            res.setHeader('content-type', 'application/json')
+            res.end('{"ok":true}')
+          } catch (err) {
+            res.statusCode = 400
+            res.end(String(err))
+          }
+        })
+      }
+
       server.middlewares.use('/__save', (req, res) => {
         const name = (req.url ?? '').replace(/^\//, '')
+        if (req.method === 'POST' && name === 'playtest') return playtest(req, res)
         if (req.method !== 'POST' || !SINKS.has(name)) {
           res.statusCode = 405
           return res.end()

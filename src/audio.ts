@@ -1410,6 +1410,20 @@ export function denied() {
   tone(c, d, 'square', c.currentTime, 220, 180, 0.05, 0.08, 0.002)
 }
 
+/**
+ * A tap on a cooling button: a dry, cold latch that doesn't catch. Steel, high and
+ * short, no body and no tail, under the auto so a mash never clutters the fight.
+ */
+export function deadTap(pan: number) {
+  const c = live()
+  if (!c) return
+  const t = c.currentTime
+  if (limited('deadTap', 0.04, t)) return
+  const d = out(c, 'abilities', pan)
+  hiss(c, d, t, 0.012, 0.09, 'highpass', 5200, 4200, 0.8, 0.001)
+  tone(c, d, 'triangle', t, vary(2300, 0.04), 1750, 0.018, 0.035, 0.001)
+}
+
 /** A shot destroyed on the Ward: a ting. */
 export function shieldTing() {
   const c = live()

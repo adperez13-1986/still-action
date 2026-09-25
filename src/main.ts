@@ -2,7 +2,7 @@ import './style.css'
 import * as THREE from 'three'
 import { createWorld, grade } from './world'
 import { Still } from './still'
-import { createHud } from './hud'
+import { createHud, type Press } from './hud'
 import { createGradePanel, apply as applyGrade } from './grade'
 import { Combat, eliteLine, type Archetype, type CastResult, type EliteMod, type Pack } from './combat'
 import { STARTING, PARTS, byId, type AbilityDef, type AbilityShape, type BeatKey } from './abilities'
@@ -1006,8 +1006,14 @@ const HOMING_SECONDS = 0.6
  */
 type Phase = 'boot' | 'workshop' | 'leaving' | 'crawl' | 'descending' | 'broken' | 'stopping' | 'homing' | 'toWalk' | 'walkHome' | 'ending' | 'arriving'
 
-/** One depth of a run, for __runStats: the phone test measures whether Stopped is reachable at all. */
-interface DepthStats { depth: number; pushes: number; quiets: number; strainIn: number; strainOut: number | null }
+/**
+ * One depth of a run, for __runStats: the phone test measures whether Stopped is reachable at all.
+ * deadTaps: taps thrown at a cooling button. Against pushes, a fight at a time, it says whether
+ * the want is there and the screen hid it, or never comes up.
+ */
+interface DepthStats { depth: number; fights: number; pushes: number; deadTaps: number; quiets: number; strainIn: number; strainOut: number | null }
+/** One press on a filled button, for the playtest file: how long taps really last on the phone. */
+interface TapLog { depth: number; slot: SlotName; ms: number; ready: boolean; result: Press['result'] }
 
 const run = {
   phase: 'boot' as Phase,
@@ -1022,6 +1028,9 @@ const run = {
   tally: freshTally() as RunTally,
   depth: 1, strain: 0, t: 0, swapped: false, fought: false, quietT: 0, killed: false, ramStunSeen: false,
   stats: [] as DepthStats[],
+  /** Where this fight's strain began: the free push is drawn above it. */
+  water: 0,
+  taps: [] as TapLog[],
   /** ISO: when this run began (its snapshot carries it). */
   startedAt: '',
   /** This level's seed: a resume builds the same layout. */
@@ -1515,9 +1524,11 @@ function resumeRun(snap: RunSnapshot) {
   for (const k of ['deepest', 'assemblers', 'arbiters'] as const) tally[k] = Object.fromEntries(Object.entries(tally[k] ?? {}).filter(([id]) => known.has(id)))
   const depth = Math.min(RUN_DEPTHS, Math.max(1, Math.floor(snap.depth) || 1))
   Object.assign(run, {
-    phase: 'crawl', t: 0, swapped: false, ramStunSeen: false, dev: false, committed: false, ending: null, stats: [],
+    phase: 'crawl', t: 0, swapped: false, ramStunSeen: false, dev: false, committed: false, ending: null, stats: [], taps: [],
     id: snap.id, startedAt: snap.startedAt, strain: Math.min(19, Math.max(0, Math.round(snap.strain) || 0)), tally,
   })
+  // a resume starts its stats over, so it's its own entry in the playtest file, not an overwrite
+  playKey = `${run.id}.${Date.now().toString(36)}`
   loot.clear()
   combat.reset()
   const worn = loadout.filter((d): d is AbilityDef => !!d)
@@ -1588,7 +1599,7 @@ function enterLevel(depth: number, o: { seed?: number; bossFelled?: boolean; res
   prev.copy(still.pos)
   run.depth = depth
   closeStats()
-  run.stats.push({ depth, pushes: 0, quiets: 0, strainIn: run.strain, strainOut: null })
+  run.stats.push({ depth, fights: 0, pushes: 0, deadTaps: 0, quiets: 0, strainIn: run.strain, strainOut: null })
   // the card's line gets a tick where this depth began (a resumed depth already has its tick)
   if (!o.resume) run.tally.marks.push(run.tally.line.length)
   // parts remember how deep they went
@@ -1601,9 +1612,10 @@ function startRun() {
   still.reassemble()
   Object.assign(run, {
     phase: 'crawl', strain: 0, t: 0, swapped: false, ramStunSeen: false,
-    id: newRunId(), dev: DEPTH_PARAM !== null, committed: false, ending: null, stats: [], tally: freshTally(),
+    id: newRunId(), dev: DEPTH_PARAM !== null, committed: false, ending: null, stats: [], taps: [], tally: freshTally(),
     startedAt: new Date().toISOString(),
   })
+  playKey = `${run.id}.${Date.now().toString(36)}`
   if (!run.dev) {
     // the first night: the doorframe's marks grow from here, in calendar time
     save.firstRunAt ??= new Date().toISOString()
@@ -1638,7 +1650,29 @@ function newRunId() {
 /** The depth being left gets its strain on the way out. */
 function closeStats() {
   const st = run.stats[run.stats.length - 1]
-  if (st && st.strainOut === null) st.strainOut = run.strain
+  if (!st || st.strainOut !== null) return
+  st.strainOut = run.strain
+  // a run's end posts once, from commit, when it knows how it ended
+  if (!run.committed) savePlaytest()
+}
+
+/** Which entry in playtest.json this run writes: one per start or resume. */
+let playKey = ''
+
+/**
+ * Dev only: the phone can't open a console, so each depth's end and the run's end POST the
+ * run so far to the dev server, which keeps it in playtest.json (one entry per run, replaced
+ * as it grows). A production build has no such endpoint and never tries.
+ */
+function savePlaytest() {
+  if (!import.meta.env.DEV || !playKey) return
+  const body = {
+    key: playKey, id: run.id, build: __BUILD__, startedAt: run.startedAt, savedAt: new Date().toISOString(),
+    dev: run.dev, end: run.ending?.kind ?? null, depth: run.depth,
+    stats: run.stats.map((st) => ({ ...st, strainOut: st.strainOut ?? run.strain })),
+    taps: run.taps,
+  }
+  void fetch('/__save/playtest', { method: 'POST', body: JSON.stringify(body) }).catch(() => {})
 }
 
 function descend() {
@@ -1732,6 +1766,7 @@ function commit(kind: EndingKind) {
   const worn = hud.slots.map((s) => s.def?.id ?? null)
   const hour = hourAtEnd(kind, run.depth)
   run.ending = { kind, hour, cardId: run.id }
+  savePlaytest()
   if (run.dev) {
     save.lastEnding = { kind, hour, depth: run.depth, worn, cardId: run.id, arrived: false }
     return
@@ -2021,6 +2056,15 @@ hud.onFire((def, pushed) => {
   const cost = r.strain + (pushed ? STRAIN_PER_PUSH : 0)
   if (cost > 0) addStrain(cost, hud.buttonPoint(def.slot))
   return r
+})
+
+hud.onPress((p) => {
+  if (run.phase !== 'crawl') return
+  run.taps.push({ depth: run.depth, slot: p.slot, ms: Math.round(p.ms), ready: p.ready, result: p.result })
+  if (p.result !== 'dead') return
+  const st = run.stats[run.stats.length - 1]
+  if (st) st.deadTaps++
+  sfx.deadTap(0.35)
 })
 
 /**
@@ -2450,6 +2494,12 @@ function simulate(realDt: number) {
   if (run.phase === 'crawl') sampleStrain(dt)
 
   if (combat.awake.length > 0) {
+    if (!run.fought) {
+      // a fight begins: its waterline is the strain it found
+      run.water = run.strain
+      const st = run.stats[run.stats.length - 1]
+      if (st) st.fights++
+    }
     run.fought = true
     run.quietT = 0
   } else if (run.fought && run.phase === 'crawl') {
@@ -2460,6 +2510,8 @@ function simulate(realDt: number) {
       else run.fought = false
     }
   }
+  // the free push, drawn while the fight is on: the quiet at its end pays QUIET_STRAIN back
+  hud.freePush(run.fought && run.phase === 'crawl' ? { from: run.water, width: QUIET_STRAIN } : null)
 
   // the boss: its bar, its second phase, and the sound of its window opening (a charge into a wall)
   const boss = combat.boss
@@ -3347,8 +3399,12 @@ if (import.meta.env.DEV) {
       return true
     },
     __continue: () => overlay.press(),
-    /** Per depth this run: pushes, quiets, and strain in and out. The open depth reads its strain now. */
+    /** Per depth this run: fights, pushes, dead taps, quiets, and strain in and out. The open depth reads its strain now. */
     __runStats: () => run.stats.map((st) => ({ ...st, strainOut: st.strainOut ?? run.strain })),
+    /** Every press this run, down to up: ms, ready at the press, and what it did. */
+    __taps: () => run.taps,
+    /** The playtest POST now, as a depth's end would. */
+    __savePlaytest: savePlaytest,
   })
 }
 
