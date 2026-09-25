@@ -315,6 +315,8 @@ export interface Voice {
   dip?: () => void
   /** A surge lost a biter: its jaw drops out of the flam. */
   lose?: () => void
+  /** A loop that follows how fast its source moves (1 = its usual rate). */
+  speed?: (k: number) => void
 }
 /** An old stop-only voice, as a Voice. */
 export const asVoice = (stop: (hard?: boolean) => void): Voice => ({ stop, pan: () => {} })
@@ -1825,7 +1827,19 @@ export function homeBeam() {
 
 // --- the Arbiter: its sweep, its lance, its vent, its scald, and the heat it leaves on a button ---
 
-/** The sweep's loop: a low saw through a lowpass, beating at 3 Hz. Its pan follows the gaze. */
+/**
+ * The machines' own small sounds, under the combat mix: the Assembler's hydraulics and the
+ * Arbiter's servos. Tune here. `whine` is the servo layer in the sweep's loop at full turn
+ * speed; `lock` the clank as its aim sets; `hydraulic` a footfall's hiss-and-thunk (scaled by
+ * distance, as the step is) and `lift` the pressure let into its rams as it gathers for a move.
+ */
+export const MACHINE = { whine: 0.022, lock: 0.3, hydraulic: 0.1, lift: 0.08 }
+
+/**
+ * The sweep's loop: a low saw through a lowpass, beating at 3 Hz, and over it the head's servo,
+ * a thin whine that rises and swells with how fast it's turning (`speed`, 1 at the sweep's
+ * own rate). Its pan follows the gaze.
+ */
 export function whirr(pan: number): Voice {
   const c = live()
   if (!c) return asVoice(() => {})
@@ -1849,19 +1863,84 @@ export function whirr(pan: number): Voice {
   depth.gain.value = 0.4
   lfo.connect(depth).connect(trem.gain)
   o.connect(lp).connect(trem).connect(g)
+  // the servo: a saw through a narrow band, so it's a motor's whine and not a buzz; straight to
+  // the panner, since the loop's gain is shaped for the drone
+  const servo = c.createOscillator()
+  servo.type = 'sawtooth'
+  servo.frequency.value = 150
+  const band = c.createBiquadFilter()
+  band.type = 'bandpass'
+  band.Q.value = 5
+  band.frequency.value = 300
+  const whine = c.createGain()
+  whine.gain.value = 0.0001
+  servo.connect(band).connect(whine).connect(p)
   o.start(t)
   lfo.start(t)
+  servo.start(t)
+  let stopped = false
   return {
     stop: (hard) => {
       const now = c.currentTime
-      g.gain.cancelScheduledValues(now)
-      if (hard) g.gain.setValueAtTime(0, now)
-      else g.gain.setTargetAtTime(0.0001, now, 0.15)
-      o.stop(now + (hard ? 0.02 : 0.8))
-      lfo.stop(now + (hard ? 0.02 : 0.8))
+      stopped = true
+      for (const x of [g, whine]) {
+        x.gain.cancelScheduledValues(now)
+        if (hard) x.gain.setValueAtTime(0, now)
+        else x.gain.setTargetAtTime(0.0001, now, 0.15)
+      }
+      for (const x of [o, lfo, servo]) x.stop(now + (hard ? 0.02 : 0.8))
     },
     pan: (v) => p.pan.setTargetAtTime(clampPan(v), c.currentTime, 0.05),
+    speed: (k) => {
+      if (stopped) return
+      const now = c.currentTime
+      const s = Math.max(0, Math.min(1.5, k))
+      servo.frequency.setTargetAtTime(150 + 130 * s, now, 0.08)
+      band.frequency.setTargetAtTime(2 * (150 + 130 * s), now, 0.08)
+      whine.gain.setTargetAtTime(Math.max(0.0001, MACHINE.whine * Math.min(1, s)), now, 0.08)
+      o.frequency.setTargetAtTime(60 + 14 * s, now, 0.1)
+      lp.frequency.setTargetAtTime(300 + 150 * s, now, 0.1)
+    },
   }
+}
+
+/**
+ * The Arbiter's aim setting at the lock: a brake biting (a short high hiss), a heavy clank of
+ * steel, and a low thunk under it. Heavier and lower than the catch's clack.
+ */
+export function servoLock(pan: number) {
+  const c = live()
+  if (!c || limited('servoLock', 0.15, c.currentTime)) return
+  const t = c.currentTime
+  const d = out(c, 'enemy', pan)
+  const v = MACHINE.lock
+  hiss(c, d, t, 0.05, 0.25 * v, 'highpass', 3800, 2600, 0.8, 0.002)
+  sample(c, 'metalHeavy', d, 0.9 * v, 0.75)
+  sample(c, 'tin', d, 0.25 * v, 1.3, 0.015)
+  tone(c, d, 'sine', t, 130, 55, 0.12, 0.5 * v, 0.002)
+}
+
+/**
+ * The Assembler's hydraulics. 'step': a footfall's ram giving under the weight, a short
+ * falling hiss of pressure and a dull thunk; 'lift': pressure let in as it gathers itself for a
+ * move, a rising hiss that ends on a valve's knock. `loud` is the step's distance scaling.
+ */
+export function hydraulic(kind: 'step' | 'lift', pan: number, loud = 1) {
+  const c = live()
+  if (!c || loud <= 0.02 || limited('hydraulic', 0.12, c.currentTime)) return
+  const t = c.currentTime
+  const d = out(c, 'enemy', pan)
+  if (kind === 'step') {
+    const v = MACHINE.hydraulic * loud
+    hiss(c, d, t + 0.02, 0.2, 0.5 * v, 'bandpass', vary(1900, 0.08), 650, 1.4, 0.01)
+    tone(c, d, 'sine', t, 95, 42, 0.14, 0.8 * v, 0.003)
+    sample(c, 'metalLight', d, 0.3 * v, 0.55, 0.03)
+    return
+  }
+  const v = MACHINE.lift * loud
+  hiss(c, d, t, 0.32, 0.45 * v, 'bandpass', 700, vary(2200, 0.06), 1.2, 0.12)
+  sample(c, 'metalMedium', d, 0.35 * v, 0.6, 0.3)
+  tone(c, d, 'sine', t + 0.3, 110, 60, 0.08, 0.6 * v, 0.002)
 }
 
 /** One tick of the sweep, every 10°: tin, and a short square click. */
@@ -1974,4 +2053,42 @@ export function cageOpen(pan: number) {
   const c = live()
   if (!c) return
   sample(c, 'tin', out(c, 'enemy', pan), 0.4, 1.8)
+}
+
+// --- the screens: a press on a menu button ---
+
+/**
+ * UI presses. They go straight to the master, past the duck, so the pause screen's own
+ * clicks aren't pushed down with the world behind it. Cold and dry, like his buttons:
+ * `click` for a press that goes on or opens, `back` (lower, softer) for one that closes
+ * or leaves. Tune here.
+ */
+export const UI = { click: 0.05, back: 0.032 }
+
+function uiOut(c: AudioContext): AudioNode {
+  const g = c.createGain()
+  g.gain.value = 1
+  g.connect(master)
+  return g
+}
+
+/** A menu press: a steel tick, high and short, and a glint of tin. */
+export function uiClick() {
+  const c = live()
+  if (!c || limited('ui', 0.03, c.currentTime)) return
+  const t = c.currentTime
+  const d = uiOut(c)
+  hiss(c, d, t, 0.01, 0.6 * UI.click, 'highpass', 6000, 4800, 0.8, 0.001)
+  tone(c, d, 'triangle', t, vary(2600, 0.03), 2100, 0.025, UI.click, 0.001)
+  sample(c, 'tin', d, 0.4 * UI.click, 2.6)
+}
+
+/** Back, close, leave: the same latch, a fifth lower and softer, falling. */
+export function uiBack() {
+  const c = live()
+  if (!c || limited('ui', 0.03, c.currentTime)) return
+  const t = c.currentTime
+  const d = uiOut(c)
+  hiss(c, d, t, 0.01, 0.4 * UI.back, 'highpass', 4200, 3400, 0.8, 0.001)
+  tone(c, d, 'triangle', t, vary(1750, 0.03), 1250, 0.035, UI.back, 0.001)
 }

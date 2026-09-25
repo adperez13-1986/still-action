@@ -1,5 +1,6 @@
 import type { AbilityDef, AbilityShape } from './abilities'
 import type { SlotName } from './still'
+import * as sfx from './audio'
 
 /**
  * The pause screen. Two modes, one layout language:
@@ -114,11 +115,21 @@ export interface PauseScreen {
 /** A notebook page, laid out (main builds these from the save and the roster). */
 export interface NotebookPage { name: string; what: string; line: string | null; facts: string; leaders: string | null }
 
+/** The presses that close a screen or turn a part down. */
+const BACK = ['resume', 'leave', 'close']
+
 export function createPauseScreen(root: HTMLElement): PauseScreen {
   const el = document.createElement('div')
   el.id = 'pause'
   root.appendChild(el)
   let isOpen = false
+  // every press on these screens clicks; the ones that close or leave click softer. Take has its own sound.
+  el.addEventListener('click', (e) => {
+    const b = (e.target as HTMLElement).closest('button')
+    if (!b || b.classList.contains('take')) return
+    if (BACK.some((cls) => b.classList.contains(cls))) sfx.uiBack()
+    else sfx.uiClick()
+  })
 
   function show(html: string, actions: [string, string, () => void][]) {
     el.innerHTML = `${html}<div class="actions">${actions.map(([cls, label]) => `<button type="button" class="${cls}">${label}</button>`).join('')}</div>`

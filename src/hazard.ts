@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import { DECAL_Y } from './world'
-import { tellMaterial, releaseTell, tellOrder, haloTexture, EMBER_DEEP } from './vfx'
+import { tellMaterial, releaseTell, tellOrder, haloTexture, meltBallMaterial, EMBER_DEEP } from './vfx'
 import { Quads, UV_LEN } from './lane'
 import type { Enemy } from './enemy'
 
@@ -80,10 +80,11 @@ const ARM_FLASH_MS = 120
 const BEAM_EXTRA_MS = 150
 const BEAM_Y = 1.2
 /**
- * A shell in flight: a dark iron ball in an ember glow. A lit ball on its own read as a
- * flat white dot against the dusk; this reads as something hot and heavy coming down.
+ * A shell in flight: a crusted gob of melt, cracked hot and tumbling, in an ember glow. A lit
+ * ball on its own read as a flat white dot against the dusk, and a flat dark one as a hole;
+ * this reads as something hot and heavy coming down. `hot` is its seams' heat.
  */
-const SHELL = { r: 0.22, iron: 0x2a1512, glow: 0xff7a40, halo: 1.1 }
+const SHELL = { r: 0.22, hot: new THREE.Color(0xff5a3c), glow: 0xff8a3c, halo: 1.1, glowOpacity: 0.8, spin: 7 }
 const shellGeo = new THREE.SphereGeometry(SHELL.r, 12, 8)
 /** A burning strip's layers. The spec's whole strip at 0.95 read as a flat slab on the floor, so it's a wash under a core. */
 const LIVE = { wash: 0.45, core: 0.9, rails: 0.95 }
@@ -192,8 +193,8 @@ export class HazardTell {
       for (const m of [this.ring, this.disc]) m.rotation.x = -Math.PI / 2
       this.disc.scale.setScalar(0.001)
       if (spec.flight) {
-        const iron = new THREE.MeshBasicMaterial({ color: SHELL.iron, fog: false })
-        const glow = new THREE.SpriteMaterial({ map: haloTexture(), color: SHELL.glow, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, fog: false })
+        const iron = meltBallMaterial(SHELL.r, SHELL.hot)
+        const glow = new THREE.SpriteMaterial({ map: haloTexture(), color: SHELL.glow, opacity: SHELL.glowOpacity, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, fog: false })
         const halo = new THREE.Sprite(glow)
         halo.scale.setScalar(SHELL.halo)
         this.shellMats.push(iron, glow)
@@ -259,6 +260,10 @@ export class HazardTell {
       this.shell.visible = !h.armed && !h.done
       // the glow flickers a little; the ball doesn't
       this.shell.children[0]!.scale.setScalar(SHELL.halo * (0.85 + Math.random() * 0.3))
+      // it tumbles as it flies, so its seams turn over
+      const ball = this.shell.children[1]!
+      ball.rotation.x += dt * SHELL.spin
+      ball.rotation.z += dt * SHELL.spin * 0.6
     }
     if (h.done) {
       // from wherever each piece was, down to nothing over the fade; one that armed and
@@ -327,6 +332,13 @@ export class HazardTell {
       this.ringMat!.opacity = 0.95
       this.discMat!.opacity = 0.8
       this.disc!.scale.setScalar(1)
+      if (this.spec.source === 'shell') {
+        // a shell bursts into a splash of its melt, crust and veins, not a flat pink disc; it fades from there
+        const d = this.discMat!
+        d.uniforms.uMolten!.value = 1
+        ;(d.uniforms.uHot!.value as THREE.Color).copy(MOLTEN.hot)
+        ;(d.uniforms.uDeep!.value as THREE.Color).copy(MOLTEN.crust)
+      }
     } else {
       this.core!.set(0, 0, 0, 0, this.len, this.halfW * 0.6, 0.004)
       this.wholeMat!.opacity = LIVE.wash

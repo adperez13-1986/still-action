@@ -577,3 +577,116 @@ export function releaseTell(m: THREE.Material) {
   TELLS.delete(m as THREE.ShaderMaterial)
   m.dispose()
 }
+
+// --- a melt: molten metal in a vessel, for a body's face ---
+
+const MELT_VERT = /* glsl */ `
+  varying vec2 vP;
+  varying vec3 vB;
+  void main() {
+    vP = position.xy;
+    vB = position;
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  }
+`
+
+/**
+ * Molten metal seen from above: a hot, churning core breaking up through drifting plates
+ * of crust, gone to dark slag at the rim. `uHot` is the body's core colour (lit, asleep or
+ * reeling), so everything else keys off it; its hottest is pushed toward orange, hotter not
+ * redder, and never white. `uSwell` (0..1) is the tell: the core widens, the crust thins and
+ * the churn quickens. `uBall` is a thrown gob of it instead: a sphere, all crust, cracked
+ * through with hot seams (sampled on three planes, so it has no seam of its own).
+ */
+const MELT_FRAG = /* glsl */ `
+  uniform float uTime;
+  uniform vec3 uHot;
+  uniform vec3 uCrust;
+  uniform float uSwell;
+  uniform float uRadius;
+  uniform float uSeed;
+  uniform float uBall;
+  varying vec2 vP;
+  varying vec3 vB;
+  float h(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+  float n(vec2 p) {
+    vec2 i = floor(p), f = fract(p); vec2 u = f * f * (3.0 - 2.0 * f);
+    return mix(mix(h(i), h(i + vec2(1, 0)), u.x), mix(h(i + vec2(0, 1)), h(i + vec2(1, 1)), u.x), u.y);
+  }
+  float fbm(vec2 p) { return n(p) * 0.55 + n(p * 2.3 + 7.1) * 0.3 + n(p * 5.2 - 3.3) * 0.15; }
+  float tri(vec3 b, vec3 w, float k, vec2 o) {
+    return (fbm(b.xy * k + o) * w.z + fbm(b.yz * k + o.yx) * w.x + fbm(b.zx * k - o) * w.y) / (w.x + w.y + w.z);
+  }
+  void main() {
+    if (uBall > 0.5) {
+      vec3 b = vB / uRadius;
+      vec3 w = pow(abs(b), vec3(3.0));
+      float crustB = tri(b, w, 1.9, vec2(uSeed, uSeed * 0.7));
+      float glowB = tri(b, w, 1.2, vec2(uSeed * 1.3 + uTime * 0.6, -uTime * 0.4));
+      float seam = 1.0 - smoothstep(0.0, 0.06, abs(crustB - 0.5));
+      float heatB = clamp(seam * (0.55 + 0.6 * glowB) + smoothstep(0.55, 0.8, glowB) * 0.35, 0.0, 1.0);
+      vec3 colB = mix(uCrust, uHot * vec3(0.22, 0.12, 0.08), smoothstep(0.0, 0.3, heatB));
+      colB = mix(colB, uHot * vec3(0.85, 1.3, 0.4), smoothstep(0.25, 0.7, heatB));
+      colB = mix(colB, uHot * vec3(1.0, 3.4, 0.9), smoothstep(0.75, 1.0, heatB) * 0.7);
+      gl_FragColor = vec4(colB, 1.0);
+      return;
+    }
+    vec2 p = vP / uRadius;
+    float r = length(p);
+    float t = uTime * (1.0 + 1.6 * uSwell);
+    // a slow turn of the whole melt, and a warp that rolls it over itself: nothing accumulates
+    float a = t * 0.22 + uSeed;
+    vec2 q = mat2(cos(a), -sin(a), sin(a), cos(a)) * p;
+    q += 0.35 * vec2(n(q * 1.6 + vec2(t * 0.5, uSeed)), n(q * 1.6 - vec2(uSeed, t * 0.45))) - 0.175;
+    float melt = fbm(q * 2.4 + vec2(uSeed * 3.1 + t * 0.2, -t * 0.15));
+    // crust plates drift slower than the melt under them, and part as it swells
+    float crust = fbm(p * 2.3 + vec2(uSeed * 1.7 - t * 0.06, t * 0.05));
+    float core = 1.0 - smoothstep(0.0, 0.42 + 0.4 * uSwell, r);
+    float heat = core * 0.6 + melt * 0.75 - 0.26 + 0.24 * uSwell;
+    float vein = 1.0 - smoothstep(0.0, 0.05, abs(crust - 0.47));
+    float rim = smoothstep(0.55 - 0.1 * uSwell, 1.0, r);
+    float plate = smoothstep(0.47, 0.54, crust) * (1.0 - 0.7 * core) * (1.0 - 0.55 * uSwell);
+    heat = clamp(heat + vein * 0.35 * (1.0 - rim), 0.0, 1.0) * (1.0 - clamp(max(rim * 0.95, plate * 0.85), 0.0, 1.0));
+    // the ramp leans orange as it heats, and loses the blue that read as salmon
+    vec3 dull = uHot * vec3(0.22, 0.12, 0.08);
+    vec3 mid = uHot * vec3(0.85, 1.3, 0.4);
+    vec3 hottest = uHot * vec3(1.0, 3.4, 0.9);
+    vec3 col = mix(uCrust, dull, smoothstep(0.0, 0.28, heat));
+    col = mix(col, mid, smoothstep(0.22, 0.68, heat));
+    col = mix(col, hottest, smoothstep(0.7, 1.0, heat) * (0.6 + 0.4 * uSwell));
+    // a touch past full at the height of the swell, for the bloom
+    col *= 1.0 + 0.25 * uSwell * smoothstep(0.5, 1.0, heat);
+    gl_FragColor = vec4(col, 1.0);
+  }
+`
+
+/** Where a melt's plates cool to: slag, a hair off black. */
+export const MELT_CRUST = new THREE.Color(0x1a0805)
+
+/**
+ * A melt for a flat disc of `radius` (a CircleGeometry, in its own xy). Its `uHot` is a
+ * Color the body keeps setting, as it did a basic material's `.color`. Unfogged: the
+ * lights-out rule. Each gets its own seed, so two never churn in step.
+ */
+export function meltMaterial(radius: number, hot: THREE.Color): THREE.ShaderMaterial {
+  return new THREE.ShaderMaterial({
+    vertexShader: MELT_VERT,
+    fragmentShader: MELT_FRAG,
+    uniforms: {
+      uTime: VFX_TIME,
+      uHot: { value: hot },
+      uCrust: { value: MELT_CRUST },
+      uSwell: { value: 0 },
+      uRadius: { value: radius },
+      uSeed: { value: Math.random() * 10 },
+      uBall: { value: 0 },
+    },
+  })
+}
+
+/** The same melt on a sphere of `radius`: a gob of it thrown, crusted over and cracking hot. */
+export function meltBallMaterial(radius: number, hot: THREE.Color): THREE.ShaderMaterial {
+  const m = meltMaterial(radius, hot)
+  m.uniforms.uBall!.value = 1
+  return m
+}

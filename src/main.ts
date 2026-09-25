@@ -8,7 +8,7 @@ import { Combat, eliteLine, type Archetype, type CastResult, type EliteMod, type
 import { STARTING, PARTS, byId, type AbilityDef, type AbilityShape, type BeatKey } from './abilities'
 import { SLOT_NAMES, type SlotName } from './still'
 import type { Enemy, EnemyEvent } from './enemy'
-import { isBoss } from './boss'
+import { isBoss, Assembler } from './boss'
 import { Arbiter, ARBITER, arbiterHusk } from './arbiter'
 import { DayTracker } from './day'
 import type { HazardSpec } from './hazard'
@@ -459,6 +459,8 @@ const combat = new Combat(world.scene, OPEN, {
     if (e.kind === 'thief') return
     breakHint(e)
     if (isBoss(e)) {
+      // the Assembler shifts its weight into every move: pressure let into its rams
+      if (e instanceof Assembler) sfx.hydraulic('lift', panOf(e.pos), hush())
       // aimed moves whistle and click like the sentinel; heavy ones rise like the hulk
       const cue = e.cue
       if (cue.voice === 'aim') windups.set(e, sfx.asVoice(sfx.aim(ms, cue.lockAt, panOf(e.pos), windupGain())))
@@ -586,6 +588,10 @@ function packEvent(ev: EnemyEvent) {
       break
     case 'arbiter':
       arbiterBeat(ev)
+      break
+    case 'lock':
+      // the Arbiter's aim sets with a clank of its brake (the others' locks are in their windup voices)
+      if (ev.e instanceof Arbiter) sfx.servoLock(panOf(ev.e.pos))
       break
   }
 }
@@ -739,7 +745,11 @@ function arbiterFx() {
     whirr.stop()
     whirr = null
   }
-  if (sweeping && whirr) whirr.pan(panOf((b as Arbiter).gazePoint(tmpGaze)))
+  if (sweeping && whirr) {
+    whirr.pan(panOf((b as Arbiter).gazePoint(tmpGaze)))
+    // its servo's whine follows how fast the head is turning, 1 at the sweep's own rate
+    whirr.speed?.((b as Arbiter).turnSpeed / (ARBITER.wedge.degPerS * Math.PI / 180))
+  }
   for (const sl of hud.slots) {
     const hot = hud.heatLeft(sl.slot) > 0
     if (!hot && hotSlots.has(sl.slot)) sfx.cool()
@@ -1157,10 +1167,12 @@ function updateShrinePrompt() {
 hud.onPrompt(() => {
   // in the room, the board's card opens the look-back screen, and the notebook's opens the book
   if (run.phase === 'workshop' && workshop.near === 'board') {
+    sfx.uiClick()
     void lookBack()
     return
   }
   if (run.phase === 'workshop' && workshop.near === 'notebook') {
+    sfx.uiClick()
     openNotebook()
     return
   }
@@ -1395,6 +1407,7 @@ hud.onTake(() => {
 hud.onCompare(() => {
   const g = offered
   if (!g || !canPause()) return
+  sfx.uiClick()
   const current = hud.loadout.find((p) => p.slot === g.def.slot) ?? null
   openPause()
   pause.compare(current, g.def, hud.loadout, () => {
@@ -1459,6 +1472,7 @@ function resume() {
 
 hud.onPause(() => {
   if (!canPause()) return
+  sfx.uiClick()
   openPause()
   pause.loadout(hud.slots, resume)
 })
@@ -1980,6 +1994,7 @@ let fadeInT = 0
 /** The words' button: everything fades, then the room, and the way into it this ending had. */
 function continueHome() {
   if (run.phase !== 'ending') return
+  sfx.uiClick()
   run.phase = 'arriving'
   run.t = 0
   run.swapped = false
@@ -2075,6 +2090,7 @@ function renderChooser() {
 
 hud.onChoose((id) => {
   if (!chooserAt) return
+  sfx.uiClick()
   chooserSel = id
   renderChooser()
 })
@@ -2084,6 +2100,7 @@ function chooserAction() {
   if (!chooserAt || !chooserSel || run.phase !== 'workshop') return
   const done = chooserAt === 'hook' ? hang(save, chooserSel) : toggleTurn(save, chooserSel)
   if (!done) return
+  sfx.uiClick()
   store.write()
   workshop.refresh(save)
   if (chooserAt === 'hook') sfx.plaqueTurn(0)
@@ -2838,7 +2855,10 @@ function footsteps(now: number) {
     const ek = Math.floor(e.gait / Math.PI)
     if (d <= STEP_HEAR && e.walking && ek !== lastStep.get(e) && stepTimes.length < STEPS_MAX) {
       const who = e.kind === 'chaser' ? 'hulk' : e.kind === 'ranged' ? 'tripod' : e.kind === 'charger' ? 'ram' : e.kind === 'thief' ? 'thief' : 'boss'
-      sfx.step(who, panOf(e.pos), (1 - d / STEP_HEAR) * (e.kind === 'chaser' ? Math.min(1, e.size) : 1) * quiet, placeNow().footsteps)
+      const loud = (1 - d / STEP_HEAR) * (e.kind === 'chaser' ? Math.min(1, e.size) : 1) * quiet
+      sfx.step(who, panOf(e.pos), loud, placeNow().footsteps)
+      // the Assembler's weight comes down through its rams: a hiss and a thunk under the step
+      if (e instanceof Assembler) sfx.hydraulic('step', panOf(e.pos), loud)
       stepTimes.push(now)
     }
     lastStep.set(e, ek)

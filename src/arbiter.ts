@@ -226,6 +226,8 @@ export class Arbiter implements Boss {
   private backLit = 0
   private recoil = 0
   private headYaw = 0
+  /** How fast the head is turning, rad/s, smoothed: what its servo's whine follows. */
+  turnSpeed = 0
   private hatch = 0
   private lift = 0
   private dressN = 0
@@ -726,6 +728,7 @@ export class Arbiter implements Boss {
     let yaw = this.headYaw
     if (this.state === 'watch' || this.state === 'unfold' || this.state === 'shellAim') yaw = this.wedges[0] ?? yaw
     else if (this.state === 'track') yaw = this.aim
+    if (dt > 0) this.turnSpeed += (Math.abs(angleDiff(yaw, this.headYaw)) / dt - this.turnSpeed) * Math.min(1, dt * 12)
     this.headYaw = yaw
     const shake = this.state === 'judder' ? 0.05 * Math.sin(Math.PI * 2 * 25 * this.bob) : 0
     this.head.rotation.y = yaw + shake

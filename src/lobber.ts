@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import { HIDES, hideMaterials } from './hide'
 import type { Terrain } from './terrain'
 import { DECAL_Y } from './world'
-import { tellMaterial, releaseTell, trackingDim, tellOrder, haloTexture } from './vfx'
+import { tellMaterial, releaseTell, trackingDim, tellOrder, haloTexture, meltMaterial } from './vfx'
 import { rod } from './ranged'
 import {
   slide, statusTint, disposeBody, reelCore, REEL, CORE, CORE_ASLEEP,
@@ -34,6 +34,8 @@ const BODY = HIDES.lobber.body
 const JOINT = HIDES.lobber.joint
 /** Where the shell leaves from: the crucible's mouth. */
 const MOUTH_Y = 1.45
+/** The glow over the melt: ember-tinted, and faint enough that the melt's texture shows through it. */
+const HALO = { color: 0xff8a3c, idle: 0.22, swell: 0.55 }
 
 export class Lobber implements Enemy {
   readonly kind = 'ranged'
@@ -80,7 +82,9 @@ export class Lobber implements Enemy {
 
   private readonly mat: THREE.MeshStandardMaterial
   private readonly jointMat: THREE.MeshStandardMaterial
-  private readonly coreMat: THREE.MeshBasicMaterial
+  /** The melt's heat: lit, banked asleep, pulsing while it reels. Its disc's shader reads it. */
+  private readonly coreColor = new THREE.Color(CORE)
+  private readonly coreMat: THREE.ShaderMaterial
   private readonly pot = new THREE.Group()
   private readonly disc: THREE.Mesh
   private readonly halo: THREE.Sprite
@@ -115,15 +119,16 @@ export class Lobber implements Enemy {
     const lip = new THREE.Mesh(new THREE.TorusGeometry(0.42, 0.04, 6, 16), this.jointMat)
     lip.rotation.x = Math.PI / 2
     lip.position.y = 0.5
-    // the lights-out rule: its core ignores the fog
-    this.coreMat = new THREE.MeshBasicMaterial({ color: CORE, fog: false })
-    this.disc = new THREE.Mesh(new THREE.CircleGeometry(0.36, 16), this.coreMat)
+    // molten metal, not a flat light: a churning core under drifting crust, slag at the rim.
+    // Unfogged, by the lights-out rule.
+    this.coreMat = meltMaterial(0.36, this.coreColor)
+    this.disc = new THREE.Mesh(new THREE.CircleGeometry(0.36, 32), this.coreMat)
     this.disc.rotation.x = -Math.PI / 2
     this.disc.position.y = 0.42
-    this.halo = new THREE.Sprite(new THREE.SpriteMaterial({ map: haloTexture(), blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, fog: false }))
-    // a smaller glow than the sentinel's lens: over a molten disc a big one washed the pot pink
+    // tinted down to ember and kept faint: the shared halo at full, added over the melt, washed it salmon
+    this.halo = new THREE.Sprite(new THREE.SpriteMaterial({ map: haloTexture(), color: HALO.color, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, fog: false }))
     this.halo.scale.setScalar(0.7)
-    this.halo.material.opacity = 0.7
+    this.halo.material.opacity = HALO.idle
     this.halo.position.y = 0.55
     this.pot.add(shell, base, lip, this.disc, this.halo)
     this.group.add(this.legs, this.pot)
@@ -247,7 +252,7 @@ export class Lobber implements Enemy {
       case 'recover':
         if (this.timer <= 0) {
           this.phase = 'approach'
-          if (this.reel >= 0) this.coreMat.color.setHex(CORE)
+          if (this.reel >= 0) this.coreColor.setHex(CORE)
           this.reel = -1
         }
         break
@@ -294,15 +299,17 @@ export class Lobber implements Enemy {
     const tilt = winding ? 0.5 * t : this.recoil * 0.3
     this.pot.rotation.x = -tilt
     this.disc.scale.setScalar(1 + (winding ? 0.4 * t : 0))
+    this.coreMat.uniforms.uSwell!.value = winding ? t : 0
     if (this.reel >= 0) {
       // reeling: the crucible knocked over toward its lip, the melt open and pulsing hot
       this.reel += dt * 1000
       this.pot.rotation.x = 0.45
-      reelCore(this.coreMat.color, CORE, this.reel / 1000)
+      reelCore(this.coreColor, CORE, this.reel / 1000)
       this.disc.scale.setScalar(1.25)
+      this.coreMat.uniforms.uSwell!.value = 0.6
     }
     this.halo.scale.setScalar(0.7 + (winding ? 0.5 * t : 0))
-    this.halo.material.opacity = this.asleep ? 0 : 0.7
+    this.halo.material.opacity = this.asleep ? 0 : HALO.idle + (winding ? (HALO.swell - HALO.idle) * t : 0)
     this.pot.position.y = 1.0 - this.recoil * 0.08
 
     const step = this.phase === 'approach' ? this.stepping : 0
@@ -326,7 +333,7 @@ export class Lobber implements Enemy {
     // asleep: sunk on its knees, the pot tipped forward
     this.pot.rotation.x = this.asleep ? 0.35 : 0
     this.pot.position.y = this.asleep ? 0.85 : 1.0
-    this.halo.material.opacity = this.asleep ? 0 : 0.7
+    this.halo.material.opacity = this.asleep ? 0 : HALO.idle
     this.tint()
   }
 
@@ -344,7 +351,7 @@ export class Lobber implements Enemy {
 
   setAsleep(asleep: boolean) {
     this.asleep = asleep
-    this.coreMat.color.setHex(asleep ? CORE_ASLEEP : CORE)
+    this.coreColor.setHex(asleep ? CORE_ASLEEP : CORE)
     if (!asleep) {
       this.flash = 1
       this.reload = LOBBER.reloadMs * 0.5
