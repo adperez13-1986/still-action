@@ -2,6 +2,7 @@ import * as THREE from 'three'
 import { DECAL_Y } from './world'
 import { tellMaterial, releaseTell } from './vfx'
 import type { Terrain } from './terrain'
+import type { EliteMod } from './combat'
 
 /**
  * Every archetype is the same machine: approach, windup, strike, recover.
@@ -16,7 +17,18 @@ export type EnemyAction =
    * else (the decoy) still lands on Still if he's inside it. Without it, only the
    * target is hit.
    */
-  | { kind: 'melee'; damage: number; reach?: number }
+  | {
+      kind: 'melee'
+      damage: number
+      reach?: number
+      /** Who swung. The Anvil needs it to stop a rush; the top-up and Brace ignore it. */
+      source?: Enemy
+      /**
+       * The enemy already tested the real Still (ctx.player) and hit, so Combat skips
+       * its own test. A lane aimed at the decoy still hits him if his feet are in it.
+       */
+      tested?: boolean
+    }
   /** `bounces`: an answer shot reflects off walls this many times, retracing a banked bolt. */
   | { kind: 'shot'; dir: THREE.Vector3; damage: number; bounces?: number }
   /** A fan of shots from one point (the boss's cannon). */
@@ -46,9 +58,46 @@ export function shoveVelocity(dx: number, dz: number, distance: number): THREE.V
   return new THREE.Vector3((dx / len) * distance * KNOCK_DECAY, 0, (dz / len) * distance * KNOCK_DECAY)
 }
 
+/**
+ * What every enemy's update can see beyond its target. One object, owned by
+ * Combat and reused every call, so nothing here may be kept past the tick.
+ */
+export interface EnemyCtx {
+  /** Still's centre. Never the decoy: every hit test an enemy does itself uses this. */
+  readonly player: THREE.Vector3
+  /** Still's velocity this tick, u/s, from the position delta. Zero on the first tick and after a jump. */
+  readonly playerVel: THREE.Vector3
+  /** Combat's game clock, seconds. */
+  readonly now: number
+  /** No booked lock within BOOK_GAP of now + offsetMs: two locks never land on top of each other. */
+  canLock(offsetMs: number): boolean
+  book(owner: object, offsetMs: number): void
+  /** Rams: the pack's windup/rush token is free for e (nobody, e itself, or its holder is past its rush). */
+  tokenFree(e: Enemy): boolean
+  takeToken(e: Enemy): void
+  /** In the clamp's throw. */
+  held(e: Enemy): boolean
+  emit(ev: EnemyEvent): void
+}
+
+/** Instants the run dresses (sound, sparks, the log). Lasting state is polled instead. */
+export type EnemyEvent =
+  /** A committed aim: the ram 495 ms in (`end` = where its lane ends), the sentinel's line freezing (`end` null). */
+  | { kind: 'lock'; e: Enemy; end: THREE.Vector3 | null }
+  /** The ram scraping a hoof while it tracks, at 80 and 300 ms. */
+  | { kind: 'paw'; e: Enemy; at: THREE.Vector3 }
+  | { kind: 'rushEnd'; e: Enemy; how: 'open' | 'wall' | 'caught' | 'trip'; at: THREE.Vector3 }
+  /** A rush shouldering another enemy aside. */
+  | { kind: 'trample'; e: Enemy; victim: Enemy; at: THREE.Vector3; dir: THREE.Vector3 }
+  /** The hatch slams: the stun window is over. */
+  | { kind: 'stunEnd'; e: Enemy }
+
 export interface Enemy {
-  readonly kind: 'chaser' | 'ranged' | 'boss'
-  /** Body radius for every hit check: the boss is far bigger than a hulk. */
+  readonly kind: 'chaser' | 'ranged' | 'charger' | 'boss'
+  /**
+   * Body radius for every hit check: base × size, so an elite is a bigger target
+   * and a split half a smaller one. The boss is far bigger than a hulk.
+   */
   readonly radius: number
   readonly group: THREE.Group
   /** Telegraphs live in world space, not under the body, so a lunge can't scale them. */
@@ -90,15 +139,37 @@ export interface Enemy {
    * be interrupted (the Assembler) returns false and just takes the hit.
    */
   interrupt: () => boolean
-  update: (dt: number, target: THREE.Vector3, terrain: Terrain) => EnemyAction | null
+  update: (dt: number, target: THREE.Vector3, terrain: Terrain, ctx: EnemyCtx) => EnemyAction | null
   /** Presentation only, no thinking: while asleep, or walking home. `face` is where to look. */
   idle: (dt: number, face: THREE.Vector3) => void
   /** Dim and dark-cored while asleep; a flash on waking. */
   setAsleep: (asleep: boolean) => void
+  /** Crowning calls it after size, hp and armor are set, for a mod the body itself has to know about. */
+  setElite?: (mod: EliteMod) => void
   dispose: (scene: THREE.Scene) => void
 }
 
-const SLEEP_BODY = new THREE.Color(0.35, 0.35, 0.38)
+/** Still's body radius. Lives here so an enemy that tests him itself can import it without a cycle. */
+export const PLAYER_RADIUS = 0.42
+
+/** Distance from a point to a segment, on the floor. */
+export function distToSegment(px: number, pz: number, ax: number, az: number, bx: number, bz: number): number {
+  const vx = bx - ax
+  const vz = bz - az
+  const len = vx * vx + vz * vz
+  const t = len > 0 ? Math.max(0, Math.min(1, ((px - ax) * vx + (pz - az) * vz) / len)) : 0
+  return Math.hypot(px - (ax + vx * t), pz - (az + vz * t))
+}
+
+/** Turn `from` toward `to` by at most `maxStep` radians, the short way round. */
+export function turn(from: number, to: number, maxStep: number): number {
+  let d = to - from
+  while (d > Math.PI) d -= Math.PI * 2
+  while (d < -Math.PI) d += Math.PI * 2
+  return from + Math.max(-maxStep, Math.min(maxStep, d))
+}
+
+export const SLEEP_BODY = new THREE.Color(0.35, 0.35, 0.38)
 
 /**
  * Free everything an enemy built for itself: every mesh's geometry and material
@@ -142,12 +213,12 @@ export function statusTint(joint: THREE.MeshStandardMaterial, shell: THREE.MeshS
     shell.color.multiplyScalar(1 - AIR_SHADE * air)
   }
 }
-const CORE_ASLEEP = 0x2a1512
+export const CORE_ASLEEP = 0x2a1512
 
 /** Dark rusted iron. Red belongs to the enemies: their cores and their tells. */
-const BODY = 0x5b3b35
-const JOINT = 0x2b2426
-const CORE = 0xff5a3c
+export const BODY = 0x5b3b35
+export const JOINT = 0x2b2426
+export const CORE = 0xff5a3c
 
 function cyl(r0: number, r1: number, len: number, mat: THREE.Material, y: number) {
   const m = new THREE.Mesh(new THREE.CylinderGeometry(r0, r1, len, 10), mat)
@@ -169,7 +240,7 @@ export const CHASER = {
 /** Closes, telegraphs a ring, strikes where the ring is. */
 export class Chaser implements Enemy {
   readonly kind = 'chaser'
-  readonly radius = CHASER.bodyRadius
+  get radius() { return CHASER.bodyRadius * this.size }
   readonly windupMs = CHASER.windupMs
   readonly knock = new THREE.Vector3()
   readonly group = new THREE.Group()
@@ -331,7 +402,7 @@ export class Chaser implements Enemy {
         if (staggered) break
         // no striking through a wall, even a low one: close in until the way is clear
         if (dist > CHASER.strikeRange || !terrain.lineClear(this.pos.x, this.pos.z, target.x, target.z, 0.2)) {
-          const to = terrain.nextStep(this.pos.x, this.pos.z, target.x, target.z, CHASER.bodyRadius)
+          const to = terrain.nextStep(this.pos.x, this.pos.z, target.x, target.z, this.radius)
           const sx = to.x - this.pos.x
           const sz = to.z - this.pos.z
           const sd = Math.hypot(sx, sz) || 1
@@ -365,7 +436,7 @@ export class Chaser implements Enemy {
       }
     }
 
-    terrain.pushOut(this.pos, CHASER.bodyRadius)
+    terrain.pushOut(this.pos, this.radius)
 
     // --- presentation ---
     const winding = this.phase === 'windup'

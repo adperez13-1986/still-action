@@ -3,7 +3,7 @@ import type { Terrain } from './terrain'
 import { DECAL_Y } from './world'
 import { tellMaterial, releaseTell } from './vfx'
 import { PART, type Flip } from './parts'
-import { slide, statusTint, disposeBody, type Enemy, type EnemyAction, type EnemyPhase } from './enemy'
+import { slide, statusTint, disposeBody, type Enemy, type EnemyAction, type EnemyCtx, type EnemyPhase } from './enemy'
 
 /**
  * Pale steel, lighter than anything else in the room so the silhouette reads on
@@ -49,7 +49,7 @@ function strip(width: number, length: number) {
 /** Keeps its distance, telegraphs a line, fires down it. Walls block the shot. */
 export class Ranged implements Enemy {
   readonly kind = 'ranged'
-  readonly radius = RANGED.bodyRadius
+  get radius() { return RANGED.bodyRadius * this.size }
   readonly windupMs = RANGED.windupMs
   readonly knock = new THREE.Vector3()
   readonly group = new THREE.Group()
@@ -190,7 +190,7 @@ export class Ranged implements Enemy {
     return false
   }
 
-  update(dt: number, target: THREE.Vector3, terrain: Terrain): EnemyAction | null {
+  update(dt: number, target: THREE.Vector3, terrain: Terrain, ctx: EnemyCtx): EnemyAction | null {
     this.timer -= dt * 1000
     this.reload -= dt * 1000
     // an answer waits a few seconds for the reload, then it's forgotten
@@ -216,7 +216,7 @@ export class Ranged implements Enemy {
         const sight = terrain.lineClear(this.pos.x, this.pos.z, target.x, target.z, 0.2, true)
         if (!sight) {
           // no shot from here: go round the wall until there is one
-          const to = terrain.nextStep(this.pos.x, this.pos.z, target.x, target.z, RANGED.bodyRadius)
+          const to = terrain.nextStep(this.pos.x, this.pos.z, target.x, target.z, this.radius)
           const sd = Math.hypot(to.x - this.pos.x, to.z - this.pos.z) || 1
           mx = (to.x - this.pos.x) / sd
           mz = (to.z - this.pos.z) / sd
@@ -240,14 +240,22 @@ export class Ranged implements Enemy {
         this.pos.z += mz * RANGED.speed * this.speedMul * dt
         this.stepping = Math.hypot(mx, mz)
 
-        // an answer comes first: it aims at the bounce and doesn't track, whatever the sight or the band
+        // an answer comes first: it aims at the bounce and doesn't track, whatever the sight or the band.
+        // Every lock is booked, so two never land within BOOK_GAP of each other: it waits, still moving.
+        const lockMs = RANGED.windupMs * RANGED.lockAt
         if (this.answer && this.reload <= 0) {
-          this.phase = 'windup'
-          this.timer = RANGED.windupMs
-          this.aim = Math.atan2(this.answer.at.x - this.pos.x, this.answer.at.z - this.pos.z)
-          this.locked = true
-          this.answering = true
-        } else if (this.reload <= 0 && dist <= RANGED.fireRange && sight) {
+          if (ctx.canLock(0)) {
+            ctx.book(this, 0)
+            this.phase = 'windup'
+            this.timer = RANGED.windupMs
+            this.aim = Math.atan2(this.answer.at.x - this.pos.x, this.answer.at.z - this.pos.z)
+            this.locked = true
+            this.answering = true
+            // locked from the start: the answer never tracks
+            ctx.emit({ kind: 'lock', e: this, end: null })
+          }
+        } else if (this.reload <= 0 && dist <= RANGED.fireRange && sight && ctx.canLock(lockMs)) {
+          ctx.book(this, lockMs)
           this.phase = 'windup'
           this.timer = RANGED.windupMs
           this.locked = false
@@ -258,7 +266,10 @@ export class Ranged implements Enemy {
         const t = 1 - this.timer / RANGED.windupMs
         if (!this.locked) {
           this.aim = toward
-          if (t >= RANGED.lockAt) this.locked = true
+          if (t >= RANGED.lockAt) {
+            this.locked = true
+            ctx.emit({ kind: 'lock', e: this, end: null })
+          }
         }
         if (this.timer <= 0) {
           this.phase = 'strike'
@@ -291,7 +302,7 @@ export class Ranged implements Enemy {
       }
     }
 
-    terrain.pushOut(this.pos, RANGED.bodyRadius)
+    terrain.pushOut(this.pos, this.radius)
 
     // --- presentation ---
     const winding = this.phase === 'windup'

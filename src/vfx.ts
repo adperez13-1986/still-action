@@ -376,6 +376,27 @@ export class Vfx {
   }
 }
 
+let halo: THREE.CanvasTexture | null = null
+
+/**
+ * A soft ember glow, drawn once and shared by every body that wears one. Shared,
+ * so nothing disposes it: disposeBody frees materials, never their maps.
+ */
+export function haloTexture(): THREE.Texture {
+  if (halo) return halo
+  const c = document.createElement('canvas')
+  c.width = c.height = 64
+  const g = c.getContext('2d')!
+  const grad = g.createRadialGradient(32, 32, 0, 32, 32, 32)
+  grad.addColorStop(0, 'rgba(255,120,80,0.9)')
+  grad.addColorStop(0.35, 'rgba(255,80,50,0.35)')
+  grad.addColorStop(1, 'rgba(255,60,40,0)')
+  g.fillStyle = grad
+  g.fillRect(0, 0, 64, 64)
+  halo = new THREE.CanvasTexture(c)
+  return halo
+}
+
 // --- telegraphs: animated, textured, instead of flat red ---
 
 const TELL_VERT = /* glsl */ `

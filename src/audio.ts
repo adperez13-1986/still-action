@@ -122,7 +122,7 @@ function sample(c: AudioContext, name: SampleName, dest: AudioNode, gain: number
 }
 
 /** Footsteps. Who's walking sets the weight; distance sets how loud. */
-export function step(who: 'still' | 'hulk' | 'tripod' | 'boss', pan: number, loudness = 1) {
+export function step(who: 'still' | 'hulk' | 'tripod' | 'ram' | 'boss', pan: number, loudness = 1) {
   const c = live()
   if (!c || loudness <= 0.02) return
   const d = out(c, who === 'still' ? 'auto' : 'enemy', pan)
@@ -138,6 +138,11 @@ export function step(who: 'still' | 'hulk' | 'tripod' | 'boss', pan: number, lou
       break
     case 'tripod':
       sample(c, 'tin', d, 0.35 * loudness, 1.6)
+      break
+    case 'ram':
+      // lighter than the hulk, and shod: a clink of iron under each hoof
+      sample(c, 'step', d, 0.7 * loudness, 0.8)
+      sample(c, 'metalLight', d, 0.12 * loudness, 0.7)
       break
     case 'boss':
       sample(c, 'softHeavy', d, 0.9 * loudness, 0.55)
@@ -186,11 +191,45 @@ function vary(v: number, amount: number) {
   return v * (1 + (Math.random() * 2 - 1) * amount)
 }
 
+const clampPan = (p: number) => Math.max(-1, Math.min(1, p))
+
 function out(c: AudioContext, bus: Bus, pan = 0): AudioNode {
   const p = c.createStereoPanner()
-  p.pan.value = Math.max(-1, Math.min(1, pan))
+  p.pan.value = clampPan(pan)
   p.connect(buses[bus])
   return p
+}
+
+/** A panner the caller keeps and moves: a voice that follows its source. */
+function livePan(c: AudioContext, bus: Bus, pan: number) {
+  const p = c.createStereoPanner()
+  p.pan.value = clampPan(pan)
+  p.connect(buses[bus])
+  return p
+}
+
+/**
+ * A voice that can be cut and can follow its source. `stop(true)` cuts it dead
+ * (a broken windup: the silence is part of the parry); otherwise it fades.
+ */
+export interface Voice {
+  stop: (hard?: boolean) => void
+  pan: (p: number) => void
+  /** The cheap Doppler at a rush's closest pass. */
+  dip?: () => void
+}
+/** An old stop-only voice, as a Voice. */
+export const asVoice = (stop: (hard?: boolean) => void): Voice => ({ stop, pan: () => {} })
+
+/** The stop for everything routed through `g`, until the voice would have ended anyway. */
+function gate(g: GainNode, c: AudioContext, until: number) {
+  return (hard = false) => {
+    const now = c.currentTime
+    if (now >= until) return
+    g.gain.cancelScheduledValues(now)
+    if (hard) g.gain.setValueAtTime(0, now)
+    else g.gain.setTargetAtTime(0.0001, now, 0.01)
+  }
 }
 
 function env(g: GainNode, t: number, peak: number, attack: number, decay: number) {
@@ -515,6 +554,184 @@ export function clang(pan: number) {
   sample(c, 'bell', d, 1, 0.7)
   for (const f of [620, 930, 1390]) tone(c, d, 'triangle', t, f, f * 0.98, 0.9, 0.06)
   hiss(c, d, t, 0.2, 0.6, 'bandpass', 2500, 900, 1)
+}
+
+// --- the ram ---
+
+/**
+ * The ram's tell, heard: an engine revving up to the lock, a ratchet tick per seam
+ * segment as its spine fills, two hoof scrapes, a heavy latch at the lock (the
+ * moment the lane stops following you), then a valve hissing open toward the rush.
+ * You can read a ram you aren't looking at.
+ */
+export function rev(ms: number, lockAt: number, pan: number, gain = 1): Voice {
+  const c = live()
+  if (!c) return asVoice(() => {})
+  const t = c.currentTime
+  const dur = ms / 1000
+  const lock = t + dur * lockAt
+  const p = livePan(c, 'enemy', pan)
+  // everything goes through one gain, so a stop silences what's already scheduled
+  const g = c.createGain()
+  g.gain.value = gain
+  g.connect(p)
+
+  // the engine: a distorted saw climbing an octave to the lock, then held
+  const o = c.createOscillator()
+  o.type = 'sawtooth'
+  o.frequency.setValueAtTime(55, t)
+  o.frequency.exponentialRampToValueAtTime(110, lock)
+  o.frequency.setValueAtTime(110, lock)
+  const lp = c.createBiquadFilter()
+  lp.type = 'lowpass'
+  lp.Q.value = 4
+  lp.frequency.setValueAtTime(250, t)
+  lp.frequency.exponentialRampToValueAtTime(1100, lock)
+  lp.frequency.setValueAtTime(1100, lock)
+  const eg = c.createGain()
+  eg.gain.setValueAtTime(0.0001, t)
+  eg.gain.linearRampToValueAtTime(0.2, lock)
+  eg.gain.setValueAtTime(0.2, t + dur)
+  eg.gain.exponentialRampToValueAtTime(0.0001, t + dur + 0.03)
+  // locked, it shudders: a 14 Hz tremolo on the held note
+  const lfo = c.createOscillator()
+  lfo.frequency.value = 14
+  const depth = c.createGain()
+  depth.gain.value = 0.08
+  lfo.connect(depth).connect(eg.gain)
+  lfo.start(lock)
+  lfo.stop(t + dur)
+  o.connect(distorted(c, lp))
+  lp.connect(eg).connect(g)
+  o.start(t)
+  o.stop(t + dur + 0.05)
+
+  // the ratchet: one tick per seam segment
+  for (let i = 0; i < 5; i++) {
+    const f = 900 + 120 * i
+    tone(c, g, 'square', t + (i + 1) * 0.099, f, f * 0.6, 0.014, 0.12, 0.0008)
+  }
+  // the hoof pawing at 80 and 300 ms
+  for (const at of [0.08, 0.3]) {
+    hiss(c, g, t + at, 0.09, 0.25, 'bandpass', 1600, 500, 1.2)
+    sample(c, 'step', g, 0.4, 0.55, at)
+  }
+  // the latch: the lane is set
+  tone(c, g, 'square', lock, 700, 380, 0.03, 0.2, 0.0008)
+  tone(c, g, 'sine', lock, 110, 70, 0.08, 0.5)
+  sample(c, 'metalHeavy', g, 0.7, 1.25, lock - t)
+  // the valve: a hiss opening from the lock to the rush
+  const s = c.createBufferSource()
+  s.buffer = noise
+  s.loop = true
+  const hp = c.createBiquadFilter()
+  hp.type = 'highpass'
+  hp.frequency.setValueAtTime(3000, lock)
+  hp.frequency.exponentialRampToValueAtTime(6000, t + dur)
+  const vg = c.createGain()
+  vg.gain.setValueAtTime(0.0001, t)
+  vg.gain.setValueAtTime(0.02, lock)
+  vg.gain.linearRampToValueAtTime(0.12, t + dur)
+  vg.gain.exponentialRampToValueAtTime(0.0001, t + dur + 0.02)
+  s.connect(hp).connect(vg).connect(g)
+  s.start(lock, Math.random() * 0.5)
+  s.stop(t + dur + 0.04)
+
+  return { stop: gate(g, c, t + dur), pan: (v) => p.pan.setTargetAtTime(clampPan(v), c.currentTime, 0.03) }
+}
+
+/** The rush: a roar falling away and a run of hooves, panned live as it crosses the screen. */
+export function rush(pan: number): Voice {
+  const c = live()
+  if (!c) return asVoice(() => {})
+  const t = c.currentTime
+  const p = livePan(c, 'enemy', pan)
+  const g = c.createGain()
+  g.connect(p)
+  const o = c.createOscillator()
+  o.type = 'sawtooth'
+  o.frequency.setValueAtTime(110, t)
+  o.frequency.exponentialRampToValueAtTime(55, t + 0.55)
+  const eg = c.createGain()
+  env(eg, t, 0.5, 0.003, 0.55)
+  o.connect(distorted(c, eg))
+  eg.connect(g)
+  o.start(t)
+  o.stop(t + 0.6)
+  hiss(c, g, t, 0.5, 0.45, 'bandpass', 500, 1400, 1)
+  sample(c, 'softHeavy', g, 0.8, 0.8)
+  for (let i = 0; i < 6; i++) sample(c, 'step', g, 0.5 * 0.85 ** i, 0.6, i * 0.07)
+  return {
+    stop: (hard) => {
+      const now = c.currentTime
+      g.gain.cancelScheduledValues(now)
+      if (hard) g.gain.setValueAtTime(0, now)
+      else g.gain.setTargetAtTime(0.0001, now, 0.02)
+    },
+    pan: (v) => p.pan.setTargetAtTime(clampPan(v), c.currentTime, 0.02),
+    dip: () => {
+      const now = c.currentTime
+      o.frequency.cancelScheduledValues(now)
+      o.frequency.setTargetAtTime(o.frequency.value * 0.85, now, 0.03)
+    },
+  }
+}
+
+/** A ram's face into a wall: stone and iron, and a bell of the boiler ringing (not when it's caught on the clamp). */
+export function ramCrash(pan: number, bell = true) {
+  const c = live()
+  if (!c) return
+  const t = c.currentTime
+  const d = out(c, 'hits', pan)
+  tone(c, d, 'sine', t, 130, 38, 0.35, 1)
+  hiss(c, d, t, 0.35, 0.6, 'lowpass', 4500, 250, 0.8)
+  sample(c, 'metalHeavy', d, 1, 0.75)
+  sample(c, 'mining', d, 0.7, 0.7, 0.01)
+  if (bell) sample(c, 'bell', d, 0.55, 1.35)
+}
+
+/**
+ * The stun: struck iron ringing, wobbling as it's dazed, and the hatch slamming
+ * shut when the window closes. Cut hard if it dies inside it.
+ */
+export function dazed(ms: number, pan: number): Voice {
+  const c = live()
+  if (!c) return asVoice(() => {})
+  const t = c.currentTime
+  const dur = ms / 1000
+  const p = livePan(c, 'enemy', pan)
+  const g = c.createGain()
+  g.connect(p)
+  // the wobble: a 5 Hz swing on everything that rings
+  const wob = c.createGain()
+  wob.gain.value = 1
+  const lfo = c.createOscillator()
+  lfo.frequency.value = 5
+  const depth = c.createGain()
+  depth.gain.value = 0.5
+  lfo.connect(depth).connect(wob.gain)
+  lfo.start(t)
+  lfo.stop(t + dur)
+  wob.connect(g)
+  const ring = c.createGain()
+  ring.gain.setValueAtTime(0.0001, t)
+  ring.gain.linearRampToValueAtTime(1, t + 0.003)
+  ring.gain.exponentialRampToValueAtTime(0.0001, t + dur)
+  ring.connect(wob)
+  for (const f of [1040, 1560, 2330]) {
+    const o = c.createOscillator()
+    o.type = 'triangle'
+    o.frequency.value = vary(f, 0.01)
+    const og = c.createGain()
+    og.gain.value = 0.05
+    o.connect(og).connect(ring)
+    o.start(t)
+    o.stop(t + dur + 0.02)
+  }
+  // the hatch slams: the window is shut
+  tone(c, g, 'square', t + dur, 1200, 700, 0.015, 0.2)
+  sample(c, 'metalMedium', g, 0.5, 1.4, dur)
+  return { stop: gate(g, c, t + dur + 0.05), pan: (v) => p.pan.setTargetAtTime(clampPan(v), c.currentTime, 0.03) }
 }
 
 /** A pack noticing you: two sharp rising notes, so you know you've pulled them even off screen. */

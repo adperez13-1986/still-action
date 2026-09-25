@@ -651,7 +651,7 @@ export class PartFx {
       }
       const markT = this.status.statusOf(e)?.markT ?? 0
       const close = b.end ? 1 : 1 - Math.min(1, markT / MARK_S)
-      let r = Math.max(0.45, e.radius * e.size * 1.3) * (1 - 0.45 * close)
+      let r = Math.max(0.45, e.radius * 1.3) * (1 - 0.45 * close)
       let opacity = 0.9
       if (b.end) {
         b.endT += dt

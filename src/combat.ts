@@ -1,8 +1,10 @@
 import * as THREE from 'three'
 import { DECAL_Y } from './world'
 import { tellMaterial, releaseTell, COLD, EMBER, type Vfx } from './vfx'
-import { Chaser, shoveVelocity, type Enemy } from './enemy'
+import { Chaser, shoveVelocity, distToSegment, PLAYER_RADIUS, type Enemy, type EnemyCtx, type EnemyEvent } from './enemy'
 import { Ranged } from './ranged'
+import { Charger, CHARGER } from './charger'
+import { KILL_WEIGHT } from './loot'
 import { Assembler, BOSS } from './boss'
 import type { Terrain } from './terrain'
 import type { Breakable } from './dungeon'
@@ -14,7 +16,6 @@ const AUTO_RANGE = 7.6
 const AUTO_INTERVAL = 0.62
 const AUTO_DAMAGE = 5
 const PLAYER_MAX_HP = 100
-const PLAYER_RADIUS = 0.42
 const SHOT_SPEED = 15
 const SHOT_RADIUS = 0.3
 /** A swing connects with anything whose body reaches the blade, not just its centre. */
@@ -99,7 +100,41 @@ const WAKE_RADIUS = 8
 /** Past this from every member, a pack gives up and walks home. */
 const LEASH_RADIUS = 16
 const HOME_SPEED = 3
-const BODY_SPACING = 1.1
+/** A hit this long after another is the same blow: only a bigger one gets through, and only the difference. */
+const HURT_WINDOW = 0.35
+
+/** Seconds between committed locks. Two tells never freeze on the same beat, so each can be read. */
+export const BOOK_GAP = 0.3
+
+/**
+ * Every committed lock (a ram's, a sentinel's) is booked on game time. A new
+ * windup may start only if its lock lands clear of every booked one: when two
+ * enemies would lock together, one waits a beat. Pause, hitstop and the stop
+ * freeze it like everything else.
+ */
+export class LockBook {
+  private entries: { at: number; owner: object }[] = []
+  constructor(private readonly clock: () => number) {}
+  canLock(offsetMs: number) {
+    const t = this.clock() + offsetMs / 1000
+    return !this.entries.some((b) => Math.abs(b.at - t) < BOOK_GAP)
+  }
+  book(owner: object, offsetMs: number) {
+    this.entries.push({ at: this.clock() + offsetMs / 1000, owner })
+  }
+  /** Drop an owner's future locks: interrupted, buried, gone. */
+  unbook(owner: object) {
+    const now = this.clock()
+    this.entries = this.entries.filter((b) => b.owner !== owner || b.at < now)
+  }
+  prune() {
+    const now = this.clock()
+    this.entries = this.entries.filter((b) => b.at > now - BOOK_GAP)
+  }
+  clear() {
+    this.entries.length = 0
+  }
+}
 
 /**
  * D2's champions: a named leader with one modifier, standing bigger than its pack,
@@ -129,8 +164,12 @@ export interface Pack {
   /** A side room's pack always pays out. */
   side: boolean
   dropped: boolean
-  /** Members at birth. A pack pays out about the same whatever its size, so each kill rolls 1/size of it. */
+  /** Members at birth. */
   size: number
+  /** Summed KILL_WEIGHT at birth. A pack pays out about the same whatever it's made of: each kill rolls its share. */
+  weight: number
+  /** The ram holding the pack's windup/rush: two rams of one pack never run at you on the same beat. */
+  token: Enemy | null
   homes: Map<Enemy, THREE.Vector3>
   /** Where each member looks while it sleeps. */
   gaze: Map<Enemy, THREE.Vector3>
@@ -166,10 +205,14 @@ interface Fx {
 }
 
 export interface CombatEvents {
-  onHit: (at: THREE.Vector3) => void
+  /** `e`: who was hit, when it was an enemy (a stunned ram sounds and sparks differently). */
+  onHit: (at: THREE.Vector3, e?: Enemy) => void
+  /** `amount`: what was actually lost. A top-up inside a hurt window reports only the difference. */
   onPlayerHurt: (amount: number, source: HurtSource) => void
-  /** `summoned`: a boss add, scrap that never drops anything. */
-  onKill: (at: THREE.Vector3, kind: Archetype, pack: Pack, wasElite: boolean, summoned: boolean) => void
+  /** `summoned`: a boss add, scrap that never drops anything. `weight`: this kill's share of the pack's payout. */
+  onKill: (at: THREE.Vector3, kind: Archetype, pack: Pack, wasElite: boolean, summoned: boolean, weight: number) => void
+  /** An enemy's instant (a lock, a rush ending, a trample). Lasting state is polled instead. */
+  onEnemy: (ev: EnemyEvent) => void
   onWake: (at: THREE.Vector3) => void
   onSmash: (b: Breakable) => void
   /** A boss volley leaving the cannon. */
@@ -210,6 +253,18 @@ export class Combat {
   private lastPlayer = new THREE.Vector3()
   /** Boss adds: scrap, so they never roll drops. */
   private readonly summoned = new WeakSet<Enemy>()
+  /** Halves of a Many: the elite's own guaranteed drop is the payout, so they weigh 0. */
+  private readonly splitBorn = new WeakSet<Enemy>()
+  /** Game time, seconds. The lock book runs on it. */
+  time = 0
+  readonly book = new LockBook(() => this.time)
+  /** Still's velocity this tick, from where he was on the last one. */
+  private readonly playerVel = new THREE.Vector3()
+  private readonly prevPlayer = new THREE.Vector3()
+  private hasPrev = false
+  /** The largest hit inside the open hurt window, and whether an Anvil catch has folded its body strikes. */
+  private hurtMax = 0
+  private hurtCaught = false
   /** Dev checks switch it off to test a part in isolation. */
   autoAttack = true
   /** Marks and slows, per enemy. Deleted when the enemy is buried. */
@@ -224,6 +279,25 @@ export class Combat {
   private tickDamage = 0
   /** What parts have out in the world. Each window, decoy and anchor joins this as its part is built. */
   readonly parts: PartRuntime = { guard: null, anvil: null, decoy: null, anchor: null, patientSince: PATIENT_START }
+  /** What every enemy's update sees beyond its target. One object, reused every call. */
+  private readonly ctx: { -readonly [K in keyof EnemyCtx]: EnemyCtx[K] } = {
+    player: new THREE.Vector3(),
+    playerVel: this.playerVel,
+    now: 0,
+    canLock: (ms) => this.book.canLock(ms),
+    book: (owner, ms) => this.book.book(owner, ms),
+    tokenFree: (e) => {
+      const h = this.packOf.get(e)?.token
+      // the token frees itself when its holder leaves windup/strike: nothing has to hand it back
+      return !h || h === e || h.dead || (h.phase !== 'windup' && h.phase !== 'strike')
+    },
+    takeToken: (e) => {
+      const p = this.packOf.get(e)
+      if (p) p.token = e
+    },
+    held: (e) => this.held.has(e),
+    emit: (ev) => this.emitEnemy(ev),
+  }
 
   // Still's bolts are cold light; enemy shots are embers. Both leave trails.
   private readonly boltGeo = new THREE.BoxGeometry(0.1, 0.1, 0.8)
@@ -245,9 +319,20 @@ export class Combat {
   }
 
   update(dt: number, player: THREE.Vector3) {
+    this.time += dt
+    // his real velocity, walls, dashes and the magnet included; a jump (a level, a rewind) isn't one
+    const vx = player.x - this.prevPlayer.x
+    const vz = player.z - this.prevPlayer.z
+    if (!this.hasPrev || dt < 1e-4 || vx * vx + vz * vz > 4) this.playerVel.set(0, 0, 0)
+    else this.playerVel.set(vx / dt, 0, vz / dt)
+    this.prevPlayer.copy(player)
+    this.hasPrev = true
+    this.ctx.player = player
+    this.ctx.now = this.time
     this.lastPlayer = player
     this.hurtCooldown = Math.max(0, this.hurtCooldown - dt)
     this.updatePacks(player)
+    this.book.prune()
 
     // --- enemies ---
     for (let i = this.enemies.length - 1; i >= 0; i--) {
@@ -288,14 +373,16 @@ export class Combat {
       // a decoy draws awake enemies near it; waking, leashing and sleeping still read Still
       const target = this.targetFor(e, player)
       const before = e.phase
-      const action = e.update(dt, target, this.terrain)
+      const action = e.update(dt, target, this.terrain, this.ctx)
       if (e.phase !== before) {
         if (e.phase === 'windup') this.events.onWindup(e, e.windupMs)
         if (e.phase === 'strike') this.events.onStrike(e)
       }
-      // a strike aimed at the decoy whose ring also covers Still still lands on him
-      if (action?.kind === 'melee' && (target === player || Math.hypot(e.pos.x - player.x, e.pos.z - player.z) <= (action.reach ?? 0))) {
-        this.hurtPlayer(action.damage, 'melee')
+      // a strike aimed at the decoy whose ring also covers Still still lands on him; a ram's
+      // lane was already tested against the real Still
+      if (action?.kind === 'melee') {
+        const reaches = action.tested || target === player || Math.hypot(e.pos.x - player.x, e.pos.z - player.z) <= (action.reach ?? 0)
+        if (reaches) this.hurtPlayer(action.damage, 'melee', action.source ?? e)
       }
       if (action?.kind === 'shot') this.fireShot(e.pos, action.dir, action.damage, e, action.bounces ?? 0)
       if (action?.kind === 'shots') {
@@ -305,6 +392,7 @@ export class Combat {
       if (action?.kind === 'wave') this.startWave(action.center, action.gaps, action.damage)
       if (action?.kind === 'summon' && pack) this.summon(pack, action.points)
       if (action?.kind === 'pull') this.pull = { center: action.center, strength: action.strength, t: action.seconds }
+      if (e instanceof Charger && e.sweep) this.trample(e)
       if (e.dead) this.bury(i)
     }
     this.tickParts(dt)
@@ -475,7 +563,7 @@ export class Combat {
       if (b.part) this.hitPart(e, b.damage)
       else {
         e.hit(b.damage)
-        this.events.onHit(e.pos)
+        this.events.onHit(e.pos, e)
       }
       // a banked bolt into a sentinel arms its answer: it shoots back down the same path
       const last = b.bounces[b.bounces.length - 1]
@@ -594,6 +682,10 @@ export class Combat {
     for (const s of this.shots) this.scene.remove(s.mesh)
     this.shots.length = 0
     this.later.length = 0
+    this.book.clear()
+    this.hasPrev = false
+    this.hurtMax = 0
+    this.hurtCaught = false
     for (const f of this.fx) this.scene.remove(f.mesh)
     this.fx.length = 0
     this.parts.patientSince = PATIENT_START
@@ -687,7 +779,7 @@ export class Combat {
       this.events.onPart({ kind: 'mark', enemy: e, state: 'consumed' })
     }
     const killed = e.hit(d)
-    this.events.onHit(e.pos)
+    this.events.onHit(e.pos, e)
     return killed
   }
 
@@ -699,7 +791,7 @@ export class Combat {
     // not doubled: the mark was used by the first hit
     if (h.short && mod && !e.dead) {
       e.hit(mod.wallDamage)
-      this.events.onHit(e.pos)
+      this.events.onHit(e.pos, e)
     }
     const blast = h.def.blast ?? 0
     const to = h.to
@@ -810,30 +902,35 @@ export class Combat {
     this.events.onPart({ kind: 'cooldownStart', slot: 'legs' })
   }
 
-  /** Frost strips slow whatever stands on them, lingering a moment after it steps off. */
+  /**
+   * Frost strips slow whatever stands on them, lingering a moment after it steps
+   * off. A ram rushing onto one goes down: a stop, not a stun. It runs before the
+   * enemy thinks, so the rush ends on the tick its centre reaches the strip.
+   */
   private applyZones(e: Enemy) {
     const z = this.zoneAt(e.pos.x, e.pos.z, e.radius * 0.5)
-    if (z) this.applySlow(e, PART.zoneLinger, z.mul)
+    if (!z) return
+    if (e instanceof Charger && e.rushing && this.tripAt(e) && e.trip()) {
+      this.emitEnemy({ kind: 'rushEnd', e, how: 'trip', at: e.pos.clone() })
+    }
+    this.applySlow(e, PART.zoneLinger, z.mul)
   }
 
   /** The floor strip under a point (grown by `r`), if any. */
   zoneAt(x: number, z: number, r = 0): Readonly<Zone> | null {
     for (const zn of this.zones) {
-      if (this.distToSegment(x, z, zn.ax, zn.az, zn.bx, zn.bz) <= zn.halfW + r) return zn
+      if (distToSegment(x, z, zn.ax, zn.az, zn.bx, zn.bz) <= zn.halfW + r) return zn
     }
     return null
   }
 
-  /**
-   * The trip hook: a rushing enemy (the charger, when it exists) asks this as it
-   * rushes. True means it's crossing a Frost strip and should fall. Nothing trips yet.
-   */
+  /** The trip test: true while an enemy is on a Frost strip. A rushing ram there falls (applyZones). */
   tripAt(e: Enemy): boolean {
     return this.zoneAt(e.pos.x, e.pos.z, e.radius * 0.5) !== null
   }
 
   /** Anvil: the blow that would have hit him lands on the clamp, and he hammers back. */
-  private catchBlow() {
+  private catchBlow(from?: Enemy) {
     const a = this.parts.anvil
     if (!a) return
     this.parts.anvil = null
@@ -848,30 +945,45 @@ export class Combat {
       if (!b.broken && Math.hypot(b.x - at.x, b.z - at.z) <= a.def.radius + b.r) this.events.onSmash(b)
     }
     this.ring(at, 0.3, a.def.radius, 0.35, 0x8fb8e8)
+    // a rush caught on the clamp: the counter has landed, now it's stuck there
+    if (from instanceof Charger && from.stopRush()) this.emitEnemy({ kind: 'rushEnd', e: from, how: 'caught', at: from.pos.clone() })
   }
 
-  /** Every way Still loses HP comes through here, so windows (Anvil, Brace) have one place to step in. */
-  private hurtPlayer(damage: number, source: HurtSource) {
-    if (this.hurtCooldown > 0) return
-    // Anvil first: it catches body strikes only, and a catch folds simultaneous strikes into one
+  /**
+   * Every way Still loses HP comes through here, so windows (Anvil, Brace) have one
+   * place to step in. Inside a hurt window only a bigger blow gets through, and only
+   * the difference: a bite can't shield him from a rush, and a window still takes
+   * one hit's worth. The window never extends.
+   */
+  private hurtPlayer(damage: number, source: HurtSource, from?: Enemy) {
+    const open = this.hurtCooldown > 0
+    // after a catch, the rest of the window's body strikes fold into it
+    if (open && source === 'melee' && this.hurtCaught) return
+    const amount = open ? damage - this.hurtMax : damage
+    if (amount <= 0) return
+    if (!open) {
+      this.hurtCooldown = HURT_WINDOW
+      this.hurtMax = 0
+      this.hurtCaught = false
+    }
+    this.hurtMax = Math.max(this.hurtMax, damage)
+    // Anvil first: it catches body strikes only, even inside an open window
     if (source === 'melee' && this.parts.anvil) {
-      this.hurtCooldown = 0.35
-      this.catchBlow()
+      this.catchBlow(from)
+      this.hurtCaught = true
       return
     }
     // Brace: the hit becomes strain instead of integrity. Main adds it, so it can end the run.
     const g = this.parts.guard
     if (g?.kind === 'brace') {
-      this.hurtCooldown = 0.35
       g.used = true
-      this.events.onPart({ kind: 'strain', amount: Math.ceil(damage / g.perStrain), at: this.lastPlayer.clone() })
+      this.events.onPart({ kind: 'strain', amount: Math.ceil(amount / g.perStrain), at: this.lastPlayer.clone() })
       return
     }
     const before = this.hp
-    this.hp = Math.max(0, this.hp - damage)
+    this.hp = Math.max(0, this.hp - amount)
     this.tickDamage += before - this.hp
-    this.hurtCooldown = 0.35
-    this.events.onPlayerHurt(damage, source)
+    this.events.onPlayerHurt(amount, source)
   }
 
   /** The dead branch of the enemy loop: out of the scene, out of its pack, paid out. */
@@ -884,9 +996,11 @@ export class Combat {
     e.air = 0
     e.dispose(this.scene)
     this.enemies.splice(i, 1)
+    this.book.unbook(e)
     if (pack) {
       pack.members.splice(pack.members.indexOf(e), 1)
       this.packOf.delete(e)
+      if (pack.token === e) pack.token = null
       const wasElite = pack.elite?.leader === e
       if (wasElite && pack.elite!.mod === 'splitting') this.split(pack, e)
       if (wasElite) {
@@ -894,7 +1008,9 @@ export class Combat {
         pack.elite!.aura.geometry.dispose()
         ;(pack.elite!.aura.material as THREE.Material).dispose()
       }
-      this.events.onKill(e.pos, e.kind, pack, wasElite, this.summoned.has(e))
+      const summoned = this.summoned.has(e)
+      const weight = summoned || this.splitBorn.has(e) ? 0 : KILL_WEIGHT[e.kind]
+      this.events.onKill(e.pos, e.kind, pack, wasElite, summoned, weight)
       if (pack.members.length === 0) this.packs.splice(this.packs.indexOf(pack), 1)
     }
     this.events.onGone(e)
@@ -1027,7 +1143,7 @@ export class Combat {
               if (mark) {
                 // Signal Flare: its own 4 is a plain hit, so it never uses up the mark it leaves
                 e.hit(def.damage)
-                this.events.onHit(e.pos)
+                this.events.onHit(e.pos, e)
                 this.mark(e, mark.ms / 1000)
               } else {
                 this.hitPart(e, def.damage)
@@ -1115,7 +1231,7 @@ export class Combat {
           break
         }
         // lifted out of its swing
-        if (e.phase === 'windup' && e.interrupt()) this.events.onPart({ kind: 'interrupt', enemy: e })
+        if (e.phase === 'windup' && e.interrupt()) this.interrupted(e)
         const m = Math.hypot(ctx.moveX, ctx.moveZ)
         let dx = m >= 0.1 ? ctx.moveX / m : e.pos.x - o.x
         let dz = m >= 0.1 ? ctx.moveZ / m : e.pos.z - o.z
@@ -1237,7 +1353,7 @@ export class Combat {
             // Parry Clamp: caught mid-windup, the attack breaks and it stumbles back
             if (!e.dead && winding && e.interrupt()) {
               this.shoveFrom(e, o.x, o.z, parry.shove)
-              this.events.onPart({ kind: 'interrupt', enemy: e })
+              this.interrupted(e)
             }
           } else if (hook) {
             // Rusted Hook: yanked to a point just in front of Still, not onto him
@@ -1463,14 +1579,14 @@ export class Combat {
     if (damage > 0) {
       const lenSq = (ex - sx) ** 2 + (ez - sz) ** 2
       for (const e of this.enemies) {
-        if (this.distToSegment(e.pos.x, e.pos.z, sx, sz, ex, ez) > width + e.radius) continue
+        if (distToSegment(e.pos.x, e.pos.z, sx, sz, ex, ez) > width + e.radius) continue
         const along = lenSq > 0 ? Math.max(0, Math.min(1, ((e.pos.x - sx) * (ex - sx) + (e.pos.z - sz) * (ez - sz)) / lenSq)) : 0
         // the move eases out, so the time to reach a point isn't linear in distance
         const reachT = 1 - Math.sqrt(1 - along)
         this.later.push({
           t: reachT * (ms / 1000),
           run: () => {
-            if (e.dead || this.distToSegment(e.pos.x, e.pos.z, sx, sz, ex, ez) > width + 1.1) return
+            if (e.dead || distToSegment(e.pos.x, e.pos.z, sx, sz, ex, ez) > width + 1.1) return
             this.hitPart(e, damage)
             if (sideways) {
               const nx = -sideways.z
@@ -1485,7 +1601,7 @@ export class Combat {
       }
     }
     for (const b of this.breakables) {
-      if (!b.broken && this.distToSegment(b.x, b.z, sx, sz, ex, ez) <= width + b.r) this.events.onSmash(b)
+      if (!b.broken && distToSegment(b.x, b.z, sx, sz, ex, ez) <= width + b.r) this.events.onSmash(b)
     }
   }
 
@@ -1521,12 +1637,48 @@ export class Combat {
     this.events.onPart({ kind: 'move', move, beat })
   }
 
-  private distToSegment(px: number, pz: number, ax: number, az: number, bx: number, bz: number): number {
-    const vx = bx - ax
-    const vz = bz - az
-    const len = vx * vx + vz * vz
-    const t = len > 0 ? Math.max(0, Math.min(1, ((px - ax) * vx + (pz - az) * vz) / len)) : 0
-    return Math.hypot(px - (ax + vx * t), pz - (az + vz * t))
+  /** A broken windup: its booked lock goes with it, and the run hears of it. */
+  private interrupted(e: Enemy) {
+    this.book.unbook(e)
+    this.events.onPart({ kind: 'interrupt', enemy: e })
+  }
+
+  /** Every enemy instant passes here: Combat does its own part first (a rush into a crate breaks it), then the run's. */
+  private emitEnemy(ev: EnemyEvent) {
+    if (ev.kind === 'rushEnd' && ev.how === 'wall') this.smashNear(ev.at.x, ev.at.z, 0.4)
+    this.events.onEnemy(ev)
+  }
+
+  /**
+   * A rush shoulders aside what it runs through: sideways off the lane, no
+   * damage, once each. Rams pass through each other; sleepers and the boss don't move.
+   */
+  private trample(c: Charger) {
+    const s = c.sweep!
+    const fx = Math.sin(c.aim)
+    const fz = Math.cos(c.aim)
+    for (const o of this.enemies) {
+      if (o === c || o.dead || o.kind === 'boss' || c.trampled.has(o) || this.held.has(o)) continue
+      if (o instanceof Charger && o.rushing) continue
+      if (this.packOf.get(o)?.state !== 'awake') continue
+      if (distToSegment(o.pos.x, o.pos.z, s.ax, s.az, s.bx, s.bz) > o.radius + CHARGER.trampleReach) continue
+      const nx = -fz
+      const nz = fx
+      const side = Math.sign((o.pos.x - s.ax) * nx + (o.pos.z - s.az) * nz) || 1
+      o.knock.addScaledVector(shoveVelocity(nx * side, nz * side, CHARGER.trampleShove), o.knockMul)
+      c.trampled.add(o)
+      this.emitEnemy({ kind: 'trample', e: c, victim: o, at: o.pos.clone(), dir: new THREE.Vector3(nx * side, 0, nz * side) })
+    }
+  }
+
+  /** Where each committed lane ends, for the camera: an 11 u lane must never end off screen. */
+  laneEnds(): THREE.Vector3[] {
+    const out: THREE.Vector3[] = []
+    for (const e of this.enemies) {
+      if (!(e instanceof Charger) || this.packOf.get(e)?.state !== 'awake') continue
+      if ((e.phase === 'windup' && e.locked) || e.rushing) out.push(e.laneEnd(new THREE.Vector3()))
+    }
+    return out
   }
 
   /** A floor ring that grows from `from` to `to` over `life`: blasts, landings, impacts. */
@@ -1557,18 +1709,31 @@ export class Combat {
   }
 
   /** Put a sleeping pack in the level. Packs are placed, not spawned from a rim. */
-  addPack(members: { kind: Archetype; x: number; z: number }[], side: boolean, elite?: { mod: EliteMod; name: string }): Pack {
-    const pack: Pack = { members: [], state: 'asleep', side, dropped: false, size: members.length, homes: new Map(), gaze: new Map(), hpSeen: 0 }
+  /** One body of any archetype but the boss. */
+  private make(kind: Archetype, x: number, z: number): Enemy {
+    switch (kind) {
+      case 'ranged': return new Ranged(x, z)
+      case 'charger': return new Charger(x, z)
+      default: return new Chaser(x, z)
+    }
+  }
+
+  /** `face`: where a member looks while it sleeps; without one the pack faces a random way together. */
+  addPack(members: { kind: Archetype; x: number; z: number; face?: { x: number; z: number } }[], side: boolean, elite?: { mod: EliteMod; name: string }): Pack {
+    const pack: Pack = {
+      members: [], state: 'asleep', side, dropped: false, size: members.length, homes: new Map(), gaze: new Map(), hpSeen: 0,
+      weight: members.reduce((a, m) => a + KILL_WEIGHT[m.kind], 0), token: null,
+    }
     const look = Math.random() * Math.PI * 2
     for (const m of members) {
-      const e = m.kind === 'ranged' ? new Ranged(m.x, m.z) : new Chaser(m.x, m.z)
+      const e = this.make(m.kind, m.x, m.z)
       this.scene.add(e.group, e.tellGroup)
       this.enemies.push(e)
       e.setAsleep(true)
       pack.members.push(e)
       pack.homes.set(e, new THREE.Vector3(m.x, 0, m.z))
       const a = look + (Math.random() - 0.5) * 1.2
-      pack.gaze.set(e, new THREE.Vector3(m.x + Math.sin(a), 0, m.z + Math.cos(a)))
+      pack.gaze.set(e, m.face ? new THREE.Vector3(m.face.x, 0, m.face.z) : new THREE.Vector3(m.x + Math.sin(a), 0, m.z + Math.cos(a)))
       this.packOf.set(e, pack)
       e.idle(0, pack.gaze.get(e)!)
     }
@@ -1585,7 +1750,7 @@ export class Combat {
     this.enemies.push(b)
     b.setAsleep(true)
     const pack: Pack = {
-      members: [b], state: 'asleep', side: false, dropped: false, size: 1,
+      members: [b], state: 'asleep', side: false, dropped: false, size: 1, weight: 1, token: null,
       homes: new Map([[b as Enemy, new THREE.Vector3(x, 0, z)]]),
       gaze: new Map([[b as Enemy, face.clone()]]),
       hpSeen: b.hp, wakeRadius: 12.5, leash: Infinity,
@@ -1641,6 +1806,7 @@ export class Combat {
       leader.armor = 0.5
       leader.knockMul = 0.3
     }
+    leader.setElite?.(mod)
     const aura = new THREE.Mesh(
       new THREE.RingGeometry(0.9, 1.15, 32),
       new THREE.MeshBasicMaterial({ color: 0x7d98ff, transparent: true, opacity: 0.55, depthWrite: false }),
@@ -1650,12 +1816,13 @@ export class Combat {
     pack.elite = { name, mod, leader, aura }
   }
 
-  /** "the Many": the leader falls apart into two smaller, awake hulks. */
+  /** "the Many": the leader falls apart into two smaller, awake copies of itself. */
   private split(pack: Pack, from: Enemy) {
     for (const side of [-1, 1]) {
-      const c = new Chaser(from.pos.x + side * 0.6, from.pos.z)
-      c.size = 0.72
-      c.hp = 12
+      const c = this.make(from.kind, from.pos.x + side * 0.6, from.pos.z)
+      c.size = CHARGER.splitSize
+      c.hp = CHARGER.splitHp
+      this.splitBorn.add(c)
       this.scene.add(c.group, c.tellGroup)
       this.enemies.push(c)
       c.setAsleep(false)
@@ -1706,8 +1873,9 @@ export class Combat {
         for (const e of pack.members) e.setAsleep(true)
       }
     }
-    // awake bodies don't stack on each other
-    const moving = this.enemies.filter((e) => this.packOf.get(e)?.state !== 'asleep')
+    // awake bodies don't stack on each other: each pair keeps its two radii apart.
+    // A rushing ram is committed to its line, so nothing nudges it off it.
+    const moving = this.enemies.filter((e) => this.packOf.get(e)?.state !== 'asleep' && !(e instanceof Charger && e.rushing))
     for (let a = 0; a < moving.length; a++) {
       for (let b = a + 1; b < moving.length; b++) {
         const p = moving[a]!.pos
@@ -1715,8 +1883,9 @@ export class Combat {
         const dx = q.x - p.x
         const dz = q.z - p.z
         const d = Math.hypot(dx, dz)
-        if (d > 0.001 && d < BODY_SPACING) {
-          const push = (BODY_SPACING - d) / 2
+        const min = moving[a]!.radius + moving[b]!.radius
+        if (d > 0.001 && d < min) {
+          const push = (min - d) / 2
           p.x -= (dx / d) * push
           p.z -= (dz / d) * push
           q.x += (dx / d) * push

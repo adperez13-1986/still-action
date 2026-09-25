@@ -52,9 +52,14 @@ export interface Shrine { kind: ShrineKind; x: number; z: number; used: boolean;
 /** A group of enemies placed together, asleep until you come near. */
 export interface PackSpec {
   room: Room
-  members: { kind: Archetype; x: number; z: number }[]
+  /** `face`: where a member looks while it sleeps; without one the pack faces a random way together. */
+  members: { kind: Archetype; x: number; z: number; face?: { x: number; z: number } }[]
   /** The first member leads, named and with one modifier. */
   elite?: { mod: EliteMod; name: string }
+  /** The pack that introduces an archetype: set up to be read, and never an elite. */
+  lesson?: boolean
+  /** The room's size budget, in bodies, for the checks. */
+  budget?: number
 }
 
 export interface Level {
@@ -458,6 +463,14 @@ export function makeTerrain(floor: Set<string>, boxes: Box[], circles: Circle[])
 
 // --- building ---------------------------------------------------------------
 
+/** A lesson wants a full 5x5 main room; a hall will do if there's none. */
+function pickLessonRoom(rooms: Room[], rand: () => number): Room | null {
+  const main = rooms.filter((r) => r.kind === 'main')
+  const full = main.filter((r) => r.rx === 2 && r.rz === 2)
+  const pool = full.length ? full : main.filter((r) => r.rx >= 2 || r.rz >= 2)
+  return pool.length ? pool[Math.floor(rand() * pool.length)]! : null
+}
+
 export function generateLevel(depth: number, seed = Math.floor(Math.random() * 1e9), opts: { boss?: boolean } = {}): Level {
   const rand = rng(seed)
   const layout = opts.boss ? generateBossLayout(rand) : generateLayout(rand, 2 + Math.floor(rand() * 2))
@@ -646,6 +659,8 @@ export function generateLevel(depth: number, seed = Math.floor(Math.random() * 1
   const packRooms = layout.rooms.filter((r) => r.kind === 'main' || r.kind === 'side')
   // level 1: exactly one pack carries a ranged; deeper, more of them do
   const rangedPack = Math.floor(rand() * packRooms.length)
+  // depth 2 meets the ram: one big main room holds a ram and a hulk, alone and easy to read
+  const lessonRoom = depth === 2 ? pickLessonRoom(packRooms, rand) : null
   packRooms.forEach((room, idx) => {
     const big = room.rx >= 2 || room.rz >= 2
     const size = 2 + Math.floor(rand() * 2) + Math.floor((depth - 1) / 2) + (big && depth > 2 ? 1 : 0)
@@ -656,6 +671,24 @@ export function generateLevel(depth: number, seed = Math.floor(Math.random() * 1
     const ox = (rand() < 0.5 ? -1 : 1) * (room.rx * CELL * 0.45)
     const oz = (rand() < 0.5 ? -1 : 1) * (room.rz * CELL * 0.45)
     const members: PackSpec['members'] = []
+    if (room === lessonRoom) {
+      // the ram leads; both sit further out, so it has room to stand up and a lane to show
+      for (const kind of ['charger', 'chaser'] as const) {
+        for (let tries = 0; tries < 12; tries++) {
+          const a = rand() * Math.PI * 2
+          const r = 1.8 + rand() * 1.2
+          const x = room.center.x + ox + Math.cos(a) * r
+          const z = room.center.z + oz + Math.sin(a) * r
+          if (makeTerrainNow.blocked(x, z, kind === 'charger' ? 0.8 : 0.7)) continue
+          if (members.some((m) => Math.hypot(m.x - x, m.z - z) < 1.3)) continue
+          // asleep, it faces into the room: you walk in on its side, not its face
+          members.push({ kind, x, z, face: kind === 'charger' ? { x: room.center.x, z: room.center.z } : undefined })
+          break
+        }
+      }
+      if (members.length) packs.push({ room, members, lesson: true, budget: size })
+      return
+    }
     for (let n = 0; n < size; n++) {
       for (let tries = 0; tries < 12; tries++) {
         const a = rand() * Math.PI * 2
@@ -668,14 +701,14 @@ export function generateLevel(depth: number, seed = Math.floor(Math.random() * 1
         break
       }
     }
-    if (members.length) packs.push({ room, members })
+    if (members.length) packs.push({ room, members, budget: size })
   })
 
   // --- elites: one per level at first, one more every two depths; never in side rooms ---
   const FIRST = ['Rust', 'Hollow', 'Cinder', 'Grim', 'Ash', 'Pale', 'Iron', 'Gutter', 'Shard', 'Mourn']
   const SECOND = ['jaw', 'maw', 'grip', 'wake', 'hook', 'coil', 'heart', 'knell']
   const TITLES: Record<EliteMod, string> = { swift: 'the Quick', plated: 'the Plated', splitting: 'the Many', warding: 'the Warden' }
-  const mainPacks = packs.filter((p) => p.room.kind === 'main' && p.members.length >= 2)
+  const mainPacks = packs.filter((p) => p.room.kind === 'main' && p.members.length >= 2 && !p.lesson)
   const eliteCount = Math.min(mainPacks.length, 1 + Math.floor((depth - 1) / 2))
   for (let n = 0; n < eliteCount; n++) {
     const p = mainPacks.splice(Math.floor(rand() * mainPacks.length), 1)[0]!

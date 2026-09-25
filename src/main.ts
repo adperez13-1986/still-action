@@ -7,9 +7,10 @@ import { createGradePanel } from './grade'
 import { Combat, ELITE_LINE, type Archetype, type CastResult, type EliteMod, type Pack } from './combat'
 import { STARTING, PARTS, byId, type AbilityDef, type AbilityShape, type BeatKey } from './abilities'
 import { SLOT_NAMES, type SlotName } from './still'
-import type { Enemy } from './enemy'
+import type { Enemy, EnemyEvent } from './enemy'
 import type { Assembler } from './boss'
 import { RANGED } from './ranged'
+import { Charger, CHARGER } from './charger'
 import * as sfx from './audio'
 import { createCameraRig } from './camera'
 import { updateMusic } from './music'
@@ -46,6 +47,8 @@ const pause = createPauseScreen(hudRoot)
 const vfx = new Vfx(world.scene)
 /** Dev only: every onPart event, for headless checks to read back. */
 const partLog: PartEvent[] = []
+/** Dev only: every enemy instant, stamped with Combat's game time. */
+const enemyLog: { t: number; ev: EnemyEvent }[] = []
 
 /** Effect helpers: a point at a height, and the colours things break into. */
 const at3 = (p: { x: number; z: number }, y: number) => new THREE.Vector3(p.x, y, p.z)
@@ -53,6 +56,9 @@ const RUST = new THREE.Color(0x5b3b35)
 const STEEL = new THREE.Color(0x7a8592)
 const STONE = new THREE.Color(0x5a5550)
 const WOOD = new THREE.Color(0x6b4a30)
+const JOINT_C = new THREE.Color(0x2b2426)
+/** A ram's lane direction, on the floor. */
+const aim3 = (c: Charger) => new THREE.Vector3(Math.sin(c.aim), 0, Math.cos(c.aim))
 
 const still = new Still()
 world.scene.add(still.group)
@@ -70,8 +76,10 @@ function panOf(at: THREE.Vector3) {
   return Math.max(-1, Math.min(1, screenX / 9)) * 0.7
 }
 
-/** Each enemy's live windup tone. `true` cuts it dead (a broken windup); otherwise it fades. */
-const windups = new Map<Enemy, (hard?: boolean) => void>()
+/** Each enemy's live windup tone. `stop(true)` cuts it dead (a broken windup); otherwise it fades. */
+const windups = new Map<object, sfx.Voice>()
+/** Voices that outlast a windup and follow their enemy: a ram's rush, its stun ringing. */
+const loops = new Map<Enemy, sfx.Voice>()
 
 const BODY_RADIUS = 0.42
 /** Grace's light hangs high for a wide, soft pool on stone (settled in the look test). */
@@ -123,22 +131,40 @@ const combat = new Combat(world.scene, OPEN, {
     rig.punch(-0.03)
     navigator.vibrate?.(30)
   },
-  onKill: (at, kind, pack, wasElite, summoned) => {
+  onKill: (at, kind, pack, wasElite, summoned, weight) => {
     run.killed = true
     if (kind === 'boss') {
       bossDown(at)
       return
     }
     sfx.kill(panOf(at))
-    // it comes apart: chunks of its own metal, a burst of embers, a puff of grit
-    vfx.chunks(at3(at, 0.8), 12, kind === 'ranged' ? STEEL : RUST, 5.5, 0.18)
-    vfx.sparks(at3(at, 0.9), EMBER, 16, 6)
-    vfx.flash(at3(at, 0.9), EMBER, 0.9)
-    vfx.dust(at, 8, 0.8)
-    maybeDrop(at, kind, pack, wasElite, summoned)
+    if (kind === 'charger') {
+      // the boiler's last breath: rust, the two hatch plates thrown high, smoke rising
+      vfx.chunks(at3(at, 0.8), 14, RUST, 5.5, 0.18)
+      vfx.chunks(at3(at, 1.0), 2, JOINT_C, 6, 0.3)
+      vfx.sparks(at3(at, 0.9), EMBER, 18, 6)
+      vfx.flash(at3(at, 0.9), EMBER, 1.0)
+      vfx.dust(at, 10, 1.0)
+      vfx.smokePuff(at3(at, 1.0), 3)
+      shake = Math.max(shake, 0.3)
+    } else {
+      // it comes apart: chunks of its own metal, a burst of embers, a puff of grit
+      vfx.chunks(at3(at, 0.8), 12, kind === 'ranged' ? STEEL : RUST, 5.5, 0.18)
+      vfx.sparks(at3(at, 0.9), EMBER, 16, 6)
+      vfx.flash(at3(at, 0.9), EMBER, 0.9)
+      vfx.dust(at, 8, 0.8)
+      shake = Math.max(shake, 0.28)
+    }
+    maybeDrop(at, kind, pack, wasElite, summoned, weight)
     hitstop = Math.max(hitstop, 0.08)
-    shake = Math.max(shake, 0.28)
     rig.punch(0.035)
+  },
+  onEnemy: (ev) => {
+    if (import.meta.env.DEV) {
+      enemyLog.push({ t: combat.time, ev })
+      if (enemyLog.length > 2000) enemyLog.shift()
+    }
+    if (ev.e instanceof Charger) ramEvent(ev.e, ev)
   },
   onPart: (ev) => {
     if (import.meta.env.DEV) {
@@ -230,7 +256,7 @@ const combat = new Combat(world.scene, OPEN, {
     }
     if (ev.kind === 'interrupt') {
       // its heat broken by his cold: the tell shatters, the tone cuts dead, and the moment holds
-      windups.get(ev.enemy)?.(true)
+      windups.get(ev.enemy)?.stop(true)
       windups.delete(ev.enemy)
       tellBreak(ev.enemy)
       sfx.parryBreak(panOf(ev.enemy.pos))
@@ -314,15 +340,22 @@ const combat = new Combat(world.scene, OPEN, {
       // aimed moves whistle and click like the sentinel; heavy ones rise like the hulk
       const b = e as Assembler
       const aimed = b.move === 'barrage' || b.move === 'charge'
-      windups.set(e, aimed ? sfx.aim(ms, 0.55, panOf(e.pos)) : sfx.windup(ms, panOf(e.pos)))
+      windups.set(e, sfx.asVoice(aimed ? sfx.aim(ms, 0.55, panOf(e.pos)) : sfx.windup(ms, panOf(e.pos))))
+      return
+    }
+    if (e.kind === 'charger') {
+      windups.set(e, sfx.rev(ms, CHARGER.lockAt, panOf(e.pos)))
       return
     }
     const stop = e.kind === 'ranged' ? sfx.aim(ms, RANGED.lockAt, panOf(e.pos)) : sfx.windup(ms, panOf(e.pos))
-    windups.set(e, stop)
+    windups.set(e, sfx.asVoice(stop))
   },
   onStrike: (e) => {
     windups.delete(e)
-    if (e.kind === 'ranged') sfx.fire(panOf(e.pos))
+    // the rush roars on and follows the ram across the screen
+    if (e.kind === 'charger') {
+      if (run.phase === 'crawl') loops.set(e, sfx.rush(panOf(e.pos)))
+    } else if (e.kind === 'ranged') sfx.fire(panOf(e.pos))
     else sfx.strike(panOf(e.pos))
     strikeFx(e)
   },
@@ -331,10 +364,62 @@ const combat = new Combat(world.scene, OPEN, {
     vfx.sparks(at3(at, 1.1), STONE.clone().lerp(new THREE.Color(1, 0.9, 0.7), 0.5), 6, 4)
   },
   onGone: (e) => {
-    windups.get(e)?.()
+    windups.get(e)?.stop()
     windups.delete(e)
+    // a ram that dies stuck in a wall stops ringing at once
+    loops.get(e)?.stop(true)
+    loops.delete(e)
   },
 })
+
+/** A ram's instants: the lock, the pawing, the ways a rush ends. */
+function ramEvent(c: Charger, ev: EnemyEvent) {
+  const pan = panOf(c.pos)
+  switch (ev.kind) {
+    case 'lock': {
+      // the stack spits as the lane sets
+      const m = c.stackMouth(new THREE.Vector3())
+      vfx.embers(m, 4, 0.15)
+      vfx.smokePuff(m, 1)
+      rig.punch(0.01)
+      break
+    }
+    case 'paw':
+      vfx.dust(ev.at, 3, 0.3, undefined, 2)
+      break
+    case 'rushEnd': {
+      loops.get(c)?.stop(ev.how === 'trip')
+      loops.delete(c)
+      if (ev.how === 'wall' || ev.how === 'caught') {
+        // the Anvil's own bell has already rung: a caught ram crashes without one
+        sfx.ramCrash(pan, ev.how === 'wall')
+        if (run.phase === 'crawl') loops.set(c, sfx.dazed(CHARGER.stunMs, pan))
+        ramImpact(c, ev.at, ev.how === 'wall')
+      }
+      if (ev.how === 'trip') tellBreak(c)
+      break
+    }
+    case 'stunEnd':
+      // dazed() plays its own hatch slam
+      loops.delete(c)
+      break
+  }
+}
+
+/** The face into a wall: stone off the wall, rust off the ram, a fan of sparks thrown back along the lane. */
+function ramImpact(c: Charger, at: THREE.Vector3, wall: boolean) {
+  const p = at3(at, 0.4)
+  const back = aim3(c).negate()
+  if (wall) vfx.chunks(p, 10, STONE, 5, 0.14)
+  vfx.chunks(p, 3, RUST, 4, 0.12)
+  vfx.sparks(p, EMBER, 22, 8, back, 1.3)
+  vfx.flash(p, EMBER, 1.3)
+  vfx.dust(at, 14, 1.0, undefined, 5)
+  vfx.smokePuff(c.stackMouth(new THREE.Vector3()), 2)
+  shake = Math.max(shake, 0.4)
+  hitstop = Math.max(hitstop, 0.07)
+  rig.punch(0.03)
+}
 
 const partFx = new PartFx(world.scene, vfx, still, combat.parts, combat)
 
@@ -373,7 +458,16 @@ function landFx(at: THREE.Vector3, what: 'flare' | 'signal' | 'throw' | 'wall') 
 
 /** N9: an enemy's live tell shatters into cold shards along its own outline. */
 function tellBreak(e: Enemy) {
-  if (e.kind === 'ranged') {
+  if (e instanceof Charger) {
+    // strewn along both rails of the lane it was drawing
+    const fx = Math.sin(e.aim)
+    const fz = Math.cos(e.aim)
+    for (let i = 0; i < 16; i++) {
+      const d = Math.random() * e.lane.len
+      const side = i % 2 ? e.hitHalf : -e.hitHalf
+      vfx.sparks(new THREE.Vector3(e.lane.x + fx * d + fz * side, 0.2, e.lane.z + fz * d - fx * side), COLD, 1, 2)
+    }
+  } else if (e.kind === 'ranged') {
     // along the aim line it was drawing
     const a = e.group.rotation.y
     for (let i = 0; i < 14; i++) {
@@ -475,6 +569,13 @@ function strikeFx(e: Enemy) {
     vfx.chunks(at3(e.pos, 0.3), 6, STONE, 4, 0.12)
     vfx.flash(at3(e.pos, 0.3), EMBER, 0.8 * e.size)
     vfx.sparks(at3(e.pos, 0.4), EMBER, 10, 5)
+  } else if (e instanceof Charger) {
+    // off the mark: grit kicked back from the rear hooves, and the prow flaring
+    const rear = e.rearMid(new THREE.Vector3())
+    vfx.dust(rear, 12, 0.6, undefined, 5)
+    vfx.sparks(at3(rear, 0.1), EMBER, 8, 6, aim3(e).negate(), 0.6)
+    vfx.flash(e.prowPoint(new THREE.Vector3()), EMBER, 0.6)
+    shake = Math.max(shake, 0.12)
   } else if (e.kind === 'ranged') {
     const dir = new THREE.Vector3(still.pos.x - e.pos.x, 0, still.pos.z - e.pos.z).normalize()
     const muzzle = at3(e.pos, 1.45).addScaledVector(dir, 0.95)
@@ -526,9 +627,9 @@ document.body.appendChild(fade)
 let offered: GroundPart | null = null
 let offerHeld = false
 
-function maybeDrop(at: THREE.Vector3, kind: Archetype, pack: Pack, wasElite: boolean, summoned: boolean) {
+function maybeDrop(at: THREE.Vector3, kind: Archetype, pack: Pack, wasElite: boolean, summoned: boolean, weight: number) {
   // a side room's pack always pays out (the last kill drops if nothing else did), elites always do
-  if (Math.random() >= dropChance(pack, wasElite, summoned)) return
+  if (Math.random() >= dropChance(pack, wasElite, summoned, weight)) return
   const taken = [...hud.loadout, ...loot.ground.map((g) => g.def)]
   const def = wasElite ? rollPart(kind, taken, 'elite') : fillEmpty(taken) ?? rollPart(kind, taken, 'kill')
   if (!def) return
@@ -812,8 +913,10 @@ function end(kind: EndingKind) {
 }
 
 function stopAllWindups() {
-  for (const stop of windups.values()) stop()
+  for (const v of windups.values()) v.stop()
   windups.clear()
+  for (const v of loops.values()) v.stop()
+  loops.clear()
 }
 
 function breakApart() {
@@ -1274,7 +1377,7 @@ function footsteps() {
     if (d > STEP_HEAR) continue
     const ek = Math.floor(e.gait / Math.PI)
     if (e.walking && ek !== lastStep.get(e)) {
-      const who = e.kind === 'chaser' ? 'hulk' : e.kind === 'ranged' ? 'tripod' : 'boss'
+      const who = e.kind === 'chaser' ? 'hulk' : e.kind === 'ranged' ? 'tripod' : e.kind === 'charger' ? 'ram' : 'boss'
       sfx.step(who, panOf(e.pos), (1 - d / STEP_HEAR) * (e.kind === 'chaser' ? Math.min(1, e.size) : 1))
     }
     lastStep.set(e, ek)
@@ -1344,7 +1447,8 @@ function frame(nowMs: number) {
   camTarget.set(x, 0, z)
   const awake = combat.awake
   const fighting = run.phase === 'crawl' && awake.length > 0
-  rig.update(elapsed, camTarget, awake.map((e) => e.pos), !fighting)
+  // a locked or rushing lane's end is a threat too: an 11 u lane must never end off screen
+  rig.update(elapsed, camTarget, [...awake.map((e) => e.pos), ...combat.laneEnds()], !fighting)
   world.camera.position.copy(camTarget).add(camOffset)
   if (shake > 0) {
     const k = shake * shake * 0.9
@@ -1371,6 +1475,7 @@ function frame(nowMs: number) {
     vfx.update(elapsed, world.camera, world.renderer.domElement.height)
     ambientFx(elapsed)
     footsteps()
+    for (const [e, v] of loops) v.pan(panOf(e.pos))
   }
   syncTells()
   world.render()
@@ -1382,18 +1487,47 @@ function frame(nowMs: number) {
  * from pixels. Checks run synchronously inside one evaluate, so the frame loop
  * can't step the world between setup and assert.
  */
+/** One fixed step for the dev hooks: the world, the HUD clock and the button faces together. */
+function devTick() {
+  simulate(STEP)
+  clock += STEP * 1000
+  partFaces(STEP)
+  hud.update(clock)
+}
+
 if (import.meta.env.DEV) {
   Object.assign(window, {
     __combat: combat, __still: still, __hud: hud, __loot: loot, __level: () => level, __world: world,
     __run: run, __parts: PARTS, __partLog: partLog, __pause: pause,
     /** Advance exactly `s` seconds of game time, and the HUD clock (and the button faces) with it. No rAF, no hitstop. */
     __step: (s: number) => {
-      for (let i = 0; i < Math.round(s * 60); i++) {
-        simulate(STEP)
-        clock += STEP * 1000
-        partFaces(STEP)
-        hud.update(clock)
+      for (let i = 0; i < Math.round(s * 60); i++) devTick()
+    },
+    /** Step 1/60 s until pred() is true. Returns the seconds stepped, or −1 after maxS. */
+    __until: (pred: () => boolean, maxS = 5) => {
+      const n = Math.round(maxS * 60)
+      for (let i = 0; i <= n; i++) {
+        if (pred()) return i / 60
+        if (i < n) devTick()
       }
+      return -1
+    },
+    __enemyLog: enemyLog,
+    /** A pack from members, like addPack. awake = true wakes it at once. */
+    __pack: (members: { kind: Archetype; x: number; z: number }[], awake = true, elite?: EliteMod): Pack => {
+      const pack = combat.addPack(members, false, elite ? { mod: elite, name: 'Test' } : undefined)
+      if (awake) combat.wake(pack)
+      return pack
+    },
+    /** A level's packs, generated and thrown away without entering it. */
+    __gen: (depth: number, seed: number) => {
+      const l = generateLevel(depth, seed, { boss: depth % BOSS_EVERY === 0 })
+      const out = l.packs.map((p) => ({
+        room: p.room.kind, rx: p.room.rx, rz: p.room.rz, kinds: p.members.map((m) => m.kind),
+        elite: p.elite?.mod ?? null, lesson: !!p.lesson, budget: p.budget ?? null,
+      }))
+      l.dispose()
+      return out
     },
     /** The same path a tap (false) or push (true) takes after the gesture: HUD cooldown, cast, strain. */
     __fire: (slot: SlotName, pushed = false) => hud.fireSlot(slot, pushed),
@@ -1450,6 +1584,7 @@ if (import.meta.env.DEV) {
       hud.enabled = true
       hitstop = 0
       partLog.length = 0
+      enemyLog.length = 0
     },
     /** A breakable with a stand-in mesh. It isn't solid: only hits find it. */
     __crate: (x: number, z: number): Breakable => {

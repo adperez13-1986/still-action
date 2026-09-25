@@ -34,11 +34,19 @@ export const LOOT = {
 }
 
 const TREASURE: Record<Archetype, Record<SlotName, number>> = {
-  // chasers are all arms and torso; ranged ones are all eyes and legs
+  // chasers are all arms and torso; ranged ones are all eyes and legs; rams are legs
   chaser: { head: 1, torso: 3, arms: 3, legs: 1 },
   ranged: { head: 3, torso: 1, arms: 1, legs: 3 },
+  charger: { head: 2, torso: 1, arms: 1, legs: 4 },
   boss: { head: 1, torso: 1, arms: 1, legs: 1 },
 }
+
+/**
+ * A kill's share of its pack's payout. A pack weighs the sum of its members at
+ * birth, so a pack pays out the same whatever it's made of. Split halves and boss
+ * adds weigh 0 (Combat passes 0 for them).
+ */
+export const KILL_WEIGHT: Record<Archetype, number> = { chaser: 1, ranged: 1, charger: 1, boss: 1 }
 
 export const TIER_COLOR: Record<Tier, number> = {
   white: 0xdfe6ee,
@@ -65,15 +73,16 @@ const GATES: Record<DropSource, readonly DropGate[]> = {
 
 /**
  * The chance this kill drops a part: 1 when it's owed (an elite, or a side room's
- * last kill with nothing dropped yet), 0 for a boss add, otherwise the pack's
- * payout split across its members.
+ * last kill with nothing dropped yet), 0 for a boss add or a split half, otherwise
+ * this kill's weight share of the pack's payout.
  */
 export function dropChance(
-  pack: Pick<Pack, 'size' | 'side' | 'dropped'> & { members: readonly unknown[] }, wasElite: boolean, summoned: boolean,
+  pack: Pick<Pack, 'weight' | 'side' | 'dropped'> & { members: readonly unknown[] }, wasElite: boolean, summoned: boolean, weight = 1,
 ): number {
   if (summoned) return 0
   if (wasElite || (pack.side && pack.members.length === 0 && !pack.dropped)) return 1
-  return LOOT.packPayout / Math.max(1, pack.size)
+  if (weight <= 0) return 0
+  return (LOOT.packPayout * weight) / Math.max(1e-6, pack.weight)
 }
 
 /**

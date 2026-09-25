@@ -52,7 +52,7 @@ function strip(width: number, length: number) {
 
 export class Assembler implements Enemy {
   readonly kind = 'boss'
-  readonly radius = BOSS.radius
+  get radius() { return BOSS.radius * this.size }
   /** The current move's windup, so its sound runs exactly as long as its tell. */
   get windupMs() {
     return this.windupTotal
