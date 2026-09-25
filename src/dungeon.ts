@@ -55,12 +55,12 @@ export interface Shrine { kind: ShrineKind; x: number; z: number; used: boolean;
 
 /**
  * One of the square's eight brick posts (G9): two solid circles side by side, and its own
- * mesh, not instanced, so the Arbiter's lances can crack it for good in its second phase.
+ * mesh, not instanced, so the Arbiter's lances and shells can crack it for good in its second phase.
  */
 export interface Post {
   circles: [Circle, Circle]
   mesh: THREE.Mesh
-  /** Lances that ended on it in the Arbiter's second phase; at 3 it cracks. */
+  /** Chips from the Arbiter's second phase (a lance that ended on it, a shell that landed on it); at 3 it cracks. */
   lances: number
   cracked: boolean
   x: number

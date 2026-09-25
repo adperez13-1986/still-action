@@ -3229,7 +3229,7 @@ if (import.meta.env.DEV) {
       const b = combat.boss
       if (!(b instanceof Arbiter)) return b ? { kind: b.def.kind, hp: b.hp, phase2: b.phase2, open: b.open } : null
       return {
-        kind: 'arbiter', hp: b.hp, phase2: b.phase2, open: b.open, state: b.state, wedges: [...b.wedges], omega: b.omega, aim: b.aim,
+        kind: 'arbiter', hp: b.hp, phase2: b.phase2, open: b.open, state: b.state, wedges: [...b.wedges], omega: b.omega, aim: b.aim, guess: b.guess,
         cut: b.cut ? { x: b.cut.x, z: b.cut.z } : null, posts: b.posts.map((p) => ({ x: p.x, z: p.z, lances: p.lances, cracked: p.cracked, r: p.circles[0].r })),
       }
     },

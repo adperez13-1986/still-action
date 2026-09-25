@@ -15,12 +15,14 @@ import type { Post } from './dungeon'
  * The Arbiter (design/content/SPEC.md §5): a lattice lamp tower in the middle of the
  * quarter's square. It never walks. Its gaze, an ember wedge on the floor, sweeps like
  * a lighthouse; when it crosses Still with a clear line it stops on him, tracks, locks,
- * and fires a lance down the locked line, which walls stop both ways. A lance that hits
+ * and fires a lance down the locked line, which walls stop both ways. It aims where it
+ * guesses he'll be, from how he dodged his last few lances (`guess`), so running round
+ * it is no answer on its own: the strip on the floor is, read at the lock. A lance that hits
  * heats one of his buttons. After every lance the tower vents for 1.2 s: the time to
  * hit it. Hide from it and it lobs a shell; hug its base and it scalds.
  *
  *   unfold → watch ⇄ (track 360 → lock 560 → live 120 → vent 1200) | shellAim 620 | scaldWind 800
- *   phase 2 (below 55%): two wedges, reversals, and lances that crack the posts
+ *   phase 2 (below 55%): two wedges, reversals, and lances and shells that crack the posts
  *
  * Every tell meets the slack rule (§5.3): the lance 178 ms, the shell 409, the scald 213.
  * The wedge is a floor tell, never a real light: Grace stays the only warm light.
@@ -32,12 +34,27 @@ export const ARBITER = {
    * floor showing through and its leading edge lit, so it carries more at its peak.
    */
   wedge: { halfDeg: 15, range: 15, degPerS: 40, unfoldMs: 1500, opacity: 0.55 },
-  lance: { trackMs: 360, lockMs: 560, liveMs: 120, halfW: 0.45, damage: 18, turnRate: 3.5, reach: 20, mirrorDamage: 18 },
+  lance: { trackMs: 360, lockMs: 560, liveMs: 120, halfW: 0.45, damage: 18, turnRate: 6, reach: 20, mirrorDamage: 18 },
+  /**
+   * It aims where he'll be when it fires, and its guess is where one of his last three dodges
+   * took him: kept going leads him fully, stopped leads him about half (his reaction's worth),
+   * turned back aims at him or behind. The rails show the guess from the catch and the strip
+   * commits it at the lock, so every lance has an answer on the floor; no one dodge answers
+   * them all. `s` is lock to the middle of the burn; `minArc` is how far he must have been
+   * moving round it at the lock for his answer to count; `maxDeg` caps the lead. `turnRate`
+   * (in `lance`) is 6, not the spec's 3.5, so the aim can reach a full lead in the track.
+   */
+  guess: { s: 0.62, maxDeg: 60, minArc: 1.0, smoothMs: 90, memory: 3 },
   vent: { ms: 1200, damageMul: 1.5 },
   heat: { ms: 4000 },
   shell: { hideMs: [2000, 1600] as const, cooldownMs: [3500, 3000] as const, windupMs: 620, flightMs: 1000, r: 1.6, damage: 12, lead: 0.3, leadMax: 2 },
   scald: { trigger: 3.0, r: 3.2, windupMs: 800, damage: 14, cooldownMs: 2500 },
-  phase2: { judderMs: 600, reverseEveryMs: [4000, 7000] as const, reverseJudderMs: 400, crackAt: 3 },
+  /**
+   * `shellChip`: in the second phase a shell whose blast overlaps a post chips it as a lance does
+   * (landing within this much of a circle's edge; the blast is r 1.6, so it visibly covers the
+   * brick), so hiding from post to post wears the cover away.
+   */
+  phase2: { judderMs: 600, reverseEveryMs: [4000, 7000] as const, reverseJudderMs: 400, crackAt: 3, shellChip: 1.2 },
   posts: { crackedR: 0.45, rubbleScale: 0.4 },
   /**
    * Risk 1 (§1): 4.6 u tall in the middle of the square, it hides a strip of floor behind it
@@ -173,6 +190,16 @@ export class Arbiter implements Boss {
   cut: THREE.Vector3 | null = null
   phase2 = false
   justPhase2 = false
+  /** The lead its next lance takes, as a share of where he's going: 1 leads him fully, 0 aims at him, below 0 behind. */
+  guess = 1
+  /** His angular speed round the tower (rad/s, the omega sense), smoothed. */
+  private spin = 0
+  private lockD = 0
+  /** His last few answers to a lock (see judge), and the stream that picks which one it guesses. */
+  private readonly answers: number[] = []
+  private guessSeed = 7
+  private lockBearing = 0
+  private lockSpin = 0
   /** What its last strike was, for the run's sound. */
   strikeKind: 'lance' | 'shell' | 'scald' | null = null
 
@@ -351,7 +378,10 @@ export class Arbiter implements Boss {
     this.justPhase2 = false
     this.sinceShell += ms
     this.sinceScald += ms
+    const flying = this.shellFlying > 0
     this.shellFlying = Math.max(0, this.shellFlying - ms)
+    // the shell lands: in the second phase, on a post it chips the brick
+    if (flying && this.shellFlying <= 0 && this.phase2 && !this.dead) this.chipPost(this.lead, ARBITER.phase2.shellChip, ctx)
     this.reverseIn -= ms
     this.strikeTick = false
     let action: EnemyAction | null = null
@@ -363,6 +393,10 @@ export class Arbiter implements Boss {
     const bearing = Math.atan2(still.x - this.pos.x, still.z - this.pos.z)
     const see = terrain.lineClear(this.pos.x, this.pos.z, still.x, still.z, 0.1, true)
     this.hiddenMs = see ? 0 : this.hiddenMs + ms
+    // his turn round the tower, from his velocity: dθ/dt = (vx cos θ − vz sin θ) / d
+    const v = ctx.playerVel
+    const spinNow = d > 0.5 ? (v.x * Math.cos(bearing) - v.z * Math.sin(bearing)) / d : 0
+    this.spin += (spinNow - this.spin) * Math.min(1, ms / ARBITER.guess.smoothMs)
     if (this.aimNext) {
       // the gaze starts behind him and comes round
       this.wedges.length = 0
@@ -427,15 +461,19 @@ export class Arbiter implements Boss {
         break
       }
       case 'track': {
-        // the sweep stops on him, and the head turns after him, no faster than 3.5 rad/s
+        // the sweep stops on him, and the head turns to its guess of where he'll be, no faster than turnRate
         const turn = ARBITER.lance.turnRate * dt
-        this.aim += Math.max(-turn, Math.min(turn, angleDiff(bearing, this.aim)))
+        const lead = Math.max(-ARBITER.guess.maxDeg * DEG, Math.min(ARBITER.guess.maxDeg * DEG, this.spin * ARBITER.guess.s * this.guess))
+        this.aim += Math.max(-turn, Math.min(turn, angleDiff(bearing + lead, this.aim)))
         this.cutAt(this.aim, terrain, this.gazeEnd)
         if (this.timer >= ARBITER.lance.trackMs) {
           // the lock: the aim freezes, and the cut is committed. Drawn = hit.
           const start = this.lanceStart(new THREE.Vector3())
           this.cut = this.cutAt(this.aim, terrain, new THREE.Vector3())
           this.rearmed = false
+          this.lockD = d
+          this.lockBearing = bearing
+          this.lockSpin = this.spin
           this.go('lock')
           ctx.emit({ kind: 'lock', e: this, end: this.cut.clone() })
           action = {
@@ -453,8 +491,9 @@ export class Arbiter implements Boss {
         if (this.timer >= ARBITER.lance.lockMs) {
           this.go('live')
           this.strike('lance')
+          this.judge(bearing)
           this.recoil = 1
-          if (this.phase2 && this.cut) this.lanceOnPost(this.cut, ctx)
+          if (this.phase2 && this.cut) this.chipPost(this.cut, 0.35, ctx)
         }
         break
       case 'live':
@@ -519,6 +558,22 @@ export class Arbiter implements Boss {
         : this.state === 'vent' ? 'recover' : 'approach'
     this.present(dt)
     return action
+  }
+
+  /**
+   * At the burn: how far round did his answer to the lock take him, against how far he'd have
+   * gone had he kept on? Kept going is 1, stopped after his reaction about 0.5, turned back
+   * about 0 or less. It remembers his last three answers, and each lance guesses one of them:
+   * a habit is caught at once, and a fixed cycle of answers within a few lances. Standing, or
+   * running straight at it, tells it nothing, and the guess stands.
+   */
+  private judge(bearing: number) {
+    const would = this.lockSpin * (ARBITER.lance.lockMs / 1000)
+    if (Math.abs(would) * this.lockD < ARBITER.guess.minArc) return
+    this.answers.push(Math.max(-1, Math.min(1, angleDiff(bearing, this.lockBearing) / would)))
+    if (this.answers.length > ARBITER.guess.memory) this.answers.shift()
+    this.guessSeed = (this.guessSeed * 16807) % 2147483647
+    this.guess = this.answers[Math.floor((this.guessSeed / 2147483647) * this.answers.length)]!
   }
 
   private strike(kind: 'lance' | 'shell' | 'scald') {
@@ -594,9 +649,9 @@ export class Arbiter implements Boss {
     return this.mortarPivot.localToWorld(out.set(0, 0.45, 0.85))
   }
 
-  /** Phase 2: a lance that ended on a post chips it; the third cracks it, for good. */
-  private lanceOnPost(cut: THREE.Vector3, ctx: EnemyCtx) {
-    const post = this.posts.find((p) => !p.cracked && p.circles.some((c) => Math.hypot(c.x - cut.x, c.z - cut.z) <= c.r + 0.35))
+  /** Phase 2: a lance that ended on a post, or a shell that landed on one, chips it; the third chip cracks it, for good. */
+  private chipPost(at: THREE.Vector3, reach: number, ctx: EnemyCtx) {
+    const post = this.posts.find((p) => !p.cracked && p.circles.some((c) => Math.hypot(c.x - at.x, c.z - at.z) <= c.r + reach))
     if (!post) return
     post.lances += 1
     if (post.lances >= ARBITER.phase2.crackAt) {
