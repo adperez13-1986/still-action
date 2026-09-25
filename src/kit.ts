@@ -105,6 +105,13 @@ export function setSurfaces(ids: Record<Surface, string>) {
 /** Which set a role wears now (checks, the look test). */
 export const surfaceNow = (role: Surface) => surfaceIds[role]
 
+/**
+ * A cold rim on the kit's vertical faces, set by the hour (DayPreset.rim): at dusk and first
+ * dark the walls and posts keep an edge, so cover stays a silhouette, never a hole. Floors
+ * never rim. Shared by every skinned material.
+ */
+export const RIM = { uRim: { value: 0 }, uRimColor: { value: new THREE.Color(0x6f9bd0) } }
+
 /** Look-test values. Shared uniforms, so they can still be tuned live. */
 export const SURF = {
   uGrime: { value: 0.7 },
@@ -149,7 +156,7 @@ export function skin(m: THREE.MeshStandardMaterial, surface: Surface, tune: { sc
   m.roughness = 1
   m.metalness = 0
   m.onBeforeCompile = (shader) => {
-    Object.assign(shader.uniforms, SURF, { uAlb: own.uAlb, uNrm: own.uNrm, uScale: own.uScale, uGain: own.uGain, uTint: own.uTint })
+    Object.assign(shader.uniforms, SURF, RIM, { uAlb: own.uAlb, uNrm: own.uNrm, uScale: own.uScale, uGain: own.uGain, uTint: own.uTint })
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', '#include <common>\nvarying vec3 vWPos;\nvarying vec3 vWNrm;')
       .replace('#include <project_vertex>', `#include <project_vertex>
@@ -166,6 +173,8 @@ export function skin(m: THREE.MeshStandardMaterial, surface: Surface, tune: { sc
         varying vec3 vWNrm;
         uniform float uGrime, uContact, uPhotoGain, uRelief, uCool, uScale, uGain;
         uniform vec3 uTint;
+        uniform float uRim;
+        uniform vec3 uRimColor;
         uniform sampler2D uAlb;
         uniform sampler2D uNrm;
         float h2(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
@@ -204,6 +213,11 @@ export function skin(m: THREE.MeshStandardMaterial, surface: Surface, tune: { sc
         diffuseColor.rgb *= mix(1.0, 0.3 + 0.7 * smoothstep(0.0, 1.1, vWPos.y), uContact * side);`)
       .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
         normal = normalize((viewMatrix * vec4(triNrm(), 0.0)).xyz);`)
+      .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
+        // the rim: vertical faces only (side), strongest where they turn from the camera
+        vec3 toCam = normalize(cameraPosition - vWPos);
+        float fres = pow(1.0 - max(0.0, dot(normalize(vWNrm), toCam)), 3.0);
+        totalEmissiveRadiance += uRimColor * uRim * side * fres;`)
   }
   m.needsUpdate = true
 }

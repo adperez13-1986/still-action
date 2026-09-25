@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import type { Piece } from './kit'
+import { RIM, type Piece } from './kit'
 import type { RosterId } from './save'
 import type { AmbienceMood } from './ambience'
 import { grade, FOCUS_DEPTH, type World } from './world'
@@ -284,6 +284,10 @@ export interface DayPreset {
    * warm; the fill turns bluer instead, so the late hours read colder, never warmer.
    */
   hemiSky?: number
+  /** x grade.bloomThreshold (default 1): the embers bloom more as the light goes. */
+  bloom?: number
+  /** A cold rim on the kit's vertical faces, 0..1 (default 0): cover stays a silhouette in the dark. */
+  rim?: number
 }
 /** The fill's sky colour as world.ts builds it: morning's. */
 export const BASE_HEMI_SKY = 0x53749c
@@ -302,15 +306,16 @@ export const DAY: Record<DayKey | 'workshop', DayPreset> = {
   'late-morning': { sat: 1.02, exposure: 1.02, vignette: 1.0, fog: 1.05, fogColor: 0x0c121a, background: 0x070a0e, hemi: 1.0, key: 1.08, keyColor: 0x9ab8de, keyDir: [-6, 15, -5], grace: 1 },
   noon: { sat: 1.04, exposure: 1.04, vignette: 0.95, fog: 1.1, fogColor: 0x0d131b, background: 0x080b10, hemi: 1.05, key: 1.15, keyColor: 0xa8c0e2, keyDir: [-3, 16, -3], grace: 1 },
   afternoon: { sat: 0.96, exposure: 0.96, vignette: 1.0, fog: 0.95, fogColor: 0x0c1017, background: 0x070a0e, hemi: 1.0, key: 1.0, keyColor: 0x98aad2, keyDir: [-10, 11, 2], grace: 1, hemiSky: 0x486cb8 },
-  'late-afternoon': { sat: 0.9, exposure: 0.9, vignette: 1.05, fog: 0.88, fogColor: 0x0b0e17, background: 0x06090f, hemi: 1.05, key: 0.95, keyColor: 0x8e9ac4, keyDir: [-12, 8, 5], grace: 1, hemiSky: 0x4868b8 },
-  dusk: { sat: 0.82, exposure: 0.82, vignette: 1.12, fog: 0.8, fogColor: 0x090c17, background: 0x05070e, hemi: 1.1, key: 0.9, keyColor: 0x7486d2, keyDir: [-13, 5, 8], grace: 1, hemiSky: 0x3a54cc },
+  'late-afternoon': { sat: 0.9, exposure: 0.9, vignette: 1.05, fog: 0.88, fogColor: 0x0b0e17, background: 0x06090f, hemi: 1.05, key: 0.95, keyColor: 0x8e9ac4, keyDir: [-12, 8, 5], grace: 1, hemiSky: 0x4868b8, bloom: 0.94 },
+  dusk: { sat: 0.82, exposure: 0.82, vignette: 1.12, fog: 0.8, fogColor: 0x090c17, background: 0x05070e, hemi: 1.1, key: 0.9, keyColor: 0x7486d2, keyDir: [-13, 5, 8], grace: 1, hemiSky: 0x3a54cc, bloom: 0.89, rim: 0.12 },
   /**
    * The Arbiter at 0 HP: the last of dusk, where lights out stops (it never reaches night in a
-   * level). §4.6's ratios on Home's dusk. Grace x exposure is held at dusk's, so she stays the
-   * one steady light while everything else goes.
+   * level). Darker than §4.6's ratios on Home's dusk, so the kill lands at a real first dark:
+   * the fill and key most of the way down, and a colder rim on the walls to keep them read.
+   * Grace x exposure is held at dusk's, so she's the one steady light while everything else goes.
    */
-  'first-dark': { sat: 0.74, exposure: 0.78, vignette: 1.2, fog: 0.74, fogColor: 0x070a14, background: 0x04060b, hemi: 0.81, key: 0.49, keyColor: 0x6a78c4, keyDir: [-13, 3, 9], grace: 0.82 / 0.78, hemiSky: 0x3448bc },
-  night: { sat: 0.7, exposure: 0.72, vignette: 1.25, fog: 0.7, fogColor: 0x05070d, background: 0x030409, hemi: 1.0, key: 0.55, keyColor: 0x6c7cc4, keyDir: [-6, 12, -10], grace: 1, hemiSky: 0x3448bc },
+  'first-dark': { sat: 0.68, exposure: 0.66, vignette: 1.26, fog: 0.7, fogColor: 0x05080f, background: 0x030409, hemi: 0.58, key: 0.28, keyColor: 0x6474c4, keyDir: [-13, 3, 9], grace: 0.82 / 0.66, hemiSky: 0x3040bc, bloom: 0.86, rim: 0.35 },
+  night: { sat: 0.7, exposure: 0.72, vignette: 1.25, fog: 0.7, fogColor: 0x05070d, background: 0x030409, hemi: 1.0, key: 0.55, keyColor: 0x6c7cc4, keyDir: [-6, 12, -10], grace: 1, hemiSky: 0x3448bc, bloom: 0.86, rim: 0.3 },
   // the room: its key light, its colour and Grace's lamp come by the hour (WINDOW)
   workshop: { sat: 1.18, exposure: 1.0, vignette: 0.55, fog: 2.0, fogColor: 0x0b0f16, background: 0x070a0e, hemi: 0.6, key: 1, keyColor: 0x98a8c4, keyDir: [-14, 9, 2], grace: 1.2 },
 }
@@ -335,10 +340,32 @@ export const WINDOW: Record<HomeHour, { sky: number; key: number; keyColor: numb
 export const GRACE_REACH = { run: 34, room: 16 }
 
 /**
- * What's applied now: reapplyDay puts it back after the grade panel moves the base. `lightsOut`,
- * 0..1: the Arbiter's square going from dusk toward first dark with its HP.
+ * The day through each depth (§7): a span from one hour to the next. Inside an area each
+ * span's `to` is the next depth's `from`, so the fades join up; nothing in a level reaches
+ * night. By 'rooms' the day follows the spine rooms he's reached; 'boss' follows the
+ * Arbiter's HP (lights out, capped at first dark); 'hold' keeps it (noon, the Assembler).
  */
-let current: { key: DayKey | 'workshop'; hour: HomeHour; lightsOut?: number } = { key: 'morning', hour: 'afternoon' }
+export const DAY_SPAN: Record<number, { from: DayKey; to: DayKey; by: 'rooms' | 'boss' | 'hold' }> = {
+  1: { from: 'morning', to: 'late-morning', by: 'rooms' },
+  2: { from: 'late-morning', to: 'noon', by: 'rooms' },
+  3: { from: 'noon', to: 'noon', by: 'hold' },
+  4: { from: 'afternoon', to: 'late-afternoon', by: 'rooms' },
+  5: { from: 'late-afternoon', to: 'dusk', by: 'rooms' },
+  6: { from: 'dusk', to: 'first-dark', by: 'boss' },
+}
+const spanOf = (depth: number) => DAY_SPAN[Math.max(1, Math.min(RUN_DEPTHS, depth))]!
+
+/** The square's fog is held back past its far corner: the camera is ~40 u off, the corner ~16 u deeper. */
+export const SQUARE_FOG_FAR = 58
+
+/** The rim and the bloom, as the hour asks; kit.ts and world.ts read these. */
+export const DAY_FX = { rim: 0, bloom: 1 }
+
+/**
+ * What's applied now: reapplyDay puts it back after the grade panel moves the base. `depth`
+ * and `progress` when a depth's span is on (the key is its `from`, for the checks).
+ */
+let current: { key: DayKey | 'workshop'; hour: HomeHour; depth?: number; progress?: number } = { key: 'morning', hour: 'afternoon' }
 
 /** The preset as it stands at an hour: the room's key, colour and lamp come from its window. */
 export function presetOf(key: DayKey | 'workshop', hour: HomeHour = 'afternoon'): DayPreset {
@@ -366,6 +393,10 @@ export function applyPreset(world: World, d: DayPreset, room = false) {
   world.key.position.set(...d.keyDir)
   world.graceLight.intensity = grade.graceLight * d.grace
   world.graceLight.distance = room ? GRACE_REACH.room : GRACE_REACH.run
+  world.bloom.threshold = grade.bloomThreshold * (d.bloom ?? 1)
+  DAY_FX.rim = d.rim ?? 0
+  DAY_FX.bloom = d.bloom ?? 1
+  RIM.uRim.value = DAY_FX.rim
 }
 
 /**
@@ -390,23 +421,20 @@ export function applyDay(world: World, key: DayKey | 'workshop', hour: HomeHour 
   applyPreset(world, presetOf(key, hour), key === 'workshop')
 }
 
-/** The square's fog is held back past its far corner: the camera is ~40 u off, the corner ~16 u deeper. */
-export const SQUARE_FOG_FAR = 58
-
 /**
- * Lights out (§4.6, §5.2): dusk mixed toward first dark by `k`, and the fog held beyond the
- * arena, so the square darkens without closing in. Capped: k never takes it past first dark.
+ * A depth's hour at `p` through its span (§7): the Home hours plus bloom, rim and, in the
+ * square, the fog held beyond the arena so it darkens without closing in.
  */
-export function applyLightsOut(world: World, k: number, hour: HomeHour = 'afternoon') {
-  const p = Math.max(0, Math.min(1, k))
-  current = { key: 'dusk', hour, lightsOut: p }
-  applyPreset(world, mixPreset(DAY.dusk, DAY['first-dark'], p))
-  world.fog.far = Math.max(world.fog.far, SQUARE_FOG_FAR)
+export function applyDayAt(world: World, depth: number, p: number) {
+  const k = Math.max(0, Math.min(1, p))
+  current = { key: spanOf(depth).from, hour: 'afternoon', depth, progress: k }
+  applyPreset(world, dayAt(depth, k))
+  if (spanOf(depth).by === 'boss') world.fog.far = Math.max(world.fog.far, SQUARE_FOG_FAR)
 }
 
 /** After the grade panel moves the base: the hour goes back on top. */
 export function reapplyDay(world: World) {
-  if (current.lightsOut !== undefined) applyLightsOut(world, current.lightsOut, current.hour)
+  if (current.depth !== undefined) applyDayAt(world, current.depth, current.progress ?? 0)
   else applyDay(world, current.key, current.hour)
 }
 
@@ -414,20 +442,16 @@ export function reapplyDay(world: World) {
 export const dayNow = () => current
 
 /** The preset on now, lights out included. */
-const presetNow = () => (current.lightsOut !== undefined ? mixPreset(DAY.dusk, DAY['first-dark'], current.lightsOut) : presetOf(current.key, current.hour))
+const presetNow = () => (current.depth !== undefined ? dayAt(current.depth, current.progress ?? 0) : presetOf(current.key, current.hour))
 /** Saturation the hour asks for: Stopped drains colour from this, not from the base. */
 export const currentSat = () => grade.saturation * presetNow().sat
 /** Grace's intensity at this hour (constant, by design; held against the exposure as the square goes dark). */
 export const currentGrace = () => grade.graceLight * presetNow().grace
 
-/**
- * Seam for the content step's "day moves with you": a depth's preset leaned toward
- * the next depth's by `progress01`. The Home build always passes 0.
- */
+/** A depth's hour at `progress01` through its span (DAY_SPAN): 0 is its own hour, as Home had it. */
 export function dayAt(depth: number, progress01: number): DayPreset {
-  const a = DAY[DEPTH_DAY[Math.max(1, Math.min(RUN_DEPTHS, depth))]!]
-  const b = DAY[DEPTH_DAY[Math.min(RUN_DEPTHS, depth + 1)]!]
-  return mixPreset(a, b, progress01)
+  const sp = spanOf(depth)
+  return mixPreset(DAY[sp.from], DAY[sp.to], progress01)
 }
 
 /** Two presets mixed by k (colours in linear RGB). */
@@ -440,5 +464,6 @@ export function mixPreset(a: DayPreset, b: DayPreset, k01: number): DayPreset {
     fogColor: c(a.fogColor, b.fogColor), background: c(a.background, b.background), hemi: m(a.hemi, b.hemi), key: m(a.key, b.key),
     keyColor: c(a.keyColor, b.keyColor), keyDir: [m(a.keyDir[0], b.keyDir[0]), m(a.keyDir[1], b.keyDir[1]), m(a.keyDir[2], b.keyDir[2])], grace: m(a.grace, b.grace),
     hemiSky: c(a.hemiSky ?? BASE_HEMI_SKY, b.hemiSky ?? BASE_HEMI_SKY),
+    bloom: m(a.bloom ?? 1, b.bloom ?? 1), rim: m(a.rim ?? 0, b.rim ?? 0),
   }
 }

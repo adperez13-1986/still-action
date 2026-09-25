@@ -1,5 +1,5 @@
 import type { Archetype, EliteMod } from './combat'
-import type { NotebookEntry, RosterId, SaveV1 } from './save'
+import type { NotebookEntry, RosterId, Save } from './save'
 import { localDate, LEADERS_MAX } from './save'
 
 /**
@@ -111,7 +111,7 @@ export function namesFor(kind: Exclude<Archetype, 'boss'>, depth: number): Roste
  * if any are left. Its own seeded stream, outside generateLevel, so the level's
  * layout doesn't know names exist.
  */
-export function assignNames(depth: number, seed: number, notebook: SaveV1['notebook']): Record<Exclude<Archetype, 'boss'>, RosterId> {
+export function assignNames(depth: number, seed: number, notebook: Save['notebook']): Record<Exclude<Archetype, 'boss'>, RosterId> {
   const r = rng((seed ^ 0x9e3779b1) >>> 0)
   const out = {} as Record<Exclude<Archetype, 'boss'>, RosterId>
   for (const kind of ['chaser', 'ranged', 'charger', 'swarm'] as const) {
@@ -134,7 +134,7 @@ export function elitePage(mod: EliteMod, depth: number): RosterId {
  * Meet a name this level. True the first time ever (the caller writes the save and
  * shows the name). `seen` holds the names already counted this level.
  */
-export function meet(nb: SaveV1['notebook'], id: RosterId, depth: number, seen: Set<RosterId>): boolean {
+export function meet(nb: Save['notebook'], id: RosterId, depth: number, seen: Set<RosterId>): boolean {
   const e = nb[id]
   if (!e) {
     nb[id] = { f: localDate(), m: 1, k: 0, d: depth }

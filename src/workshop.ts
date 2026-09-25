@@ -8,7 +8,7 @@ import { PARTS, type AbilityDef, type Tier } from './abilities'
 import { partModel, centred, WALL_SCALE, DISPLAY_EYE, EYE_OFF } from './partmodels'
 import { canTurn, hookOffers, partName, historyLine } from './pool'
 import { presetOf, applyDay, WINDOW, GRACE_REACH, BASE_HEMI, BASE_KEY, type HomeHour } from './areas'
-import type { EndingKind, PartId, RunCard, SaveV1 } from './save'
+import type { EndingKind, PartId, RunCard, Save } from './save'
 import { COLD, type Vfx } from './vfx'
 import * as sfx from './audio'
 import { setRain } from './ambience'
@@ -80,9 +80,9 @@ export interface Workshop {
   /** One fixed step: arrival script, stick movement, collisions, zones, the beam. */
   update(dt: number, stickX: number, stickZ: number): WorkshopEvent[]
   /** Rebuild what the save shows: the wall (lit, turned, bare), what hangs on the hook, and his body under it. */
-  refresh(s: SaveV1): void
+  refresh(s: Save): void
   /** The chooser for the wall's section or the hook, with `selected` picked (or the default). */
-  cardFor(id: 'hook' | `wall:${SlotName}`, s: SaveV1, selected: PartId | null): ChooserSpec
+  cardFor(id: 'hook' | `wall:${SlotName}`, s: Save, selected: PartId | null): ChooserSpec
   /** The zones as built (the wall's sections are sized from the models): for checks. */
   readonly zones: readonly Interactable[]
   /** How many marks each child's post shows. */
@@ -96,7 +96,7 @@ export interface Workshop {
   readonly focus: THREE.Vector3
   readonly hold: number
   /** The card for what he's standing at (PLACEHOLDER copy, Adrian's). */
-  promptFor(id: InteractId, s: SaveV1): { title: string; line: string; action: string | null }
+  promptFor(id: InteractId, s: Save): { title: string; line: string; action: string | null }
 }
 
 // --- the plan -------------------------------------------------------------------
@@ -759,7 +759,7 @@ export function createWorkshop(world: World, still: Still, vfx: Vfx, drawings: D
   }
 
   // --- what the save shows: the wall, the hook, and his body under it ---
-  let save: SaveV1 | null = null
+  let save: Save | null = null
   /** What he came home wearing, and what his body shows now (the hooked part lifts off onto the hook). */
   let worn: (PartId | null)[] = [null, null, null, null]
   const body: (PartId | null | undefined)[] = [undefined, undefined, undefined, undefined]
@@ -778,7 +778,7 @@ export function createWorkshop(world: World, still: Still, vfx: Vfx, drawings: D
   }
 
   /** The part on the hook, shown: hung, and (while an ending's choice is open) one of its candidates. */
-  const shownOnHook = (sv: SaveV1): PartId | null => {
+  const shownOnHook = (sv: Save): PartId | null => {
     const h = sv.hook
     if (!h || !sv.found.includes(h)) return null
     if (sv.pendingHook && !sv.pendingHook.candidates.includes(h)) return null
@@ -854,7 +854,7 @@ export function createWorkshop(world: World, still: Still, vfx: Vfx, drawings: D
   }
 
   /** The newest twelve cards on the cork, each tilted a little, pinned; drawings arrive as IndexedDB answers. */
-  function refreshBoard(sv: SaveV1) {
+  function refreshBoard(sv: Save) {
     const cards = sv.cards.slice(-BOARD_CARDS).reverse()
     const ids = cards.map((c) => c.id).join()
     if (ids === boardIds) return

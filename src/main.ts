@@ -10,6 +10,7 @@ import { SLOT_NAMES, type SlotName } from './still'
 import type { Enemy, EnemyEvent } from './enemy'
 import { isBoss } from './boss'
 import { Arbiter, ARBITER, arbiterHusk } from './arbiter'
+import { DayTracker } from './day'
 import type { HazardSpec } from './hazard'
 import { RANGED } from './ranged'
 import { LOBBER } from './lobber'
@@ -17,7 +18,7 @@ import { Charger, CHARGER } from './charger'
 import { Mite, BROOD, type Brood } from './swarm'
 import * as sfx from './audio'
 import { createCameraRig } from './camera'
-import { updateMusic } from './music'
+import { updateMusic, musicNow } from './music'
 import { updateAmbience } from './ambience'
 import { Loot, LOOT, dropChance, rollPart, type GroundPart } from './loot'
 import { createPauseScreen } from './pause'
@@ -30,14 +31,15 @@ import { PartFx } from './partfx'
 import type { PartEvent } from './parts'
 import type { NotebookPage } from './pause'
 import {
-  RUN_DEPTHS, BOSS_EVERY, LEAN_HOME, FIRST_RUN_IN_MAZE, DAY, DEPTH_DAY, exitsAfterBoss, hourAtEnd, bossFor, areaOf,
-  applyDay, dayNow, currentSat, currentGrace, fogAt, dayAt, AREAS, PLACES, WALK_PLACE, ASSEMBLER_DEF, ARBITER_DEF, ARBITER_AT_6, lookAt, applyLightsOut,
+  RUN_DEPTHS, BOSS_EVERY, LEAN_HOME, FIRST_RUN_IN_MAZE, DAY, exitsAfterBoss, hourAtEnd, bossFor, areaOf,
+  applyDay, dayNow, currentSat, currentGrace, fogAt, dayAt, AREAS, PLACES, WALK_PLACE, ASSEMBLER_DEF, ARBITER_DEF, ARBITER_AT_6, lookAt, applyDayAt,
+  DAY_SPAN, DAY_FX,
   type BossDef, type BossKind, type HomeHour, type PlaceDef,
 } from './areas'
 import { createWorkshop, MARKS_MAX, type ArrivalKind, type InteractId, type Workshop } from './workshop'
 import { createDrawings, HANDS, CARD_ASPECT, type Moment } from './crayon'
 import { composeCard } from './cards'
-import { openSave, freshTally, localDate, drawerFor, trimCards, CARD_KEEP, CARD_LINES, LEADERS_MAX, type EndingKind, type RunSnapshot, type RunTally, type SaveV1 } from './save'
+import { openSave, freshTally, localDate, drawerFor, trimCards, CARD_KEEP, CARD_LINES, LEADERS_MAX, type EndingKind, type RunSnapshot, type RunTally, type Save } from './save'
 import { poolView, markFound, hookCandidates, facingOutWhites, toggleTurn, hang, applyHookDefault, startPart, partName, historyLine, type PoolView } from './pool'
 import { assignNames, elitePage, meet, addLeader, ROSTER, ROSTER_BY_ID, WHAT, BOSS_PAGE, FRAGMENT_PAGE, LOBBER_PAGE, HEAP_PAGE, namesFor } from './notebook'
 import type { DropSource } from './loot'
@@ -1026,8 +1028,6 @@ const run = {
   /** This level's names (§7.2), and the ones already counted as met here. */
   names: {} as Partial<Record<Archetype, string>>,
   met: new Set<string>(),
-  /** How far along this level he's got, 0..1, by the spine rooms he's reached. Never falls. */
-  reached: 0,
 }
 
 /** Nothing awake for this long counts as a fight cleared. */
@@ -1387,17 +1387,18 @@ let devArbiterAt6: boolean | null = null
 const bossHere = (depth: number) => bossFor(depth, devArbiterAt6 ?? ARBITER_AT_6)
 
 /**
- * Lights out (§5.2, §7): at the last depth the square follows the Arbiter's HP from dusk
- * down to first dark, eased on game time (so a pause or hitstop holds it), and stops there.
+ * The day moves with you (§7): each level's span of the day, by the rooms he's reached, or
+ * at the last depth by the Arbiter's HP (lights out, capped at first dark). Applied only
+ * when what's shown moves, and never while __arena has the level put away.
  */
-const lightsOut = { target: 0, shown: 0, applied: -1 }
-function trackLightsOut(dt: number) {
-  const b = combat.boss
-  if (b && !b.dead && b.def.kind === 'arbiter') lightsOut.target = Math.max(lightsOut.target, 1 - b.hp / b.maxHp)
-  lightsOut.shown += (lightsOut.target - lightsOut.shown) * Math.min(1, dt * 1.5)
-  if (level?.footprint && level.group.visible && Math.abs(lightsOut.shown - lightsOut.applied) > 1e-4) {
-    lightsOut.applied = lightsOut.shown
-    applyLightsOut(world, lightsOut.shown)
+const day = new DayTracker()
+let dayApplied = -1
+function trackDay(dt: number) {
+  if (!level || level.house || !level.group.visible) return
+  day.update(dt, level, still.pos, combat.boss)
+  if (Math.abs(day.shown - dayApplied) > 1e-4) {
+    dayApplied = day.shown
+    applyDayAt(world, run.depth, day.shown)
   }
 }
 
@@ -1435,9 +1436,9 @@ function bossDown(at: THREE.Vector3) {
     // the lens goes out; the tower stands as a husk, solid; the square is at first dark
     sfx.lensOut(panOf(at))
     raiseHusk(at.x, at.z, felled.aim)
-    lightsOut.target = lightsOut.shown = 1
-    lightsOut.applied = -1
-    applyLightsOut(world, 1)
+    day.snap(1)
+    dayApplied = 1
+    applyDayAt(world, run.depth, 1)
     // its drops land outside the footprint, toward him
     const dx = still.pos.x - at.x
     const dz = still.pos.z - at.z
@@ -1461,8 +1462,9 @@ function bossDown(at: THREE.Vector3) {
   loot.dropScrap(new THREE.Vector3(at.x + 1.2, 0, at.z))
   loot.dropScrap(new THREE.Vector3(at.x - 1.2, 0, at.z))
   overlay.banner(`area ${run.depth / BOSS_EVERY} cleared`)
-  // parts remember: each one worn through it saw the Assembler (the Arbiter's count arrives with save v2)
-  if (!arbiter) for (const sl of hud.slots) if (sl.def) run.tally.assemblers[sl.def.id] = (run.tally.assemblers[sl.def.id] ?? 0) + 1
+  // parts remember: each one worn through it saw that boss fall
+  const felledBy = arbiter ? run.tally.arbiters : run.tally.assemblers
+  for (const sl of hud.slots) if (sl.def) felledBy[sl.def.id] = (felledBy[sl.def.id] ?? 0) + 1
   // a beam save: a reload here comes back to the beams open and no boss, with its drops
   run.bossFelled = true
   run.bossLoot = [blue, gold].filter((d): d is AbilityDef => !!d).map((d) => d.id)
@@ -1506,7 +1508,7 @@ function resumeRun(snap: RunSnapshot) {
   })
   const tally = { ...freshTally(), ...snap.tally }
   tally.carried = (tally.carried ?? []).filter((id) => known.has(id))
-  for (const k of ['deepest', 'assemblers'] as const) tally[k] = Object.fromEntries(Object.entries(tally[k] ?? {}).filter(([id]) => known.has(id)))
+  for (const k of ['deepest', 'assemblers', 'arbiters'] as const) tally[k] = Object.fromEntries(Object.entries(tally[k] ?? {}).filter(([id]) => known.has(id)))
   const depth = Math.min(RUN_DEPTHS, Math.max(1, Math.floor(snap.depth) || 1))
   Object.assign(run, {
     phase: 'crawl', t: 0, swapped: false, ramStunSeen: false, dev: false, committed: false, ending: null, stats: [],
@@ -1566,14 +1568,13 @@ function enterLevel(depth: number, o: { seed?: number; bossFelled?: boolean; res
   namedLabels.length = 0
   // the place's look (every place wears the ruin's today; setSurfaces is a no-op until they don't)
   setSurfaces(place.surfaces)
-  // the square goes dark with the Arbiter: dusk now, first dark once it's down (a resume there)
-  lightsOut.shown = lightsOut.target = run.bossFelled ? 1 : 0
-  if (boss?.kind === 'arbiter') applyLightsOut(world, lightsOut.shown)
-  else applyDay(world, DEPTH_DAY[Math.min(RUN_DEPTHS, depth)] ?? 'dusk')
+  // the day starts where this depth's span does; the square once its tower is down is at first dark
+  day.enter(depth, run.bossFelled && boss?.kind === 'arbiter')
+  dayApplied = day.shown
+  applyDayAt(world, depth, day.shown)
   run.fought = false
   run.quietT = 0
   run.killed = false
-  run.reached = 0
   lastStep.clear()
   still.pos.copy(level.entrance)
   prev.copy(still.pos)
@@ -1739,10 +1740,11 @@ function commit(kind: EndingKind) {
   const wornIds = new Set(worn.filter((id): id is string => !!id))
   const endAt = { broken: 3, stopped: 4, home: 5 } as const
   for (const id of run.tally.carried) {
-    const h = save.history[id] ?? [0, 0, 0, 0, 0, 0]
+    const h = save.history[id] ?? [0, 0, 0, 0, 0, 0, 0]
     h[0] += 1
     h[1] = Math.max(h[1], run.tally.deepest[id] ?? run.depth)
     h[2] += run.tally.assemblers[id] ?? 0
+    h[6] += run.tally.arbiters[id] ?? 0
     if (wornIds.has(id)) h[endAt[kind]] += 1
     save.history[id] = h
   }
@@ -2411,13 +2413,12 @@ function simulate(realDt: number) {
   // mid-vault he's over the wall, not in it
   if (!still.vaulting) combat.terrain.pushOut(still.pos, BODY_RADIUS)
   pushOffBoss()
-  trackReach()
 
   const target = combat.nearestTarget(still.pos, 9.5)
   still.aim = target ? Math.atan2(target.x - still.pos.x, target.z - still.pos.z) : null
 
   combat.update(dt, still.pos)
-  trackLightsOut(dt)
+  trackDay(dt)
   partFx.update(dt)
   loot.update(dt, still.pos)
   updateOffer()
@@ -2572,15 +2573,9 @@ const WALK_DOOR_R = 1.3
 /** Area II's day slows the score: 97 falling to 94.5 through depth 4, and 94.5 to 92 through depth 5. */
 function crawlBpm() {
   if (level?.house || inRoom()) return 97
-  if (run.depth === 4) return 97 - 2.5 * run.reached
-  if (run.depth === 5) return 94.5 - 2.5 * run.reached
+  if (run.depth === 4) return 97 - 2.5 * day.shown
+  if (run.depth === 5) return 94.5 - 2.5 * day.shown
   return 97
-}
-
-/** The spine room he's in moves how far along he's got; nothing else does, and it never goes back. */
-function trackReach() {
-  const r = level?.spineAt(still.pos.x, still.pos.z)
-  if (r && level) run.reached = Math.max(run.reached, level.progressOf(r))
 }
 
 /**
@@ -2758,6 +2753,8 @@ function frame(nowMs: number) {
     phase2: bossAwake && combat.boss!.phase2,
     area: place.music,
     bpm: crawlBpm(),
+    kit: combat.boss?.def.kind === 'arbiter' ? 'anvil' : 'drums',
+    dark: day.by === 'boss' && !level?.house && !home ? day.shown : 0,
     fighting,
     calm: !fighting,
     strain: run.strain / 20,
@@ -2981,7 +2978,7 @@ if (import.meta.env.DEV) {
       enterRoom(o.arrival ?? 'idle', o.hour ?? 'afternoon', hud.slots.map((sl) => sl.def?.id ?? null))
     },
     __near: () => workshop.near,
-    __notebook: () => JSON.parse(JSON.stringify(save.notebook)) as SaveV1['notebook'],
+    __notebook: () => JSON.parse(JSON.stringify(save.notebook)) as Save['notebook'],
     __names: () => ({ ...run.names }),
     __labels: () => [...labelsNow],
     __roster: () => ROSTER.map((r) => ({ ...r })),
@@ -3015,6 +3012,8 @@ if (import.meta.env.DEV) {
     __PLACES: PLACES,
     /** The set each surface role is wearing right now. */
     __surfaceNow: () => Object.fromEntries((['paving', 'rock', 'wood', 'ground', 'grate'] as const).map((r) => [r, surfaceNow(r)])),
+    /** What the score was last asked to play (the state is taken even before audio unlocks). */
+    __music: () => musicNow(),
     /** The place he's in, and what it sounds like. */
     __look: () => {
       const p = placeNow()
@@ -3068,9 +3067,11 @@ if (import.meta.env.DEV) {
     __day: () => ({
       day: dayNow().key, hour: dayNow().hour, sat: world.gradePass.uniforms.uSaturation!.value, fogNear: world.fog.near, fogFar: world.fog.far,
       keyLight: world.key.intensity, grace: world.graceLight.intensity, keyColor: world.key.color.getHex(), fogColor: world.fog.color.getHex(),
-      exposure: world.renderer.toneMappingExposure, lightsOut: dayNow().lightsOut ?? null, progress: lightsOut.shown,
+      exposure: world.renderer.toneMappingExposure, progress: day.shown, target: day.target, depth: dayNow().depth ?? null,
+      bloom: world.bloom.threshold, rim: DAY_FX.rim, from: dayNow().depth ? DAY_SPAN[dayNow().depth!]!.from : null, to: dayNow().depth ? DAY_SPAN[dayNow().depth!]!.to : null,
     }),
     __DAY: DAY,
+    __DAY_SPAN: DAY_SPAN,
     __grade: grade,
     /** The grade panel's apply: the base moves, the hour goes back on top. */
     __applyGrade: () => applyGrade(world),
@@ -3115,9 +3116,9 @@ if (import.meta.env.DEV) {
       dropChance,
     },
     /** A deep copy of the live save. */
-    __save: () => JSON.parse(JSON.stringify(save)) as SaveV1,
+    __save: () => JSON.parse(JSON.stringify(save)) as Save,
     /** Merge a patch into the live save and write it; null starts a fresh one (the stored copy too). */
-    __setSave: (patch: Partial<SaveV1> | null) => {
+    __setSave: (patch: Partial<Save> | null) => {
       if (patch === null) store.reset()
       else {
         Object.assign(save, patch)
@@ -3164,7 +3165,7 @@ if (import.meta.env.DEV) {
      */
     __fillSave: () => {
       const all = PARTS.map((p) => p.id)
-      const hist = Object.fromEntries(all.map((id) => [id, [999, 6, 999, 999, 999, 999]])) as SaveV1['history']
+      const hist = Object.fromEntries(all.map((id) => [id, [999, 6, 999, 999, 999, 999, 999]])) as Save['history']
       const line = (n: number) => 'k'.repeat(n)
       const ROSTER_IDS = [
         'wandering-drone', 'rust-guard', 'corroded-sentry', 'fracture-mite', 'iron-crawler', 'glitch-node', 'sentinel-shard', 'hollow-repeater',
@@ -3175,7 +3176,7 @@ if (import.meta.env.DEV) {
         'ward-pylon', 'raging-hull', 'phase-wraith', 'drain-frame', 'martyr-shell',
       ]
       const ELITE_PAGES = new Set(['vault-keeper', 'corrupted-overseer', 'fracture-titan', 'overcharge-sentinel', 'lockdown-warden', 'meltdown-core'])
-      const notebook: SaveV1['notebook'] = {}
+      const notebook: Save['notebook'] = {}
       for (const id of ROSTER_IDS) {
         notebook[id] = { f: '2026-09-25', m: 9999, k: 99999, d: 6 }
         if (ELITE_PAGES.has(id)) notebook[id]!.l = Array.from({ length: LEADERS_MAX }, () => 'Guttermother the Warden')
@@ -3186,7 +3187,7 @@ if (import.meta.env.DEV) {
         ...(i >= CARD_KEEP - CARD_LINES ? { line: line(96), marks: [0, 16, 32, 48, 64, 80] } : {}),
       }))
       const tally: RunTally = {
-        ...freshTally(), carried: all, deepest: Object.fromEntries(all.map((id) => [id, 6])), assemblers: Object.fromEntries(all.map((id) => [id, 2])),
+        ...freshTally(), carried: all, deepest: Object.fromEntries(all.map((id) => [id, 6])), assemblers: Object.fromEntries(all.map((id) => [id, 2])), arbiters: Object.fromEntries(all.map((id) => [id, 1])),
         line: line(191), marks: [0, 32, 64, 96, 128, 160], win: 20, winT: 4.99, pushes: 9999, quiets: 9999,
       }
       Object.assign(save, {
@@ -3198,7 +3199,7 @@ if (import.meta.env.DEV) {
           bossFelled: true, bossLoot: ['through-line', 'borrowed-time'], strain: 19, loadout: cards[0]!.worn, tally,
         },
         hints: all, doorMarks: 48,
-      } satisfies Partial<SaveV1>)
+      } satisfies Partial<Save>)
     },
     __mode: () => run.phase,
     /** The level's beams, read off its scene: a beam that was never built is null. */

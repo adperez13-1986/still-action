@@ -1,4 +1,4 @@
-import { musicContext } from './audio'
+import { musicContext, type SampleName } from './audio'
 
 /**
  * Generative score, synthesised like everything else. Cold by default, one warm
@@ -53,10 +53,16 @@ export interface MusicState {
   /** Which loop, and the crawl's tempo (the boss's is its own). Default area I at 97. */
   area?: 'I' | 'II'
   bpm?: number
+  /** The boss's drum kit: the Assembler's drums, or the Arbiter's anvil (struck plate and a bell). */
+  kit?: 'drums' | 'anvil'
+  /** 0..1, the day's darkening in the Arbiter's square: the pad's lowpass closes with it. */
+  dark?: number
 }
 
 interface Engine {
   ctx: AudioContext
+  /** Recorded hits, for the anvil kit. */
+  play: (name: SampleName, dest: AudioNode, gain: number, rate?: number, when?: number) => void
   pulse: GainNode
   drums: GainNode
   drive: GainNode
@@ -75,6 +81,8 @@ let boss = false
 let phase2 = false
 let area: 'I' | 'II' = 'I'
 let bpm = BPM
+let kit: 'drums' | 'anvil' = 'drums'
+let dark = 0
 const beatLen = () => 60 / (boss ? BOSS_BPM : bpm)
 let noiseBuf: AudioBuffer | null = null
 
@@ -88,7 +96,7 @@ function impulse(ctx: AudioContext, seconds: number): AudioBuffer {
   return buf
 }
 
-function build(ctx: AudioContext, out: AudioNode): Engine {
+function build(ctx: AudioContext, out: AudioNode, play: Engine['play']): Engine {
   const reverb = ctx.createConvolver()
   reverb.buffer = impulse(ctx, 3.2)
   const wet = ctx.createGain()
@@ -153,7 +161,7 @@ function build(ctx: AudioContext, out: AudioNode): Engine {
     o.start()
   }
 
-  return { ctx, pulse, drums, drive, arp, bell, tension, padOut, nextBeat: ctx.currentTime + 0.1, beat: 0, bellStep: 0 }
+  return { ctx, play, pulse, drums, drive, arp, bell, tension, padOut, nextBeat: ctx.currentTime + 0.1, beat: 0, bellStep: 0 }
 }
 
 function note(
@@ -223,14 +231,26 @@ function metalTick(e: Engine, t: number) {
 function scheduleBoss(e: Engine, i: number, t: number, chord: (typeof CHORDS)[number]) {
   const B = beatLen()
   const beatInBar = i % 4
-  // kick on every beat, and a pickup before the bar turns
-  note(e, e.drums, 'sine', 70, t, 0.002, 0.03, 0.26, 0.9)
-  note(e, e.drums, 'triangle', 1400, t, 0.001, 0, 0.02, 0.1)
-  if (beatInBar === 3) note(e, e.drums, 'sine', 70, t + B * 0.75, 0.002, 0.02, 0.2, 0.6)
-  // snare on 2 and 4
-  if (beatInBar === 1 || beatInBar === 3) {
-    hit(e, e.drums, t, 'bandpass', 1900, 0.18, 0.5)
-    note(e, e.drums, 'triangle', 190, t, 0.001, 0, 0.1, 0.25)
+  const when = Math.max(0, t - e.ctx.currentTime)
+  if (kit === 'anvil') {
+    // the Arbiter's: the kick is plate struck low under a softer sine, the snare a bell over a thinner noise
+    e.play('plateHeavy', e.drums, 0.5, 0.55, when)
+    note(e, e.drums, 'sine', 70, t, 0.002, 0.03, 0.26, 0.9 * 0.6)
+    if (beatInBar === 3) e.play('plateHeavy', e.drums, 0.3, 0.55, when + B * 0.75)
+    if (beatInBar === 1 || beatInBar === 3) {
+      e.play('bell', e.drums, 0.25, 0.8, when)
+      hit(e, e.drums, t, 'bandpass', 1900, 0.18, 0.5 * 0.3)
+    }
+  } else {
+    // kick on every beat, and a pickup before the bar turns
+    note(e, e.drums, 'sine', 70, t, 0.002, 0.03, 0.26, 0.9)
+    note(e, e.drums, 'triangle', 1400, t, 0.001, 0, 0.02, 0.1)
+    if (beatInBar === 3) note(e, e.drums, 'sine', 70, t + B * 0.75, 0.002, 0.02, 0.2, 0.6)
+    // snare on 2 and 4
+    if (beatInBar === 1 || beatInBar === 3) {
+      hit(e, e.drums, t, 'bandpass', 1900, 0.18, 0.5)
+      note(e, e.drums, 'triangle', 190, t, 0.001, 0, 0.1, 0.25)
+    }
   }
   // hats in sixteenths, accents on the off-beats
   for (let k = 0; k < 4; k++) hit(e, e.drums, t + (k * B) / 4, 'highpass', 7000, 0.04, k === 2 ? 0.22 : 0.1)
@@ -261,7 +281,8 @@ function schedule(e: Engine, i: number, t: number) {
   if (i % chordBeats === 0) {
     const len = chordBeats * BEAT
     for (const n of chord.pad) {
-      note(e, e.padOut, 'sawtooth', midi(n), t, 1.8, len - 1.8, 2.6, 0.022, 1100, -7)
+      // the pad's filter closes as the square goes dark
+      note(e, e.padOut, 'sawtooth', midi(n), t, 1.8, len - 1.8, 2.6, 0.022, 1100 - 400 * dark, -7)
       note(e, e.padOut, 'triangle', midi(n), t, 1.8, len - 1.8, 2.6, 0.03, 0, 6)
     }
   }
@@ -309,22 +330,27 @@ function tick() {
  * The beat grid, for anything that plays in time with the score (the Works' forge
  * thump): when the next beat falls on the audio clock, how long one is, its index.
  */
+/** What the score is playing now, for checks: the loop, the tempo, the kit, how dark the pad is. */
+export const musicNow = () => ({ area, bpm, kit, dark, boss, phase2 })
+
 export function beatClock(): { next: number; len: number; beat: number } | null {
   return engine ? { next: engine.nextBeat, len: beatLen(), beat: engine.beat } : null
 }
 
 /** Call every frame. Starts itself the first time audio is running, then only reacts to changes. */
 export function updateMusic(state: MusicState) {
+  // the loop, the tempo, the kit and the dark change on the next beat, without restarting anything
+  area = state.area ?? 'I'
+  bpm = state.bpm ?? BPM
+  kit = state.kit ?? 'drums'
+  dark = state.dark ?? 0
   if (!engine) {
     const m = musicContext()
     if (!m) return
-    engine = build(m.ctx, m.out)
+    engine = build(m.ctx, m.out, m.play)
     window.setInterval(tick, 30)
     tick()
   }
-  // the loop and the tempo change on the next beat, without restarting anything
-  area = state.area ?? 'I'
-  bpm = state.bpm ?? BPM
 
   const strain = Math.round(state.strain * 20) / 20
   if (

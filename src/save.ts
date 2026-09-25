@@ -18,7 +18,8 @@ export const SAVE_KEY = 'still-action.save'
 export const SAVE_BACKUP_KEY = 'still-action.save.corrupt'
 export const PROBE_KEY = 'still-action.probe'
 export const LEGACY_HINT_PREFIX = 'still.pushHint.'
-export const SAVE_VERSION = 1
+/** v2 (area II): each part's history counts the Arbiters it saw fall. */
+export const SAVE_VERSION = 2
 /** Cards kept in localStorage, newest last. */
 export const CARD_KEEP = 36
 /** Of those, the newest this many keep their strain line. */
@@ -37,8 +38,8 @@ export const FIRST_DRAWER: Drawer = 'yanah'
 /** The children take turns: run 1 is FIRST_DRAWER's, run 2 the other's, and so on. */
 export const drawerFor = (n: number): Drawer => (n % 2 === 1 ? FIRST_DRAWER : FIRST_DRAWER === 'yanah' ? 'yuri' : 'yanah')
 
-/** [runs carried, deepest depth, Assemblers felled while worn, worn at broken, at stopped, at home] */
-export type PartHistory = [runs: number, deepest: number, assemblers: number, broken: number, stopped: number, home: number]
+/** [runs carried, deepest depth, Assemblers felled while worn, worn at broken, at stopped, at home, Arbiters felled while worn] */
+export type PartHistory = [runs: number, deepest: number, assemblers: number, broken: number, stopped: number, home: number, arbiters: number]
 
 export interface NotebookEntry {
   /** First met, local date 'yyyy-mm-dd'. */
@@ -89,6 +90,7 @@ export interface RunTally {
   carried: PartId[]
   deepest: Record<PartId, number>
   assemblers: Record<PartId, number>
+  arbiters: Record<PartId, number>
   /** The strain line so far (the corkboard step). */
   line: string
   lineStep: number
@@ -102,7 +104,7 @@ export interface RunTally {
 }
 
 export const freshTally = (): RunTally => ({
-  carried: [], deepest: {}, assemblers: {}, line: '', lineStep: 5, marks: [], win: 0, winT: 0, pushes: 0, quiets: 0,
+  carried: [], deepest: {}, assemblers: {}, arbiters: {}, line: '', lineStep: 5, marks: [], win: 0, winT: 0, pushes: 0, quiets: 0,
 })
 
 /** The in-progress run at its last beam. INV: null whenever no run is in progress (resume is the last step). */
@@ -128,8 +130,8 @@ export interface RunSnapshot {
   tally: RunTally
 }
 
-export interface SaveV1 {
-  v: 1
+export interface Save {
+  v: 2
   /** ISO; set at the first run's start. The doorframe grows from it. */
   firstRunAt: string | null
   /** Endings committed. */
@@ -156,7 +158,7 @@ export interface SaveV1 {
 
 export interface SaveStore {
   /** Live and mutable: the pure helpers in pool.ts change it in place. */
-  readonly data: SaveV1
+  readonly data: Save
   readonly mode: 'local' | 'memory'
   /** Unions the only-growing sets with the stored copy, then writes. Never throws. A no-op in memory mode. */
   write(): void
@@ -164,14 +166,25 @@ export interface SaveStore {
   reset(): void
 }
 
-/** Key n upgrades a save from version n to n + 1. Empty at v1. */
-export const MIGRATIONS: Record<number, (s: any) => any> = {}
+/**
+ * Key n upgrades a save from version n to n + 1. Lossless, run on load before anything reads
+ * the save. 1 → 2: every part's history gains its Arbiter count (0), and a snapshot's tally
+ * its `arbiters`; every card, page and part stays exactly as it was.
+ */
+export const MIGRATIONS: Record<number, (s: any) => any> = {
+  1: (s: any) => ({
+    ...s,
+    v: 2,
+    history: Object.fromEntries(Object.entries(s.history ?? {}).map(([k, h]) => [k, Array.isArray(h) ? [...h, 0] : h])),
+    run: s.run && typeof s.run === 'object' ? { ...s.run, tally: { ...(s.run.tally ?? {}), arbiters: {} } } : s.run ?? null,
+  }),
+}
 
 const KNOWN = new Set(PARTS.map((p) => p.id))
 
-export function freshSave(): SaveV1 {
+export function freshSave(): Save {
   return {
-    v: 1, firstRunAt: null, runs: 0, found: [...STARTER_POOL], turned: [], hook: null, pendingHook: null,
+    v: 2, firstRunAt: null, runs: 0, found: [...STARTER_POOL], turned: [], hook: null, pendingHook: null,
     history: {}, notebook: {}, cards: [], lastEnding: null, run: null, hints: [], doorMarks: 0,
   }
 }
@@ -191,7 +204,7 @@ const ids = (x: unknown): PartId[] => (Array.isArray(x) ? [...new Set(x.filter((
  * re-asserted (§4.8), turned inside found, the hook legal. Never throws on
  * a plain object.
  */
-function repair(raw: Record<string, any>): SaveV1 {
+function repair(raw: Record<string, any>): Save {
   const s = freshSave()
   const found = new Set([...ids(raw.found).filter((i) => KNOWN.has(i)), ...STARTER_POOL])
   s.found = [...found]
@@ -203,13 +216,15 @@ function repair(raw: Record<string, any>): SaveV1 {
   s.pendingHook = isObj(raw.pendingHook) ? { candidates: ids(raw.pendingHook.candidates).filter((i) => KNOWN.has(i)) } : null
   if (isObj(raw.history)) {
     for (const [k, h] of Object.entries(raw.history)) {
-      if (KNOWN.has(k) && Array.isArray(h) && h.length === 6 && h.every(Number.isFinite)) s.history[k] = h as PartHistory
+      if (KNOWN.has(k) && Array.isArray(h) && h.length === 7 && h.every(Number.isFinite)) s.history[k] = h as PartHistory
     }
   }
   if (isObj(raw.notebook)) s.notebook = raw.notebook
   if (Array.isArray(raw.cards)) s.cards = raw.cards.filter(isObj) as RunCard[]
   s.lastEnding = isObj(raw.lastEnding) ? (raw.lastEnding as LastEnding) : null
   s.run = isObj(raw.run) ? (raw.run as RunSnapshot) : null
+  // a snapshot from before the Arbiter's count: its tally starts it at nothing
+  if (s.run && isObj(s.run.tally)) s.run.tally.arbiters ??= {}
   s.hints = ids(raw.hints)
   s.doorMarks = Number.isFinite(raw.doorMarks) ? Math.max(0, raw.doorMarks) : 0
   keepWhites(s)
@@ -341,7 +356,7 @@ export function openSave(opts: { memory?: boolean } = {}): SaveStore {
     },
     reset() {
       const f = freshSave()
-      for (const k of Object.keys(data) as (keyof SaveV1)[]) delete data[k]
+      for (const k of Object.keys(data) as (keyof Save)[]) delete data[k]
       Object.assign(data, f)
       if (mode === 'local') {
         try {
@@ -359,7 +374,7 @@ export function openSave(opts: { memory?: boolean } = {}): SaveStore {
 }
 
 /** Keep the newest CARD_KEEP; older than the newest CARD_LINES lose their line (IndexedDB keeps it, later). */
-export function trimCards(s: SaveV1): void {
+export function trimCards(s: Save): void {
   if (s.cards.length > CARD_KEEP) s.cards.splice(0, s.cards.length - CARD_KEEP)
   for (let i = 0; i < s.cards.length - CARD_LINES; i++) {
     delete s.cards[i]!.line
