@@ -14,6 +14,7 @@ import { DayTracker } from './day'
 import type { HazardSpec } from './hazard'
 import { RANGED } from './ranged'
 import { LOBBER } from './lobber'
+import { Thief, type ThiefEvent, type ThiefWorld } from './thief'
 import { Charger, CHARGER } from './charger'
 import { Mite, BROOD, type Brood } from './swarm'
 import * as sfx from './audio'
@@ -24,7 +25,7 @@ import { Loot, LOOT, dropChance, rollPart, type GroundPart } from './loot'
 import { createPauseScreen } from './pause'
 import { createOverlay } from './ending'
 import { loadKit, setSurfaces, pieceData, surfaceNow, PIECES, type Piece } from './kit'
-import { generateLevel, generateWalkHome, makeTerrain, key, squarePosts, type Box, type Breakable, type Circle, type Level, type Post, type Shrine } from './dungeon'
+import { generateLevel, generateWalkHome, makeTerrain, key, squarePosts, type Box, type Breakable, type Circle, type Level, type Post, type Room, type Shrine } from './dungeon'
 import type { Terrain } from './terrain'
 import { Vfx, syncTells, COLD, COLD_DEEP, EMBER, SLAG_DROP } from './vfx'
 import { PartFx } from './partfx'
@@ -41,7 +42,7 @@ import { createDrawings, HANDS, CARD_ASPECT, type Moment } from './crayon'
 import { composeCard } from './cards'
 import { openSave, freshTally, localDate, drawerFor, trimCards, CARD_KEEP, CARD_LINES, LEADERS_MAX, type EndingKind, type RunSnapshot, type RunTally, type Save } from './save'
 import { poolView, markFound, hookCandidates, facingOutWhites, toggleTurn, hang, applyHookDefault, startPart, partName, historyLine, type PoolView } from './pool'
-import { assignNames, elitePage, meet, addLeader, ROSTER, ROSTER_BY_ID, WHAT, BOSS_PAGE, FRAGMENT_PAGE, LOBBER_PAGE, HEAP_PAGE, namesFor } from './notebook'
+import { assignNames, elitePage, meet, addLeader, ROSTER, ROSTER_BY_ID, WHAT, BOSS_PAGE, FRAGMENT_PAGE, LOBBER_PAGE, HEAP_PAGE, THIEF_PAGE, namesFor } from './notebook'
 import type { DropSource } from './loot'
 
 const canvas = document.querySelector<HTMLCanvasElement>('#view')!
@@ -434,6 +435,8 @@ const combat = new Combat(world.scene, OPEN, {
   onWindup: (e, ms) => {
     // once Still is stopping, the world is slowing with him; a real-time tell would lie
     if (run.phase !== 'crawl') return
+    // the thief never winds up: it has no voice here
+    if (e.kind === 'thief') return
     if (isBoss(e)) {
       // aimed moves whistle and click like the sentinel; heavy ones rise like the hulk
       const cue = e.cue
@@ -500,6 +503,7 @@ const combat = new Combat(world.scene, OPEN, {
     }
     vfx.embers(at3(s, 0.1), Math.round(4 + s.r * 3), s.r * 0.8)
   },
+  onThief: (ev) => thiefEvent(ev),
   onShotBlocked: (at) => {
     sfx.blocked(panOf(at))
     vfx.sparks(at3(at, 1.1), STONE.clone().lerp(new THREE.Color(1, 0.9, 0.7), 0.5), 6, 4)
@@ -1557,6 +1561,10 @@ function enterLevel(depth: number, o: { seed?: number; bossFelled?: boolean; res
   combat.breakables = level.breakables
   const boss = bossHere(depth)
   if (level.boss && boss && !run.bossFelled) combat.addBoss(level.boss.x, level.boss.z, level.boss.face, boss, level.posts)
+  // G8: a thief in its nest, with no pack (it never spawns carrying)
+  arenaFloor = null
+  lastThief = level.thief ? combat.addThief(new Thief(level.thief.nest.x, level.thief.nest.z, level.thief.nest, thiefWorld())) : null
+  thiefChimeT = 0
   // a felled boss is never fought again: its beams are open, as they were when it fell, and a tower stands as its husk
   if (run.bossFelled) {
     for (const kind of exitsAfterBoss(depth)) kind === 'cold' ? level.openExit() : level.openHome()
@@ -2418,6 +2426,7 @@ function simulate(realDt: number) {
   still.aim = target ? Math.atan2(target.x - still.pos.x, target.z - still.pos.z) : null
 
   combat.update(dt, still.pos)
+  thiefFx(dt)
   trackDay(dt)
   partFx.update(dt)
   loot.update(dt, still.pos)
@@ -2635,16 +2644,102 @@ function footsteps(now: number) {
   while (stepTimes.length && now - stepTimes[0]! > STEP_WINDOW) stepTimes.shift()
   const quiet = hush()
   const dist = (e: Enemy) => Math.hypot(e.pos.x - still.pos.x, e.pos.z - still.pos.z)
-  for (const e of [...combat.awake].sort((a, b) => dist(a) - dist(b))) {
+  // the thief is never awake, but its feet are heard like anyone's
+  const walkers = [...combat.awake, ...combat.enemies.filter((e) => e.kind === 'thief')]
+  for (const e of walkers.sort((a, b) => dist(a) - dist(b))) {
     const d = dist(e)
     const ek = Math.floor(e.gait / Math.PI)
     if (d <= STEP_HEAR && e.walking && ek !== lastStep.get(e) && stepTimes.length < STEPS_MAX) {
-      const who = e.kind === 'chaser' ? 'hulk' : e.kind === 'ranged' ? 'tripod' : e.kind === 'charger' ? 'ram' : 'boss'
+      const who = e.kind === 'chaser' ? 'hulk' : e.kind === 'ranged' ? 'tripod' : e.kind === 'charger' ? 'ram' : e.kind === 'thief' ? 'thief' : 'boss'
       sfx.step(who, panOf(e.pos), (1 - d / STEP_HEAR) * (e.kind === 'chaser' ? Math.min(1, e.size) : 1) * quiet, placeNow().footsteps)
       stepTimes.push(now)
     }
     lastStep.set(e, ek)
   }
+}
+
+// --- the thief (§6.1): its world, its instants, its chime ---
+
+/** __arena's floor while it's up: a thief spawned there paths over it as one room. */
+let arenaFloor: Set<string> | null = null
+const ARENA_ROOM: Room = { kind: 'main', ci: 0, cj: 0, rx: 3, rz: 3, center: new THREE.Vector3() }
+
+/** What the thief may see: the floor, the parts on it, where Still is, and which rooms it may run through. */
+function thiefWorld(): ThiefWorld {
+  const floor = arenaFloor ?? level!.floor
+  const rooms = arenaFloor ? [ARENA_ROOM] : level!.rooms
+  const beams = arenaFloor || !level ? [] : [level.exit, ...(level.home ? [level.home] : [])]
+  const inside = (r: Room, x: number, z: number) => Math.abs(Math.round(x / 4) - r.ci) <= r.rx && Math.abs(Math.round(z / 4) - r.cj) <= r.rz
+  return {
+    ground: () => loot.ground,
+    lift: (g) => loot.lift(g),
+    still: still.pos,
+    floor, rooms, beams,
+    // no asleep pack in it (by where its members sleep), and never the exit room
+    allowedRooms: () => rooms.filter((r) => r.kind !== 'exit' && !combat.packs.some((p) =>
+      p.state === 'asleep' && p.members.some((m) => { const h = p.homes.get(m); return !!h && inside(r, h.x, h.z) }))),
+  }
+}
+
+/** The level's thief, if it has one and it's still about. */
+const thiefNow = () => (combat.enemies.find((e): e is Thief => e instanceof Thief && !e.dead) ?? null)
+/** The last thief built, for __thief: a caught one is still reported (as caught) after it's buried. */
+let lastThief: Thief | null = null
+
+function thiefEvent(ev: ThiefEvent) {
+  const at = ev.kind === 'caught' ? ev.at : ev.e.pos
+  const pan = panOf(at)
+  switch (ev.kind) {
+    case 'wake':
+      // the notebook meets it the first time it moves: its name floats over it
+      if (run.dev) break
+      if (meet(save.notebook, THIEF_PAGE, run.depth, run.met)) {
+        namedLabels.push({ text: ROSTER_BY_ID.get(THIEF_PAGE)!.name, e: ev.e, until: performance.now() + NAMED_MS })
+        sfx.pencil(pan)
+        store.write()
+      }
+      break
+    case 'take':
+      // the cage snaps shut on it, and the part's glass goes cold white
+      sfx.snatch(pan)
+      vfx.sparks(at3(at, 0.8), COLD, 8, 3)
+      vfx.flash(at3(at, 0.85), COLD_DEEP, 0.4)
+      thiefChimeT = 0.25
+      break
+    case 'listen':
+      break
+    case 'caught': {
+      // the cage springs open: rust off the little body, and the part it had (only that) comes back down
+      sfx.cageOpen(pan)
+      vfx.chunks(at3(at, 0.5), 6, RUST, 3.5, 0.1)
+      vfx.dust(at, 5, 0.5)
+      if (ev.def) {
+        vfx.flash(at3(at, 0.85), COLD, 0.8)
+        vfx.sparks(at3(at, 0.85), COLD, 12, 4)
+        loot.drop(ev.def, at, still.pos)
+        sfx.drop(ev.def.tier, pan)
+      } else vfx.sparks(at3(at, 0.5), EMBER, 6, 3)
+      hitstop = Math.max(hitstop, 0.05)
+      shake = Math.max(shake, 0.12)
+      if (!run.dev) {
+        meet(save.notebook, THIEF_PAGE, run.depth, run.met)
+        save.notebook[THIEF_PAGE]!.k += 1
+      }
+      break
+    }
+  }
+}
+
+/** Seconds to the carrying thief's next chime. */
+let thiefChimeT = 0
+const THIEF_CHIME_S = 1.4
+function thiefFx(dt: number) {
+  const t = thiefNow()
+  if (!t?.carrying || run.phase !== 'crawl') return
+  thiefChimeT -= dt
+  if (thiefChimeT > 0) return
+  thiefChimeT = THIEF_CHIME_S
+  sfx.thiefChime(panOf(t.pos))
 }
 
 /** Continuous effects: the boss dressing itself (smoke, sparks), hulks glowing as they wind up, slag dripping. */
@@ -2848,7 +2943,7 @@ if (import.meta.env.DEV) {
         })),
         edge: l.made.edge,
         far: l.made.far,
-        thief: null,
+        thief: l.thief ? { x: l.thief.nest.x, z: l.thief.nest.z } : null,
       }
       l.dispose()
       return out
@@ -2864,6 +2959,8 @@ if (import.meta.env.DEV) {
     __stick: (x: number, z: number) => hud.setStick(x, z),
     /** One enemy as its own pack of 1. awake = true wakes it at once. A boss is the variant's (default the Assembler). */
     __spawn: (kind: Archetype, x: number, z: number, awake = true, elite?: EliteMod, variant?: BossKind | 'lobber'): Enemy => {
+      // a thief nests where it's spawned: in __arena's floor, or the level's
+      if (kind === 'thief') return (lastThief = combat.addThief(new Thief(x, z, new THREE.Vector3(x, 0, z), thiefWorld())))
       if (kind === 'boss') {
         const defs: Record<BossKind, BossDef> = { assembler: ASSEMBLER_DEF, arbiter: ARBITER_DEF }
         // the Arbiter stands among __arena's posts, when it built them
@@ -2885,6 +2982,7 @@ if (import.meta.env.DEV) {
       namedLabels.length = 0
       const floor = new Set<string>()
       for (let i = -3; i <= 3; i++) for (let j = -3; j <= 3; j++) floor.add(key(i, j))
+      arenaFloor = floor
       // posts: the square's eight round (0, 0), solid and drawn, for the Arbiter's checks
       if (devPosts) world.scene.remove(devPosts.group)
       devPosts = null
@@ -2987,6 +3085,11 @@ if (import.meta.env.DEV) {
     __openNotebook: () => openNotebook(),
     __adds: () => combat.adds(),
     /** The Arbiter's state for checks (null for any other boss). */
+    /** The thief, while there is one: its state, where it is, what it carries, its nest. */
+    __thief: () => {
+      const t = lastThief && (combat.enemies.includes(lastThief) || lastThief.state === 'caught') ? lastThief : null
+      return t ? { state: t.state, x: t.pos.x, z: t.pos.z, carrying: t.carrying?.id ?? null, nest: { x: t.nest.x, z: t.nest.z } } : null
+    },
     __boss: () => {
       const b = combat.boss
       if (!(b instanceof Arbiter)) return b ? { kind: b.def.kind, hp: b.hp, phase2: b.phase2, open: b.open } : null

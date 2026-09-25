@@ -126,7 +126,7 @@ function sample(c: AudioContext, name: SampleName, dest: AudioNode, gain: number
 export type FootSurface = 'stone' | 'wood' | 'plate'
 
 /** Footsteps. Who's walking sets the weight; distance sets how loud. */
-export function step(who: 'still' | 'hulk' | 'tripod' | 'ram' | 'boss', pan: number, loudness = 1, surface: FootSurface = 'stone') {
+export function step(who: 'still' | 'hulk' | 'tripod' | 'ram' | 'boss' | 'thief', pan: number, loudness = 1, surface: FootSurface = 'stone') {
   const c = live()
   if (!c || loudness <= 0.02) return
   const d = out(c, who === 'still' ? 'auto' : 'enemy', pan)
@@ -166,6 +166,11 @@ export function step(who: 'still' | 'hulk' | 'tripod' | 'ram' | 'boss', pan: num
     case 'boss':
       sample(c, 'softHeavy', d, 0.9 * loudness, 0.55)
       sample(c, 'metalHeavy', d, 0.2 * loudness, 0.5)
+      break
+    case 'thief':
+      // thiefStep: four thin feet, a quick high tick; a scuttle is one sound, not four
+      if (limited('thiefStep', 0.07, c.currentTime)) return
+      sample(c, 'tin', d, 0.12 * loudness, 2.4)
       break
   }
   // theirs ring on plate too, and knock on boards, at half his layer
@@ -1897,4 +1902,30 @@ export function lensOut(pan: number) {
   const d = out(c, 'enemy', pan)
   tone(c, d, 'sine', c.currentTime, 900, 60, 1.5, 0.08, 0.01)
   sample(c, 'tin', d, 0.3, 3)
+}
+
+// --- the thief: its chime, the snatch, the cage opening ---
+
+/** Every 1.4 s while it carries: two high sines 13 Hz apart, beating. The only cold instrument on an enemy. */
+export function thiefChime(pan: number) {
+  const c = live()
+  if (!c) return
+  const d = out(c, 'enemy', pan)
+  const t = c.currentTime
+  tone(c, d, 'sine', t, 2637, 2637, 0.6, 0.03, 0.004)
+  tone(c, d, 'sine', t, 2650, 2650, 0.6, 0.03, 0.004)
+}
+
+/** It takes a part off the floor. */
+export function snatch(pan: number) {
+  const c = live()
+  if (!c) return
+  sample(c, 'metalLight', out(c, 'enemy', pan), 0.5, 1.6)
+}
+
+/** Caught: the cage springs open (the part's own drop sound is played with it). */
+export function cageOpen(pan: number) {
+  const c = live()
+  if (!c) return
+  sample(c, 'tin', out(c, 'enemy', pan), 0.4, 1.8)
 }

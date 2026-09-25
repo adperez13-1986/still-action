@@ -7,6 +7,7 @@ import { ELITE_MODS, type Archetype, type EliteMod } from './combat'
 import { BROOD, HEAP } from './swarm'
 import { exitsAfterBoss, lookAt, type BossDef, type ExitKind, type KitPreset, type MachineKind, type PlaceDef, type PlaceId } from './areas'
 import { buildMachines, machineTop, CHIMNEY_H, type MachinePlacement } from './machines'
+import { THIEF } from './thief'
 
 /**
  * A D2-style crawl level on a 4-unit grid (KayKit's floor tile). A main path of
@@ -144,6 +145,8 @@ export interface Level {
   progressOf: (room: Room) => number
   /** The spine room containing (x, z), or null (corridors, side rooms, outside). */
   spineAt: (x: number, z: number) => Room | null
+  /** G8: the thief's nest when this level rolled one (a side room's, clear of its pack). */
+  thief?: { nest: THREE.Vector3; room: Room }
   made: LevelMade
   packs: PackSpec[]
   breakables: Breakable[]
@@ -185,10 +188,10 @@ function rng(seed: number) {
 }
 
 /**
- * Separate seeded streams for what area II adds (slag, the heap, machinery): the
- * main sequence never sees them, so the ruin builds exactly as it did.
+ * Separate seeded streams for what area II adds (slag, the heap, machinery, the thief):
+ * the main sequence never sees them, so the ruin builds exactly as it did.
  */
-const SALT = { slag: 0x51a6, heap: 0x4ea9, far: 0xfa51, machine: 0x3ac1 }
+const SALT = { slag: 0x51a6, heap: 0x4ea9, far: 0xfa51, machine: 0x3ac1, thief: 0x7417 }
 /**
  * The salted seed is scrambled before it seeds its stream: rng's first draws follow its
  * seed almost linearly, so seeds 1, 2, 3 xor one salt would all open on the same roll.
@@ -1050,6 +1053,32 @@ export function generateLevel(
     }
   }
 
+  // --- G8 the thief: its own stream, so the level around it is exactly what it was ---
+  let thief: Level['thief']
+  const sideRooms = layout.rooms.filter((r) => r.kind === 'side')
+  if (THIEF.depths.includes(depth) && !opts.boss && sideRooms.length && stream(seed, SALT.thief)() < THIEF.chance) {
+    // the side room furthest along the level (ties to the first)
+    let room = sideRooms[0]!
+    for (const r of sideRooms) if (progress.of(r) > progress.of(room)) room = r
+    const sleepers = packs.filter((p) => p.room === room).flatMap((p) => p.members)
+    const clear = (x: number, z: number) => !makeTerrainNow.blocked(x, z, THIEF.bodyRadius + 0.15) && sleepers.every((m) => Math.hypot(m.x - x, m.z - z) >= 1.2)
+    // a corner of the middle, stepped outward until it's clear of the room's props and its pack
+    let nest = new THREE.Vector3(room.center.x + 0.9, 0, room.center.z + 0.9)
+    search: for (let rr = 0; rr <= 3; rr += 0.5) {
+      const n = rr === 0 ? 1 : Math.round(rr * 8)
+      for (let k = 0; k < n; k++) {
+        const a = Math.PI / 4 + (k / n) * Math.PI * 2
+        const x = room.center.x + 0.9 + Math.sin(a) * rr
+        const z = room.center.z + 0.9 + Math.cos(a) * rr
+        if (clear(x, z)) {
+          nest = new THREE.Vector3(x, 0, z)
+          break search
+        }
+      }
+    }
+    thief = { nest, room }
+  }
+
   // --- a shrine, most levels: one bargain, in a main room ---
   const shrines: Shrine[] = []
   const shrineParts: THREE.Object3D[] = []
@@ -1134,6 +1163,7 @@ export function generateLevel(
     floor,
     progressOf: progress.of,
     spineAt: progress.spineAt,
+    thief,
     made,
     group,
     terrain: makeTerrainNow,

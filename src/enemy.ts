@@ -127,7 +127,8 @@ export type EnemyEvent =
   | { kind: 'arbiter'; e: Enemy; what: 'catch' | 'ratchet' | 'vent' | 'ventEnd' | 'judder' | 'crack' | 'scald' | 'phase2'; at: THREE.Vector3; ms?: number }
 
 export interface Enemy {
-  readonly kind: 'chaser' | 'ranged' | 'charger' | 'swarm' | 'boss'
+  /** 'thief': a body without a pack that never attacks (thief.ts). */
+  readonly kind: 'chaser' | 'ranged' | 'charger' | 'swarm' | 'boss' | 'thief'
   /** 'lobber' for the sentinel variant that lobs shells; loot, budget and treasure follow `kind`. */
   readonly variant?: 'lobber'
   /** Where an elite's name floats, before size. */

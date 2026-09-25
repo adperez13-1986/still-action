@@ -4,6 +4,7 @@ import { tellMaterial, releaseTell, TELL_CROWD, COLD, EMBER, type Vfx } from './
 import { Chaser, shoveVelocity, distToSegment, PLAYER_RADIUS, type Enemy, type EnemyCtx, type EnemyEvent } from './enemy'
 import { Ranged } from './ranged'
 import { Lobber } from './lobber'
+import { Thief, type ThiefEvent } from './thief'
 import { Charger, CHARGER } from './charger'
 import { Mite, Brood, MiteBatch, MITE } from './swarm'
 import { KILL_WEIGHT } from './loot'
@@ -169,6 +170,8 @@ export const ELITE_MODS: Record<Exclude<Archetype, 'boss'>, EliteMod[]> = {
   charger: ['swift', 'plated', 'splitting', 'warding'],
   // a swarm already is many, and a 16-HP body at half damage is a number, not a decision
   swarm: ['swift', 'warding'],
+  // the thief is never crowned
+  thief: [],
 }
 /** The line under an elite's name. A Plated ram's plate lifts in a stun, so it says so. */
 export function eliteLine(kind: Archetype, mod: EliteMod): string {
@@ -260,7 +263,12 @@ export interface CombatEvents {
   /** A floor hazard's instants: made, armed, done, and each body it hit. */
   /** `heat`: a heating hazard (the lance) reached Still, taken or braced: the run heats a button. */
   onHazard: (ev: { kind: 'spawn' | 'arm' | 'end' | 'heat'; h: Hazard } | { kind: 'hit'; h: Hazard; who: Enemy | 'still'; at: THREE.Vector3 }) => void
+  /** The thief's instants: its first wake (a notebook meet), a part taken, a listen, the catch (main drops `def`). */
+  onThief: (ev: ThiefEvent) => void
 }
+
+/** An empty thief is no target for the auto or an aimed part; a carrying one is (bolts that pass through hit it either way). */
+const targetable = (e: Enemy) => !(e instanceof Thief) || e.carrying !== null
 
 export class Combat {
   hp = PLAYER_MAX_HP
@@ -459,6 +467,7 @@ export class Combat {
       if (action?.kind === 'unhazard') for (const h of this.live) if (h.spec.owner === e && h.spec.source === action.source && !h.armed) this.endHazard(h)
       if (action?.kind === 'pull') this.pull = { center: action.center, strength: action.strength, t: action.seconds }
       if (e instanceof Charger && e.sweep) this.trample(e)
+      if (e instanceof Thief) for (const ev of e.drain()) this.events.onThief(ev)
       if (e.dead) this.bury(i)
     }
     this.tickParts(dt)
@@ -949,10 +958,10 @@ export class Combat {
     if (slot === 'legs') this.fadeAnchor()
   }
 
-  /** Lure: whoever is drawn to the decoy aims at it. The Assembler is never fooled; its adds are. */
+  /** Lure: whoever is drawn to the decoy aims at it. The Assembler is never fooled; its adds are. The thief hunts no one. */
   targetFor(e: Enemy, player: THREE.Vector3): THREE.Vector3 {
     const d = this.parts.decoy
-    if (!d || e.kind === 'boss') return player
+    if (!d || e.kind === 'boss' || e.kind === 'thief') return player
     return Math.hypot(e.pos.x - d.pos.x, e.pos.z - d.pos.z) <= d.def.range ? d.pos : player
   }
 
@@ -1081,6 +1090,8 @@ export class Combat {
     for (const h of this.live) if (h.spec.owner === e && h.spec.cancelOnDeath && !h.armed && !h.done) this.endHazard(h)
     // H6: a slag core spills, unless a hazard killed it (no chains)
     if (this.slagged.has(e) && !this.hazardKilled.has(e)) this.spillSlag(e.pos)
+    // the thief has no pack, so no kill and no roll: its catch (and the part it had) is its own event
+    if (e instanceof Thief) for (const ev of e.drain()) this.events.onThief(ev)
     if (pack) {
       pack.members.splice(pack.members.indexOf(e), 1)
       this.packOf.delete(e)
@@ -1150,6 +1161,7 @@ export class Combat {
     let best: Enemy | null = null
     let bestDist = range
     for (const e of this.enemies) {
+      if (!targetable(e)) continue
       const d = Math.hypot(e.pos.x - from.x, e.pos.z - from.z)
       if (d < bestDist && (!needsClearShot || this.clearShot(from, e.pos))) {
         bestDist = d
@@ -1418,7 +1430,7 @@ export class Combat {
         let snapD = Infinity
         for (const e of this.enemies) {
           const d = Math.hypot(e.pos.x - o.x, e.pos.z - o.z)
-          if (d < snapD && this.inReach(o, e, def.range) && !this.shaded(o, e)) {
+          if (d < snapD && targetable(e) && this.inReach(o, e, def.range) && !this.shaded(o, e)) {
             snap = e
             snapD = d
           }
@@ -1631,6 +1643,7 @@ export class Combat {
     let bestD = Infinity
     let bestAwake = false
     for (const e of this.enemies) {
+      if (!targetable(e)) continue
       const d = Math.hypot(e.pos.x - o.x, e.pos.z - o.z)
       if (d > range) continue
       const awake = awakeFirst && this.packOf.get(e)?.state === 'awake'
@@ -1851,7 +1864,8 @@ export class Combat {
       if (taken && s.heat) this.events.onHazard({ kind: 'heat', h })
     }
     for (const e of this.enemies) {
-      if (e.dead || h.hit.has(e) || this.held.has(e) || (s.sparesOwner && e === s.owner)) continue
+      // H2: hazards never hurt the thief
+      if (e.dead || e.kind === 'thief' || h.hit.has(e) || this.held.has(e) || (s.sparesOwner && e === s.owner)) continue
       if (!inShape(sh, e.pos.x, e.pos.z, e.radius - PLAYER_RADIUS) || covered(e.pos.x, e.pos.z)) continue
       h.hit.add(e)
       // not a part: it never uses a mark. A sleeper hit this way wakes its pack (hpSeen).
@@ -1969,6 +1983,16 @@ export class Combat {
     pack.hpSeen = this.hpOf(pack)
     this.packs.push(pack)
     return pack
+  }
+
+  /**
+   * The thief (§6.1): into the enemies with no pack, so it's never awake, never wakes
+   * anything, and pays nothing out. Its nest is where it was built.
+   */
+  addThief(t: Thief): Thief {
+    this.scene.add(t.group, t.tellGroup)
+    this.enemies.push(t)
+    return t
   }
 
   /** The area's boss, as its def says: its own pack, woken by walking into the arena, never leashed. */

@@ -42,15 +42,18 @@ const TREASURE: Record<Archetype, Record<SlotName, number>> = {
   charger: { head: 2, torso: 1, arms: 1, legs: 4 },
   swarm: { head: 4, torso: 1, arms: 1, legs: 2 },
   boss: { head: 1, torso: 1, arms: 1, legs: 1 },
+  // never rolled (it adds no loot, and weighs 0), but the record needs the key
+  thief: { head: 1, torso: 1, arms: 1, legs: 1 },
 }
 
 /**
  * A kill's share of its pack's payout. A pack weighs the sum of its members at
  * birth, so a pack pays out the same whatever it's made of. Split halves and boss
  * adds weigh 0 (Combat passes 0 for them). A mite is a quarter: a
- * brood of 8 pays out like two hulks.
+ * brood of 8 pays out like two hulks. The thief weighs nothing: it has no pack, and a catch
+ * gives back only what it took.
  */
-export const KILL_WEIGHT: Record<Archetype, number> = { chaser: 1, ranged: 1, charger: 1, swarm: 0.25, boss: 1 }
+export const KILL_WEIGHT: Record<Archetype, number> = { chaser: 1, ranged: 1, charger: 1, swarm: 0.25, boss: 1, thief: 0 }
 
 export const TIER_COLOR: Record<Tier, number> = {
   white: 0xdfe6ee,
@@ -329,6 +332,15 @@ export class Loot {
       }
     }
     return best
+  }
+
+  /**
+   * The thief takes it: off the floor and out of the scene, and its def goes into the
+   * cage. The same def comes back down on a catch, so nothing is added or lost.
+   */
+  lift(g: GroundPart): AbilityDef {
+    this.remove(g)
+    return g.def
   }
 
   remove(g: GroundPart) {

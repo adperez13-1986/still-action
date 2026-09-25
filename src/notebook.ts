@@ -12,7 +12,7 @@ import { localDate, LEADERS_MAX } from './save'
  * From design/meta/SPEC.md §7.3 (ids are still's ALL_ENEMIES keys).
  */
 
-export type RosterRole = 'hulk' | 'sentinel' | 'ram' | 'mites' | 'elite' | 'fragment' | 'boss' | 'lobber' | 'heap' | 'reserved'
+export type RosterRole = 'hulk' | 'sentinel' | 'ram' | 'mites' | 'elite' | 'fragment' | 'boss' | 'lobber' | 'heap' | 'thief' | 'reserved'
 export interface RosterEntry {
   id: RosterId
   name: string
@@ -36,7 +36,7 @@ const E = (id: string, name: string, role: RosterRole, band: RosterEntry['band']
 
 // ADRIAN: every `line: null` below is a blank page for you to write (41). Two ship with their old lines.
 export const ROSTER: readonly RosterEntry[] = [
-  E('wandering-drone', 'Wandering Drone', 'reserved', 'I', { reservedFor: 'the thief' }),
+  E('wandering-drone', 'Wandering Drone', 'thief', 'I'),
   E('rust-guard', 'Rust Guard', 'hulk', 'I'),
   E('corroded-sentry', 'Corroded Sentry', 'sentinel', 'I'),
   E('fracture-mite', 'Fracture Mite', 'mites', 'II'),
@@ -82,13 +82,15 @@ export const ROSTER: readonly RosterEntry[] = [
 ]
 export const ROSTER_BY_ID = new Map(ROSTER.map((r) => [r.id, r]))
 
-const ROLE_OF: Record<Exclude<Archetype, 'boss'>, RosterRole> = { chaser: 'hulk', ranged: 'sentinel', charger: 'ram', swarm: 'mites' }
+const ROLE_OF: Record<Exclude<Archetype, 'boss'>, RosterRole> = { chaser: 'hulk', ranged: 'sentinel', charger: 'ram', swarm: 'mites', thief: 'thief' }
 const bandOf = (depth: number): 'I' | 'II' => (depth <= 3 ? 'I' : 'II')
 /** The Assembler's page, both depths. */
 export const BOSS_PAGE: RosterId = 'the-first-warden'
 /** The Lobber's page, and the slag heap's: one each, whatever the level names its ranged and its mites. */
 export const LOBBER_PAGE: RosterId = 'hollow-repeater'
 export const HEAP_PAGE: RosterId = 'slag-heap'
+/** The thief's page: met on its first wake, felled on a catch. */
+export const THIEF_PAGE: RosterId = 'wandering-drone'
 /** The halves of a Many split. */
 export const FRAGMENT_PAGE: RosterId = 'fracture-fragment'
 
@@ -158,7 +160,7 @@ export function addLeader(e: NotebookEntry, name: string) {
 
 /** What the page says it is. */
 export const WHAT: Record<RosterRole, string> = {
-  // PLACEHOLDER words for the two content pages
+  // PLACEHOLDER words for the content pages
   hulk: 'a hulk', sentinel: 'a sentinel', ram: 'a ram', mites: 'mites', elite: 'an elite', boss: 'the boss', fragment: 'pieces of one',
-  lobber: 'a lobber', heap: 'a slag heap', reserved: '',
+  lobber: 'a lobber', heap: 'a slag heap', thief: 'a thief', reserved: '',
 }
