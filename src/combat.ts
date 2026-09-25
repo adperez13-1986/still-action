@@ -8,7 +8,7 @@ import type { Terrain } from './terrain'
 import type { Breakable } from './dungeon'
 import type { AbilityDef, BeatKey } from './abilities'
 import type { SlotName } from './still'
-import { PART, type EnemyStatus, type Held, type PartEvent, type PartRuntime, type StillMove } from './parts'
+import { PART, bankShot, type EnemyStatus, type Flip, type Held, type PartEvent, type PartRuntime, type StillMove } from './parts'
 
 const AUTO_RANGE = 7.6
 const AUTO_INTERVAL = 0.62
@@ -68,6 +68,12 @@ interface Bolt {
   once?: Set<Enemy>
   /** Trail size; defaults to the bolt's weight class. */
   trail?: number
+  speed: number
+  /** Through-Line: ignores terrain, smashing crates it passes. */
+  ghost?: boolean
+  /** Ricochet: reflections left, and where each one happened (the answer retraces them). */
+  bouncesLeft: number
+  bounces: { at: THREE.Vector3; flip: Flip }[]
 }
 
 /** Where Patient Lens sits after a swap or a new level: ready, but with nothing banked. */
@@ -81,6 +87,9 @@ interface Shot {
   damage: number
   /** Who fired it: a Mirror Ward sends it back there. */
   owner?: Enemy
+  /** An answer shot reflects like a Ricochet bolt. */
+  bouncesLeft: number
+  bounced: number
 }
 
 export type Archetype = Enemy['kind']
@@ -253,9 +262,11 @@ export class Combat {
         const k = Math.min(1, Math.max(0, (h.t - PART.throwLead) / (h.T - PART.throwLead)))
         e.pos.lerpVectors(h.from, h.to, k)
         e.knock.set(0, 0, 0)
+        e.air = Math.sin(k * Math.PI)
         e.idle(dt, h.to)
-        e.group.position.y = Math.sin(k * Math.PI) * PART.throwPeak
+        e.group.position.y = e.air * PART.throwPeak
         if (h.t >= h.T) {
+          e.air = 0
           this.held.delete(e)
           this.landThrow(e, h)
         }
@@ -274,7 +285,7 @@ export class Combat {
         if (e.phase === 'strike') this.events.onStrike(e)
       }
       if (action?.kind === 'melee') this.hurtPlayer(action.damage, 'melee')
-      if (action?.kind === 'shot') this.fireShot(e.pos, action.dir, action.damage, e)
+      if (action?.kind === 'shot') this.fireShot(e.pos, action.dir, action.damage, e, action.bounces ?? 0)
       if (action?.kind === 'shots') {
         for (const d of action.dirs) this.fireShot(action.from, d, action.damage, e)
         this.events.onVolley(action.from)
@@ -301,41 +312,18 @@ export class Combat {
     // --- bolts ---
     for (let i = this.bolts.length - 1; i >= 0; i--) {
       const b = this.bolts[i]!
-      b.mesh.position.addScaledVector(b.dir, PART.boltSpeed * dt)
       b.life -= dt
-      this.vfx?.trail(b.mesh.position, COLD, b.trail ?? (b.radius > 0.5 ? 0.34 : 0.18))
-
       let spent = b.life <= 0
-      // same rule as enemy shots: waist-high walls stop yours too
-      if (!spent && this.terrain.blocked(b.mesh.position.x, b.mesh.position.z, 0.15)) {
-        this.smashNear(b.mesh.position.x, b.mesh.position.z, 0.4)
-        this.events.onShotBlocked(b.mesh.position)
-        this.ring(b.mesh.position, 0.2, 0.8, 0.18, 0x8fb8e8)
-        spent = true
+      // bouncing and ghost bolts move in short substeps, so a reflection lands where
+      // the bank solver said and a fast ghost can't skip over a body
+      const dist = b.speed * dt
+      const n = b.bouncesLeft > 0 || b.ghost ? Math.max(1, Math.ceil(dist / PART.bounceSubstep)) : 1
+      if (spent) b.mesh.position.addScaledVector(b.dir, dist)
+      for (let k = 0; k < n && !spent; k++) {
+        b.mesh.position.addScaledVector(b.dir, dist / n)
+        spent = this.boltStep(b, dist / n)
       }
-      if (!spent) {
-        for (const e of this.enemies) {
-          if (b.pierced?.has(e) || b.once?.has(e)) continue
-          const dx = b.mesh.position.x - e.pos.x
-          const dz = b.mesh.position.z - e.pos.z
-          if (Math.hypot(dx, dz) < b.radius + e.radius) {
-            if (b.part) this.hitPart(e, b.damage)
-            else {
-              e.hit(b.damage)
-              this.events.onHit(e.pos)
-            }
-            b.once?.add(e)
-            if (b.pierced) {
-              b.pierced.add(e)
-              // n counts up along the line, so each pass can sound a step higher
-              this.events.onPart({ kind: 'pierce', at: e.pos.clone(), n: b.pierced.size })
-              continue
-            }
-            spent = true
-            break
-          }
-        }
-      }
+      this.vfx?.trail(b.mesh.position, COLD, b.trail ?? (b.radius > 0.5 ? 0.34 : 0.18))
       if (spent) {
         this.scene.remove(b.mesh)
         this.bolts.splice(i, 1)
@@ -404,40 +392,16 @@ export class Combat {
     // --- enemy shots ---
     for (let i = this.shots.length - 1; i >= 0; i--) {
       const s = this.shots[i]!
-      s.mesh.position.addScaledVector(s.dir, SHOT_SPEED * dt)
       s.life -= dt
       this.vfx?.trail(s.mesh.position, EMBER, 0.3)
       s.mesh.scale.setScalar(0.85 + Math.random() * 0.3)
-      const p = s.mesh.position
-
       let spent = s.life <= 0
-      // a shell meets shots before they reach him: Ward destroys them, Mirror Ward sends them home
-      const g = this.parts.guard
-      if (!spent && g && g.kind !== 'brace' && Math.hypot(p.x - player.x, p.z - player.z) < g.radius) {
-        if (g.kind === 'ward') {
-          g.used = true
-          this.events.onPart({ kind: 'shield', at: p.clone(), reflected: false })
-          spent = true
-        } else if (g.reflectsLeft > 0) {
-          g.reflectsLeft--
-          g.used = true
-          const o = s.owner && !s.owner.dead ? s.owner.pos : null
-          const aim = o ? Math.atan2(o.x - p.x, o.z - p.z) : Math.atan2(-s.dir.x, -s.dir.z)
-          // his shot now: a cold bolt, and walls stop it like any other
-          this.spawnBolt(p, aim, g.reflectDamage, 0.3, 20)
-          this.events.onPart({ kind: 'shield', at: p.clone(), reflected: true })
-          spent = true
-        }
-      }
-      if (!spent && Math.hypot(p.x - player.x, p.z - player.z) < SHOT_RADIUS + PLAYER_RADIUS) {
-        this.hurtPlayer(s.damage, 'shot')
-        spent = true
-      }
-      if (!spent && this.terrain.blocked(p.x, p.z, 0.15)) {
-        this.smashNear(p.x, p.z, 0.4)
-        this.events.onShotBlocked(p)
-        this.ring(p, 0.2, 0.9, 0.2, 0xff7a55)
-        spent = true
+      const dist = SHOT_SPEED * dt
+      const n = s.bouncesLeft > 0 ? Math.max(1, Math.ceil(dist / PART.bounceSubstep)) : 1
+      if (spent) s.mesh.position.addScaledVector(s.dir, dist)
+      for (let k = 0; k < n && !spent; k++) {
+        s.mesh.position.addScaledVector(s.dir, dist / n)
+        spent = this.shotStep(s, dist / n, player)
       }
       if (spent) {
         this.scene.remove(s.mesh)
@@ -459,6 +423,125 @@ export class Combat {
         this.fx.splice(i, 1)
       }
     }
+  }
+
+  /**
+   * One stretch of a Still bolt's flight. Walls stop it (see mode: a breach lets it
+   * through), or reflect it if it has bounces left; props always absorb it. Returns
+   * true when the bolt is spent.
+   */
+  private boltStep(b: Bolt, step: number): boolean {
+    const p = b.mesh.position
+    if (b.ghost) {
+      // Through-Line ignores terrain; crates it passes are smashed on the way
+      for (const c of this.breakables) {
+        if (!c.broken && Math.hypot(c.x - p.x, c.z - p.z) < c.r + b.radius + 0.4) this.events.onSmash(c)
+      }
+    } else {
+      const hit = this.terrain.blocker(p.x, p.z, 0.15, true)
+      if (hit === 'wall' && b.bouncesLeft > 0) {
+        const at = this.reflect(p, b.dir, step)
+        b.mesh.rotation.y = Math.atan2(b.dir.x, b.dir.z)
+        b.bouncesLeft--
+        b.bounces.push({ at: at.pos, flip: at.flip })
+        this.events.onPart({ kind: 'bounce', at: at.pos.clone(), side: 'still', n: b.bounces.length })
+      } else if (hit) {
+        // same rule as enemy shots: waist-high walls stop yours too
+        this.smashNear(p.x, p.z, 0.4)
+        this.events.onShotBlocked(p)
+        this.ring(p, 0.2, 0.8, 0.18, 0x8fb8e8)
+        return true
+      }
+    }
+    for (const e of this.enemies) {
+      if (b.pierced?.has(e) || b.once?.has(e)) continue
+      if (Math.hypot(p.x - e.pos.x, p.z - e.pos.z) >= b.radius + e.radius) continue
+      if (b.part) this.hitPart(e, b.damage)
+      else {
+        e.hit(b.damage)
+        this.events.onHit(e.pos)
+      }
+      // a banked bolt into a sentinel arms its answer: it shoots back down the same path
+      const last = b.bounces[b.bounces.length - 1]
+      if (last && e instanceof Ranged && !e.dead) e.setAnswer({ at: last.at.clone(), flip: last.flip, bounces: b.bounces.length })
+      b.once?.add(e)
+      if (b.pierced) {
+        b.pierced.add(e)
+        // n counts up along the line, so each pass can sound a step higher
+        this.events.onPart({ kind: 'pierce', at: e.pos.clone(), n: b.pierced.size })
+        continue
+      }
+      return true
+    }
+    return false
+  }
+
+  /** One stretch of an enemy shot's flight: the shell, Still, then the walls (see mode). True when spent. */
+  private shotStep(s: Shot, step: number, player: THREE.Vector3): boolean {
+    const p = s.mesh.position
+    // a shell meets shots before they reach him: Ward destroys them, Mirror Ward sends them home
+    const g = this.parts.guard
+    if (g && g.kind !== 'brace' && Math.hypot(p.x - player.x, p.z - player.z) < g.radius) {
+      if (g.kind === 'ward') {
+        g.used = true
+        this.events.onPart({ kind: 'shield', at: p.clone(), reflected: false })
+        return true
+      }
+      if (g.reflectsLeft > 0) {
+        g.reflectsLeft--
+        g.used = true
+        const o = s.owner && !s.owner.dead ? s.owner.pos : null
+        const aim = o ? Math.atan2(o.x - p.x, o.z - p.z) : Math.atan2(-s.dir.x, -s.dir.z)
+        // his shot now: a cold bolt, and walls stop it like any other
+        this.spawnBolt(p, aim, g.reflectDamage, 0.3, 20)
+        this.events.onPart({ kind: 'shield', at: p.clone(), reflected: true })
+        return true
+      }
+    }
+    if (Math.hypot(p.x - player.x, p.z - player.z) < SHOT_RADIUS + PLAYER_RADIUS) {
+      this.hurtPlayer(s.damage, 'shot')
+      return true
+    }
+    const hit = this.terrain.blocker(p.x, p.z, 0.15, true)
+    if (hit === 'wall' && s.bouncesLeft > 0) {
+      // the answer: the same reflection code, so it retraces the bolt to where Still fired from
+      const at = this.reflect(p, s.dir, step)
+      s.bouncesLeft--
+      s.bounced++
+      this.events.onPart({ kind: 'bounce', at: at.pos.clone(), side: 'enemy', n: s.bounced })
+    } else if (hit) {
+      this.smashNear(p.x, p.z, 0.4)
+      this.events.onShotBlocked(p)
+      this.ring(p, 0.2, 0.9, 0.2, 0xff7a55)
+      return true
+    }
+    return false
+  }
+
+  /**
+   * Reflect a projectile at `p` off the wall it has just entered. Back up to the
+   * last clear point (found to within a hair), see which axis is blocked, flip
+   * the direction on it. `p` and `dir` are changed in place.
+   */
+  private reflect(p: THREE.Vector3, dir: THREE.Vector3, step: number): { pos: THREE.Vector3; flip: Flip } {
+    const bx = p.x - dir.x * step
+    const bz = p.z - dir.z * step
+    let lo = 0
+    let hi = step
+    for (let k = 0; k < 6; k++) {
+      const m = (lo + hi) / 2
+      if (this.terrain.blocked(bx + dir.x * m, bz + dir.z * m, 0.15, true)) hi = m
+      else lo = m
+    }
+    const px = bx + dir.x * lo
+    const pz = bz + dir.z * lo
+    const hx = this.terrain.blocked(px + dir.x * step, pz, 0.15, true)
+    const hz = this.terrain.blocked(px, pz + dir.z * step, 0.15, true)
+    const flip: Flip = hx && !hz ? 'x' : hz && !hx ? 'z' : 'xz'
+    if (flip !== 'z') dir.x = -dir.x
+    if (flip !== 'x') dir.z = -dir.z
+    p.set(px, p.y, pz)
+    return { pos: new THREE.Vector3(px, 0, pz), flip }
   }
 
   /** Where Still should be looking. Null when nothing is in range. */
@@ -509,6 +592,11 @@ export class Combat {
   /** Read-only, for what's drawn on bodies (badges, rime motes). */
   statusOf(e: Enemy): Readonly<EnemyStatus> | undefined {
     return this.status.get(e)
+  }
+
+  /** Where every enemy shot is right now (a breach rim flares as one passes through). */
+  *shotPositions(): IterableIterator<THREE.Vector3> {
+    for (const s of this.shots) yield s.mesh.position
   }
 
   /** Every enemy carrying a status right now. */
@@ -611,6 +699,9 @@ export class Combat {
     p.patientSince += dt
     if (p.guard && (p.guard.t -= dt) <= 0) this.endGuard()
     if (p.anvil && (p.anvil.t -= dt) <= 0) this.endAnvil()
+    // the cover comes back
+    const closed = this.terrain.tickBreaches(dt)
+    if (closed.length) this.events.onPart({ kind: 'breach', holes: closed, open: false })
   }
 
   /** G8: a window ends with a small tick, and says whether it met anything. */
@@ -695,6 +786,7 @@ export class Combat {
     // dying in the air means no landing
     this.status.delete(e)
     this.held.delete(e)
+    e.air = 0
     e.dispose(this.scene)
     this.enemies.splice(i, 1)
     if (pack) {
@@ -714,12 +806,12 @@ export class Combat {
   }
 
   /** An enemy shot. Public for dev checks; `owner` is who a Mirror Ward sends it back to. */
-  fireShot(from: THREE.Vector3, dir: THREE.Vector3, damage: number, owner?: Enemy) {
+  fireShot(from: THREE.Vector3, dir: THREE.Vector3, damage: number, owner?: Enemy, bounces = 0) {
     const mesh = new THREE.Mesh(this.shotGeo, this.shotMat)
     // leaves from the barrel, not the feet
     mesh.position.set(from.x + dir.x * 0.7, 1.45, from.z + dir.z * 0.7)
     this.scene.add(mesh)
-    this.shots.push({ mesh, dir, life: 20 / SHOT_SPEED, damage, owner })
+    this.shots.push({ mesh, dir: dir.clone(), life: 20 / SHOT_SPEED, damage, owner, bouncesLeft: bounces, bounced: 0 })
   }
 
   /** A burst ring at a point: for smashed crates and used shrines. */
@@ -751,8 +843,9 @@ export class Combat {
     }
   }
 
+  /** A projectile's line: see mode, so a breach lets a shot through both ways. */
   private clearShot(from: THREE.Vector3, to: THREE.Vector3): boolean {
-    return this.terrain.lineClear(from.x, from.z, to.x, to.z, 0.15)
+    return this.terrain.lineClear(from.x, from.z, to.x, to.z, 0.15, true)
   }
 
   private nearest(from: THREE.Vector3, range = AUTO_RANGE, needsClearShot = false): Enemy | null {
@@ -774,7 +867,7 @@ export class Combat {
     const dir = new THREE.Vector3(to.x - from.x, 0, to.z - from.z).normalize()
     mesh.rotation.y = Math.atan2(dir.x, dir.z)
     this.scene.add(mesh)
-    this.bolts.push({ mesh, part: false, dir, life: 0.7, damage: AUTO_DAMAGE, radius: 0.3 })
+    this.bolts.push({ mesh, part: false, dir, life: 0.7, damage: AUTO_DAMAGE, radius: 0.3, speed: PART.boltSpeed, bouncesLeft: 0, bounces: [] })
   }
 
   /**
@@ -788,6 +881,14 @@ export class Combat {
 
     switch (def.shape) {
       case 'bolt': {
+        if (mod?.kind === 'bounce') {
+          this.ricochet(def, mod.bankSearch, ctx, r)
+          break
+        }
+        if (mod?.kind === 'pierceAll') {
+          this.throughLine(def, mod.breachMs, ctx, r)
+          break
+        }
         // no line needed to pick a target: walls stop the bolt, not the aim
         const target = this.nearest(o, def.range)
         const aim = target ? Math.atan2(target.pos.x - o.x, target.pos.z - o.z) : ctx.facing
@@ -1128,10 +1229,56 @@ export class Combat {
     return null
   }
 
+  /**
+   * Ricochet Lens: with a clear line it's just a weaker Lens. Without one it takes
+   * a one-wall bank found near Still, and the bolt reflects there by itself.
+   * It targets awake enemies first, so a bank never wakes a second pack by accident.
+   */
+  private ricochet(def: AbilityDef, search: number, ctx: CastContext, r: CastResult) {
+    const o = ctx.origin
+    const t = this.pickTarget(o, def.range, true)
+    const bank = t && !this.clearShot(o, t.pos) ? bankShot(this.terrain, o, t.pos, search, def.range) : null
+    const aim = bank ? Math.atan2(bank.at.x - o.x, bank.at.z - o.z) : t ? Math.atan2(t.pos.x - o.x, t.pos.z - o.z) : ctx.facing
+    // the head cants toward the bank side, so it reads "at an angle"
+    r.lean = bank ? Math.sign(Math.sin(aim - ctx.facing)) || 1 : 0
+    this.spawnBolt(o, aim, def.damage, def.radius, def.range, { bounces: 2, trail: 0.2 })
+    // you didn't pick the angle, so the whole path flashes first
+    const points = bank && t
+      ? [o.clone(), bank.at.clone(), t.pos.clone()]
+      : [o.clone(), t ? t.pos.clone() : this.ahead(o, ctx.facing, def.range)]
+    this.events.onPart({ kind: 'path', points })
+  }
+
+  /**
+   * Through-Line: a ghost bolt through enemies, crates and walls, and every solid it
+   * crosses opens to sight and shots for a few seconds, both ways. Awake first.
+   */
+  private throughLine(def: AbilityDef, breachMs: number, ctx: CastContext, r: CastResult) {
+    const o = ctx.origin
+    const t = this.pickTarget(o, def.range, true)
+    const aim = t ? Math.atan2(t.pos.x - o.x, t.pos.z - o.z) : ctx.facing
+    // he faces down the line: the draw, the beam and the recoil all run along it
+    r.aim = aim
+    const dir = this.spawnBolt(o, aim, def.damage, def.radius, def.range, { speed: PART.ghostSpeed, ghost: true, pierced: new Set() })
+    const holes = this.terrain.breach(o.x, o.z, o.x + dir.x * def.range, o.z + dir.z * def.range, breachMs / 1000)
+    this.events.onPart({ kind: 'breach', holes, open: true, seconds: breachMs / 1000 })
+  }
+
+  /**
+   * The ready tick for a bank shot: where a Ricochet Lens would bounce right now,
+   * or null when the nearest target has a clear line (or there's no bank).
+   */
+  bankPreview(def: AbilityDef, o: THREE.Vector3): THREE.Vector3 | null {
+    if (def.mod?.kind !== 'bounce') return null
+    const t = this.pickTarget(o, def.range, true)
+    if (!t || this.clearShot(o, t.pos)) return null
+    return bankShot(this.terrain, o, t.pos, def.mod.bankSearch, def.range)?.at ?? null
+  }
+
   /** One of Still's bolts, leaving from lens height. `scale` shrinks the mesh only, never the hit. */
   private spawnBolt(
     o: THREE.Vector3, aim: number, damage: number, radius: number, range: number,
-    opts: { pierced?: Set<Enemy>; once?: Set<Enemy>; scale?: number; trail?: number } = {},
+    opts: { pierced?: Set<Enemy>; once?: Set<Enemy>; scale?: number; trail?: number; speed?: number; ghost?: boolean; bounces?: number } = {},
   ) {
     const dir = new THREE.Vector3(Math.sin(aim), 0, Math.cos(aim))
     const mesh = new THREE.Mesh(this.boltGeo, this.abilityBoltMat)
@@ -1140,7 +1287,12 @@ export class Combat {
     mesh.position.set(o.x, 1.15, o.z)
     mesh.rotation.y = aim
     this.scene.add(mesh)
-    this.bolts.push({ mesh, part: true, dir, life: range / PART.boltSpeed, damage, radius, pierced: opts.pierced, once: opts.once, trail: opts.trail })
+    const speed = opts.speed ?? PART.boltSpeed
+    this.bolts.push({
+      mesh, part: true, dir, life: range / speed, damage, radius, speed, pierced: opts.pierced, once: opts.once, trail: opts.trail,
+      ghost: opts.ghost, bouncesLeft: opts.bounces ?? 0, bounces: [],
+    })
+    return dir
   }
 
   /**

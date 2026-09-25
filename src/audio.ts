@@ -564,8 +564,15 @@ export function ability(beat: BeatKey, pushed: boolean, power = 0) {
   const k = pushed ? 1.3 : 1
 
   switch (beat) {
+    case 'through':
+      // the bolt voice stretched low: the biggest thing the head does
+      tone(c, d, 'sawtooth', t, 300 * r, 3200 * r, 0.1, 0.4 * k)
+      tone(c, d, 'sine', t + 0.06, 3200 * r, 120 * r, 0.4, 0.5 * k)
+      hiss(c, d, t, 0.2, 0.35 * k, 'highpass', 3000, 7000, 0.7)
+      break
     case 'lens':
     case 'cracked':
+    case 'ricochet':
       tone(c, d, 'sawtooth', t, 600 * r, 2600 * r, 0.06, 0.35 * k)
       tone(c, d, 'sine', t + 0.05, 2400 * r, 260 * r, 0.2, 0.5 * k)
       hiss(c, d, t, 0.12, 0.3 * k, 'highpass', 3000, 6000, 0.7)
@@ -760,6 +767,37 @@ export function throwLand(pan: number, wall: boolean) {
     sample(c, 'mining', d, 0.7)
     sample(c, 'plateHeavy', d, 0.5)
   }
+}
+
+/**
+ * A bounce off a wall: a ping, the second a fifth higher. The sentinel's answer
+ * gets the same ping at its bounce: you hear the symmetry.
+ */
+export function bounce(pan: number, n: number) {
+  const c = live()
+  if (!c) return
+  const f = n >= 2 ? 1.5 : 1
+  const d = out(c, 'abilities', pan)
+  sample(c, 'tin', d, 0.5, 1.8 * f)
+  tone(c, d, 'triangle', c.currentTime, 2200 * f, 1600 * f, 0.05, 0.2)
+}
+
+/** Through-Line crossing a wall: stone giving way. */
+export function breachWall(pan: number) {
+  const c = live()
+  if (!c) return
+  const d = out(c, 'abilities', pan)
+  sample(c, 'mining', d, 0.6, 1.2)
+  sample(c, 'plateHeavy', d, 0.3, 1.4)
+}
+
+/** A breach closing: soft, so your ear tells you your cover is back. */
+export function breachClose(pan: number) {
+  const c = live()
+  if (!c) return
+  const d = out(c, 'abilities', pan)
+  sample(c, 'generic', d, 0.25, 0.8)
+  hiss(c, d, c.currentTime, 0.2, 0.2, 'lowpass', 800, 200, 0.7, 0.01)
 }
 
 /** A shot destroyed on the Ward: a ting. */

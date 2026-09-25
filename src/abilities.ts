@@ -377,4 +377,6 @@ export const READY = new Set<string>([
   'ward', 'mirror-ward', 'brace', 'anvil',
   // step 4: statuses, the interrupt, the throw
   'signal-flare', 'chill-vent', 'parry-clamp', 'clamp-toss',
+  // step 5: bounce and breach
+  'ricochet-lens', 'through-line',
 ])

@@ -12,7 +12,8 @@ export type EnemyPhase = 'approach' | 'windup' | 'strike' | 'recover'
 /** What an enemy does to the world on the tick it strikes. Combat resolves it. */
 export type EnemyAction =
   | { kind: 'melee'; damage: number }
-  | { kind: 'shot'; dir: THREE.Vector3; damage: number }
+  /** `bounces`: an answer shot reflects off walls this many times, retracing a banked bolt. */
+  | { kind: 'shot'; dir: THREE.Vector3; damage: number; bounces?: number }
   /** A fan of shots from one point (the boss's cannon). */
   | { kind: 'shots'; from: THREE.Vector3; dirs: THREE.Vector3[]; damage: number }
   /** A ring rolling outward with gaps to stand in. Angles in radians, world space. */
@@ -68,6 +69,12 @@ export interface Enemy {
    * each class's tint lerps toward RIME with it, joints first (legs first).
    */
   rime: number
+  /**
+   * 0..1: how high it's been thrown, set by Combat while it's in the air. Tint
+   * shades the body by it, so a hulk lifted toward Grace's light stays rusted
+   * metal instead of blowing out white.
+   */
+  air: number
   /** For footsteps: whether it's walking, and a phase that advances one PI per step. */
   readonly walking: boolean
   readonly gait: number
@@ -96,11 +103,23 @@ export const RIME = new THREE.Color(0x9fb4c8)
  */
 const RIME_DEPTH = 0.4
 
-/** Frost climbs the joints first, the shell half as much. Call after the base colour, before the hit flash. */
-export function rimeTint(joint: THREE.MeshStandardMaterial, shell: THREE.MeshStandardMaterial, rime: number) {
-  if (rime <= 0) return
-  joint.color.lerp(RIME, rime * RIME_DEPTH)
-  shell.color.lerp(RIME, rime * RIME_DEPTH * 0.5)
+/** At the top of a throw the body is this much closer to the light: shade it back by about as much. */
+const AIR_SHADE = 0.5
+
+/**
+ * What statuses and flight do to a body's colour. Frost climbs the joints first,
+ * the shell half as much; a thrown body is shaded against the light it rises into.
+ * Call after the base colour, before the hit flash.
+ */
+export function statusTint(joint: THREE.MeshStandardMaterial, shell: THREE.MeshStandardMaterial, rime: number, air: number) {
+  if (rime > 0) {
+    joint.color.lerp(RIME, rime * RIME_DEPTH)
+    shell.color.lerp(RIME, rime * RIME_DEPTH * 0.5)
+  }
+  if (air > 0) {
+    joint.color.multiplyScalar(1 - AIR_SHADE * air)
+    shell.color.multiplyScalar(1 - AIR_SHADE * air)
+  }
 }
 const CORE_ASLEEP = 0x2a1512
 
@@ -143,6 +162,7 @@ export class Chaser implements Enemy {
   size = 1
   readonly height = 1.7
   rime = 0
+  air = 0
   walking = false
   get gait() { return this.bob * 1.6 }
 
@@ -242,7 +262,7 @@ export class Chaser implements Enemy {
       m.color.setHex(base)
       if (this.asleep) m.color.multiply(SLEEP_BODY)
     }
-    rimeTint(this.jointMat, this.mat, this.rime)
+    statusTint(this.jointMat, this.mat, this.rime, this.air)
     for (const m of [this.mat, this.jointMat]) {
       m.color.lerp(new THREE.Color(0xffffff), this.flash * 0.85)
       m.emissive.setRGB(this.flash * 0.6, this.flash * 0.25, this.flash * 0.2)

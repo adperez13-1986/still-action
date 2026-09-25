@@ -2,7 +2,8 @@ import * as THREE from 'three'
 import type { Terrain } from './terrain'
 import { DECAL_Y } from './world'
 import { tellMaterial, releaseTell } from './vfx'
-import { slide, rimeTint, type Enemy, type EnemyAction, type EnemyPhase } from './enemy'
+import { PART, type Flip } from './parts'
+import { slide, statusTint, type Enemy, type EnemyAction, type EnemyPhase } from './enemy'
 
 /**
  * Pale steel, lighter than anything else in the room so the silhouette reads on
@@ -63,6 +64,7 @@ export class Ranged implements Enemy {
   size = 1
   readonly height = 2.0
   rime = 0
+  air = 0
 
   private timer = 0
   private reload = RANGED.reloadMs * 0.6
@@ -73,6 +75,16 @@ export class Ranged implements Enemy {
   private strafeTimer = 1 + Math.random() * 2
   private aim = 0
   private locked = false
+  /**
+   * A bolt banked off a wall into it: it shoots back down the same path, at the
+   * bounce, not at you. Kept for a few seconds waiting for its reload.
+   */
+  private answer: { at: THREE.Vector3; flip: Flip; bounces: number; t: number } | null = null
+  private answering = false
+  /** The answer's aim strip, bent where it will bounce, and an ember tick at the wall top. */
+  private readonly bendLine: THREE.Mesh
+  private readonly bendFill: THREE.Mesh
+  private readonly tick: THREE.Mesh
 
   private readonly mat: THREE.MeshStandardMaterial
   private readonly head: THREE.Group
@@ -153,7 +165,19 @@ export class Ranged implements Enemy {
     this.fill = new THREE.Mesh(strip(0.3, RANGED.aimLength), this.fillMat)
     this.fill.position.y = 0.005
     this.fill.scale.z = 0.001
-    this.tellGroup.add(line, this.fill)
+    this.line = line
+    this.bendLine = new THREE.Mesh(strip(0.62, RANGED.aimLength), this.lineMat)
+    this.bendFill = new THREE.Mesh(strip(0.3, RANGED.aimLength), this.fillMat)
+    this.tick = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.12, 0.12), new THREE.MeshBasicMaterial({ color: 0xff7a55 }))
+    this.bendLine.visible = this.bendFill.visible = this.tick.visible = false
+    this.tellGroup.add(line, this.fill, this.bendLine, this.bendFill, this.tick)
+  }
+
+  private readonly line: THREE.Mesh
+
+  /** Ricochet Lens banked a bolt into it: it answers down the same path. */
+  setAnswer(a: { at: THREE.Vector3; flip: Flip; bounces: number }) {
+    this.answer = { ...a, t: PART.answerSeconds }
   }
 
   hit(damage: number): boolean {
@@ -169,6 +193,8 @@ export class Ranged implements Enemy {
   update(dt: number, target: THREE.Vector3, terrain: Terrain): EnemyAction | null {
     this.timer -= dt * 1000
     this.reload -= dt * 1000
+    // an answer waits a few seconds for the reload, then it's forgotten
+    if (this.answer && !this.answering && (this.answer.t -= dt) <= 0) this.answer = null
     this.bob += dt * 4
     this.flash = Math.max(0, this.flash - dt * 6)
     this.recoil = Math.max(0, this.recoil - dt * 5)
@@ -186,7 +212,8 @@ export class Ranged implements Enemy {
         if (staggered) break
         let mx = 0
         let mz = 0
-        const sight = terrain.lineClear(this.pos.x, this.pos.z, target.x, target.z, 0.2)
+        // sight is see-mode: a breach opens its line both ways
+        const sight = terrain.lineClear(this.pos.x, this.pos.z, target.x, target.z, 0.2, true)
         if (!sight) {
           // no shot from here: go round the wall until there is one
           const to = terrain.nextStep(this.pos.x, this.pos.z, target.x, target.z, RANGED.bodyRadius)
@@ -213,7 +240,14 @@ export class Ranged implements Enemy {
         this.pos.z += mz * RANGED.speed * this.speedMul * dt
         this.stepping = Math.hypot(mx, mz)
 
-        if (this.reload <= 0 && dist <= RANGED.fireRange && sight) {
+        // an answer comes first: it aims at the bounce and doesn't track, whatever the sight or the band
+        if (this.answer && this.reload <= 0) {
+          this.phase = 'windup'
+          this.timer = RANGED.windupMs
+          this.aim = Math.atan2(this.answer.at.x - this.pos.x, this.answer.at.z - this.pos.z)
+          this.locked = true
+          this.answering = true
+        } else if (this.reload <= 0 && dist <= RANGED.fireRange && sight) {
           this.phase = 'windup'
           this.timer = RANGED.windupMs
           this.locked = false
@@ -234,7 +268,10 @@ export class Ranged implements Enemy {
             kind: 'shot',
             dir: new THREE.Vector3(Math.sin(this.aim), 0, Math.cos(this.aim)),
             damage: RANGED.damage,
+            bounces: this.answering ? this.answer?.bounces ?? 0 : 0,
           }
+          if (this.answering) this.answer = null
+          this.answering = false
         }
         break
       }
@@ -274,6 +311,7 @@ export class Ranged implements Enemy {
     }
     this.tellGroup.position.set(this.pos.x, DECAL_Y, this.pos.z)
     this.tellGroup.rotation.y = this.aim
+    this.bend()
 
     this.group.scale.setScalar(this.size * (1 + this.flash * 0.1))
     this.tint()
@@ -325,15 +363,41 @@ export class Ranged implements Enemy {
       m.color.setHex(base)
       if (this.asleep) m.color.multiplyScalar(0.4)
     }
-    rimeTint(this.jointMat, this.mat, this.rime)
+    statusTint(this.jointMat, this.mat, this.rime, this.air)
     for (const m of [this.mat, this.jointMat]) {
       m.color.lerp(new THREE.Color(0xffffff), this.flash * 0.85)
       m.emissive.setRGB(this.flash * 0.6, this.flash * 0.25, this.flash * 0.2)
     }
   }
 
+  /**
+   * While answering, the strip runs to the bounce and bends there, with an ember
+   * tick at wall-top height so the barrier never hides it. Only the first bend: enough of a read.
+   */
+  private bend() {
+    const a = this.answering ? this.answer : null
+    this.bendLine.visible = this.bendFill.visible = this.tick.visible = !!a
+    if (!a) {
+      this.line.scale.z = 1
+      return
+    }
+    const leg1 = Math.hypot(a.at.x - this.pos.x, a.at.z - this.pos.z)
+    this.line.scale.z = leg1 / RANGED.aimLength
+    const k = this.fill.scale.z
+    this.fill.scale.z = Math.min(k, leg1 / RANGED.aimLength)
+    const refl = a.flip === 'x' ? -this.aim : a.flip === 'z' ? Math.PI - this.aim : this.aim + Math.PI
+    for (const m of [this.bendLine, this.bendFill]) {
+      m.position.set(0, m === this.bendFill ? 0.009 : 0.004, leg1)
+      m.rotation.y = refl - this.aim
+    }
+    this.bendFill.scale.z = Math.max(0.001, k)
+    this.tick.position.set(0, 0.9, leg1)
+  }
+
   interrupt() {
     if (this.phase !== 'windup') return false
+    this.answer = null
+    this.answering = false
     this.phase = 'approach'
     this.timer = 0
     this.locked = false

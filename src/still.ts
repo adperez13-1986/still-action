@@ -67,6 +67,7 @@ type Pose =
   | 'dash' | 'step' | 'ram' | 'hop' | 'spring'
   | 'ward' | 'brace' | 'mirror' | 'anvil' | 'anvil-slam'
   | 'signal' | 'chill' | 'parry' | 'toss'
+  | 'ricochet' | 'through'
 
 /**
  * Beat -> pose and duration. The ported parts borrow their shape's pose until
@@ -77,6 +78,8 @@ const POSES: Partial<Record<AttackSpec['beat'], { pose: Pose; dur: number; yaw?:
   shot: { pose: 'shot', dur: 0.14 },
   lens: { pose: 'bolt', dur: 0.3 },
   cracked: { pose: 'bolt', dur: 0.3 },
+  ricochet: { pose: 'ricochet', dur: 0.3 },
+  through: { pose: 'through', dur: 0.42 },
   // stretched by the charge at the press: 0.26 s weak, 0.40 s full
   patient: { pose: 'patient', dur: 0.26 },
   coil: { pose: 'coil', dur: 0.22 },
@@ -160,7 +163,11 @@ export class Still {
 
   private ghosts: Ghost[] = []
   /** The attack being played: which pose, and how far through it (seconds). */
-  private anim: { pose: Pose; t: number; dur: number; hold: number; pushed: boolean; power: number; yaw: number } | null = null
+  private anim: { pose: Pose; t: number; dur: number; hold: number; pushed: boolean; power: number; yaw: number; lean: number } | null = null
+  /** A visual recoil of the whole body, backwards along facing (Through-Line). Never moves `pos`. */
+  private recoil = 0
+  /** Where the body is drawn relative to `pos`: the render adds this after interpolating. */
+  readonly nudge = new THREE.Vector3()
   private eyeFlash = 0
   private slowdown = 0
   private ghostTimer = 0
@@ -205,7 +212,7 @@ export class Still {
     const power = a.power ?? 0
     const dur = p?.pose === 'patient' ? p.dur + 0.14 * power : p?.dur ?? 0
     // a beat with no body yet still lights the eye
-    this.anim = p ? { pose: p.pose, t: 0, dur, hold: a.holdS ?? 0, pushed: a.pushed, power, yaw: p.yaw ?? 1 } : null
+    this.anim = p ? { pose: p.pose, t: 0, dur, hold: a.holdS ?? 0, pushed: a.pushed, power, yaw: p.yaw ?? 1, lean: a.lean ?? 0 } : null
   }
 
   /** 0 is running, 1 is stopped: the eye goes out and the head drops. */
@@ -342,6 +349,7 @@ export class Still {
       this.animate(dt)
       // flat is a dash, an arc is a hop: height is how you tell them apart
       const y = m.dash ? 0.12 : 4 * m.hopH * k * (1 - k)
+      this.nudge.set(0, 0, 0)
       this.group.position.set(this.pos.x, y + this.lift, this.pos.z)
       this.group.rotation.y = this.facing
       if (m.t >= m.T) {
@@ -375,7 +383,8 @@ export class Still {
     this.parts.torso.rotation.x = 0.16
     this.animate(dt)
 
-    this.group.position.set(this.pos.x, Math.abs(Math.sin(this.bob)) * 0.05 * mag + this.lift, this.pos.z)
+    this.nudge.set(-Math.sin(this.facing) * this.recoil, 0, -Math.cos(this.facing) * this.recoil)
+    this.group.position.set(this.pos.x + this.nudge.x, Math.abs(Math.sin(this.bob)) * 0.05 * mag + this.lift, this.pos.z + this.nudge.z)
     this.group.rotation.y = this.facing
   }
 
@@ -439,6 +448,7 @@ export class Still {
     head.position.z = 0.1
     this.lens.rotation.z = 0.18
     this.lift = 0
+    this.recoil = 0
     this.jawL.position.x = JAW_X - JAW_OPEN
     this.jawR.position.x = JAW_X + JAW_OPEN
 
@@ -505,6 +515,26 @@ export class Still {
           this.legR.rotation.x = 0.35 * (1 - k)
           torso.rotation.x -= 0.05 * (1 - k)
         }
+        break
+      }
+      case 'ricochet': {
+        // the Lens kick, with the head canted toward the bank: it reads "at an angle"
+        const kick = Math.pow(1 - k, 2)
+        head.rotation.x = -0.4 * kick * big
+        head.rotation.z = -0.25 * a.lean * Math.sin(Math.min(1, k * 1.5) * Math.PI)
+        torso.rotation.x = 0.16 - 0.15 * kick * big
+        break
+      }
+      case 'through': {
+        // a draw (0.12 s): the lens pulls in, the legs brace; then the release, and the whole body recoils
+        const draw = Math.min(1, a.t / 0.12)
+        const fire = a.t < 0.12 ? 0 : Math.pow(1 - Math.min(1, (a.t - 0.12) / (a.dur - 0.12)), 2)
+        head.position.z = 0.1 - 0.06 * (a.t < 0.12 ? draw : fire)
+        this.legL.rotation.x = 0.25 * (a.t < 0.12 ? draw : fire)
+        this.legR.rotation.x = -0.25 * (a.t < 0.12 ? draw : fire)
+        head.rotation.x = -0.55 * fire * big
+        torso.rotation.x = 0.16 - 0.16 * fire
+        this.recoil = 0.15 * fire * big
         break
       }
       case 'coil': {

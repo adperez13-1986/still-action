@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import { DECAL_Y } from './world'
 import { tellMaterial, releaseTell, COLD, COLD_DEEP } from './vfx'
-import { slide, rimeTint, type Enemy, type EnemyAction, type EnemyPhase } from './enemy'
+import { slide, statusTint, type Enemy, type EnemyAction, type EnemyPhase } from './enemy'
 import type { Terrain } from './terrain'
 
 /**
@@ -70,6 +70,7 @@ export class Assembler implements Enemy {
   size = 1
   readonly height = 4.2
   rime = 0
+  air = 0
 
   /** What it's doing right now, for sounds and the HUD. */
   move: BossMove | null = null
@@ -608,7 +609,7 @@ export class Assembler implements Enemy {
       m.color.setHex(base)
       if (this.asleep) m.color.multiplyScalar(0.45)
     }
-    rimeTint(this.jointMat, this.mat, this.rime)
+    statusTint(this.jointMat, this.mat, this.rime, this.air)
     for (const m of [this.mat, this.jointMat]) {
       m.color.lerp(new THREE.Color(0xffffff), this.flash * 0.6)
       m.emissive.setRGB(this.flash * 0.5 + (this.overloaded ? 0.08 : 0), this.flash * 0.2, this.flash * 0.15)

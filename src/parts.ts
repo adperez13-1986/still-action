@@ -1,13 +1,13 @@
-import type * as THREE from 'three'
+import * as THREE from 'three'
 import type { SlotName } from './still'
+import type { Terrain } from './terrain'
 import type { AbilityDef, BeatKey } from './abilities'
 import type { Enemy } from './enemy'
 
 /**
  * What parts leave out in the world, and the engine numbers that aren't any one
  * part's own. A part's own numbers live on its def in PARTS; these are the glue.
- * The 1.5 s history ring and the bank-shot solver join this file with the parts
- * that need them (Borrowed Time, Ricochet Lens).
+ * The 1.5 s history ring joins this file with Borrowed Time.
  */
 
 /** Engine constants: not any one part's number. */
@@ -107,10 +107,40 @@ export type PartEvent =
   | { kind: 'path'; points: THREE.Vector3[] }                          // Ricochet's cast-time path flash
   | { kind: 'bounce'; at: THREE.Vector3; side: 'still' | 'enemy'; n: number }
   | { kind: 'pierce'; at: THREE.Vector3; n: number }                   // Cracked: one per enemy passed, n counts up
-  | { kind: 'breach'; holes: BreachHole[]; open: boolean }
+  | { kind: 'breach'; holes: BreachHole[]; open: boolean; seconds?: number }
   | { kind: 'shield'; at: THREE.Vector3; reflected: boolean }          // a shot destroyed or turned by the shell
   | { kind: 'catch'; at: THREE.Vector3 }                               // Anvil
   | { kind: 'decoy'; state: 'spawn' | 'burst' | 'gone'; at: THREE.Vector3 }
   | { kind: 'anchor'; state: 'plant' | 'snap' | 'fade' | 'denied'; at: THREE.Vector3 }
   | { kind: 'windowEnd'; slot: SlotName; used: boolean }               // G8 end tick
   | { kind: 'cooldownStart'; slot: SlotName }                          // the anchor faded: start the HUD cooldown now
+
+/**
+ * One-wall bank shot. Mirror the target across each wall face near Still, aim at
+ * the mirror, and keep the shortest path whose two legs are both clear.
+ * Returns the bounce point on the face (offset by `pad`, where a bolt's blocked
+ * test will fire) and the axis the bolt reflects on.
+ */
+export function bankShot(
+  terrain: Terrain, o: THREE.Vector3, t: THREE.Vector3, search: number, maxPath: number, pad = 0.15,
+): { at: THREE.Vector3; flip: Flip; length: number } | null {
+  let best: { at: THREE.Vector3; flip: Flip; length: number } | null = null
+  for (const f of terrain.faces(o.x, o.z, search)) {
+    const plane = f.at + f.normal * pad
+    const oSide = ((f.axis === 'x' ? o.x : o.z) - plane) * f.normal
+    const tSide = ((f.axis === 'x' ? t.x : t.z) - plane) * f.normal
+    if (oSide <= 0.05 || tSide <= 0.05) continue              // both must be on the face's open side
+    const mx = f.axis === 'x' ? 2 * plane - t.x : t.x
+    const mz = f.axis === 'z' ? 2 * plane - t.z : t.z
+    const s = oSide / (oSide + tSide)                          // where o→mirror meets the plane
+    const px = o.x + (mx - o.x) * s
+    const pz = o.z + (mz - o.z) * s
+    const along = f.axis === 'x' ? pz : px
+    if (along < f.from + 0.2 || along > f.to - 0.2) continue  // off the end of the face
+    const length = Math.hypot(px - o.x, pz - o.z) + Math.hypot(t.x - px, t.z - pz)
+    if (length > maxPath || (best && length >= best.length)) continue
+    if (!terrain.lineClear(o.x, o.z, px, pz, pad, true) || !terrain.lineClear(px, pz, t.x, t.z, pad, true)) continue
+    best = { at: new THREE.Vector3(px, 0, pz), flip: f.axis, length }
+  }
+  return best
+}

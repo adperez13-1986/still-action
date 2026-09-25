@@ -88,6 +88,8 @@ export interface Hud {
   live: (slot: SlotName, frac: number | null) => void
   /** Swap a button to one of its part's alternate icons, or back (null). Repaints only on change. */
   iconState: (slot: SlotName, s: IconState | null) => void
+  /** Whether a slot's button is ready to fire (not cooling). An empty slot is never ready. */
+  isReady: (slot: SlotName) => boolean
   /** 0..1 into the button's `.charge` fill (Patient Lens). */
   charge: (slot: SlotName, c: number) => void
   /** A short pulse on one button: something about it just changed. */
@@ -417,6 +419,10 @@ export function createHud(root: HTMLElement): Hud {
       if (!b.def || b.icon === st) return
       b.icon = st
       b.el.querySelector('.lbl')!.innerHTML = svg((st && b.def.iconStates?.[st]) ?? b.def.icon)
+    },
+    isReady(slot) {
+      const b = buttons.find((x) => x.slot === slot)!
+      return !!b.def && state.clock >= b.readyAt
     },
     charge(slot, c) {
       buttons.find((x) => x.slot === slot)!.el.style.setProperty('--charge', c.toFixed(3))

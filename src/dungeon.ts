@@ -1,7 +1,8 @@
 import * as THREE from 'three'
 import { DECAL_Y } from './world'
 import { buildInstanced, pieceData, skin, type Piece, type Placement } from './kit'
-import type { Terrain } from './terrain'
+import type { Terrain, WallFace } from './terrain'
+import type { BreachHole } from './parts'
 import type { Archetype, EliteMod } from './combat'
 
 /**
@@ -229,18 +230,44 @@ export function makeTerrain(floor: Set<string>, boxes: Box[], circles: Circle[])
   }
   const onFloor = (x: number, z: number) => floor.has(key(cellOf(x), cellOf(z)))
 
-  const hits = (x: number, z: number, r: number) => {
-    if (!onFloor(x, z)) return true
+  // --- breaches: per solid piece, and per void cell, open to sight and projectiles only ---
+  const ids = new Map<Box | Circle, number>()
+  let nextId = 1
+  for (const b of boxes) ids.set(b, nextId++)
+  for (const c of circles) ids.set(c, nextId++)
+  /** Seconds left on each open piece. */
+  const breached = new Map<Box | Circle, number>()
+  /** Off-floor cells a breach crossed: key -> seconds left. Their ids are handed out as they open. */
+  const voidBreach = new Map<string, { t: number; id: number; i: number; j: number }>()
+
+  const inBox = (b: Box, x: number, z: number, r: number) => {
+    const cx = Math.max(b.minX, Math.min(x, b.maxX))
+    const cz = Math.max(b.minZ, Math.min(z, b.maxZ))
+    return (x - cx) ** 2 + (z - cz) ** 2 < r * r
+  }
+  const inCircle = (c: Circle, x: number, z: number, r: number) => (x - c.x) ** 2 + (z - c.z) ** 2 < (c.r + r) ** 2
+
+  /** What (x, z) is inside, grown by r. With `see`, open breaches don't count. Movement never passes `see`. */
+  const solidAt = (x: number, z: number, r: number, see = false): 'wall' | 'prop' | null => {
+    if (!onFloor(x, z) && !(see && voidBreach.has(key(cellOf(x), cellOf(z))))) return 'wall'
     for (const b of near(boxIndex, x, z)) {
-      const cx = Math.max(b.minX, Math.min(x, b.maxX))
-      const cz = Math.max(b.minZ, Math.min(z, b.maxZ))
-      if ((x - cx) ** 2 + (z - cz) ** 2 < r * r) return true
+      if (see && breached.has(b)) continue
+      if (inBox(b, x, z, r)) return 'wall'
     }
     for (const c of near(circleIndex, x, z)) {
-      if (!c.dead && (x - c.x) ** 2 + (z - c.z) ** 2 < (c.r + r) ** 2) return true
+      if (c.dead || (see && breached.has(c))) continue
+      if (inCircle(c, x, z, r)) return 'prop'
     }
-    return false
+    return null
   }
+  const hits = (x: number, z: number, r: number, see = false) => solidAt(x, z, r, see) !== null
+
+  const holeOf = (piece: Box | Circle): BreachHole => 'minX' in piece
+    ? { id: ids.get(piece)!, kind: 'wall', minX: piece.minX, maxX: piece.maxX, minZ: piece.minZ, maxZ: piece.maxZ }
+    : { id: ids.get(piece)!, kind: 'prop', minX: piece.x - piece.r, maxX: piece.x + piece.r, minZ: piece.z - piece.r, maxZ: piece.z + piece.r }
+  const voidHole = (v: { id: number; i: number; j: number }): BreachHole => ({
+    id: v.id, kind: 'void', minX: v.i * CELL - CELL / 2, maxX: v.i * CELL + CELL / 2, minZ: v.j * CELL - CELL / 2, maxZ: v.j * CELL + CELL / 2,
+  })
 
   // --- navigation: a breadth-first distance field per target cell, cached ---
   const fields = new Map<string, Map<string, number>>()
@@ -329,18 +356,86 @@ export function makeTerrain(floor: Set<string>, boxes: Box[], circles: Circle[])
       }
     },
 
-    blocked(x, z, pad = 0) {
-      return hits(x, z, Math.max(0.001, pad))
+    blocked(x, z, pad = 0, see = false) {
+      return hits(x, z, Math.max(0.001, pad), see)
     },
 
-    lineClear(ax, az, bx, bz, pad = 0) {
+    blocker(x, z, pad, see) {
+      return solidAt(x, z, Math.max(0.001, pad), see)
+    },
+
+    lineClear(ax, az, bx, bz, pad = 0, see = false) {
       const len = Math.hypot(bx - ax, bz - az)
       const steps = Math.max(1, Math.ceil(len / 0.35))
       for (let s = 1; s < steps; s++) {
         const t = s / steps
-        if (hits(ax + (bx - ax) * t, az + (bz - az) * t, Math.max(0.001, pad))) return false
+        if (hits(ax + (bx - ax) * t, az + (bz - az) * t, Math.max(0.001, pad), see)) return false
       }
       return true
+    },
+
+    breach(ax, az, bx, bz, seconds) {
+      const opened: BreachHole[] = []
+      const len = Math.hypot(bx - ax, bz - az)
+      const steps = Math.max(1, Math.ceil(len / 0.2))
+      const open = (piece: Box | Circle) => {
+        if (!breached.has(piece)) opened.push(holeOf(piece))
+        breached.set(piece, Math.max(breached.get(piece) ?? 0, seconds))
+      }
+      for (let s = 0; s <= steps; s++) {
+        const x = ax + ((bx - ax) * s) / steps
+        const z = az + ((bz - az) * s) / steps
+        if (!onFloor(x, z)) {
+          const i = cellOf(x)
+          const j = cellOf(z)
+          const k = key(i, j)
+          const v = voidBreach.get(k)
+          if (v) v.t = Math.max(v.t, seconds)
+          else {
+            const nv = { t: seconds, id: nextId++, i, j }
+            voidBreach.set(k, nv)
+            opened.push(voidHole(nv))
+          }
+        }
+        for (const b of near(boxIndex, x, z)) if (inBox(b, x, z, 0.15)) open(b)
+        for (const c of near(circleIndex, x, z)) if (!c.dead && inCircle(c, x, z, 0.15)) open(c)
+      }
+      return opened
+    },
+
+    tickBreaches(dt) {
+      const closed: BreachHole[] = []
+      for (const [piece, t] of breached) {
+        if (t - dt > 0) breached.set(piece, t - dt)
+        else {
+          breached.delete(piece)
+          closed.push(holeOf(piece))
+        }
+      }
+      for (const [k, v] of voidBreach) {
+        if ((v.t -= dt) <= 0) {
+          voidBreach.delete(k)
+          closed.push(voidHole(v))
+        }
+      }
+      return closed
+    },
+
+    faces(x, z, r) {
+      const out: WallFace[] = []
+      for (const b of boxes) {
+        if (breached.has(b)) continue
+        const cx = Math.max(b.minX, Math.min(x, b.maxX))
+        const cz = Math.max(b.minZ, Math.min(z, b.maxZ))
+        if ((x - cx) ** 2 + (z - cz) ** 2 > r * r) continue
+        out.push(
+          { axis: 'x', at: b.minX, normal: -1, from: b.minZ, to: b.maxZ },
+          { axis: 'x', at: b.maxX, normal: 1, from: b.minZ, to: b.maxZ },
+          { axis: 'z', at: b.minZ, normal: -1, from: b.minX, to: b.maxX },
+          { axis: 'z', at: b.maxZ, normal: 1, from: b.minX, to: b.maxX },
+        )
+      }
+      return out
     },
 
     clampMove(ax, az, bx, bz, radius) {

@@ -86,6 +86,10 @@ const OPEN: Terrain = {
   lineClear: () => true,
   clampMove: (_ax, _az, bx, bz) => ({ x: bx, z: bz }),
   nextStep: (_ax, _az, bx, bz) => ({ x: bx, z: bz }),
+  blocker: () => null,
+  breach: () => [],
+  tickBreaches: () => [],
+  faces: () => [],
 }
 const STEP = 1 / 60
 const MAX_FRAME = 0.25
@@ -200,6 +204,29 @@ const combat = new Combat(world.scene, OPEN, {
       }
     }
     if (ev.kind === 'land') landFx(ev.at, ev.what)
+    if (ev.kind === 'bounce') {
+      // a cold flash on the wall top, and sparks thrown back off it; the answer pings the same
+      const at = at3(ev.at, 1.0)
+      vfx.flash(at, ev.side === 'still' ? COLD : EMBER, 0.5)
+      vfx.sparks(at, ev.side === 'still' ? COLD : EMBER, 8, 5, undefined, 0.6)
+      vfx.chunks(at, 2, STONE, 3, 0.08)
+      sfx.bounce(panOf(ev.at), ev.n)
+    }
+    if (ev.kind === 'breach') {
+      for (const h of ev.holes) {
+        if (h.kind === 'void') continue
+        const c = new THREE.Vector3((h.minX + h.maxX) / 2, 0, (h.minZ + h.maxZ) / 2)
+        if (ev.open) {
+          // stone on both faces of what it went through
+          vfx.chunks(at3(c, 0.7), 6, STONE, 4, 0.12)
+          vfx.dust(c, 8, Math.max(h.maxX - h.minX, h.maxZ - h.minZ) / 2 + 0.4, undefined, 3)
+          sfx.breachWall(panOf(c))
+        } else {
+          vfx.dust(c, 5, 0.6, undefined, 1.5)
+          sfx.breachClose(panOf(c))
+        }
+      }
+    }
     if (ev.kind === 'interrupt') {
       // its heat broken by his cold: the tell shatters, the tone cuts dead, and the moment holds
       windups.get(ev.enemy)?.(true)
@@ -812,6 +839,16 @@ function castFx(def: AbilityDef, r: CastResult, pushed: boolean) {
       vfx.flash(lens, COLD, 0.8)
       vfx.sparks(lens, COLD, 10, 7, fwd, 0.5)
       break
+    case 'ricochet':
+      vfx.flash(lens, COLD, 0.8)
+      vfx.sparks(lens, COLD, 10, 7, fwd, 0.5)
+      break
+    case 'through':
+      // the draw into the lens, then a near-instant line with a bright head along it
+      vfx.gather(lens, 10, 0.6, COLD)
+      vfx.flash(lens, COLD, 1.1)
+      partFx.beam(at3(still.pos, 0), ahead(def.range, 0), 0.18, 0.2, 1.0)
+      break
     case 'patient':
       // a weak shot is a twitch, a full one looks like a Focusing Lens
       vfx.flash(lens, COLD, 0.4 + 0.8 * r.power)
@@ -931,6 +968,8 @@ function castFx(def: AbilityDef, r: CastResult, pushed: boolean) {
 /** Patient Lens has banked a full shot, and the button has said so once. */
 let patientFull = false
 let patientMotes = 0
+/** Ricochet's ready tick is recomputed this often, not every frame. */
+let bankT = 0
 /** Frayed Cleaver's width tier last frame; null while it isn't on a button. */
 let frayTier: number | null = null
 
@@ -942,6 +981,15 @@ function partFaces(dt: number) {
   const [head, , arms] = hud.slots.map((s) => s.def)
   // LIVE: something of his is out in the world, drawn as a lit ring that drains
   for (const slot of SLOT_NAMES) hud.live(slot, combat.liveFrac(slot))
+  // Ricochet, ready, and the nearest target is behind cover: one tick where it would bank
+  if (head?.mod?.kind === 'bounce' && hud.isReady('head') && run.phase === 'crawl') {
+    if ((bankT -= dt) <= 0) {
+      bankT = 0.1
+      partFx.bankTick(combat.bankPreview(head, still.pos))
+    }
+  } else {
+    partFx.bankTick(null)
+  }
   if (head?.mod?.kind === 'charge') {
     const m = head.mod
     const c = Math.min(1, Math.max(0, (combat.parts.patientSince - m.minS) / (m.fullS - m.minS)))
@@ -1164,8 +1212,8 @@ function frame(nowMs: number) {
   const alpha = accumulator / STEP
   const x = prev.x + (still.pos.x - prev.x) * alpha
   const z = prev.z + (still.pos.z - prev.z) * alpha
-  still.group.position.x = x
-  still.group.position.z = z
+  still.group.position.x = x + still.nudge.x
+  still.group.position.z = z + still.nudge.z
 
   // Grace's light drifts a little toward the exit: the light you carry points the way
   if (level && run.phase === 'crawl') {

@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import { DECAL_Y } from './world'
 import { tellMaterial, releaseTell, COLD, COLD_DEEP, EMBER, VFX_TIME, type Vfx } from './vfx'
-import { PART, type EnemyStatus, type PartEvent, type PartRuntime } from './parts'
+import { PART, type BreachHole, type EnemyStatus, type PartEvent, type PartRuntime } from './parts'
 import type { Enemy } from './enemy'
 import type { Still } from './still'
 
@@ -21,11 +21,15 @@ interface Landing {
   tick?: THREE.Mesh
 }
 
-/** What PartFx may read of Combat's statuses. Nothing here writes. */
+/** What PartFx may read of Combat. Nothing here writes. */
 export interface StatusReader {
   statuses(): Iterable<[Enemy, Readonly<EnemyStatus>]>
   statusOf(e: Enemy): Readonly<EnemyStatus> | undefined
+  shotPositions(): Iterable<THREE.Vector3>
 }
+
+/** N6: a breached piece's cold rim, burning shorter as the hole closes. */
+interface Rim { hole: BreachHole; t: number; max: number; group: THREE.Group; mat: THREE.MeshBasicMaterial; flare: number }
 
 /** N3: the mark's three brackets orbiting an enemy's head. */
 interface Badge { group: THREE.Group; mat: THREE.MeshBasicMaterial; spin: number; end: 'consumed' | 'expired' | null; endT: number; flash2: number }
@@ -49,6 +53,13 @@ const FADE_S = 0.25
 const CROWD = 5
 /** Falling frost motes, at most this many a beat across every slowed enemy. */
 const MOTES_MAX = 12
+/** Barrier tops: where a breach rim and the bank tick sit, so the wall never hides them. */
+const WALL_TOP = 1.0
+/** The path flash, and a rim's ember flare when a shot goes through its hole. */
+const PATH_S = 0.15
+const FLARE_S = 0.1
+const RIM_COLD = new THREE.Color(0xcfe4ff)
+const RIM_EMBER = new THREE.Color(0xff7a55)
 /** The glob leaves from about lens height. */
 const LOB_FROM_Y = 1.9
 const TETHER_Y = 1.0
@@ -112,6 +123,10 @@ export class PartFx {
   private landings: Landing[] = []
   private badges = new Map<Enemy, Badge>()
   private motesT = 0
+  private rims = new Map<number, Rim>()
+  private readonly edgeGeo = new THREE.BoxGeometry(1, 0.05, 0.05)
+  /** Ricochet's ready tick: one cold mark on the wall where it would bounce. */
+  private readonly bankMark = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.14, 0.14), new THREE.MeshBasicMaterial({ color: 0xeef6ff, blending: THREE.AdditiveBlending, transparent: true, opacity: 0.9 }))
   private readonly bracketGeo = new THREE.BoxGeometry(0.035, 0.035, 0.2)
   private readonly tickGeo = new THREE.BoxGeometry(0.12, 0.3, 0.12)
   private readonly tickMat = new THREE.MeshBasicMaterial({ color: 0xeef6ff, blending: THREE.AdditiveBlending, transparent: true })
@@ -152,7 +167,8 @@ export class PartFx {
     this.anvilRing.rotation.x = -Math.PI / 2
     this.anvilRing.visible = false
     this.anvilMat.opacity = 0.8
-    scene.add(this.shell, this.anvilRing)
+    this.bankMark.visible = false
+    scene.add(this.shell, this.anvilRing, this.bankMark)
   }
 
   /** One instant from Combat's onPart. */
@@ -179,6 +195,14 @@ export class PartFx {
     } else if (ev.kind === 'land') {
       const i = this.landings.findIndex((l) => l.to.distanceToSquared(ev.at) < 1e-4)
       if (i >= 0) this.dropLanding(i)
+    } else if (ev.kind === 'path') {
+      // Ricochet: the whole path flashes as a thin line at wall-top height before the bolt travels
+      for (let i = 0; i + 1 < ev.points.length; i++) this.beam(ev.points[i]!, ev.points[i + 1]!, 0.1, PATH_S, WALL_TOP)
+    } else if (ev.kind === 'breach') {
+      for (const h of ev.holes) {
+        if (ev.open) this.openRim(h, ev.seconds ?? 4)
+        else this.closeRim(h.id)
+      }
     } else if (ev.kind === 'mark') {
       const b = this.badges.get(ev.enemy)
       if (ev.state === 'on' && !b) this.badges.set(ev.enemy, this.makeBadge())
@@ -211,8 +235,8 @@ export class PartFx {
           this.vfx.sparks(l.glob.position, COLD, 1, 2)
         }
       }
-      // the thrown body trails cold while it's in the air
-      if (l.enemy && !l.enemy.dead) this.vfx.trail(new THREE.Vector3(l.enemy.pos.x, 0.8 + l.enemy.group.position.y, l.enemy.pos.z), COLD, 0.3)
+      // the thrown body trails cold from its feet: under it, never stacked over it
+      if (l.enemy && !l.enemy.dead) this.vfx.trail(new THREE.Vector3(l.enemy.pos.x, 0.15 + l.enemy.group.position.y, l.enemy.pos.z), COLD_DEEP, 0.2)
       l.ring.scale.setScalar(l.radius * (l.wide + (1 - l.wide) * k))
     }
     // a thrown enemy that died in the air never lands: its mark goes with it
@@ -220,6 +244,7 @@ export class PartFx {
 
     this.drawBadges(dt)
     this.drawFrost(dt)
+    this.drawRims(dt)
 
     for (let i = this.beams.length - 1; i >= 0; i--) {
       const b = this.beams[i]!
@@ -246,7 +271,8 @@ export class PartFx {
         continue
       }
       this.pose(te.mesh, from, e.pos, 0.12, TETHER_Y)
-      this.vfx.trail(new THREE.Vector3(e.pos.x, 0.9, e.pos.z), COLD, 0.3)
+      // from the feet, like a throw's: a trail stacked over the body blows it out white
+      this.vfx.trail(new THREE.Vector3(e.pos.x, 0.15, e.pos.z), COLD_DEEP, 0.22)
     }
   }
 
@@ -270,7 +296,15 @@ export class PartFx {
   }
 
   /** A new level or a new run: everything drawn goes. */
+  /** Where a Ricochet Lens would bank right now, or null: one small cold tick on the wall. */
+  bankTick(at: THREE.Vector3 | null) {
+    this.bankMark.visible = !!at
+    if (at) this.bankMark.position.set(at.x, WALL_TOP * 0.9, at.z)
+  }
+
   clear() {
+    this.bankTick(null)
+    for (const id of [...this.rims.keys()]) this.closeRim(id)
     while (this.landings.length) this.dropLanding(0)
     for (const e of [...this.badges.keys()]) this.dropBadge(e)
     for (const b of this.beams) {
@@ -316,6 +350,66 @@ export class PartFx {
         this.glintT = 0.3
         this.vfx.flash(this.still.jawL.getWorldPosition(new THREE.Vector3()), COLD, 0.35)
       }
+    }
+  }
+
+  /**
+   * N6: a cold rim on a breached piece: the four top edges of a wall, or a ring at
+   * a prop's base. Void cells get nothing (there's nothing there to draw).
+   */
+  private openRim(h: BreachHole, seconds: number) {
+    if (h.kind === 'void' || this.rims.has(h.id)) return
+    const mat = new THREE.MeshBasicMaterial({ color: RIM_COLD, blending: THREE.AdditiveBlending, transparent: true, depthWrite: false })
+    const group = new THREE.Group()
+    if (h.kind === 'wall') {
+      const w = h.maxX - h.minX
+      const d = h.maxZ - h.minZ
+      const cx = (h.minX + h.maxX) / 2
+      const cz = (h.minZ + h.maxZ) / 2
+      for (const [x, z, len, rot] of [[cx, h.minZ, w, 0], [cx, h.maxZ, w, 0], [h.minX, cz, d, Math.PI / 2], [h.maxX, cz, d, Math.PI / 2]] as const) {
+        const edge = new THREE.Mesh(this.edgeGeo, mat)
+        edge.position.set(x, WALL_TOP, z)
+        edge.rotation.y = rot
+        edge.userData.len = len
+        edge.scale.x = len
+        group.add(edge)
+      }
+    } else {
+      const ring = new THREE.Mesh(new THREE.RingGeometry(0.9, 1, 32), mat)
+      ring.rotation.x = -Math.PI / 2
+      ring.position.set((h.minX + h.maxX) / 2, DECAL_Y + 0.02, (h.minZ + h.maxZ) / 2)
+      ring.scale.setScalar((h.maxX - h.minX) / 2 + 0.1)
+      group.add(ring)
+    }
+    this.scene.add(group)
+    this.rims.set(h.id, { hole: h, t: seconds, max: seconds, group, mat, flare: 0 })
+  }
+
+  private closeRim(id: number) {
+    const r = this.rims.get(id)
+    if (!r) return
+    this.scene.remove(r.group)
+    r.group.traverse((o) => {
+      if (o instanceof THREE.Mesh && o.geometry !== this.edgeGeo) o.geometry.dispose()
+    })
+    r.mat.dispose()
+    this.rims.delete(id)
+  }
+
+  /** Rims burn shorter as the hole closes, flicker in its last second, and flare ember as a shot goes through. */
+  private drawRims(dt: number) {
+    if (this.rims.size === 0) return
+    for (const r of this.rims.values()) {
+      r.t = Math.max(0, r.t - dt)
+      const h = r.hole
+      for (const p of this.status.shotPositions()) {
+        if (p.x > h.minX - 0.3 && p.x < h.maxX + 0.3 && p.z > h.minZ - 0.3 && p.z < h.maxZ + 0.3) r.flare = FLARE_S
+      }
+      r.flare = Math.max(0, r.flare - dt)
+      r.mat.color.copy(r.flare > 0 ? RIM_EMBER : RIM_COLD)
+      const left = r.t / r.max
+      r.mat.opacity = r.t < 1 ? 0.35 + Math.random() * 0.6 : 0.9
+      if (h.kind === 'wall') for (const e of r.group.children) e.scale.x = Math.max(0.05, (e.userData.len as number) * left)
     }
   }
 
