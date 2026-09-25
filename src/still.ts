@@ -1,45 +1,23 @@
 import * as THREE from 'three'
-import type { BeatKey } from './abilities'
+import { STARTING, type AbilityDef, type BeatKey } from './abilities'
 import type { StillMove } from './parts'
+import { buildModel, EYE, EYE_OFF, EYE_ON, HUNCH, JAW_OPEN, JAW_X, LENS_TILT, type PartCtx, type SlotModel } from './partmodels'
 
 /**
  * Q16: architecture yes, content no.
- * Still is four separate parts from day one, so swapping a part later is a mesh
- * assignment rather than a rewrite.
+ * Still is four separate parts from day one, so swapping a part is a model swap
+ * rather than a rewrite. Each part's model lives in `partmodels.ts`: frame +
+ * shell, where the frame holds every handle the poses below write.
  *
  * The Lantern: tall, thin and a little hunched. An open cage for a torso with a
  * small cold core inside, a round lens on a stalk for a head, backward-bent
- * bird legs, mismatched arms (a clamp, a hook). Picked from the lineup; every
- * rod is thicker than the lineup draft so it still reads at phone size.
+ * bird legs, mismatched arms (a clamp, a hook). Picked from the lineup.
  */
 export type SlotName = 'head' | 'torso' | 'arms' | 'legs'
 export const SLOT_NAMES: readonly SlotName[] = ['head', 'torso', 'arms', 'legs'] as const
 
-const SHELL = new THREE.MeshStandardMaterial({ color: 0x55616e, roughness: 0.5, metalness: 0.55 })
-const SHELL_DARK = new THREE.MeshStandardMaterial({ color: 0x2c343d, roughness: 0.65, metalness: 0.45 })
-/** Pale and cold: Grace is the only warm light. The lens and the core share it, so both go out together. */
-const EYE_ON = new THREE.Color(0xd6ebff)
-const EYE_OFF = new THREE.Color(0x0c1014)
-const EYE = new THREE.MeshBasicMaterial({ color: EYE_ON })
-
-/** An unfound part: dull, dark, unpowered. The frame is there; nothing's in it yet. */
-const BARE = new THREE.MeshStandardMaterial({ color: 0x15191e, roughness: 0.95, metalness: 0.1 })
-
-const v3 = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z)
-
-/** A rod between two points. */
-function rod(a: THREE.Vector3, b: THREE.Vector3, r: number, mat: THREE.Material) {
-  const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, a.distanceTo(b), 8), mat)
-  m.position.copy(a).add(b).multiplyScalar(0.5)
-  m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), b.clone().sub(a).normalize())
-  return m
-}
-
-function ball(r: number, mat: THREE.Material, at: THREE.Vector3) {
-  const m = new THREE.Mesh(new THREE.SphereGeometry(r, 10, 8), mat)
-  m.position.copy(at)
-  return m
-}
+/** A piece's rest transform, recorded when it's worn: reassembly puts every piece back, not just the four roots. */
+interface Rest { p: THREE.Vector3; q: THREE.Quaternion; s: THREE.Vector3 }
 
 const GHOST_EVERY = 0.03
 const GHOST_LIFE = 0.26
@@ -119,10 +97,6 @@ const POSES: Partial<Record<AttackSpec['beat'], { pose: Pose; dur: number; yaw?:
 /** A stance lets go over this long once its window is done. */
 const RELEASE_S = 0.1
 
-/** Where the clamp's jaws rest, either side of the hand. They close toward it. */
-const JAW_X = -0.05
-const JAW_OPEN = 0.06
-
 /** A move in progress: the path, how long it takes, and how high it arcs. */
 interface Move {
   from: THREE.Vector3
@@ -164,7 +138,14 @@ export class Still {
   /** A pose's own lift (a crouch, a squash), added over the walk bob and any hop. */
   private lift = 0
 
-  private readonly home = new Map<THREE.Object3D, THREE.Vector3>()
+  /** What each slot wears right now: a part's model or the frame. */
+  readonly models = {} as Record<SlotName, SlotModel>
+  /** Bumped on every wear: anything that copied his body (Borrowed Time's echo) rebuilds when it changes. */
+  version = 0
+  private readonly rest = new Map<THREE.Object3D, Rest>()
+  /** What the parts' idle motion reads. main writes `charge` and `marked`; `update` the rest. */
+  readonly ctx: PartCtx = { speed: 0, bob: 0, accel: 0, charge: 0, marked: false, pose: null, k: 0, moving: false, broken: false }
+  private fwdSpeed = 0
   private debris: Debris[] = []
 
   private ghosts: Ghost[] = []
@@ -184,21 +165,47 @@ export class Still {
   /** Called on the tick a move arrives, for landing dust and sound. */
   onLand: ((m: StillMove) => void) | null = null
 
+  /** The Lantern, whole: the four plain parts. A run starts him with one and three frames (`wear`). */
   constructor() {
-    this.setPart('legs', this.buildLegs())
-    this.setPart('torso', this.buildTorso())
-    this.setPart('arms', this.buildArms())
-    this.setPart('head', this.buildHead())
-    for (const p of Object.values(this.parts)) this.home.set(p, p.position.clone())
+    for (const slot of ['legs', 'torso', 'arms', 'head'] as const) this.wear(slot, STARTING.find((p) => p.slot === slot) ?? null)
   }
 
-  /** Found parts are lit metal; unfound ones are drawn bare. The eye and core stay lit regardless. */
-  setEquipped(slot: SlotName, on: boolean) {
-    this.parts[slot].traverse((o) => {
-      if (!(o instanceof THREE.Mesh) || o.material === EYE) return
-      const own = (o.userData.own ??= o.material) as THREE.Material
-      o.material = on ? own : BARE
-    })
+  /**
+   * Put a part on (or `null`: the empty slot's frame). The model replaces the
+   * slot's piece, the pose handles are rebound to it, and its rest pose is
+   * recorded, so a part picked up mid-run reassembles where it belongs.
+   */
+  wear(slot: SlotName, def: AbilityDef | null) {
+    const old = this.models[slot]
+    if (old) {
+      old.root.traverse((o) => this.rest.delete(o))
+      this.debris = this.debris.filter((d) => d.part !== old.root)
+    }
+    const m = buildModel(slot, def?.id ?? null, 'body')
+    this.models[slot] = m
+    this.setPart(slot, m.root)
+    if (m.lens) this.lens = m.lens
+    if (m.core) this.core = m.core
+    if (m.armL && m.armR && m.jawL && m.jawR) {
+      this.armL = m.armL
+      this.armR = m.armR
+      this.jawL = m.jawL
+      this.jawR = m.jawR
+    }
+    if (m.legL && m.legR) {
+      this.legL = m.legL
+      this.legR = m.legR
+    }
+    m.root.traverse((o) => this.rest.set(o, { p: o.position.clone(), q: o.quaternion.clone(), s: o.scale.clone() }))
+    // a stopping Still stays stopping: the new head drops as far as the old one had
+    if (slot === 'head') m.root.rotation.x = this.slowdown * 0.42
+    if (slot === 'arms') m.root.rotation.x = this.slowdown * 0.12
+    this.version++
+  }
+
+  /** Its thing is out in the world (Lure's decoy, Plumb Line's anchor): the body shows it missing. */
+  setLive(slot: SlotName, out: boolean) {
+    this.models[slot].setLive?.(out)
   }
 
   /**
@@ -252,6 +259,9 @@ export class Still {
   }
 
   updateBroken(dt: number) {
+    // idle motion freezes where it is; only the fan coasts down
+    this.ctx.broken = true
+    for (const m of Object.values(this.models)) m.tick?.(dt, this.ctx)
     for (const d of this.debris) {
       d.vel.y -= 22 * dt
       d.part.position.addScaledVector(d.vel, dt)
@@ -267,14 +277,21 @@ export class Still {
     }
   }
 
+  /** Every piece back at its rest pose: the four roots, and everything a pose or an idle had moved inside them. */
   reassemble() {
     this.debris = []
     this.move = null
     this.lockT = 0
-    for (const p of Object.values(this.parts)) {
-      p.position.copy(this.home.get(p) ?? new THREE.Vector3())
-      p.rotation.set(0, 0, 0)
+    this.anim = null
+    this.lift = 0
+    this.recoil = 0
+    this.ctx.broken = false
+    for (const [o, r] of this.rest) {
+      o.position.copy(r.p)
+      o.quaternion.copy(r.q)
+      o.scale.copy(r.s)
     }
+    for (const m of Object.values(this.models)) m.reset?.()
     this.setSlowdown(0)
   }
 
@@ -321,6 +338,32 @@ export class Still {
   }
 
   update(dt: number, moveX: number, moveZ: number) {
+    const x = this.pos.x
+    const z = this.pos.z
+    this.drive(dt, moveX, moveZ)
+    this.tickParts(dt, x, z)
+  }
+
+  /** The parts' idle motion, from how he actually moved this tick. */
+  private tickParts(dt: number, x: number, z: number) {
+    const c = this.ctx
+    c.broken = false
+    if (dt > 1e-6) {
+      const vx = (this.pos.x - x) / dt
+      const vz = (this.pos.z - z) / dt
+      const fwd = vx * Math.sin(this.facing) + vz * Math.cos(this.facing)
+      c.accel += ((fwd - this.fwdSpeed) / dt - c.accel) * Math.min(1, dt * 12)
+      this.fwdSpeed = fwd
+      c.speed += (Math.hypot(vx, vz) / this.speed - c.speed) * Math.min(1, dt * 6)
+    }
+    c.bob = this.bob
+    c.pose = this.anim?.pose ?? null
+    c.k = this.anim ? Math.min(1, this.anim.t / this.anim.dur) : 0
+    c.moving = this.move !== null
+    for (const m of Object.values(this.models)) m.tick?.(dt, c)
+  }
+
+  private drive(dt: number, moveX: number, moveZ: number) {
     this.updateGhosts(dt)
 
     if (this.lockT > 0) {
@@ -343,7 +386,7 @@ export class Still {
       // a rewind un-walks: the bob runs backwards, so the legs play the walk in reverse
       const back = m.src.kind === 'rewind'
       this.bob += dt * (back ? -13 : 22)
-      this.parts.torso.rotation.x = 0.16
+      this.parts.torso.rotation.x = HUNCH
       if (back) {
         const swing = Math.sin(this.bob) * 0.45
         this.legL.rotation.x = swing
@@ -393,7 +436,7 @@ export class Still {
     this.legR.rotation.x = -swing
     this.armL.rotation.x = -swing * 0.5
     this.armR.rotation.x = swing * 0.5
-    this.parts.torso.rotation.x = 0.16
+    this.parts.torso.rotation.x = HUNCH
     this.animate(dt)
 
     this.nudge.set(-Math.sin(this.facing) * this.recoil, 0, -Math.cos(this.facing) * this.recoil)
@@ -468,7 +511,7 @@ export class Still {
     head.rotation.y = 0
     head.rotation.z = 0
     head.position.z = 0.1
-    this.lens.rotation.z = 0.18
+    this.lens.rotation.z = LENS_TILT
     this.lift = 0
     this.recoil = 0
     this.jawL.position.x = JAW_X - JAW_OPEN
@@ -786,101 +829,5 @@ export class Still {
     while (delta > Math.PI) delta -= Math.PI * 2
     while (delta < -Math.PI) delta += Math.PI * 2
     this.facing += delta * Math.min(1, rate)
-  }
-
-  private buildLegs(): THREE.Object3D {
-    const g = new THREE.Group()
-    const leg = (side: number) => {
-      // hinged at the hip, so the whole leg swings when he walks
-      const hip = new THREE.Group()
-      hip.position.set(side * 0.14, 0.98, 0)
-      const knee = v3(side * 0.02, -0.4, 0.17)
-      const ankle = v3(0, -0.8, -0.09)
-      const toe = v3(0, -0.95, 0.14)
-      hip.add(
-        rod(v3(0, 0, 0), knee, 0.07, SHELL_DARK),
-        rod(knee, ankle, 0.055, SHELL_DARK),
-        rod(ankle, toe, 0.05, SHELL),
-        ball(0.085, SHELL, knee),
-        ball(0.06, SHELL, ankle),
-      )
-      return hip
-    }
-    this.legL = leg(-1)
-    this.legR = leg(1)
-    g.add(this.legL, this.legR)
-    return g
-  }
-
-  private buildTorso(): THREE.Object3D {
-    // an open cage with the core inside: you can see what little is there
-    const g = new THREE.Group()
-    g.position.y = 1.0
-    g.rotation.x = 0.16 // a little hunched, leaning into the walk
-    const bars = 6
-    for (let i = 0; i < bars; i++) {
-      const a = (i / bars) * Math.PI * 2
-      g.add(rod(v3(Math.cos(a) * 0.15, 0, Math.sin(a) * 0.15), v3(Math.cos(a) * 0.23, 0.55, Math.sin(a) * 0.2), 0.035, SHELL))
-    }
-    const top = new THREE.Mesh(new THREE.TorusGeometry(0.23, 0.045, 6, 18), SHELL_DARK)
-    top.position.y = 0.55
-    top.rotation.x = Math.PI / 2
-    const bottom = new THREE.Mesh(new THREE.TorusGeometry(0.15, 0.045, 6, 16), SHELL_DARK)
-    bottom.rotation.x = Math.PI / 2
-    this.core = ball(0.11, EYE, v3(0, 0.28, 0))
-    g.add(top, bottom, this.core)
-    return g
-  }
-
-  private buildArms(): THREE.Object3D {
-    const g = new THREE.Group()
-    // left: long, ends in a clamp
-    this.armL = new THREE.Group()
-    this.armL.position.set(-0.26, 1.5, 0.04)
-    const le = v3(-0.08, -0.32, 0.08)
-    const lh = v3(-0.05, -0.64, 0.14)
-    this.armL.add(
-      rod(v3(0, 0, 0), le, 0.05, SHELL_DARK),
-      rod(le, lh, 0.045, SHELL),
-      ball(0.06, SHELL, le),
-    )
-    const jaw = (off: number) => {
-      const m = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.16, 0.07), SHELL)
-      m.position.set(lh.x + off, lh.y - 0.07, lh.z)
-      this.armL.add(m)
-      return m
-    }
-    this.jawL = jaw(-JAW_OPEN)
-    this.jawR = jaw(JAW_OPEN)
-    // right: shorter, a hook
-    this.armR = new THREE.Group()
-    this.armR.position.set(0.26, 1.5, 0.04)
-    const re = v3(0.06, -0.28, 0.07)
-    const hook = new THREE.Mesh(new THREE.TorusGeometry(0.1, 0.035, 6, 12, Math.PI * 1.3), SHELL)
-    hook.position.set(re.x, re.y - 0.12, re.z)
-    hook.rotation.y = Math.PI / 2
-    this.armR.add(rod(v3(0, 0, 0), re, 0.05, SHELL_DARK), ball(0.06, SHELL, re), hook)
-    g.add(this.armL, this.armR)
-    return g
-  }
-
-  private buildHead(): THREE.Object3D {
-    // pivots at the neck, so the head can drop when Still stops
-    const g = new THREE.Group()
-    g.position.set(0, 1.56, 0.1)
-    g.add(rod(v3(0, 0, 0), v3(0.03, 0.2, 0.04), 0.04, SHELL_DARK))
-    const lens = new THREE.Group()
-    this.lens = lens
-    lens.position.set(0.03, 0.32, 0.05)
-    lens.rotation.z = 0.18 // tilted, curious
-    const body = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.17, 18), SHELL)
-    body.rotation.x = Math.PI / 2
-    const glass = new THREE.Mesh(new THREE.CircleGeometry(0.135, 18), EYE)
-    glass.position.z = 0.087
-    const rim = new THREE.Mesh(new THREE.TorusGeometry(0.16, 0.03, 6, 18), SHELL_DARK)
-    rim.position.z = 0.086
-    lens.add(body, glass, rim)
-    g.add(lens)
-    return g
   }
 }

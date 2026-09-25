@@ -2,6 +2,7 @@ import * as THREE from 'three'
 import { DECAL_Y } from './world'
 import { PARTS, type AbilityDef, type DropGate, type Tier } from './abilities'
 import type { SlotName } from './still'
+import { centred, DISPLAY_EYE, EYE_ON, FLOOR_SCALE, partModel } from './partmodels'
 import type { Archetype, Pack } from './combat'
 import type { Terrain } from './terrain'
 
@@ -56,6 +57,9 @@ export const TIER_COLOR: Record<Tier, number> = {
   // warm like Grace's light, so it's kept thin and rare; no light source of its own
   gold: 0xd9b36c,
 }
+
+/** An angle into (−π, π]. */
+const wrap = (a: number) => Math.atan2(Math.sin(a), Math.cos(a))
 
 function pickWeighted<T extends string>(weights: Record<T, number>): T {
   const entries = Object.entries(weights) as [T, number][]
@@ -120,9 +124,26 @@ export interface GroundPart {
   fly: number
   from: THREE.Vector3
   bob: number
+  /** The part's own model, turning about its middle inside the beam. */
+  spinner: THREE.Group
+  /** Its glass: dim until it's offered, then it answers him. Its own copy, so it lights alone. */
+  eye: THREE.MeshBasicMaterial
+  /** Half its height, so the hover never puts it through the floor. */
+  half: number
+  yaw: number
+  /** The random spin it flies out with. */
+  tumble: THREE.Vector3
+  /** Counts down the small bounce after it lands. */
+  settle: number
+  /** 0 dim .. 1 lit, eased over OFFER_S. */
+  lit: number
 }
 
 const FLY = 0.42
+/** How long the offered part's glass takes to light. */
+const OFFER_S = 0.15
+const SETTLE_S = 0.3
+const SPIN = 1.6
 
 export class Loot {
   readonly ground: GroundPart[] = []
@@ -131,23 +152,32 @@ export class Loot {
   private readonly scrapGeo = new THREE.TorusGeometry(0.16, 0.06, 6, 10)
   private readonly scrapMat = new THREE.MeshBasicMaterial({ color: 0x9fd8c4 })
   private readonly beamGeo = new THREE.CylinderGeometry(0.07, 0.16, 5, 8, 1, true)
-  private readonly chunkGeo = new THREE.BoxGeometry(0.38, 0.3, 0.38)
   private readonly discGeo = new THREE.CircleGeometry(0.55, 24)
 
   /** Swapped for each level, so drops never land on the far side of a wall. */
   terrain: Terrain | null = null
+  /** The part the pickup card is showing: it lights up and turns to face him. */
+  private offered: GroundPart | null = null
 
   constructor(private readonly scene: THREE.Scene) {}
 
+  /**
+   * The beam finds the part, and the model says what it is. The model is the
+   * part itself (shared geometry and steel, cold, no emissive): tier colour lives
+   * only in the beam and the disc.
+   */
   drop(def: AbilityDef, at: THREE.Vector3, toward?: THREE.Vector3) {
     const color = TIER_COLOR[def.tier]
     const group = new THREE.Group()
 
-    const chunk = new THREE.Mesh(this.chunkGeo, new THREE.MeshStandardMaterial({
-      color: 0x3a4b61, emissive: color, emissiveIntensity: 0.55, roughness: 0.5, metalness: 0.4,
-    }))
-    chunk.position.y = 0.35
-    chunk.name = 'chunk'
+    const model = partModel(def)
+    const eye = DISPLAY_EYE.clone()
+    // the copy must be disposable: clone() carries the shared flag over
+    eye.userData = {}
+    model.root.traverse((o) => {
+      if (o instanceof THREE.Mesh && o.userData.eye) o.material = eye
+    })
+    const { group: spinner, half } = centred(model.root, FLOOR_SCALE[def.slot])
 
     const beamMat = new THREE.MeshBasicMaterial({
       color, transparent: true, opacity: def.tier === 'white' ? 0.18 : 0.34,
@@ -162,7 +192,7 @@ export class Loot {
     disc.rotation.x = -Math.PI / 2
     disc.position.y = DECAL_Y
 
-    group.add(chunk, beam, disc)
+    group.add(spinner, beam, disc)
 
     // land a short hop away from where it fell, never through a wall
     const a = toward
@@ -176,7 +206,16 @@ export class Loot {
 
     group.position.copy(at)
     this.scene.add(group)
-    this.ground.push({ def, pos, group, fly: FLY, from: at.clone(), bob: Math.random() * 10 })
+    this.ground.push({
+      def, pos, group, fly: FLY, from: at.clone(), bob: Math.random() * 10,
+      spinner, eye, half, yaw: Math.random() * Math.PI * 2, settle: 0, lit: 0,
+      tumble: new THREE.Vector3(Math.random() * 16 - 8, Math.random() * 10 - 5, Math.random() * 16 - 8),
+    })
+  }
+
+  /** The pickup card is showing this one (or none). */
+  offer(g: GroundPart | null) {
+    this.offered = g
   }
 
   dropScrap(at: THREE.Vector3) {
@@ -201,7 +240,8 @@ export class Loot {
     return n
   }
 
-  update(dt: number) {
+  /** `still` is where he stands: an offered part turns to face him. */
+  update(dt: number, still?: THREE.Vector3) {
     for (const s of this.scraps) {
       s.bob += dt * 3
       s.mesh.position.y = 0.4 + Math.sin(s.bob) * 0.08
@@ -210,17 +250,42 @@ export class Loot {
     }
     for (const g of this.ground) {
       g.bob += dt * 2.4
-      const chunk = g.group.getObjectByName('chunk')!
+      const sp = g.spinner
+      let bounce = 0
       if (g.fly > 0) {
         g.fly = Math.max(0, g.fly - dt)
         const k = 1 - g.fly / FLY
         g.group.position.lerpVectors(g.from, g.pos, k)
         g.group.position.y = Math.sin(k * Math.PI) * 1.4
+        // a piece of the enemy flying off, tumbling
+        sp.rotation.x += g.tumble.x * dt
+        sp.rotation.z += g.tumble.z * dt
+        g.yaw += g.tumble.y * dt
+        if (g.fly <= 0) {
+          g.settle = SETTLE_S
+          sp.rotation.x = wrap(sp.rotation.x)
+          sp.rotation.z = wrap(sp.rotation.z)
+        }
       } else {
         g.group.position.set(g.pos.x, 0, g.pos.z)
+        // it lands upright, with a small bounce
+        const e = Math.min(1, dt * 18)
+        sp.rotation.x -= sp.rotation.x * e
+        sp.rotation.z -= sp.rotation.z * e
+        if (g.settle > 0) {
+          g.settle = Math.max(0, g.settle - dt)
+          const u = 1 - g.settle / SETTLE_S
+          bounce = 0.14 * Math.sin(u * Math.PI) * (1 - u)
+        }
       }
-      chunk.rotation.y += dt * 1.6
-      chunk.position.y = 0.35 + Math.sin(g.bob) * 0.08
+      // offered, the part answers him: its glass lights, the spin stops, it turns to face him
+      const on = g === this.offered && g.fly <= 0
+      g.lit = Math.max(0, Math.min(1, g.lit + (on ? dt : -dt) / OFFER_S))
+      g.eye.color.copy(DISPLAY_EYE.color).lerp(EYE_ON, g.lit)
+      if (on && still) g.yaw += wrap(Math.atan2(still.x - g.pos.x, still.z - g.pos.z) - g.yaw) * Math.min(1, dt * 10)
+      else if (g.fly <= 0) g.yaw += dt * SPIN * (1 - g.lit)
+      sp.rotation.y = g.yaw
+      sp.position.y = Math.max(0.3, g.half + 0.14) + Math.sin(g.bob) * 0.08 + bounce
     }
   }
 
@@ -253,10 +318,18 @@ export class Loot {
     this.scraps.length = 0
   }
 
+  /**
+   * Only what this drop owns: the beam, the disc and its glass. The model's
+   * geometry and steel are shared with every other copy of the part, Still's own
+   * included, so disposing them would blank those too.
+   */
   private dispose(g: GroundPart) {
     this.scene.remove(g.group)
+    if (this.offered === g) this.offered = null
+    const own = new Set<THREE.Material>()
     g.group.traverse((o) => {
-      if (o instanceof THREE.Mesh) (o.material as THREE.Material).dispose()
+      if (o instanceof THREE.Mesh && !(o.material as THREE.Material).userData.shared) own.add(o.material as THREE.Material)
     })
+    for (const m of own) m.dispose()
   }
 }

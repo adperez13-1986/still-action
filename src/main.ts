@@ -982,6 +982,7 @@ function updateOffer() {
   if (next !== offered) {
     offered = next
     hud.offer(next?.def ?? null)
+    loot.offer(next)
   }
 }
 
@@ -1011,11 +1012,13 @@ function takePart(g: GroundPart) {
   const old = swapIn(g.def)
   loot.remove(g)
   // an empty slot filled: nothing falls out
+  // the part he gave up lands at his feet as itself
   if (old) loot.drop(old, still.pos)
-  still.setEquipped(g.def.slot, true)
+  still.wear(g.def.slot, g.def)
   offered = null
   offerHeld = true
   hud.offer(null)
+  loot.offer(null)
   sfx.take()
   rig.punch(0.03)
   still.group.scale.setScalar(1.12)
@@ -1122,7 +1125,7 @@ function startRun() {
   // the last run's anchor or decoy goes before the new loadout arrives, so nothing carries over onto its buttons
   combat.reset()
   hud.resetLoadout(start)
-  for (const slot of SLOT_NAMES) still.setEquipped(slot, start.some((p) => p.slot === slot))
+  for (const slot of SLOT_NAMES) still.wear(slot, start.find((p) => p.slot === slot) ?? null)
   enterLevel(START_DEPTH)
   hud.bossBar(null)
   rig.reset()
@@ -1454,6 +1457,7 @@ function partFaces(dt: number) {
       vfx.gather(still.lensPoint(new THREE.Vector3()), 12, 0.6, COLD, 4)
     }
     patientFull = c >= 1
+    still.ctx.charge = c
     if (patientFull && run.phase === 'crawl' && (patientMotes -= dt) <= 0) {
       patientMotes = 0.2
       vfx.gather(still.lensPoint(new THREE.Vector3()), 2, 0.5, COLD, 2.5)
@@ -1476,6 +1480,16 @@ function partFaces(dt: number) {
     frayTier = tier
   } else {
     frayTier = null
+  }
+
+  // the body's side of LIVE: the lure went with the decoy, the bob with the anchor.
+  // Polled after the decoy was cloned, so the decoy carries the lit lure and he doesn't.
+  still.setLive('torso', !!combat.parts.decoy)
+  still.setLive('legs', !!combat.parts.anchor)
+  if (head?.mod?.kind === 'mark') {
+    let marked = false
+    for (const [, st] of combat.statuses()) if (st.markT > 0) marked = true
+    still.ctx.marked = marked
   }
 }
 
@@ -1544,7 +1558,7 @@ function simulate(realDt: number) {
 
   combat.update(dt, still.pos)
   partFx.update(dt)
-  loot.update(dt)
+  loot.update(dt, still.pos)
   updateOffer()
   updateShrinePrompt()
   const scrap = loot.collectScrap(still.pos)
@@ -1786,7 +1800,7 @@ if (import.meta.env.DEV) {
     __equip: (id: string) => {
       const def = byId(id)
       swapIn(def)
-      still.setEquipped(def.slot, true)
+      still.wear(def.slot, def)
     },
     __stick: (x: number, z: number) => hud.setStick(x, z),
     /** One enemy as its own pack of 1. awake = true wakes it at once. */

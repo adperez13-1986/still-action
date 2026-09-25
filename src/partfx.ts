@@ -147,7 +147,7 @@ export class PartFx {
   private readonly tetherTick = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.3, 0.12), new THREE.MeshBasicMaterial({ color: 0xeef6ff, blending: THREE.AdditiveBlending, transparent: true }))
   private bobT = 0
   /** Borrowed Time's afterimage: where a rewind would take him, 1.5 s behind. */
-  private echoGhost: { obj: THREE.Object3D; mat: THREE.MeshBasicMaterial } | null = null
+  private echoGhost: { obj: THREE.Object3D; mat: THREE.MeshBasicMaterial; version: number } | null = null
   private rims = new Map<number, Rim>()
   private readonly edgeGeo = new THREE.BoxGeometry(1, 0.05, 0.05)
   /** Ricochet's ready tick: one cold mark on the wall where it would bounce. */
@@ -368,8 +368,10 @@ export class PartFx {
       }
       return
     }
+    // cloned once and then only moved, so it goes stale when he swaps a part: rebuilt then
+    if (this.echoGhost && this.echoGhost.version !== this.still.version) this.echo(null)
     if (!this.echoGhost) {
-      this.echoGhost = this.still.makeGhost(0.14)
+      this.echoGhost = { ...this.still.makeGhost(0.14), version: this.still.version }
       this.scene.add(this.echoGhost.obj)
     }
     this.echoGhost.obj.position.set(at.x, 0, at.z)
