@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import { DECAL_Y } from './world'
-import { tellMaterial, releaseTell, COLD, COLD_DEEP } from './vfx'
+import { tellMaterial, releaseTell, tellOrder, COLD, COLD_DEEP } from './vfx'
 import { slide, statusTint, disposeBody, distToSegment, type Enemy, type EnemyAction, type EnemyCtx, type EnemyPhase } from './enemy'
 import { LaneTell, type LaneEnd } from './lane'
 import type { Terrain } from './terrain'
@@ -559,6 +559,10 @@ export class Assembler implements Enemy {
 
     this.tellGroup.position.set(this.pos.x, DECAL_Y, this.pos.z)
     this.tellGroup.rotation.y = 0
+    // soonest on top: its tells sit in the crowd by how soon they land
+    const order = tellOrder(winding ? this.timer : 0)
+    this.tellGroup.traverse((o) => { o.renderOrder = order })
+    this.piles.traverse((o) => { o.renderOrder = order })
     this.sector.visible = this.sectorEdge.visible = this.move === 'sweep'
     this.lanes.visible = this.move === 'wave'
     this.fan.visible = this.move === 'barrage'
@@ -675,6 +679,7 @@ export class Assembler implements Enemy {
       x: this.pos.x, z: this.pos.z, aim: this.aim, len: this.laneLen,
       coreHalf: BOSS.charge.coreHalf, hitHalf: BOSS.charge.hitHalf, bodyR: this.radius, end: this.laneKind,
       fill: striking ? 1 : (t - lock) / (1 - lock),
+      order,
       from: striking ? Math.hypot(this.pos.x - this.chargeFrom.x, this.pos.z - this.chargeFrom.z) : 0,
     })
   }

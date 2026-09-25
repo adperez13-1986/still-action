@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import { DECAL_Y } from './world'
-import { tellMaterial, releaseTell } from './vfx'
+import { tellMaterial, releaseTell, tellOrder } from './vfx'
 import type { Terrain } from './terrain'
 import type { EliteMod } from './combat'
 import type { Brood } from './swarm'
@@ -108,6 +108,8 @@ export type EnemyEvent =
   | { kind: 'broodEnd'; at: THREE.Vector3 }
   /** A level change took a brood away: stop its voices. */
   | { kind: 'broodGone'; brood: Brood }
+  /** A Warden fell: its pack's seals break, nearest first. */
+  | { kind: 'sealBreak'; from: THREE.Vector3; members: Enemy[] }
 
 export interface Enemy {
   readonly kind: 'chaser' | 'ranged' | 'charger' | 'swarm' | 'boss'
@@ -298,6 +300,7 @@ export class Chaser implements Enemy {
   /** Lives in world space, NOT under the body — the lunge must not scale the tell. */
   readonly tellGroup = new THREE.Group()
   private readonly disc: THREE.Mesh
+  private readonly ring: THREE.Mesh
   private readonly ringMat: THREE.ShaderMaterial
   private readonly discMat: THREE.ShaderMaterial
 
@@ -345,6 +348,7 @@ export class Chaser implements Enemy {
     this.ringMat = tellMaterial('radial', CHASER.strikeRadius)
     const ring = new THREE.Mesh(new THREE.RingGeometry(CHASER.strikeRadius - 0.1, CHASER.strikeRadius, 48), this.ringMat)
     ring.rotation.x = -Math.PI / 2
+    this.ring = ring
 
     this.discMat = tellMaterial('radial', CHASER.strikeRadius)
     this.disc = new THREE.Mesh(new THREE.CircleGeometry(CHASER.strikeRadius, 48), this.discMat)
@@ -466,6 +470,9 @@ export class Chaser implements Enemy {
       this.ringMat.opacity = 0.42
       this.discMat.opacity = 0.3
       this.disc.scale.setScalar(Math.max(0.001, t))
+      // soonest on top: a slam about to land draws over a fainter tell
+      this.disc.renderOrder = tellOrder(this.timer)
+      this.ring.renderOrder = this.disc.renderOrder + 0.2
     } else if (this.phase === 'strike') {
       this.ringMat.opacity = 0.95
       this.discMat.opacity = 0.8

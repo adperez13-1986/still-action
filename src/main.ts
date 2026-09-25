@@ -90,6 +90,15 @@ function panOf(at: THREE.Vector3) {
 const windups = new Map<object, sfx.Voice>()
 /** Voices that outlast a windup and follow their enemy: a ram's rush, its stun ringing. */
 const loops = new Map<Enemy, sfx.Voice>()
+/** At most three windups at full voice: a fourth starts 9 dB down, so a crowd of tells stays three you can hear. */
+const windupGain = () => (windups.size >= 3 ? 0.355 : 1)
+/**
+ * The hush before the rush: while a ram is locked (405 ms), footsteps and the
+ * skitter drop 6 dB, so the latch and the held rev have the room to themselves.
+ */
+function hush() {
+  return combat.awake.some((e) => e instanceof Charger && e.locked && e.phase === 'windup') ? 0.5 : 1
+}
 
 const BODY_RADIUS = 0.42
 /** Grace's light hangs high for a wide, soft pool on stone (settled in the look test). */
@@ -209,7 +218,7 @@ const combat = new Combat(world.scene, OPEN, {
       if (enemyLog.length > 2000) enemyLog.shift()
     }
     if ('e' in ev && ev.e instanceof Charger) ramEvent(ev.e, ev)
-    else broodEvent(ev)
+    else packEvent(ev)
   },
   onPart: (ev) => {
     if (import.meta.env.DEV) {
@@ -385,14 +394,14 @@ const combat = new Combat(world.scene, OPEN, {
       // aimed moves whistle and click like the sentinel; heavy ones rise like the hulk
       const b = e as Assembler
       const aimed = b.move === 'barrage' || b.move === 'charge'
-      windups.set(e, sfx.asVoice(aimed ? sfx.aim(ms, 0.55, panOf(e.pos)) : sfx.windup(ms, panOf(e.pos))))
+      windups.set(e, sfx.asVoice(aimed ? sfx.aim(ms, 0.55, panOf(e.pos), windupGain()) : sfx.windup(ms, panOf(e.pos), windupGain())))
       return
     }
     if (e.kind === 'charger') {
-      windups.set(e, sfx.rev(ms, CHARGER.lockAt, panOf(e.pos)))
+      windups.set(e, sfx.rev(ms, CHARGER.lockAt, panOf(e.pos), windupGain()))
       return
     }
-    const stop = e.kind === 'ranged' ? sfx.aim(ms, RANGED.lockAt, panOf(e.pos)) : sfx.windup(ms, panOf(e.pos))
+    const stop = e.kind === 'ranged' ? sfx.aim(ms, RANGED.lockAt, panOf(e.pos), windupGain()) : sfx.windup(ms, panOf(e.pos), windupGain())
     windups.set(e, sfx.asVoice(stop))
   },
   onStrike: (e) => {
@@ -417,11 +426,15 @@ const combat = new Combat(world.scene, OPEN, {
   },
 })
 
-/** A brood's instants: its one surge voice, the ring's pieces breaking, the bite, the end. */
-function broodEvent(ev: EnemyEvent) {
+/** A brood's instants (its one surge voice, the ring's pieces breaking, the bite, the end), and a Warden's seals breaking. */
+function packEvent(ev: EnemyEvent) {
   switch (ev.kind) {
+    case 'sealBreak':
+      // you hear the ward come off: one tin tick per member, rippling outward
+      ev.members.forEach((m, rank) => sfx.sealTick(panOf(m.pos), 0.03 * rank))
+      break
     case 'surge': {
-      if (run.phase === 'crawl') windups.set(ev.brood, sfx.chitter(ev.ms, ev.biters, panOf(ev.at)))
+      if (run.phase === 'crawl') windups.set(ev.brood, sfx.chitter(ev.ms, ev.biters, panOf(ev.at), windupGain()))
       // the stamp: six embers thrown off the ring's edge
       for (let k = 0; k < 6; k++) {
         const a = (k * Math.PI) / 3
@@ -489,6 +502,7 @@ function skitter(dt: number) {
   const sum = rates.reduce((a, r) => a + r, 0)
   const scale = sum > 36 ? 36 / sum : 1
   const duck = windups.size > 0 ? 0.5 : 1
+  const quiet = hush()
   awake.forEach((b, i) => {
     let acc = (skitterAcc.get(b) ?? 0) + rates[i]! * scale * dt
     const moving = b.mites.filter((m) => !m.dead && m.moving)
@@ -496,7 +510,7 @@ function skitter(dt: number) {
       acc -= 1
       const m = moving[Math.floor(Math.random() * moving.length)]!
       const d = b.nearestTo(still.pos)
-      sfx.skitterTick(panOf(m.pos), Math.max(0, 1 - d / STEP_HEAR) * duck)
+      sfx.skitterTick(panOf(m.pos), Math.max(0, 1 - d / STEP_HEAR) * duck * quiet)
     }
     skitterAcc.set(b, Math.min(acc, 1))
   })
@@ -635,8 +649,11 @@ function ramImpact(c: Charger, at: THREE.Vector3, wall: boolean) {
   vfx.dust(at, 14, 1.0, undefined, 5)
   vfx.smokePuff(c.stackMouth(new THREE.Vector3()), 2)
   shake = Math.max(shake, 0.4)
-  hitstop = Math.max(hitstop, 0.07)
-  rig.punch(0.03)
+  // the first stun of the run holds a beat longer: it teaches the hatch once
+  const first = !run.ramStunSeen
+  run.ramStunSeen = true
+  hitstop = Math.max(hitstop, first ? 0.12 : 0.07)
+  rig.punch(first ? 0.04 : 0.03)
 }
 
 const partFx = new PartFx(world.scene, vfx, still, combat.parts, combat)
@@ -830,7 +847,7 @@ const EXIT_RADIUS = 1.4
 
 type Phase = 'crawl' | 'descending' | 'broken' | 'stopping' | 'over'
 
-const run = { phase: 'crawl' as Phase, depth: 1, strain: 0, t: 0, swapped: false, fought: false, quietT: 0, killed: false }
+const run = { phase: 'crawl' as Phase, depth: 1, strain: 0, t: 0, swapped: false, fought: false, quietT: 0, killed: false, ramStunSeen: false }
 
 /** Nothing awake for this long counts as a fight cleared. */
 const QUIET_SECONDS = 2.5
@@ -1097,7 +1114,7 @@ const START_DEPTH = Math.max(1, Number(new URLSearchParams(location.search).get(
 
 function startRun() {
   still.reassemble()
-  Object.assign(run, { phase: 'crawl', strain: 0, t: 0, swapped: false })
+  Object.assign(run, { phase: 'crawl', strain: 0, t: 0, swapped: false, ramStunSeen: false })
   loot.clear()
   // Still begins with one random plain part; the rest he finds. Starting deeper
   // (?depth=) skips the levels where he'd have found them, so he gets all four.
@@ -1588,18 +1605,25 @@ function simulate(realDt: number) {
 /** Footsteps: a step sounds each time a foot lands, quieter with distance. */
 const lastStep = new Map<object, number>()
 const STEP_HEAR = 16
-function footsteps() {
+/** Enemy steps in the last 120 ms (real time): at most three, nearest first, so a crowd's feet stay a rhythm. */
+const stepTimes: number[] = []
+const STEP_WINDOW = 0.12
+const STEPS_MAX = 3
+function footsteps(now: number) {
   if (run.phase !== 'crawl') return
   const k = Math.floor(still.stride / Math.PI)
   if (still.walking && k !== lastStep.get(still)) sfx.step('still', 0)
   lastStep.set(still, k)
-  for (const e of combat.awake) {
-    const d = Math.hypot(e.pos.x - still.pos.x, e.pos.z - still.pos.z)
-    if (d > STEP_HEAR) continue
+  while (stepTimes.length && now - stepTimes[0]! > STEP_WINDOW) stepTimes.shift()
+  const quiet = hush()
+  const dist = (e: Enemy) => Math.hypot(e.pos.x - still.pos.x, e.pos.z - still.pos.z)
+  for (const e of [...combat.awake].sort((a, b) => dist(a) - dist(b))) {
+    const d = dist(e)
     const ek = Math.floor(e.gait / Math.PI)
-    if (e.walking && ek !== lastStep.get(e)) {
+    if (d <= STEP_HEAR && e.walking && ek !== lastStep.get(e) && stepTimes.length < STEPS_MAX) {
       const who = e.kind === 'chaser' ? 'hulk' : e.kind === 'ranged' ? 'tripod' : e.kind === 'charger' ? 'ram' : 'boss'
-      sfx.step(who, panOf(e.pos), (1 - d / STEP_HEAR) * (e.kind === 'chaser' ? Math.min(1, e.size) : 1))
+      sfx.step(who, panOf(e.pos), (1 - d / STEP_HEAR) * (e.kind === 'chaser' ? Math.min(1, e.size) : 1) * quiet)
+      stepTimes.push(now)
     }
     lastStep.set(e, ek)
   }
@@ -1695,7 +1719,7 @@ function frame(nowMs: number) {
   if (!paused) {
     vfx.update(elapsed, world.camera, world.renderer.domElement.height)
     ambientFx(elapsed)
-    footsteps()
+    footsteps(now)
     ramFx(elapsed)
     broodFx(elapsed)
     skitter(elapsed)
@@ -1738,6 +1762,8 @@ if (import.meta.env.DEV) {
       return -1
     },
     __enemyLog: enemyLog,
+    /** The crowd's mix: live windup voices, the gain a new one would get, the hush. */
+    __mix: { windups, windupGain, hush },
     /** A pack from members, like addPack. awake = true wakes it at once. */
     __pack: (members: { kind: Archetype; x: number; z: number }[], awake = true, elite?: EliteMod): Pack => {
       const pack = combat.addPack(members, false, elite ? { mod: elite, name: 'Test' } : undefined)

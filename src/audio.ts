@@ -358,13 +358,14 @@ export function hurt() {
  * the slam over a low swell of pressure. Ends exactly at the strike, so you can
  * dodge a hulk you aren't looking at. Returns a stop for when it dies mid-windup.
  */
-export function windup(ms: number, pan: number): (hard?: boolean) => void {
+export function windup(ms: number, pan: number, gain = 1): (hard?: boolean) => void {
   const c = live()
   if (!c) return () => {}
   const t = c.currentTime
   const dur = ms / 1000
   // everything goes through one gain, so a stop silences clicks already scheduled
   const g = c.createGain()
+  g.gain.value = gain
   g.connect(out(c, 'enemy', pan))
 
   // the pressure: low noise opening up as the blow loads
@@ -422,13 +423,14 @@ export function strike(pan: number) {
  * recorded clack when the line freezes — the moment to move — and a short, quiet
  * capacitor whine up to the shot. Returns a stop, like windup().
  */
-export function aim(ms: number, lockAt: number, pan: number): (hard?: boolean) => void {
+export function aim(ms: number, lockAt: number, pan: number, gain = 1): (hard?: boolean) => void {
   const c = live()
   if (!c) return () => {}
   const t = c.currentTime
   const dur = ms / 1000
   const lock = t + dur * lockAt
   const g = c.createGain()
+  g.gain.value = gain
   const d = out(c, 'enemy', pan)
   g.connect(d)
 
@@ -939,6 +941,13 @@ export function broodEnd(pan: number) {
   }
   hiss(c, d, t + 0.05, 0.5, 0.08, 'bandpass', 3000, 900, 1)
   tone(c, d, 'sine', t + 0.35, 660, 655, 0.25, 0.05, 0.01)
+}
+
+/** One seal breaking as a Warden falls: a small tin tick, each member a little later than the last. */
+export function sealTick(pan: number, delay: number) {
+  const c = live()
+  if (!c) return
+  sample(c, 'tin', out(c, 'enemy', pan), 0.15, 2.0, delay)
 }
 
 /** A pack noticing you: two sharp rising notes, so you know you've pulled them even off screen. */

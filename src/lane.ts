@@ -40,6 +40,10 @@ export interface LaneState {
   fill: number
   /** How far along the original lane `x, z` is now, so the chevrons stay put on the floor as it burns off. */
   from: number
+  /** 1, or 0.6 while another tell is locked: the tracking rails give way to what's coming. */
+  dim?: number
+  /** Soonest on top: the lane's base renderOrder (tellOrder). Its own pieces layer just above it. */
+  order?: number
 }
 
 /**
@@ -144,13 +148,6 @@ export class LaneTell {
     // the half toward the body: a whole disc at the contact would show through past a thin wall
     this.star = new THREE.Mesh(new THREE.CircleGeometry(0.7, 20, 0, Math.PI), this.starMat)
     this.star.rotation.x = -Math.PI / 2
-    // layered bottom to top: the wash, the core over it, the rails and marks over both
-    this.wash.mesh.renderOrder = 1
-    this.cap.renderOrder = 1
-    this.core.mesh.renderOrder = 2
-    this.rails.mesh.renderOrder = 3
-    this.star.renderOrder = 3
-    for (const q of [this.streaks, this.spikes, this.bar]) q.mesh.renderOrder = 4
     this.group.add(this.wash.mesh, this.cap, this.core.mesh, this.rails.mesh, this.star, this.streaks.mesh, this.spikes.mesh, this.bar.mesh)
     this.group.visible = false
   }
@@ -167,6 +164,13 @@ export class LaneTell {
 
     this.group.position.set(s.x, DECAL_Y, s.z)
     this.group.rotation.y = s.aim
+    // layered bottom to top: the wash, the core over it, the rails and marks over both; the whole
+    // lane sits in the crowd by how soon it lands
+    const o = s.order ?? 0
+    this.wash.mesh.renderOrder = this.cap.renderOrder = o + 0.1
+    this.core.mesh.renderOrder = o + 0.2
+    this.rails.mesh.renderOrder = this.star.renderOrder = o + 0.3
+    for (const q of [this.streaks, this.spikes, this.bar]) q.mesh.renderOrder = o + 0.4
     const len = Math.max(0, s.len)
     const u = s.from / UV_LEN
     const tracking = s.stage === 'tracking'
@@ -202,7 +206,7 @@ export class LaneTell {
 
     let mark = 0
     if (tracking) {
-      this.railMat.opacity = 0.3
+      this.railMat.opacity = 0.3 * (s.dim ?? 1)
       this.washMat.opacity = this.coreMat.opacity = this.capMat.opacity = 0
     } else {
       // the lock frame: everything snaps at once, and the end mark stamps

@@ -1,9 +1,9 @@
 import * as THREE from 'three'
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { DECAL_Y } from './world'
-import { tellMaterial, releaseTell, haloTexture } from './vfx'
+import { tellMaterial, releaseTell, haloTexture, tellOrder } from './vfx'
 import {
-  slide, PLAYER_RADIUS, BODY, JOINT, CORE, CORE_ASLEEP, SLEEP_BODY, RIME,
+  slide, disposeBody, PLAYER_RADIUS, BODY, JOINT, CORE, CORE_ASLEEP, SLEEP_BODY, RIME,
   type Enemy, type EnemyAction, type EnemyCtx, type EnemyPhase,
 } from './enemy'
 import type { Terrain } from './terrain'
@@ -86,8 +86,15 @@ const CORE_OFF = new THREE.Color(CORE_ASLEEP)
 /** A surging core runs from ember to this over the 550 ms: hot, never white. */
 const SURGE_HOT = new THREE.Color(0xffc890)
 const HALO_C = new THREE.Color(0xff7850)
+const HALO = 0.4
 const WHITE = new THREE.Color(0xffffff)
-const BODY_C = new THREE.Color(BODY)
+/**
+ * A dome faces straight up into Grace's light, where the hulk's sides turn away
+ * from it: at the hulk's red-brown a mite tone-mapped to a pink beetle. Matte, and
+ * most of the way to the joints' neutral iron, it's dark metal, and the ember on
+ * its back is what you see and count.
+ */
+const BODY_C = new THREE.Color(BODY).lerp(new THREE.Color(JOINT), 0.75)
 const JOINT_C = new THREE.Color(JOINT)
 
 /**
@@ -144,6 +151,12 @@ export class Mite implements Enemy {
   face = 0
   /** A broken surge: the core goes dark for a moment. */
   blinkT = 0
+  /** Warded by its Warden: an iron lid over its ember. Set by Combat while the Warden stands. */
+  sealed = false
+  /** Seconds its seal still holds after the Warden fell: the lights come back in a ripple. */
+  unsealT = 0
+  /** The brood-mother's own body: a lit sac, a ridge of spines, and a glow. Null for the rest. */
+  private extras: { sac: THREE.Mesh; sacMat: THREE.MeshBasicMaterial; spineMat: THREE.MeshStandardMaterial; glow: THREE.Sprite } | null = null
   /** Seconds alive, for breathing and the jaws' flutter. */
   private life = Math.random() * 10
   readonly rig: Rig
@@ -180,6 +193,7 @@ export class Mite implements Enemy {
     this.flash = Math.max(0, this.flash - dt * 6)
     this.wakeDelay = Math.max(0, this.wakeDelay - dt * 1000)
     this.blinkT = Math.max(0, this.blinkT - dt)
+    this.unsealT = Math.max(0, this.unsealT - dt)
     const wasSliding = this.staggered
     this.staggered = slide(this.pos, this.knock, dt)
     if (wasSliding && !this.staggered) this.landed = true
@@ -261,14 +275,31 @@ export class Mite implements Enemy {
     if (!asleep) this.flash = 1
   }
 
-  /** The brood-mother: Combat has made her bigger; she always takes a biter's seat. Her looks are step 4. */
+  /**
+   * The brood-mother: Combat has made her bigger, and she always takes a biter's seat.
+   * A raised sac with its own ember (never her brood's roles), three spines on her
+   * ridge, and a glow: in the spent clump she's the bright one, so she's the target.
+   */
   setElite(mod: EliteMod) {
     this.queen = true
     this.quick = mod === 'swift'
+    const sacMat = new THREE.MeshBasicMaterial({ color: CORE })
+    const sac = new THREE.Mesh(new THREE.SphereGeometry(0.16, 10, 8), sacMat)
+    sac.position.set(0, 0.08, -0.3)
+    sac.scale.z = 1.35
+    const spineMat = new THREE.MeshStandardMaterial({ color: JOINT, roughness: 0.6, metalness: 0.5 })
+    const spines = new THREE.Mesh(mergeGeometries([-0.1, 0.02, 0.14].map((z) => new THREE.ConeGeometry(0.03, 0.12, 5).translate(0, 0.17, z)))!, spineMat)
+    const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: haloTexture(), blending: THREE.AdditiveBlending, depthWrite: false, transparent: true }))
+    glow.position.copy(sac.position)
+    this.rig.body.add(sac, spines, glow)
+    this.extras = { sac, sacMat, spineMat, glow }
+    // Quick: longer legs, and she scuttles faster (the bob)
+    if (this.quick) this.rig.legsL.scale.x = this.rig.legsR.scale.x = 1.3
   }
 
   idle(dt: number, face: THREE.Vector3) {
     this.life += dt
+    this.unsealT = Math.max(0, this.unsealT - dt)
     this.flash = Math.max(0, this.flash - dt * 6)
     this.moving = !this.asleep
     this.face = Math.atan2(face.x - this.pos.x, face.z - this.pos.z)
@@ -353,7 +384,25 @@ export class Mite implements Enemy {
     this.group.position.set(this.pos.x, hop, this.pos.z)
     this.group.rotation.y = yaw
     this.group.scale.setScalar(this.size * (1 + this.flash * 0.1))
+    this.presentQueen()
   }
+
+  /** Her sac beats with the brood at double depth, swells through the crouch and lets go at the lunge. */
+  private presentQueen() {
+    const x = this.extras
+    if (!x) return
+    const swell = this.phase === 'windup' ? 1 + 0.25 * Math.min(1, this.t / BROOD.windupMs) : 1
+    x.sac.scale.set(swell, swell, 1.35 * swell)
+    const beat = this.phase === 'recover' ? 1 : 0.7 + 0.3 * Math.sin(Math.PI * 2 * (this.brood?.heartHz ?? BROOD.heartHz) * this.life)
+    if (this.asleep || this.wakeDelay > 0) x.sacMat.color.copy(CORE_OFF)
+    else x.sacMat.color.copy(CORE_C).multiplyScalar(beat)
+    x.glow.material.opacity = this.asleep ? 0 : 0.9 * beat
+    x.glow.scale.setScalar(0.8 * swell)
+    x.spineMat.color.copy(this.jointColor(new THREE.Color()))
+  }
+
+  /** Sealed by a standing Warden, or its seal still breaking: the ember is lidded. */
+  get isSealed() { return this.sealed || this.unsealT > 0 }
 
   /** Shell colour: rust, dimmed asleep, frosted, shaded in the air, and the hit flash over it all. */
   shellColor(out: THREE.Color) {
@@ -375,6 +424,8 @@ export class Mite implements Enemy {
   /** The ember on its back says its role: bright close in, dim far out, hot in a surge, spent after. */
   coreColor(out: THREE.Color, clock: number) {
     if (this.asleep || this.wakeDelay > 0 || this.blinkT > 0) return out.copy(CORE_OFF)
+    // an iron lid over the dot: the pack visibly has one light left, and it's the Warden
+    if (this.isSealed) return out.copy(JOINT_C)
     const hb = 0.85 + 0.15 * Math.sin(Math.PI * 2 * this.brood.heartHz * clock)
     const surging = this.phase === 'windup'
     if (surging) out.copy(CORE_C).lerp(SURGE_HOT, Math.min(1, this.t / BROOD.windupMs))
@@ -384,20 +435,23 @@ export class Mite implements Enemy {
 
   /** Additive, so its colour is its brightness. 0 while dark. */
   haloColor(out: THREE.Color) {
-    if (this.asleep || this.wakeDelay > 0 || this.blinkT > 0) return out.setRGB(0, 0, 0)
+    if (this.asleep || this.wakeDelay > 0 || this.blinkT > 0 || this.isSealed) return out.setRGB(0, 0, 0)
     const k = this.phase === 'windup' ? 0.9 + 0.1 * Math.min(1, this.t / BROOD.windupMs)
       : this.phase === 'recover' ? 0.15 : this.role === 'outer' ? 0.45 : 0.9
     return out.copy(HALO_C).multiplyScalar(k)
   }
 
+  /** Smaller than the mite (0.54 across): at T's 0.55 the additive glow washed the whole dome ember. */
   get haloScale() {
-    return this.phase === 'windup' ? 0.55 + 0.25 * Math.min(1, this.t / BROOD.windupMs) : 0.55
+    return this.phase === 'windup' ? HALO + 0.25 * Math.min(1, this.t / BROOD.windupMs) : HALO
   }
 
   dispose(scene: THREE.Scene) {
-    // nothing on the GPU: the batch draws it
+    // the batch draws the body; only the brood-mother's extras are her own
     scene.remove(this.group)
     scene.remove(this.tellGroup)
+    disposeBody(this.group)
+    this.extras?.glow.material.dispose()
   }
 }
 
@@ -433,7 +487,7 @@ export class MiteBatch {
   private readonly c = new THREE.Color()
 
   constructor(scene: THREE.Scene) {
-    const shellMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.45, metalness: 0.6 })
+    const shellMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.85, metalness: 0.3 })
     const jointMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.6, metalness: 0.5 })
     const coreMat = new THREE.MeshBasicMaterial({ color: 0xffffff })
     const haloMat = new THREE.MeshBasicMaterial({ map: haloTexture(), blending: THREE.AdditiveBlending, transparent: true, depthWrite: false })
@@ -605,8 +659,11 @@ export class BiteRing {
     this.group.visible = false
   }
 
-  update(dt: number, state: Brood['state'], k: number) {
+  update(dt: number, state: Brood['state'], k: number, order = 0) {
     if (!this.group.visible) return
+    // soonest on top: a bite about to land draws over a fainter tell
+    this.disc.renderOrder = order
+    for (const a of this.arcs) a.renderOrder = order + 0.2
     if (state === 'windup') {
       // the stamp: 0 → 0.9 in 50 ms, settling to 0.7 (it lies in the light at his feet, the brightest
       // floor in the room); the disc fills like the hulk's clock
@@ -894,7 +951,8 @@ export class Brood {
         break
       }
     }
-    this.ring.update(dt, this.state, this.state === 'windup' ? 1 - Math.max(0, this.timer) / BROOD.windupMs : 1)
+    const toBite = this.state === 'windup' ? Math.max(0, this.timer) : 0
+    this.ring.update(dt, this.state, this.state === 'windup' ? 1 - toBite / BROOD.windupMs : 1, tellOrder(toBite))
     return bite
   }
 

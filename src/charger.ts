@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
-import { haloTexture } from './vfx'
+import { haloTexture, trackingDim, tellOrder } from './vfx'
 import {
   slide, statusTint, disposeBody, turn, distToSegment, PLAYER_RADIUS, BODY, JOINT, CORE, CORE_ASLEEP, SLEEP_BODY,
   type Enemy, type EnemyAction, type EnemyCtx, type EnemyPhase,
@@ -82,6 +82,8 @@ const LOCK_FLASH = new THREE.Color(0xffc49a)
 const CORE_C = new THREE.Color(CORE)
 const CORE_DIM = new THREE.Color(CORE).multiplyScalar(0.2)
 const CORE_OFF = new THREE.Color(CORE_ASLEEP)
+const JOINT_C = new THREE.Color(JOINT)
+const SEAL_RIM = new THREE.Color(CORE).multiplyScalar(0.4)
 const WHITE = new THREE.Color(0xffffff)
 const GLOW = new THREE.Color(0.5, 0.42, 0.38)
 /** The open firebox at the top of its pulse: hot amber, so the core reads apart from the rust around it. */
@@ -170,6 +172,10 @@ export class Charger implements Enemy {
   plated = false
   /** Its elite mod, if it leads a pack: the body wears it. */
   elite: EliteMod | null = null
+  /** Warded by its Warden: seams and visor go dark, with one dim rim. Set by Combat while the Warden stands. */
+  sealed = false
+  /** Seconds its seal still holds after the Warden fell: the lights come back in a ripple. */
+  unsealT = 0
 
   // read by Combat, main and the checks
   locked = false
@@ -425,6 +431,7 @@ export class Charger implements Enemy {
     this.flash = Math.max(0, this.flash - dt * 6)
     this.lockFlash = Math.max(0, this.lockFlash - dt * 10)
     this.wakeT = Math.max(0, this.wakeT - dt)
+    this.unsealT = Math.max(0, this.unsealT - dt)
     this.sweep = null
     const dx = target.x - this.pos.x
     const dz = target.z - this.pos.z
@@ -711,6 +718,7 @@ export class Charger implements Enemy {
   idle(dt: number, face: THREE.Vector3) {
     this.flash = Math.max(0, this.flash - dt * 6)
     this.life += dt
+    this.unsealT = Math.max(0, this.unsealT - dt)
     this.wakeT = Math.max(0, this.wakeT - dt)
     const to = Math.atan2(face.x - this.pos.x, face.z - this.pos.z)
     this.facing = this.asleep ? to : turn(this.facing, to, CHARGER.turnRate * dt)
@@ -893,8 +901,10 @@ export class Charger implements Enemy {
     this.glow.visible = glow > 0.01
 
     // colour: the seam and visor are its only lights; asleep they're banked coals
-    this.seamMats.forEach((m, i) => m.color.copy(this.asleep ? CORE_OFF : seam[i]!))
-    this.coreMat.color.copy(this.asleep ? CORE_OFF : CORE_C)
+    // sealed: an iron lid on every light but one dim segment, the rim that says it's warded
+    const sealed = !this.asleep && (this.sealed || this.unsealT > 0)
+    this.seamMats.forEach((m, i) => m.color.copy(this.asleep ? CORE_OFF : sealed ? (i === 2 ? SEAL_RIM : JOINT_C) : seam[i]!))
+    this.coreMat.color.copy(this.asleep ? CORE_OFF : sealed ? JOINT_C : CORE_C)
     this.tint()
 
     this.group.position.set(this.pos.x, 0, this.pos.z)
@@ -907,6 +917,9 @@ export class Charger implements Enemy {
       coreHalf: this.laneHalf, hitHalf: this.hitHalf, bodyR: this.radius, end: this.lane.end,
       fill: this.rushing ? 1 : (this.t - CHARGER.windupMs * CHARGER.lockAt) / (CHARGER.windupMs * (1 - CHARGER.lockAt)),
       from: this.rushing ? Math.hypot(this.pos.x - this.rushFrom.x, this.pos.z - this.rushFrom.z) : 0,
+      // tracking gives way to any locked tell; the whole lane sits in the crowd by how soon it lands
+      dim: this.locked ? 1 : trackingDim(),
+      order: tellOrder(this.rushing ? 0 : CHARGER.windupMs - this.t),
     })
   }
 

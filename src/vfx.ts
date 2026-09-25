@@ -397,6 +397,17 @@ export function haloTexture(): THREE.Texture {
   return halo
 }
 
+/**
+ * How many tells are locked (committed, about to land) this tick. Combat counts
+ * them; a tracking tell draws at 60% while any other is locked, so the one that's
+ * coming is the one you see.
+ */
+export const TELL_CROWD = { locked: 0 }
+/** A tracking tell's brightness while the crowd has a locked one. */
+export const trackingDim = () => (TELL_CROWD.locked > 0 ? 0.6 : 1)
+/** Soonest on top: every tell's renderOrder, from how many ms until it lands. */
+export const tellOrder = (msToStrike: number) => 1000 - Math.max(0, msToStrike) / 10
+
 // --- telegraphs: animated, textured, instead of flat red ---
 
 const TELL_VERT = /* glsl */ `

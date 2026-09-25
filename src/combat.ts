@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import { DECAL_Y } from './world'
-import { tellMaterial, releaseTell, COLD, EMBER, type Vfx } from './vfx'
+import { tellMaterial, releaseTell, TELL_CROWD, COLD, EMBER, type Vfx } from './vfx'
 import { Chaser, shoveVelocity, distToSegment, PLAYER_RADIUS, type Enemy, type EnemyCtx, type EnemyEvent } from './enemy'
 import { Ranged } from './ranged'
 import { Charger, CHARGER } from './charger'
@@ -358,6 +358,7 @@ export class Combat {
     this.hurtCooldown = Math.max(0, this.hurtCooldown - dt)
     this.updatePacks(player)
     this.book.prune()
+    this.countTells()
     this.tickBroods(dt)
 
     // --- enemies ---
@@ -715,6 +716,7 @@ export class Combat {
     }
     this.broods.length = 0
     this.broodIndex = 0
+    TELL_CROWD.locked = 0
     this.miteBatch.clear()
     this.book.clear()
     this.hasPrev = false
@@ -1037,6 +1039,7 @@ export class Combat {
       if (pack.token === e) pack.token = null
       const wasElite = pack.elite?.leader === e
       if (wasElite && pack.elite!.mod === 'splitting') this.split(pack, e)
+      if (wasElite && pack.elite!.mod === 'warding') this.breakSeals(pack, e)
       if (wasElite) {
         this.scene.remove(pack.elite!.aura)
         pack.elite!.aura.geometry.dispose()
@@ -1906,10 +1909,18 @@ export class Combat {
       const el = pack.elite
       if (el && !el.leader.dead) {
         el.aura.position.set(el.leader.pos.x, DECAL_Y, el.leader.pos.z)
-        // the warden shields the rest of its pack while it stands
-        if (el.mod === 'warding') for (const e of pack.members) e.armor = e === el.leader ? 1 : 0.35
+        // the warden shields the rest of its pack while it stands; rams and mites wear it as a lid on their lights
+        if (el.mod === 'warding') {
+          for (const e of pack.members) {
+            e.armor = e === el.leader ? 1 : 0.35
+            if (e instanceof Charger || e instanceof Mite) e.sealed = e !== el.leader
+          }
+        }
       } else if (el?.mod === 'warding') {
-        for (const e of pack.members) e.armor = 1
+        for (const e of pack.members) {
+          e.armor = 1
+          if (e instanceof Charger || e instanceof Mite) e.sealed = false
+        }
       }
       const nearest = Math.min(...pack.members.map((e) => Math.hypot(e.pos.x - player.x, e.pos.z - player.z)))
       const hp = this.hpOf(pack)
@@ -1981,6 +1992,34 @@ export class Combat {
       const bite = b.tick(dt, this.terrain, this.ctx, cap, this.parts.decoy)
       if (bite) this.hurtPlayer(bite.damage, 'melee', bite.source)
     }
+  }
+
+  /**
+   * A Warden falls: its pack's seals break in a ripple outward from where it fell,
+   * 30 ms a member, so you see (and hear) the ward come off.
+   */
+  private breakSeals(pack: Pack, warden: Enemy) {
+    const members = pack.members.filter((m) => m !== warden && !m.dead)
+      .sort((a, b) => a.pos.distanceTo(warden.pos) - b.pos.distanceTo(warden.pos))
+    members.forEach((m, rank) => {
+      if (!(m instanceof Charger || m instanceof Mite)) return
+      m.sealed = false
+      m.unsealT = 0.03 * rank
+    })
+    this.emitEnemy({ kind: 'sealBreak', from: warden.pos.clone(), members })
+  }
+
+  /** How many tells are locked this tick: a tracking tell gives way while any is. */
+  private countTells() {
+    let n = 0
+    for (const e of this.enemies) {
+      if (this.packOf.get(e)?.state !== 'awake') continue
+      if (e instanceof Charger) n += (e.phase === 'windup' && e.locked) || e.rushing ? 1 : 0
+      else if (e instanceof Ranged) n += e.phase === 'windup' && e.locked ? 1 : 0
+      else if (e instanceof Chaser || e instanceof Assembler) n += e.phase === 'windup' ? 1 : 0
+    }
+    for (const b of this.broods) n += b.state === 'windup' ? 1 : 0
+    TELL_CROWD.locked = n
   }
 
   /** A mite leaves its brood; the last one takes the brood with it. */

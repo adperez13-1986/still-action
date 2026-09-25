@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import type { Terrain } from './terrain'
 import { DECAL_Y } from './world'
-import { tellMaterial, releaseTell } from './vfx'
+import { tellMaterial, releaseTell, trackingDim, tellOrder } from './vfx'
 import { PART, type Flip } from './parts'
 import { WALL_TOP } from './lane'
 import { slide, statusTint, disposeBody, type Enemy, type EnemyAction, type EnemyCtx, type EnemyPhase } from './enemy'
@@ -76,7 +76,8 @@ export class Ranged implements Enemy {
   private strafe = Math.random() < 0.5 ? 1 : -1
   private strafeTimer = 1 + Math.random() * 2
   private aim = 0
-  private locked = false
+  /** The line has frozen: its shot is committed. Read by Combat for the crowd of tells. */
+  locked = false
   /**
    * A bolt banked off a wall into it: it shoots back down the same path, at the
    * bounce, not at you. Kept for a few seconds waiting for its reload.
@@ -310,10 +311,15 @@ export class Ranged implements Enemy {
     const winding = this.phase === 'windup'
     const t = winding ? Math.min(1, Math.max(0, 1 - this.timer / RANGED.windupMs)) : 0
     if (winding) {
-      // tracking: faint and following. locked: bright and still.
-      this.lineMat.opacity = this.locked ? 0.4 : 0.16
-      this.fillMat.opacity = this.locked ? 0.75 : 0.35
+      // tracking: faint and following (fainter still while another tell is locked). locked: bright and still.
+      const dim = this.locked ? 1 : trackingDim()
+      this.lineMat.opacity = this.locked ? 0.4 : 0.16 * dim
+      this.fillMat.opacity = this.locked ? 0.75 : 0.35 * dim
       this.fill.scale.z = Math.max(0.001, t)
+      // soonest on top
+      const o = tellOrder(this.timer)
+      this.line.renderOrder = this.bendLine.renderOrder = o
+      this.fill.renderOrder = this.bendFill.renderOrder = o + 0.2
     } else if (this.phase === 'strike') {
       this.lineMat.opacity = 0.5
       this.fillMat.opacity = 0.9
