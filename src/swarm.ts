@@ -367,7 +367,10 @@ export class Mite implements Enemy {
     return this.waypoint.set(T.x + Math.sin(a) * R, 0, T.z + Math.cos(a) * R)
   }
 
-  /** Parry, or a grab: a crouching biter leaves the surge. The brood notices on its next tick. */
+  /**
+   * Parry, a grab, or a push: a crouching biter leaves the surge. The brood notices on its
+   * next tick, and the bite shrinks by one. A mite has no reel: it goes back to its ring.
+   */
   interrupt() {
     if (this.phase !== 'windup') return false
     this.phase = 'approach'
@@ -375,6 +378,11 @@ export class Mite implements Enemy {
     this.t = 0
     this.blinkT = 0.2
     return true
+  }
+
+  /** The brood's bite: one clock for every biter in the surge. */
+  landsIn() {
+    return this.phase === 'windup' && this.brood.state === 'windup' ? Math.max(0, this.brood.timer) : null
   }
 
   hit(damage: number): boolean {

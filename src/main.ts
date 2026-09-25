@@ -370,6 +370,13 @@ const combat = new Combat(world.scene, OPEN, {
       windups.get(ev.enemy)?.stop(true)
       windups.delete(ev.enemy)
       tellBreak(ev.enemy)
+      if (ev.push) {
+        const st = run.stats[run.stats.length - 1]
+        if (st) st.breaks++
+        // a ram broken by a push reels with its hatch open: dazed, and the slam when it shuts
+        const c = ev.enemy
+        if (c instanceof Charger && c.stunned && run.phase === 'crawl') loops.set(c, sfx.dazed(CHARGER.reelMs, panOf(c.pos)))
+      }
       sfx.parryBreak(panOf(ev.enemy.pos))
       vfx.flash(at3(ev.enemy.pos, 1.0), COLD, 1.0)
       vfx.sparks(at3(ev.enemy.pos, 1.0), COLD, 16, 7)
@@ -450,6 +457,7 @@ const combat = new Combat(world.scene, OPEN, {
     if (run.phase !== 'crawl') return
     // the thief never winds up: it has no voice here
     if (e.kind === 'thief') return
+    breakHint(e)
     if (isBoss(e)) {
       // aimed moves whistle and click like the sentinel; heavy ones rise like the hulk
       const cue = e.cue
@@ -539,6 +547,7 @@ function packEvent(ev: EnemyEvent) {
       break
     case 'surge': {
       if (run.phase === 'crawl') windups.set(ev.brood, sfx.chitter(ev.ms, ev.biters, panOf(ev.at), windupGain()))
+      for (const m of ev.brood.biters) breakHint(m)
       // the stamp: six embers thrown off the ring's edge
       for (let k = 0; k < 6; k++) {
         const a = (k * Math.PI) / 3
@@ -1045,9 +1054,10 @@ type Phase = 'boot' | 'workshop' | 'leaving' | 'crawl' | 'descending' | 'broken'
 /**
  * One depth of a run, for __runStats: the phone test measures whether Stopped is reachable at all.
  * deadTaps: taps thrown at a cooling button. Against pushes, a fight at a time, it says whether
- * the want is there and the screen hid it, or never comes up.
+ * the want is there and the screen hid it, or never comes up. breaks: windups a push broke under
+ * the break rule (each biter of a surge counts).
  */
-interface DepthStats { depth: number; fights: number; pushes: number; deadTaps: number; quiets: number; strainIn: number; strainOut: number | null }
+interface DepthStats { depth: number; fights: number; pushes: number; breaks: number; deadTaps: number; quiets: number; strainIn: number; strainOut: number | null }
 /** One press on a filled button, for the playtest file: how long taps really last on the phone. */
 interface TapLog { depth: number; slot: SlotName; ms: number; ready: boolean; result: Press['result'] }
 
@@ -1064,6 +1074,8 @@ const run = {
   tally: freshTally() as RunTally,
   depth: 1, strain: 0, t: 0, swapped: false, fought: false, quietT: 0, killed: false, ramStunSeen: false,
   stats: [] as DepthStats[],
+  /** The break rule for this run's playtest entry: as it began, or 'mixed' once flipped mid-run. */
+  breakRule: false as boolean | 'mixed',
   /** Where this fight's strain began: the free push is drawn above it. */
   water: 0,
   taps: [] as TapLog[],
@@ -1306,6 +1318,45 @@ function notebookPages(): NotebookPage[] {
 /** How a part card names a part and tells its past, from the save. */
 const describePart = (d: AbilityDef) => ({ name: partName(save, d.id, d.name), history: historyLine(save, d.id) })
 pause.setDescribe(describePart)
+
+/**
+ * Strain step 1's switch (design/strain/PITCHES.md): a push breaks the windup it lands in.
+ * Off by default and kept per device, so the measured step-0 runs stay step 0 until it's
+ * flipped on the pause screen. A run it's flipped in says 'mixed' in its playtest entry.
+ */
+const BREAK_RULE_KEY = 'still-action.breakRule'
+function readBreakRule(): boolean {
+  try {
+    return localStorage.getItem(BREAK_RULE_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+function setBreakRule(on: boolean) {
+  // flipped before the run has fought or pushed, the whole run is played the new way
+  const untouched = run.stats.every((st) => st.fights === 0 && st.pushes === 0)
+  if (run.phase === 'crawl' && run.breakRule !== on) run.breakRule = untouched ? on : 'mixed'
+  combat.breakRule = on
+  hud.breakRule = on
+  try {
+    localStorage.setItem(BREAK_RULE_KEY, on ? '1' : '0')
+  } catch {
+    // no storage (a private window): it holds for this session only
+  }
+}
+combat.breakRule = hud.breakRule = readBreakRule()
+pause.setBreakRule(() => combat.breakRule, setBreakRule)
+
+/**
+ * C-T2: under the break rule the push is taught at its first reason, once per save: a
+ * windup starting that a cooling part on Still reaches and could break.
+ */
+function breakHint(e: Enemy) {
+  if (!combat.breakRule || run.phase !== 'crawl' || !combat.breakable(e)) return
+  for (const sl of hud.slots) {
+    if (sl.def && !hud.isReady(sl.slot) && combat.reaches(sl.def, still.pos, e) && hud.breakHint(sl.slot)) return
+  }
+}
 
 /** It went quiet: half of what's missing comes back, and a little strain lets go. */
 function quiet() {
@@ -1562,7 +1613,7 @@ function resumeRun(snap: RunSnapshot) {
   const depth = Math.min(RUN_DEPTHS, Math.max(1, Math.floor(snap.depth) || 1))
   Object.assign(run, {
     phase: 'crawl', t: 0, swapped: false, ramStunSeen: false, dev: false, committed: false, ending: null, stats: [], taps: [],
-    id: snap.id, startedAt: snap.startedAt, strain: Math.min(19, Math.max(0, Math.round(snap.strain) || 0)), tally,
+    breakRule: combat.breakRule, id: snap.id, startedAt: snap.startedAt, strain: Math.min(19, Math.max(0, Math.round(snap.strain) || 0)), tally,
   })
   // a resume starts its stats over, so it's its own entry in the playtest file, not an overwrite
   playKey = `${run.id}.${Date.now().toString(36)}`
@@ -1638,7 +1689,7 @@ function enterLevel(depth: number, o: { seed?: number; bossFelled?: boolean; res
   prev.copy(still.pos)
   run.depth = depth
   closeStats()
-  run.stats.push({ depth, fights: 0, pushes: 0, deadTaps: 0, quiets: 0, strainIn: run.strain, strainOut: null })
+  run.stats.push({ depth, fights: 0, pushes: 0, breaks: 0, deadTaps: 0, quiets: 0, strainIn: run.strain, strainOut: null })
   // the card's line gets a tick where this depth began (a resumed depth already has its tick)
   if (!o.resume) run.tally.marks.push(run.tally.line.length)
   // parts remember how deep they went
@@ -1652,7 +1703,7 @@ function startRun() {
   Object.assign(run, {
     phase: 'crawl', strain: 0, t: 0, swapped: false, ramStunSeen: false,
     id: newRunId(), dev: DEPTH_PARAM !== null, committed: false, ending: null, stats: [], taps: [], tally: freshTally(),
-    startedAt: new Date().toISOString(),
+    startedAt: new Date().toISOString(), breakRule: combat.breakRule,
   })
   playKey = `${run.id}.${Date.now().toString(36)}`
   if (!run.dev) {
@@ -1704,10 +1755,11 @@ let playKey = ''
  * as it grows). A production build has no such endpoint and never tries.
  */
 function savePlaytest() {
-  if (!import.meta.env.DEV || !playKey) return
+  // the owner's phone runs only: a headless check (webdriver) never lands in his numbers
+  if (!import.meta.env.DEV || !playKey || navigator.webdriver) return
   const body = {
     key: playKey, id: run.id, build: __BUILD__, startedAt: run.startedAt, savedAt: new Date().toISOString(),
-    dev: run.dev, end: run.ending?.kind ?? null, depth: run.depth,
+    dev: run.dev, end: run.ending?.kind ?? null, depth: run.depth, breakRule: run.breakRule,
     stats: run.stats.map((st) => ({ ...st, strainOut: st.strainOut ?? run.strain })),
     taps: run.taps,
   }
@@ -3488,6 +3540,11 @@ if (import.meta.env.DEV) {
     __taps: () => run.taps,
     /** The playtest POST now, as a depth's end would. */
     __savePlaytest: savePlaytest,
+    /** Strain step 1's switch, as the pause screen flips it (kept per device). No argument reads it. */
+    __breakRule: (on?: boolean) => {
+      if (on !== undefined) setBreakRule(on)
+      return combat.breakRule
+    },
   })
 }
 

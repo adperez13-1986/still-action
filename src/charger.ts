@@ -59,6 +59,8 @@ export const CHARGER = {
   /** Damage taken while stunned: the hatch is open. */
   stunMul: 1.5,
   stunRecoverMs: 400,
+  /** A push broke its tracking (strain step 1): the hatch opens as in a wall, for less (verifier D1). */
+  reelMs: 700,
   missRecoverMs: 900,
   /** Frost Trail: a stop, not a stun. The hatch stays shut. */
   tripRecoverMs: 1200,
@@ -682,17 +684,31 @@ export class Charger implements Enemy {
     return true
   }
 
-  /** Parry, or a grab: only a windup breaks. A rush is committed. */
-  interrupt() {
-    if (this.phase !== 'windup') return false
+  /**
+   * Parry, or a grab: only a windup breaks. A rush is committed. A push (`reel`) breaks
+   * only the tracking: after the lock the hit can't land in time to count, so it's refused.
+   */
+  interrupt(reel = false) {
+    if (this.phase !== 'windup' || (reel && this.locked)) return false
+    this.laneTell.break()
+    this.locked = false
+    if (reel) {
+      // the hatch language: it reels open, ×1.5, and the hatch slams as it would off a wall
+      this.endRush(CHARGER.reelMs)
+      this.stunned = true
+      return true
+    }
     this.phase = 'approach'
     this.t = 0
-    this.locked = false
     this.reload = CHARGER.reloadMs
-    this.laneTell.break()
     // the flinch: head snaps back, eased from there
     this.pose.prx = -0.2
     return true
+  }
+
+  /** Until the rush: through the tracking and the lock. */
+  landsIn() {
+    return this.phase === 'windup' ? Math.max(0, CHARGER.windupMs - this.t) : null
   }
 
   hit(damage: number): boolean {
@@ -857,8 +873,9 @@ export class Charger implements Enemy {
         over.sy = 1 + 0.1 * e
         over.sz = 1 - 0.2 * e
       }
-      // the window closing: the hatches sink over the last 400 ms
-      hatch = tw > 800 ? 1.2 - (0.4 * (tw - 800)) / 400 : 1.2 * backOut(Math.min(1, s / 0.12))
+      // the window closing: the hatches sink over the last 400 ms (of a stun, or a push's shorter reel)
+      const shut = this.timer - 400
+      hatch = tw > shut ? 1.2 - (0.4 * (tw - shut)) / 400 : 1.2 * backOut(Math.min(1, s / 0.12))
       over.pry = Math.sin(s * 44) * 0.12 * Math.max(0, 1 - s / 1.2)
       fire = 1 + 0.25 * Math.sin(Math.PI * 2 * 9 * s)
       heat = 0.5 + 0.5 * Math.sin(Math.PI * 2 * 9 * s)

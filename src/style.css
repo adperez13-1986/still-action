@@ -367,6 +367,11 @@ html, body {
   font: 600 14px/1 var(--ui); letter-spacing: .04em;
 }
 #pause .actions .take { border-color: #6f9bd0; color: #e6f0fb; }
+/* the break rule's switch: a setting, not an action, so muted until it's on (then his cold) */
+#pause .actions .rule { color: #8193a6; border-style: dashed; }
+#pause .actions .rule b { display: inline-block; min-width: 2.1em; margin-left: 6px; text-align: left; font-weight: 700; color: #6f8196; letter-spacing: .08em; }
+#pause .actions .rule.on { border-style: solid; border-color: #6f9bd0; color: #cbd7e6; }
+#pause .actions .rule.on b { color: #bcd6ff; }
 @media (max-width: 760px) {
   #pause .row.four .pcard { width: auto; flex: 1; }
   #pause .row.four { width: 100%; }

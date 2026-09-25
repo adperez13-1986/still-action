@@ -351,6 +351,10 @@ export class Assembler implements Boss {
     return false
   }
 
+  landsIn() {
+    return this.phase === 'windup' && !this.stunned ? Math.max(0, this.timer) : null
+  }
+
   hit(damage: number): boolean {
     // stunned, the open grill lets hits into the core
     this.hp -= damage * this.armor * (this.stunned ? 1.5 : 1)

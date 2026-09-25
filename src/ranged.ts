@@ -5,7 +5,7 @@ import { tellMaterial, releaseTell, trackingDim, tellOrder } from './vfx'
 import { PART, type Flip } from './parts'
 import { WALL_TOP } from './lane'
 import { HIDES, hideMaterials } from './hide'
-import { slide, statusTint, disposeBody, SLAG_CORE, SLAG_CORE_ASLEEP, type Enemy, type EnemyAction, type EnemyCtx, type EnemyPhase } from './enemy'
+import { slide, statusTint, disposeBody, reelCore, REEL, SLAG_CORE, SLAG_CORE_ASLEEP, type Enemy, type EnemyAction, type EnemyCtx, type EnemyPhase } from './enemy'
 
 /**
  * Drawn gunmetal: the lightest body in the room so the silhouette reads on dark
@@ -78,6 +78,8 @@ export class Ranged implements Enemy {
   private strafe = Math.random() < 0.5 ? 1 : -1
   private strafeTimer = 1 + Math.random() * 2
   private aim = 0
+  /** A push broke its line: reeling open through its recover (ms in). -1 when not. */
+  private reel = -1
   /** The line has frozen: its shot is committed. Read by Combat for the crowd of tells. */
   locked = false
   /**
@@ -191,7 +193,7 @@ export class Ranged implements Enemy {
   }
 
   hit(damage: number): boolean {
-    this.hp -= damage * this.armor
+    this.hp -= damage * this.armor * (this.reel >= 0 ? REEL.mul : 1)
     this.flash = 1
     if (this.hp <= 0 && !this.dead) {
       this.dead = true
@@ -307,6 +309,8 @@ export class Ranged implements Enemy {
         if (this.timer <= 0) {
           this.phase = 'approach'
           this.reload = RANGED.reloadMs
+          if (this.reel >= 0) this.coreMat.color.setHex(this.coreOn)
+          this.reel = -1
         }
         break
       }
@@ -356,6 +360,13 @@ export class Ranged implements Enemy {
     this.group.rotation.y = this.aim
     this.head.position.y = 1.45 + Math.sin(this.bob * 1.3) * 0.07 + (winding ? t * 0.08 : 0)
     this.head.rotation.x = 0
+    if (this.reel >= 0) {
+      // reeling: the head knocked up and back, the lens open and pulsing hot
+      this.reel += dt * 1000
+      this.head.rotation.x = -0.4
+      reelCore(this.coreMat.color, this.coreOn, this.reel / 1000)
+      this.orb.scale.setScalar(1.3)
+    }
     // a stepping gait: the legs rock side to side and the hub bobs with each step
     const step = this.phase === 'approach' ? this.stepping : 0
     this.legs.rotation.z = Math.sin(this.bob * 3.2) * 0.1 * step
@@ -421,12 +432,13 @@ export class Ranged implements Enemy {
     this.tick.position.set(0, WALL_TOP + 0.06 - DECAL_Y, leg1)
   }
 
-  interrupt() {
+  interrupt(reel = false) {
     if (this.phase !== 'windup') return false
     this.answer = null
     this.answering = false
-    this.phase = 'approach'
-    this.timer = 0
+    this.phase = reel ? 'recover' : 'approach'
+    this.timer = reel ? RANGED.recoverMs : 0
+    if (reel) this.reel = 0
     this.locked = false
     // otherwise it re-winds on the same tick
     this.reload = RANGED.reloadMs
@@ -434,6 +446,10 @@ export class Ranged implements Enemy {
     this.fillMat.opacity = 0
     this.fill.scale.z = 0.001
     return true
+  }
+
+  landsIn() {
+    return this.phase === 'windup' ? Math.max(0, this.timer) : null
   }
 
   setAsleep(asleep: boolean) {
@@ -444,6 +460,7 @@ export class Ranged implements Enemy {
       this.reload = RANGED.reloadMs * 0.8
     }
     this.phase = 'approach'
+    this.reel = -1
   }
 
   setSlag() {

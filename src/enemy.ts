@@ -177,8 +177,12 @@ export interface Enemy {
    * Break a windup (Parry Clamp, a grab). True if one was broken: the tell goes,
    * the strike never comes, and it goes back to closing in. Something that can't
    * be interrupted (the Assembler) returns false and just takes the hit.
+   * `reel` (a pushed hit, the break rule on): it reels instead, its own recover
+   * with every hit ×REEL.mul, the ram's hatch language. The ram refuses a reel once locked.
    */
-  interrupt: () => boolean
+  interrupt: (reel?: boolean) => boolean
+  /** ms until the windup running now lands (its strike, shot, launch or rush); null when none is. */
+  landsIn: () => number | null
   update: (dt: number, target: THREE.Vector3, terrain: Terrain, ctx: EnemyCtx) => EnemyAction | null
   /** Presentation only, no thinking: while asleep, or walking home. `face` is where to look. */
   idle: (dt: number, face: THREE.Vector3) => void
@@ -212,6 +216,17 @@ export function turn(from: number, to: number, maxStep: number): number {
 }
 
 export const SLEEP_BODY = new THREE.Color(0.35, 0.35, 0.38)
+
+/**
+ * A windup broken by a push (strain step 1): the body reels through its own recover,
+ * open like the ram's hatch, its core pulsing the firebox's hot amber.
+ */
+export const REEL = { mul: 1.5, hot: 0xff8a3c, hz: 9 }
+const REEL_HOT = new THREE.Color(REEL.hot)
+/** A reeling core's colour at `s` seconds in: the firebox's pulse between its own ember and hot amber. */
+export function reelCore(out: THREE.Color, base: number, s: number) {
+  return out.setHex(base).lerp(REEL_HOT, 0.5 + 0.5 * Math.sin(Math.PI * 2 * REEL.hz * s))
+}
 
 /**
  * Free everything an enemy built for itself: every mesh's geometry and material
@@ -307,6 +322,8 @@ export class Chaser implements Enemy {
   private timer = 0
   /** A broken windup: the core blinks dark for a moment. */
   private blink = 0
+  /** A push broke its slam: reeling open through its recover (ms in). -1 when not. */
+  private reel = -1
   private flash = 0
   private bob = Math.random() * 10
   private readonly mat: THREE.MeshStandardMaterial
@@ -414,10 +431,11 @@ export class Chaser implements Enemy {
     }
   }
 
-  interrupt() {
+  interrupt(reel = false) {
     if (this.phase !== 'windup') return false
-    this.phase = 'approach'
-    this.timer = 0
+    this.phase = reel ? 'recover' : 'approach'
+    this.timer = reel ? CHASER.recoverMs : 0
+    if (reel) this.reel = 0
     // the ring goes at once: no fade, its heat broken
     this.ringMat.opacity = 0
     this.discMat.opacity = 0
@@ -428,8 +446,12 @@ export class Chaser implements Enemy {
     return true
   }
 
+  landsIn() {
+    return this.phase === 'windup' ? Math.max(0, this.timer) : null
+  }
+
   hit(damage: number): boolean {
-    this.hp -= damage * this.armor
+    this.hp -= damage * this.armor * (this.reel >= 0 ? REEL.mul : 1)
     this.flash = 1
     if (this.hp <= 0 && !this.dead) {
       this.dead = true
@@ -484,7 +506,11 @@ export class Chaser implements Enemy {
         break
       }
       case 'recover': {
-        if (this.timer <= 0) this.phase = 'approach'
+        if (this.timer <= 0) {
+          this.phase = 'approach'
+          if (this.reel >= 0) this.coreMat.color.setHex(this.coreOn)
+          this.reel = -1
+        }
         break
       }
     }
@@ -516,8 +542,16 @@ export class Chaser implements Enemy {
     // winding: rear back and raise both fists. strike: slam them into the floor.
     if (winding) this.strikePose(dt, { lean: -0.32 * t, arms: -2.5 * t, squash: 1 + 0.06 * t })
     else if (this.phase === 'strike') this.strikePose(dt, { lean: 0.42, arms: -0.55, squash: 0.86 }, true)
+    // reeling: knocked back on its heels, fists thrown wide, the chest open
+    else if (this.reel >= 0) this.strikePose(dt, { lean: -0.42, arms: -1.1, squash: 0.94 })
     else this.strikePose(dt * 0.5, { lean: 0.08, arms: 0, squash: 1 })
     this.core.scale.setScalar(1 + (winding ? t * 0.7 : 0))
+    if (this.reel >= 0) {
+      this.reel += dt * 1000
+      // after the blink, the open core: swollen, pulsing hot like the ram's firebox
+      if (this.blink <= 0) reelCore(this.coreMat.color, this.coreOn, this.reel / 1000)
+      this.core.scale.setScalar(1.35)
+    }
 
     const walking = this.phase === 'approach' && !staggered
     this.walking = walking
@@ -556,6 +590,7 @@ export class Chaser implements Enemy {
     this.coreMat.color.setHex(asleep ? this.coreOff : this.coreOn)
     if (!asleep) this.flash = 1
     this.phase = 'approach'
+    this.reel = -1
   }
 
   setSlag() {

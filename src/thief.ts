@@ -247,6 +247,10 @@ export class Thief implements Enemy {
     return false
   }
 
+  landsIn() {
+    return null
+  }
+
   /** Its instants since the last call, for Combat's onThief. */
   drain(): ThiefEvent[] {
     return this.pending.splice(0)

@@ -348,6 +348,16 @@ export class Arbiter implements Boss {
     return false
   }
 
+  /** Its lance to the burn, its mortar to the launch, its scald to the hiss. Never broken, only read. */
+  landsIn() {
+    const L = ARBITER.lance
+    if (this.state === 'track') return Math.max(0, L.trackMs + L.lockMs - this.timer)
+    if (this.state === 'lock') return Math.max(0, L.lockMs - this.timer)
+    if (this.state === 'shellAim') return Math.max(0, ARBITER.shell.windupMs - this.timer)
+    if (this.state === 'scaldWind') return Math.max(0, ARBITER.scald.windupMs - this.timer)
+    return null
+  }
+
   hit(damage: number): boolean {
     this.hp -= damage * this.armor * (this.open ? ARBITER.vent.damageMul : 1)
     this.flash = 1

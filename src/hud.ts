@@ -35,6 +35,10 @@ const DEAD_CAPTION = 'hold to push'
 /** PLACEHOLDER words (Adrian's): the one-time caption over the first button a lance ever heats. */
 const HEAT_CAPTION = 'hot \u00b7 hold to push'
 const HEAT_CAPTION_MS = 2400
+/** PLACEHOLDER words (Adrian's): the break rule's one-time caption, over the first cooling button that could break a windup. */
+const BREAK_CAPTION = 'hold \u00b7 break it'
+/** Its own hint id, so a save that saw the old hints still gets this one. */
+const BREAK_HINT = 'break'
 
 /** What the run tells the button after a press: start the cooldown, stay live, or nothing happened. */
 export type FireResult = Pick<CastResult, 'cooldown'>
@@ -79,6 +83,8 @@ export interface Hud {
   integrity: number
   /** Off once an ending starts: the stick and buttons stop answering. */
   enabled: boolean
+  /** The break rule is on: the push hint waits for a breakable windup (breakHint), not a recharge. */
+  breakRule: boolean
   /** `now` is game time in ms, not wall time: it stops while paused, and so do cooldowns. */
   update: (now: number) => void
   /** One listener: the run casts the part and answers how the button should react. */
@@ -164,6 +170,11 @@ export interface Hud {
   charge: (slot: SlotName, c: number) => void
   /** A short pulse on one button: something about it just changed. */
   pulse: (slot: SlotName) => void
+  /**
+   * The break rule's push hint, once per save: this cooling button could break the windup
+   * that just started. The pulse and a caption over it. False if it was shown before.
+   */
+  breakHint: (slot: SlotName) => boolean
   /** Dev only: the path a tap (false) or a push (true) takes once the gesture is recognised. */
   fireSlot: (slot: SlotName, pushed: boolean) => void
   /** Dev only: hold the stick at a world direction (0, 0 lets go). */
@@ -363,7 +374,7 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
       strainMeter.appendChild(tick)
     }
   }
-  const state = { moveX: 0, moveZ: 0, strain: 0, integrity: 1, enabled: true, clock: 0 }
+  const state = { moveX: 0, moveZ: 0, strain: 0, integrity: 1, enabled: true, clock: 0, breakRule: false }
 
   // --- stick ---
   let stickPointer: number | null = null
@@ -495,6 +506,8 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
     set strain(v: number) { state.strain = v },
     get integrity() { return state.integrity },
     set integrity(v: number) { state.integrity = v },
+    get breakRule() { return state.breakRule },
+    set breakRule(v: boolean) { state.breakRule = v },
     get enabled() { return state.enabled },
     set enabled(v: boolean) {
       state.enabled = v
@@ -519,7 +532,8 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
         b.el.classList.toggle('ready', ready)
         b.cdEl.style.setProperty('--sweep', left <= 0 ? '0deg' : `${Math.min(360, (left / b.def.cooldownMs) * 360)}deg`)
         const pushShaped = b.def.mod?.kind === 'overrun' || b.def.mod?.kind === 'charge'
-        if (b.wasReady && !ready && pushShaped && !hinted(b.def.id)) {
+        // under the break rule the hint waits for its reason instead (breakHint)
+        if (!state.breakRule && b.wasReady && !ready && pushShaped && !hinted(b.def.id)) {
           // the button telling you, once, that holding it now does something different
           markHinted(b.def.id)
           b.el.classList.add('hint')
@@ -755,6 +769,18 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
       void el.offsetWidth
       el.classList.add('pulse')
       setTimeout(() => el.classList.remove('pulse'), 400)
+    },
+    breakHint(slot) {
+      const b = buttons.find((x) => x.slot === slot)!
+      if (!b.def || hinted(BREAK_HINT)) return false
+      markHinted(BREAK_HINT)
+      // any part can break, so the whole button pulses, not a push-shaped icon's half
+      b.el.classList.remove('pulse')
+      void b.el.offsetWidth
+      b.el.classList.add('pulse')
+      setTimeout(() => b.el.classList.remove('pulse'), 400)
+      caption(b, BREAK_CAPTION)
+      return true
     },
 
     fireSlot(slot, pushed) {

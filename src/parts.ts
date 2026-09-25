@@ -51,7 +51,8 @@ export interface PartRuntime {
   /** Arms window: Anvil. Closes on the first catch. */
   anvil: { t: number; max: number; def: AbilityDef } | null
   /** Torso: the Lure decoy. At most one. */
-  decoy: { pos: THREE.Vector3; t: number; max: number; def: AbilityDef } | null
+  /** `pushed`: its cast was a push, so its burst is a pushed hit (the break rule). */
+  decoy: { pos: THREE.Vector3; t: number; max: number; def: AbilityDef; pushed: boolean } | null
   /** Legs: the Plumb Line anchor. While it lives, the legs button is tappable (cooldown 'hold'). */
   anchor: { pos: THREE.Vector3; t: number; max: number; def: AbilityDef } | null
   /** Head: seconds since the last Patient Lens cast. Set to mod.minS on swap-in and on reset. */
@@ -70,7 +71,7 @@ export interface EnemyStatus {
 export interface Zone { ax: number; az: number; bx: number; bz: number; halfW: number; t: number; max: number; mul: number }
 
 /** An enemy in the clamp's throw. While held, it doesn't think. */
-export interface Held { from: THREE.Vector3; to: THREE.Vector3; t: number; T: number; short: boolean; def: AbilityDef }
+export interface Held { from: THREE.Vector3; to: THREE.Vector3; t: number; T: number; short: boolean; def: AbilityDef; pushed: boolean }
 
 export type Flip = 'x' | 'z' | 'xz'
 
@@ -163,7 +164,8 @@ export interface BreachHole {
 export type PartEvent =
   | { kind: 'move'; move: StillMove; beat: BeatKey }
   | { kind: 'strain'; amount: number; at: THREE.Vector3 }             // a Brace conversion
-  | { kind: 'interrupt'; enemy: Enemy }                                // a windup broken (Parry, a grab)
+  /** A windup broken (Parry, a grab, a push). `push`: a pushed hit broke it under the break rule, and it reels. */
+  | { kind: 'interrupt'; enemy: Enemy; push?: boolean }
   | { kind: 'mark'; enemy: Enemy; state: 'on' | 'consumed' | 'expired' }
   | { kind: 'slow'; enemy: Enemy; state: 'on' | 'off' }
   | { kind: 'lob'; from: THREE.Vector3; to: THREE.Vector3; ms: number; radius: number; signal: boolean }

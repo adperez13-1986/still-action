@@ -5,7 +5,7 @@ import { DECAL_Y } from './world'
 import { tellMaterial, releaseTell, trackingDim, tellOrder, haloTexture } from './vfx'
 import { rod } from './ranged'
 import {
-  slide, statusTint, disposeBody, CORE, CORE_ASLEEP,
+  slide, statusTint, disposeBody, reelCore, REEL, CORE, CORE_ASLEEP,
   type Enemy, type EnemyAction, type EnemyCtx, type EnemyPhase,
 } from './enemy'
 
@@ -73,6 +73,8 @@ export class Lobber implements Enemy {
   private facing = 0
   private asleep = false
   private recoil = 0
+  /** A push broke its aim: reeling open through its recover (ms in). -1 when not. */
+  private reel = -1
   /** Where the shell will land: tracking in the windup, frozen at the launch. */
   readonly lead = new THREE.Vector3()
 
@@ -135,7 +137,7 @@ export class Lobber implements Enemy {
   }
 
   hit(damage: number): boolean {
-    this.hp -= damage * this.armor
+    this.hp -= damage * this.armor * (this.reel >= 0 ? REEL.mul : 1)
     this.flash = 1
     if (this.hp <= 0 && !this.dead) {
       this.dead = true
@@ -145,13 +147,19 @@ export class Lobber implements Enemy {
   }
 
   /** In the windup only: the ring goes, and the shell never comes. Once it's launched, it's committed. */
-  interrupt() {
+  interrupt(reel = false) {
     if (this.phase !== 'windup') return false
-    this.phase = 'approach'
-    this.timer = 0
+    this.phase = reel ? 'recover' : 'approach'
+    this.timer = reel ? LOBBER.recoverMs : 0
+    if (reel) this.reel = 0
     this.reload = LOBBER.interruptReloadMs
     this.ringMat.opacity = 0
     return true
+  }
+
+  /** Until the launch: once the shell is up, it's the floor's and nothing breaks it. */
+  landsIn() {
+    return this.phase === 'windup' ? Math.max(0, this.timer) : null
   }
 
   update(dt: number, target: THREE.Vector3, terrain: Terrain, ctx: EnemyCtx): EnemyAction | null {
@@ -237,7 +245,11 @@ export class Lobber implements Enemy {
         }
         break
       case 'recover':
-        if (this.timer <= 0) this.phase = 'approach'
+        if (this.timer <= 0) {
+          this.phase = 'approach'
+          if (this.reel >= 0) this.coreMat.color.setHex(CORE)
+          this.reel = -1
+        }
         break
     }
     terrain.pushOut(this.pos, this.radius)
@@ -282,6 +294,13 @@ export class Lobber implements Enemy {
     const tilt = winding ? 0.5 * t : this.recoil * 0.3
     this.pot.rotation.x = -tilt
     this.disc.scale.setScalar(1 + (winding ? 0.4 * t : 0))
+    if (this.reel >= 0) {
+      // reeling: the crucible knocked over toward its lip, the melt open and pulsing hot
+      this.reel += dt * 1000
+      this.pot.rotation.x = 0.45
+      reelCore(this.coreMat.color, CORE, this.reel / 1000)
+      this.disc.scale.setScalar(1.25)
+    }
     this.halo.scale.setScalar(0.7 + (winding ? 0.5 * t : 0))
     this.halo.material.opacity = this.asleep ? 0 : 0.7
     this.pot.position.y = 1.0 - this.recoil * 0.08
@@ -331,6 +350,7 @@ export class Lobber implements Enemy {
       this.reload = LOBBER.reloadMs * 0.5
     }
     this.phase = 'approach'
+    this.reel = -1
   }
 
   dispose(scene: THREE.Scene) {
