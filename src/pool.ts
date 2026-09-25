@@ -138,10 +138,12 @@ export function keepWhites(s: Save): void {
 
 /**
  * What a part is called once it has a past: the first rule that matches, never a
- * stat. The Arbiter, the last of the day, outranks the Assembler.
+ * stat. The Arbiter, the last of the day, outranks the Engine; either outranks the Assembler.
  */
 export const NAMED: { test: (h: PartHistory) => boolean; suffix: string }[] = [
   { test: (h) => (h[6] ?? 0) >= 1, suffix: ', that saw the Arbiter' },
+  // PLACEHOLDER words (Adrian's)
+  { test: (h) => (h[7] ?? 0) >= 1, suffix: ', that saw the Engine' },
   { test: (h) => h[2] >= 2, suffix: ', that saw the Assembler twice' },
   { test: (h) => h[2] >= 1, suffix: ', that saw the Assembler' },
 ]

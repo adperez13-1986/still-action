@@ -1,6 +1,6 @@
 import { PARTS } from './abilities'
 import { STARTER_POOL, keepWhites } from './pool'
-import type { HomeHour } from './areas'
+import type { HomeHour, RouteId } from './areas'
 
 /**
  * The one save: everything a run leaves behind, under one versioned key.
@@ -18,8 +18,8 @@ export const SAVE_KEY = 'still-action.save'
 export const SAVE_BACKUP_KEY = 'still-action.save.corrupt'
 export const PROBE_KEY = 'still-action.probe'
 export const LEGACY_HINT_PREFIX = 'still.pushHint.'
-/** v2 (area II): each part's history counts the Arbiters it saw fall. */
-export const SAVE_VERSION = 2
+/** v2 (area II): each part's history counts the Arbiters it saw fall. v3 (area III): the Engines too, and the roads. */
+export const SAVE_VERSION = 3
 /** Cards kept in localStorage, newest last. */
 export const CARD_KEEP = 36
 /** Of those, the newest this many keep their strain line. */
@@ -38,8 +38,8 @@ export const FIRST_DRAWER: Drawer = 'yanah'
 /** The children take turns: run 1 is FIRST_DRAWER's, run 2 the other's, and so on. */
 export const drawerFor = (n: number): Drawer => (n % 2 === 1 ? FIRST_DRAWER : FIRST_DRAWER === 'yanah' ? 'yuri' : 'yanah')
 
-/** [runs carried, deepest depth, Assemblers felled while worn, worn at broken, at stopped, at home, Arbiters felled while worn] */
-export type PartHistory = [runs: number, deepest: number, assemblers: number, broken: number, stopped: number, home: number, arbiters: number]
+/** [runs carried, deepest depth, Assemblers felled while worn, worn at broken, at stopped, at home, Arbiters felled while worn, Engines felled while worn] */
+export type PartHistory = [runs: number, deepest: number, assemblers: number, broken: number, stopped: number, home: number, arbiters: number, engines: number]
 
 export interface NotebookEntry {
   /** First met, local date 'yyyy-mm-dd'. */
@@ -73,6 +73,8 @@ export interface RunCard {
   line?: string
   /** Sample index where each depth began. */
   marks?: number[]
+  /** The road taken at depth 4. Absent: 'II' (every card before the Line, and every Works run). */
+  route?: RouteId
 }
 
 export interface LastEnding {
@@ -91,6 +93,7 @@ export interface RunTally {
   deepest: Record<PartId, number>
   assemblers: Record<PartId, number>
   arbiters: Record<PartId, number>
+  engines: Record<PartId, number>
   /** The strain line so far (the corkboard step). */
   line: string
   lineStep: number
@@ -104,7 +107,7 @@ export interface RunTally {
 }
 
 export const freshTally = (): RunTally => ({
-  carried: [], deepest: {}, assemblers: {}, arbiters: {}, line: '', lineStep: 5, marks: [], win: 0, winT: 0, pushes: 0, quiets: 0,
+  carried: [], deepest: {}, assemblers: {}, arbiters: {}, engines: {}, line: '', lineStep: 5, marks: [], win: 0, winT: 0, pushes: 0, quiets: 0,
 })
 
 /** The in-progress run at its last beam. INV: null whenever no run is in progress (resume is the last step). */
@@ -128,10 +131,14 @@ export interface RunSnapshot {
   /** Four, slot order. */
   loadout: (PartId | null)[]
   tally: RunTally
+  /** undefined: a v2 snapshot, so route 'II'. null: not chosen yet (only with `crossroads`). */
+  route?: RouteId | null
+  /** Resume in the crossroads room (depth 3, its boss down). */
+  crossroads?: true
 }
 
 export interface Save {
-  v: 2
+  v: 3
   /** ISO; set at the first run's start. The doorframe grows from it. */
   firstRunAt: string | null
   /** Endings committed. */
@@ -154,6 +161,10 @@ export interface Save {
   hints: PartId[]
   /** High-water mark count: never shrinks under clock skew. */
   doorMarks: number
+  /** INV: contains 'II'; only grows (unioned in write). 'III' joins at the commit of a run that felled an Assembler, while the Line is on. */
+  roads: RouteId[]
+  /** The road last taken at depth 4 (non-dev). The alternate fallback reads it. */
+  lastRoad: RouteId | null
 }
 
 export interface SaveStore {
@@ -178,14 +189,23 @@ export const MIGRATIONS: Record<number, (s: any) => any> = {
     history: Object.fromEntries(Object.entries(s.history ?? {}).map(([k, h]) => [k, Array.isArray(h) ? [...h, 0] : h])),
     run: s.run && typeof s.run === 'object' ? { ...s.run, tally: { ...(s.run.tally ?? {}), arbiters: {} } } : s.run ?? null,
   }),
+  // 2 → 3: every history gains its Engine count (0), the roads open to the Works only, and a snapshot's tally gains `engines`
+  2: (s: any) => ({
+    ...s,
+    v: 3,
+    history: Object.fromEntries(Object.entries(s.history ?? {}).map(([k, h]) => [k, Array.isArray(h) ? [...h, 0] : h])),
+    roads: ['II'],
+    lastRoad: null,
+    run: s.run && typeof s.run === 'object' ? { ...s.run, tally: { ...(s.run.tally ?? {}), engines: {} } } : s.run ?? null,
+  }),
 }
 
 const KNOWN = new Set(PARTS.map((p) => p.id))
 
 export function freshSave(): Save {
   return {
-    v: 2, firstRunAt: null, runs: 0, found: [...STARTER_POOL], turned: [], hook: null, pendingHook: null,
-    history: {}, notebook: {}, cards: [], lastEnding: null, run: null, hints: [], doorMarks: 0,
+    v: 3, firstRunAt: null, runs: 0, found: [...STARTER_POOL], turned: [], hook: null, pendingHook: null,
+    history: {}, notebook: {}, cards: [], lastEnding: null, run: null, hints: [], doorMarks: 0, roads: ['II'], lastRoad: null,
   }
 }
 
@@ -216,7 +236,7 @@ function repair(raw: Record<string, any>): Save {
   s.pendingHook = isObj(raw.pendingHook) ? { candidates: ids(raw.pendingHook.candidates).filter((i) => KNOWN.has(i)) } : null
   if (isObj(raw.history)) {
     for (const [k, h] of Object.entries(raw.history)) {
-      if (KNOWN.has(k) && Array.isArray(h) && h.length === 7 && h.every(Number.isFinite)) s.history[k] = h as PartHistory
+      if (KNOWN.has(k) && Array.isArray(h) && h.length === 8 && h.every(Number.isFinite)) s.history[k] = h as PartHistory
     }
   }
   if (isObj(raw.notebook)) s.notebook = raw.notebook
@@ -224,9 +244,15 @@ function repair(raw: Record<string, any>): Save {
   s.lastEnding = isObj(raw.lastEnding) ? (raw.lastEnding as LastEnding) : null
   s.run = isObj(raw.run) ? (raw.run as RunSnapshot) : null
   // a snapshot from before the Arbiter's count: its tally starts it at nothing
-  if (s.run && isObj(s.run.tally)) s.run.tally.arbiters ??= {}
+  if (s.run && isObj(s.run.tally)) {
+    s.run.tally.arbiters ??= {}
+    s.run.tally.engines ??= {}
+  }
   s.hints = ids(raw.hints)
   s.doorMarks = Number.isFinite(raw.doorMarks) ? Math.max(0, raw.doorMarks) : 0
+  // the roads: always the Works; the Line only if it was ever opened
+  s.roads = ['II', ...(Array.isArray(raw.roads) && raw.roads.includes('III') ? (['III'] as const) : [])]
+  s.lastRoad = raw.lastRoad === 'II' || raw.lastRoad === 'III' ? raw.lastRoad : null
   keepWhites(s)
   return s
 }
@@ -340,6 +366,7 @@ export function openSave(opts: { memory?: boolean } = {}): SaveStore {
           if (isObj(other) && other.v === SAVE_VERSION) {
             for (const id of ids(other.found)) if (KNOWN.has(id) && !data.found.includes(id)) data.found.push(id)
             for (const id of ids(other.hints)) if (!data.hints.includes(id)) data.hints.push(id)
+            if (Array.isArray(other.roads) && other.roads.includes('III') && !data.roads.includes('III')) data.roads.push('III')
             if (isObj(other.notebook)) {
               for (const [k, e] of Object.entries(other.notebook)) if (!(k in data.notebook)) data.notebook[k] = e as NotebookEntry
             }

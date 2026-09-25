@@ -52,6 +52,8 @@ export function makeBoss(def: BossDef, x: number, z: number, face: THREE.Vector3
   switch (def.kind) {
     case 'assembler': return new Assembler(def, x, z)
     case 'arbiter': return new Arbiter(def, x, z, face, posts)
+    // stage C builds the Engine; until then a DEV `?engine=1` meets an Assembler under its def
+    case 'engine': return new Assembler(def, x, z)
   }
 }
 

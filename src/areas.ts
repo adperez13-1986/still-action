@@ -24,6 +24,54 @@ export const LEAN_HOME = true
  */
 export const FIRST_RUN_IN_MAZE = true
 
+// --- area III's switches (design/area3/SPEC.md §1.7) -------------------------------------
+
+/** The Line and its crossroads. False: no crossroads, the route is always 'II', save.roads never gains 'III'. */
+export const LINE_ENABLED = false
+/** The Engine as the Line's boss at 6. False: route III's depth 6 is the quarter's square with the Arbiter. */
+export const ENGINE_ON_LINE = false
+/** The Porter (stage D). */
+export const PORTER_ENABLED = false
+/** How the road is chosen: the crossroads room, or (the fallback) alternating by save.lastRoad. */
+export const ROAD_CHOICE: 'crossroads' | 'alternate' = 'crossroads'
+
+export type FlagName = 'line' | 'engine' | 'porter'
+const FLAG_DEFAULT: Record<FlagName, boolean> = { line: LINE_ENABLED, engine: ENGINE_ON_LINE, porter: PORTER_ENABLED }
+/**
+ * DEV overrides (a URL param or __flags); null is the constant. Production builds never
+ * read them: `import.meta.env.DEV` is false there, so the constants are the whole story.
+ */
+const flagOverride: Record<FlagName, boolean | null> & { roadChoice: 'crossroads' | 'alternate' | null } = {
+  line: null, engine: null, porter: null, roadChoice: null,
+}
+if (import.meta.env.DEV && typeof location !== 'undefined') {
+  const q = new URLSearchParams(location.search)
+  for (const k of ['line', 'engine', 'porter'] as const) {
+    const v = q.get(k)
+    if (v !== null) flagOverride[k] = v !== '0' && v !== 'false'
+  }
+}
+/** INV: the only way code reads the three switches. */
+export function flag(name: FlagName): boolean {
+  if (import.meta.env.DEV) return flagOverride[name] ?? FLAG_DEFAULT[name]
+  return FLAG_DEFAULT[name]
+}
+/** ROAD_CHOICE, through the same DEV override. */
+export function roadChoice(): 'crossroads' | 'alternate' {
+  if (import.meta.env.DEV) return flagOverride.roadChoice ?? ROAD_CHOICE
+  return ROAD_CHOICE
+}
+/** DEV only (__flags): override for this page; null (or absent) leaves one as it is, undefined too. */
+export function setFlags(o: Partial<Record<FlagName, boolean | null>> & { roadChoice?: 'crossroads' | 'alternate' | null }) {
+  if (!import.meta.env.DEV) return
+  for (const k of ['line', 'engine', 'porter', 'roadChoice'] as const) if (k in o) (flagOverride as Record<string, unknown>)[k] = o[k] ?? null
+}
+/** What the switches read as now, for checks. */
+export const flagsNow = () => ({ line: flag('line'), engine: flag('engine'), porter: flag('porter'), roadChoice: roadChoice() })
+
+/** INV: exactly these two. 'II' is area II as built; 'III' is the Line. */
+export type RouteId = 'II' | 'III'
+
 /** The two beams. INV: never a third. */
 export type ExitKind = 'cold' | 'warm'
 
@@ -54,14 +102,14 @@ export function hourAtEnd(kind: 'broken' | 'stopped' | 'home', depth: number): H
 
 // --- areas and places ------------------------------------------------------------------
 
-export type AreaId = 'I' | 'II'
+export type AreaId = 'I' | 'II' | 'III'
 /** 'grate' is the Works' walkways; the ruin maps it to its own paving. */
 export type SurfaceRole = 'paving' | 'rock' | 'wood' | 'ground' | 'grate'
 export type FootSurface = 'stone' | 'wood' | 'plate'
 /** The room tones: ambience.ts owns the list. */
 export type { AmbienceMood }
 /** A depth's look (design/content/SPEC.md §2.1): area II has two, the Works and the quarter. */
-export type PlaceId = 'ruin' | 'works' | 'quarter'
+export type PlaceId = 'ruin' | 'works' | 'quarter' | 'sidings' | 'station'
 /** The Works' beyond: code-built machinery standing in the fog (the Works step builds them). */
 export type MachineKind = 'chimney' | 'crucible' | 'press' | 'hopper'
 
@@ -206,12 +254,35 @@ const quarter: PlaceDef = {
   },
 }
 
-export const PLACES: Record<PlaceId, PlaceDef> = { ruin, works, quarter }
+/**
+ * The Line (area III, design/area3/SPEC.md §4.1). Until its own kit lands (stage A3) each is
+ * a copy of the area II place at the same depth, under its own id: the road is the same
+ * afternoon on new plumbing.
+ */
+const sidings: PlaceDef = { ...works, id: 'sidings' }
+const station: PlaceDef = { ...quarter, id: 'station' }
+
+export const PLACES: Record<PlaceId, PlaceDef> = { ruin, works, quarter, sidings, station }
 export const PLACE_OF: Record<number, PlaceId> = { 1: 'ruin', 2: 'ruin', 3: 'ruin', 4: 'works', 5: 'quarter', 6: 'quarter' }
-/** The walk home is the last of the quarter, at night. */
+/** INV: depths 1-3 are 'ruin' on every route. INV: ROUTES.II equals PLACE_OF for 4-6. */
+export const ROUTES: Record<RouteId, Record<4 | 5 | 6, PlaceId>> = {
+  II: { 4: 'works', 5: 'quarter', 6: 'quarter' },
+  // 6 reads ENGINE_ON_LINE (lookAt): until the Engine, the roads meet in the square
+  III: { 4: 'sidings', 5: 'station', 6: 'station' },
+}
+/** The walk home is the last of the quarter, at night (both roads). */
 export const WALK_PLACE: PlaceId = 'quarter'
-/** INV: the only way anything picks a look. areaOf(depth) stays for bosses, the hour and the banner. */
-export const lookAt = (depth: number): PlaceDef => PLACES[PLACE_OF[Math.max(1, Math.min(RUN_DEPTHS, depth))]!]
+/**
+ * INV: the only way anything picks a look. The route defaults to 'II' (every call site that
+ * predates the Line). areaOf(depth, route) stays for bosses, the hour and the banner.
+ */
+export function lookAt(depth: number, route: RouteId = 'II', engineOnLine = ENGINE_ON_LINE): PlaceDef {
+  const d = Math.max(1, Math.min(RUN_DEPTHS, depth))
+  if (d <= 3) return PLACES.ruin
+  // the roads meet in the square
+  if (route === 'III' && d === 6 && !engineOnLine) return PLACES.quarter
+  return PLACES[ROUTES[route][d as 4 | 5 | 6]]
+}
 
 /** An area: its depths, and a look for what still asks by area (I the ruin's; II the quarter's, where it ends). */
 export interface AreaDef extends Omit<PlaceDef, 'id'> {
@@ -220,13 +291,18 @@ export interface AreaDef extends Omit<PlaceDef, 'id'> {
 }
 const areaI: AreaDef = { ...PLACES.ruin, id: 'I', depths: [1, 2, 3] }
 const areaII: AreaDef = { ...PLACES.quarter, id: 'II', depths: [4, 5, 6] }
+/** INV: AREAS stays the run's two areas in order; area III is the Line's alternative to II, reached by route. */
 export const AREAS: readonly AreaDef[] = [areaI, areaII]
-export const areaOf = (depth: number): AreaDef =>
-  AREAS[Math.min(AREAS.length, Math.ceil(Math.max(1, Math.min(depth, RUN_DEPTHS)) / BOSS_EVERY)) - 1]!
+/** Area III for bosses, the hour and the banner (its hours are area II's: DAY_SPAN is by depth). */
+const areaIII: AreaDef = { ...PLACES.station, id: 'III', depths: [4, 5, 6] }
+export const areaOf = (depth: number, route: RouteId = 'II'): AreaDef => {
+  const a = AREAS[Math.min(AREAS.length, Math.ceil(Math.max(1, Math.min(depth, RUN_DEPTHS)) / BOSS_EVERY)) - 1]!
+  return route === 'III' && a.id === 'II' ? areaIII : a
+}
 
 // --- bosses -----------------------------------------------------------------------
 
-export type BossKind = 'assembler' | 'arbiter'
+export type BossKind = 'assembler' | 'arbiter' | 'engine'
 /** INV: every boss is 900 HP, never hits above 22, never winds up under 620 ms. */
 export interface BossDef {
   kind: BossKind
@@ -236,8 +312,8 @@ export interface BossDef {
   adds: 'hulks' | 'rams-mites' | 'none'
   /** Its notebook page. */
   roster: RosterId
-  /** The Assembler's yard of low walls and crates; the Arbiter's square of brick posts. */
-  arena: 'yard' | 'square'
+  /** The Assembler's yard of low walls and crates; the Arbiter's square of brick posts; the Engine's roundhouse (stage C). */
+  arena: 'yard' | 'square' | 'roundhouse'
   /** The bar while its ×1.5 window is open. */
   openWord: string
 }
@@ -250,6 +326,11 @@ export const ARBITER_DEF: BossDef = {
   // PLACEHOLDER name (Adrian's)
   kind: 'arbiter', name: 'The Arbiter', hp: 900, adds: 'none', roster: 'the-thermal-arbiter', arena: 'square', openWord: 'venting',
 }
+/** The Line's boss at 6 (design/area3/SPEC.md §7), from stage C; until then ENGINE_ON_LINE keeps the Arbiter. */
+export const ENGINE_DEF: BossDef = {
+  // PLACEHOLDER name (Adrian's)
+  kind: 'engine', name: 'The Engine', hp: 900, adds: 'none', roster: 'raging-hull', arena: 'roundhouse', openWord: 'derailed',
+}
 /**
  * false restores Home's second Assembler at depth 6, with rams and mites for adds: the
  * one-evening fallback if the Arbiter doesn't land.
@@ -258,10 +339,12 @@ export const ARBITER_AT_6 = true
 
 /**
  * The only place a depth is decided to have a boss. `arbiterAt6` is the switch above
- * (dev checks flip it to test the fallback).
+ * (dev checks flip it to test the fallback); the route is third, so C's checks still call
+ * bossFor(6, false). The Engine ends the Line only with `engineOnLine`.
  */
-export function bossFor(depth: number, arbiterAt6 = ARBITER_AT_6): BossDef | null {
+export function bossFor(depth: number, arbiterAt6 = ARBITER_AT_6, route: RouteId = 'II', engineOnLine = ENGINE_ON_LINE): BossDef | null {
   if (depth % BOSS_EVERY !== 0) return null
+  if (depth === RUN_DEPTHS && route === 'III' && engineOnLine) return ENGINE_DEF
   if (depth === RUN_DEPTHS && arbiterAt6) return ARBITER_DEF
   return { ...ASSEMBLER_DEF, adds: depth === RUN_DEPTHS ? 'rams-mites' : 'hulks' }
 }

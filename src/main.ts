@@ -34,9 +34,9 @@ import type { PartEvent } from './parts'
 import type { NotebookPage } from './pause'
 import {
   RUN_DEPTHS, BOSS_EVERY, LEAN_HOME, FIRST_RUN_IN_MAZE, DAY, exitsAfterBoss, hourAtEnd, bossFor, areaOf,
-  applyDay, dayNow, currentSat, currentGrace, fogAt, dayAt, AREAS, PLACES, WALK_PLACE, ASSEMBLER_DEF, ARBITER_DEF, ARBITER_AT_6, lookAt, applyDayAt,
-  DAY_SPAN, DAY_FX,
-  type BossDef, type BossKind, type HomeHour, type PlaceDef,
+  applyDay, dayNow, currentSat, currentGrace, fogAt, dayAt, AREAS, PLACES, WALK_PLACE, ASSEMBLER_DEF, ARBITER_DEF, ENGINE_DEF, ARBITER_AT_6, lookAt, applyDayAt,
+  DAY_SPAN, DAY_FX, flag, setFlags, flagsNow, roadChoice,
+  type BossDef, type BossKind, type HomeHour, type PlaceDef, type RouteId,
 } from './areas'
 import { createWorkshop, MARKS_MAX, type ArrivalKind, type InteractId, type Workshop } from './workshop'
 import { createDrawings, HANDS, CARD_ASPECT, type Moment } from './crayon'
@@ -62,6 +62,10 @@ const params = new URLSearchParams(location.search)
 /** `?depth=3` starts a run there: the fastest way to the boss while tuning it. Never past the last depth. */
 const DEPTH_PARAM = params.get('depth')
 const START_DEPTH = Math.min(RUN_DEPTHS, Math.max(1, Number(DEPTH_PARAM) || 1))
+/** DEV only: a URL param as given, or null (production builds never read them). */
+const devParam = (k: string): string | null => (import.meta.env.DEV ? params.get(k) : null)
+/** `?route=II|III` (DEV): the run starts on that road and never sees the crossroads; with ?depth=4-6 it starts there. */
+const ROUTE_PARAM: RouteId | null = devParam('route') === 'III' ? 'III' : devParam('route') === 'II' ? 'II' : null
 
 /**
  * The save. A dev run (?depth=) reads it and never writes, so tuning at the boss
@@ -1096,6 +1100,11 @@ const run = {
   /** This depth's boss is down (a resume opens the beams, no boss), and what it dropped. */
   bossFelled: false,
   bossLoot: [] as string[],
+  /**
+   * The road through depths 4-6 (design/area3/SPEC.md §3). null until it's chosen: at the
+   * Assembler's descend, or in the crossroads. Depths 1-3 ignore it; null reads as 'II'.
+   */
+  route: null as RouteId | null,
   /** This level's names (§7.2), and the ones already counted as met here. */
   names: {} as Partial<Record<Archetype, string>>,
   met: new Set<string>(),
@@ -1491,14 +1500,18 @@ let bossWasOpen = false
 const BOSS_COPY: Record<BossKind, { phase2: string; open: (pan: number) => void }> = {
   assembler: { phase2: 'the Assembler overloads', open: (pan) => sfx.clang(pan) },
   arbiter: { phase2: 'the Arbiter opens its second eye', open: (pan) => sfx.vent(pan) },
+  // stage C; until then only a DEV ?engine=1 meets it (an Assembler under its def)
+  engine: { phase2: 'the Engine runs both ways', open: (pan) => sfx.clang(pan) },
 }
 
 /** __arena's posts, when it built them. */
 let devPosts: { posts: Post[]; group: THREE.Group } | null = null
 /** A dev check's override of ARBITER_AT_6 (null: the switch as shipped). */
 let devArbiterAt6: boolean | null = null
-/** This depth's boss, through the one switch. */
-const bossHere = (depth: number) => bossFor(depth, devArbiterAt6 ?? ARBITER_AT_6)
+/** The road this run is on for looks and bosses: not chosen yet reads as the Works'. */
+const routeNow = (): RouteId => run.route ?? 'II'
+/** This depth's boss, through the one switch, on this run's road. */
+const bossHere = (depth: number) => bossFor(depth, devArbiterAt6 ?? ARBITER_AT_6, routeNow(), flag('engine'))
 
 /**
  * The day moves with you (§7): each level's span of the day, by the rooms he's reached, or
@@ -1578,7 +1591,7 @@ function bossDown(at: THREE.Vector3) {
   loot.dropScrap(new THREE.Vector3(at.x - 1.2, 0, at.z))
   overlay.banner(`area ${run.depth / BOSS_EVERY} cleared`)
   // parts remember: each one worn through it saw that boss fall
-  const felledBy = arbiter ? run.tally.arbiters : run.tally.assemblers
+  const felledBy = arbiter ? run.tally.arbiters : felled?.def.kind === 'engine' ? run.tally.engines : run.tally.assemblers
   for (const sl of hud.slots) if (sl.def) felledBy[sl.def.id] = (felledBy[sl.def.id] ?? 0) + 1
   // a beam save: a reload here comes back to the beams open and no boss, with its drops
   run.bossFelled = true
@@ -1600,7 +1613,7 @@ function writeSnapshot() {
   const snap: RunSnapshot = {
     s: 1, build: __BUILD__, id: run.id, startedAt: run.startedAt, depth: run.depth, seed: run.seed,
     bossFelled: run.bossFelled, bossLoot: [...run.bossLoot], strain: run.strain,
-    loadout: hud.slots.map((sl) => sl.def?.id ?? null), tally: structuredClone(run.tally),
+    loadout: hud.slots.map((sl) => sl.def?.id ?? null), tally: structuredClone(run.tally), route: run.route,
   }
   save.run = snap
   store.write()
@@ -1623,11 +1636,14 @@ function resumeRun(snap: RunSnapshot) {
   })
   const tally = { ...freshTally(), ...snap.tally }
   tally.carried = (tally.carried ?? []).filter((id) => known.has(id))
-  for (const k of ['deepest', 'assemblers', 'arbiters'] as const) tally[k] = Object.fromEntries(Object.entries(tally[k] ?? {}).filter(([id]) => known.has(id)))
+  for (const k of ['deepest', 'assemblers', 'arbiters', 'engines'] as const) tally[k] = Object.fromEntries(Object.entries(tally[k] ?? {}).filter(([id]) => known.has(id)))
   const depth = Math.min(RUN_DEPTHS, Math.max(1, Math.floor(snap.depth) || 1))
+  // the road: a v2 snapshot (undefined) or anything unknown is the Works'; the Line only while it's on.
+  // Before depth 4 an unchosen road stays unchosen, so the crossroads still comes.
+  const route: RouteId | null = snap.route === 'III' && flag('line') ? 'III' : snap.route === 'II' || depth >= 4 || snap.route === 'III' ? 'II' : null
   Object.assign(run, {
     phase: 'crawl', t: 0, swapped: false, ramStunSeen: false, dev: false, committed: false, ending: null, stats: [], taps: [],
-    breakRule: combat.breakRule, id: snap.id, startedAt: snap.startedAt, strain: Math.min(19, Math.max(0, Math.round(snap.strain) || 0)), tally,
+    breakRule: combat.breakRule, id: snap.id, startedAt: snap.startedAt, strain: Math.min(19, Math.max(0, Math.round(snap.strain) || 0)), tally, route,
   })
   // a resume starts its stats over, so it's its own entry in the playtest file, not an overwrite
   playKey = `${run.id}.${Date.now().toString(36)}`
@@ -1667,7 +1683,7 @@ function enterLevel(depth: number, o: { seed?: number; bossFelled?: boolean; res
   run.seed = o.seed ?? Math.floor(Math.random() * 1e9)
   run.bossFelled = !!o.bossFelled
   run.bossLoot = []
-  const place = lookAt(depth)
+  const place = lookAt(depth, routeNow(), flag('engine'))
   level = generateLevel(depth, run.seed, { boss: bossHere(depth), place })
   world.scene.add(level.group)
   combat.terrain = level.terrain
@@ -1717,7 +1733,7 @@ function startRun() {
   Object.assign(run, {
     phase: 'crawl', strain: 0, t: 0, swapped: false, ramStunSeen: false,
     id: newRunId(), dev: DEPTH_PARAM !== null, committed: false, ending: null, stats: [], taps: [], tally: freshTally(),
-    startedAt: new Date().toISOString(), breakRule: combat.breakRule,
+    startedAt: new Date().toISOString(), breakRule: combat.breakRule, route: ROUTE_PARAM,
   })
   playKey = `${run.id}.${Date.now().toString(36)}`
   if (!run.dev) {
@@ -1788,6 +1804,15 @@ function descend() {
   updateOffer()
   updateShrinePrompt()
   stopAllWindups()
+}
+
+/**
+ * §3.1. The road without a room: the Works, unless the fallback alternates the roads (and
+ * the Line is on and open), when it's the one not taken last (the Line when none was).
+ */
+function routeForAlternate(): RouteId {
+  if (roadChoice() !== 'alternate' || !flag('line') || !save.roads.includes('III')) return 'II'
+  return save.lastRoad === 'III' ? 'II' : 'III'
 }
 
 /** A part went on Still this run: its history counts the run at the ending. */
@@ -1877,7 +1902,11 @@ function commit(kind: EndingKind) {
     return
   }
   save.runs += 1
-  const card = { id: run.id, n: save.runs, date: localDate(), end: kind, depth: run.depth, hour, by: drawerFor(save.runs), worn, line: t.line, marks: [...t.marks] }
+  const card = {
+    id: run.id, n: save.runs, date: localDate(), end: kind, depth: run.depth, hour, by: drawerFor(save.runs), worn, line: t.line, marks: [...t.marks],
+    // the road, on a Line run only (absent is the Works')
+    ...(run.route === 'III' && run.depth >= 4 ? { route: 'III' as const } : {}),
+  }
   save.cards.push(card)
   trimCards(save)
   drawings.putCard(card)
@@ -1888,11 +1917,12 @@ function commit(kind: EndingKind) {
   const wornIds = new Set(worn.filter((id): id is string => !!id))
   const endAt = { broken: 3, stopped: 4, home: 5 } as const
   for (const id of run.tally.carried) {
-    const h = save.history[id] ?? [0, 0, 0, 0, 0, 0, 0]
+    const h = save.history[id] ?? [0, 0, 0, 0, 0, 0, 0, 0]
     h[0] += 1
     h[1] = Math.max(h[1], run.tally.deepest[id] ?? run.depth)
     h[2] += run.tally.assemblers[id] ?? 0
     h[6] += run.tally.arbiters[id] ?? 0
+    h[7] += run.tally.engines[id] ?? 0
     if (wornIds.has(id)) h[endAt[kind]] += 1
     save.history[id] = h
   }
@@ -2545,6 +2575,8 @@ function simulate(realDt: number) {
     run.t += realDt
     if (!run.swapped && run.t >= DESCEND_OUT) {
       run.swapped = true
+      // the road is set on the way down from the Assembler (the crossroads comes in A2)
+      if (run.depth === 3) run.route ??= routeForAlternate()
       enterLevel(run.depth + 1)
       // a beam save: a reload comes back to the start of this depth
       writeSnapshot()
@@ -2805,7 +2837,7 @@ function tallFrame(awake: readonly Enemy[]): THREE.Vector3[] {
 
 /** The place he's in: the depth's look, or the quarter at night on the walk home. */
 function placeNow(): PlaceDef {
-  return level?.house ? PLACES[WALK_PLACE] : lookAt(run.depth)
+  return level?.house ? PLACES[WALK_PLACE] : lookAt(run.depth, routeNow(), flag('engine'))
 }
 
 /** The room tone for where he is: the place's, a boss level's own. */
@@ -3097,6 +3129,11 @@ function devTick() {
   hud.update(clock)
 }
 
+/** DEV: a level on a road, generated for a check and thrown away (the Arbiter's switch as shipped, the Engine's as flagged). */
+function genFor(depth: number, seed: number, route: RouteId) {
+  return generateLevel(depth, seed, { boss: bossFor(depth, ARBITER_AT_6, route, flag('engine')), place: lookAt(depth, route, flag('engine')) })
+}
+
 if (import.meta.env.DEV) {
   Object.assign(window, {
     __combat: combat, __still: still, __hud: hud, __loot: loot, __level: () => level, __world: world,
@@ -3124,8 +3161,8 @@ if (import.meta.env.DEV) {
       return pack
     },
     /** A level's packs, generated and thrown away without entering it. */
-    __gen: (depth: number, seed: number) => {
-      const l = generateLevel(depth, seed, { boss: bossFor(depth) })
+    __gen: (depth: number, seed: number, route: RouteId = 'II') => {
+      const l = genFor(depth, seed, route)
       const out = l.packs.map((p) => ({
         room: p.room.kind, rx: p.room.rx, rz: p.room.rz, kinds: p.members.map((m) => m.kind),
         elite: p.elite?.mod ?? null, name: p.elite?.name ?? null, lesson: !!p.lesson, budget: p.budget ?? null, template: p.template ?? null,
@@ -3138,8 +3175,8 @@ if (import.meta.env.DEV) {
      * p = the room's progress), the tall beyond (hides: its shadow falls on floor), the floor
      * pieces, and the packs as __gen has them with their slag cores and look.
      */
-    __genLook: (depth: number, seed: number) => {
-      const l = generateLevel(depth, seed, { boss: bossFor(depth) })
+    __genLook: (depth: number, seed: number, route: RouteId = 'II') => {
+      const l = genFor(depth, seed, route)
       const out = {
         place: l.place, props: l.made.props, tall: l.made.tall, floors: l.made.floors,
         rooms: l.rooms.map((r) => ({ kind: r.kind, rx: r.rx, rz: r.rz, p: l.progressOf(r) })),
@@ -3169,7 +3206,7 @@ if (import.meta.env.DEV) {
       // a thief nests where it's spawned: in __arena's floor, or the level's
       if (kind === 'thief') return (lastThief = combat.addThief(new Thief(x, z, new THREE.Vector3(x, 0, z), thiefWorld())))
       if (kind === 'boss') {
-        const defs: Record<BossKind, BossDef> = { assembler: ASSEMBLER_DEF, arbiter: ARBITER_DEF }
+        const defs: Record<BossKind, BossDef> = { assembler: ASSEMBLER_DEF, arbiter: ARBITER_DEF, engine: ENGINE_DEF }
         // the Arbiter stands among __arena's posts, when it built them
         const b = combat.addBoss(x, z, new THREE.Vector3(x, 0, z - 1), defs[(variant ?? 'assembler') as BossKind], devPosts?.posts ?? [])
         if (awake) combat.wake(combat.packs[combat.packs.length - 1]!)
@@ -3240,8 +3277,8 @@ if (import.meta.env.DEV) {
      * mesh (in build order), the breakables, the shrines, the rooms and the solids. For
      * proving a refactor of the generator changes nothing.
      */
-    __genKit: (depth: number, seed: number) => {
-      const l = generateLevel(depth, seed, { boss: bossFor(depth) })
+    __genKit: (depth: number, seed: number, route: RouteId = 'II') => {
+      const l = genFor(depth, seed, route)
       const r = (v: number) => Math.round(v * 1e4) / 1e4
       const out = {
         meshes: l.group.children.filter((o): o is THREE.InstancedMesh => o instanceof THREE.InstancedMesh).map((m) => ({
@@ -3392,7 +3429,14 @@ if (import.meta.env.DEV) {
     /** Put any hour on the world now (look checks). */
     __applyDay: (k: keyof typeof DAY, hour?: HomeHour) => applyDay(world, k, hour),
     __bossFor: bossFor,
-    __areaOf: (d: number) => areaOf(d).id,
+    __areaOf: (d: number, route: RouteId = 'II') => areaOf(d, route).id,
+    /** Override area III's switches for this page (design/area3/SPEC.md §12.2); null restores one. Returns what they read now. */
+    __flags: (o: { line?: boolean | null; engine?: boolean | null; porter?: boolean | null; roadChoice?: 'crossroads' | 'alternate' | null } = {}) => {
+      setFlags(o)
+      return flagsNow()
+    },
+    /** The road: this run's, whether he's in the crossroads, and the save's roads. */
+    __route: () => ({ route: run.route, atCrossroads: false, roads: [...save.roads], lastRoad: save.lastRoad }),
     __zones: () => workshop.zones.map((z) => ({ id: z.id, anchor: z.anchor })),
     /** toggleTurn through the rules, saved and shown as the card's button would. */
     __turn: (id: string) => {
@@ -3475,7 +3519,7 @@ if (import.meta.env.DEV) {
      */
     __fillSave: () => {
       const all = PARTS.map((p) => p.id)
-      const hist = Object.fromEntries(all.map((id) => [id, [999, 6, 999, 999, 999, 999, 999]])) as Save['history']
+      const hist = Object.fromEntries(all.map((id) => [id, [999, 6, 999, 999, 999, 999, 999, 999]])) as Save['history']
       const line = (n: number) => 'k'.repeat(n)
       const ROSTER_IDS = [
         'wandering-drone', 'rust-guard', 'corroded-sentry', 'fracture-mite', 'iron-crawler', 'glitch-node', 'sentinel-shard', 'hollow-repeater',
@@ -3497,7 +3541,7 @@ if (import.meta.env.DEV) {
         ...(i >= CARD_KEEP - CARD_LINES ? { line: line(96), marks: [0, 16, 32, 48, 64, 80] } : {}),
       }))
       const tally: RunTally = {
-        ...freshTally(), carried: all, deepest: Object.fromEntries(all.map((id) => [id, 6])), assemblers: Object.fromEntries(all.map((id) => [id, 2])), arbiters: Object.fromEntries(all.map((id) => [id, 1])),
+        ...freshTally(), carried: all, deepest: Object.fromEntries(all.map((id) => [id, 6])), assemblers: Object.fromEntries(all.map((id) => [id, 2])), arbiters: Object.fromEntries(all.map((id) => [id, 1])), engines: Object.fromEntries(all.map((id) => [id, 1])),
         line: line(191), marks: [0, 32, 64, 96, 128, 160], win: 20, winT: 4.99, pushes: 9999, quiets: 9999,
       }
       Object.assign(save, {
@@ -3506,9 +3550,9 @@ if (import.meta.env.DEV) {
         lastEnding: { kind: 'stopped', hour: 'afternoon', depth: 6, worn: cards[0]!.worn, cardId: cards[0]!.id, arrived: true },
         run: {
           s: 1, build: new Date().toISOString(), id: newRunId(), startedAt: new Date().toISOString(), depth: 6, seed: 999999999,
-          bossFelled: true, bossLoot: ['through-line', 'borrowed-time'], strain: 19, loadout: cards[0]!.worn, tally,
+          bossFelled: true, bossLoot: ['through-line', 'borrowed-time'], strain: 19, loadout: cards[0]!.worn, tally, route: 'III',
         },
-        hints: all, doorMarks: 48,
+        hints: all, doorMarks: 48, roads: ['II', 'III'], lastRoad: 'III',
       } satisfies Partial<Save>)
     },
     __mode: () => run.phase,
