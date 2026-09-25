@@ -1034,9 +1034,26 @@ export function makeBeam(color: number, height: number): Beam {
  * sides, with streaks drifting up it, motes rising through it, and a warm pool
  * breathing on the floor. The warmest thing on screen after her.
  */
-const HOME_AMBER = new THREE.Color(0xff7a22)
-const HOME_HOT = new THREE.Color(0xffb866)
-const HOME_MOTES = 34
+/** How a light beam is drawn: its two colours, its size, how strong each layer is. */
+export interface BeamStyle {
+  /** The deep colour (the column's edges and the pool) and the hot one (its middle and the motes). */
+  deep: number
+  hot: number
+  radius: [top: number, bottom: number]
+  core: [top: number, bottom: number]
+  shell: number
+  coreStrength: number
+  motes: number
+  /** The motes' spiral: how far out they ride, and their size in px. */
+  moteR: number
+  moteSize: number
+  pool: { radius: number; strength: number; ripple: number }
+}
+/** Grace's light, where he can walk into it. */
+export const HOME_STYLE: BeamStyle = {
+  deep: 0xff7a22, hot: 0xffb866, radius: [0.55, 0.78], core: [0.14, 0.2], shell: 1.35, coreStrength: 1.6,
+  motes: 34, moteR: 0.55, moteSize: 4.5, pool: { radius: 1.7, strength: 0.5, ripple: 0.3 },
+}
 
 const HOME_NOISE = /* glsl */ `
   float hash3(vec3 p) { return fract(sin(dot(p, vec3(12.9898, 78.233, 37.719))) * 43758.5453); }
@@ -1050,11 +1067,16 @@ const HOME_NOISE = /* glsl */ `
 `
 
 function makeHomeBeam(height: number): Beam {
+  return makeLightBeam(height, HOME_STYLE)
+}
+
+/** A textured beam of light: soft round column, streaks drifting up, rising motes, a breathing pool. */
+export function makeLightBeam(height: number, st: BeamStyle): Beam {
   const uniforms = {
     uTime: { value: 0 },
     uGlow: { value: 1 },
-    uAmber: { value: HOME_AMBER.clone() },
-    uHot: { value: HOME_HOT.clone() },
+    uAmber: { value: new THREE.Color(st.deep) },
+    uHot: { value: new THREE.Color(st.hot) },
   }
   // the column: brightest where it faces the camera, gone at its silhouette, so it reads round, not a slab
   const columnMat = (strength: number, grain: number) => new THREE.ShaderMaterial({
@@ -1095,32 +1117,32 @@ function makeHomeBeam(height: number): Beam {
       }
     `,
   })
-  const shellMat = columnMat(1.35, 1)
-  const coreMat = columnMat(1.6, 0.6)
-  const shell = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.78, height, 24, 1, true), shellMat)
+  const shellMat = columnMat(st.shell, 1)
+  const coreMat = columnMat(st.coreStrength, 0.6)
+  const shell = new THREE.Mesh(new THREE.CylinderGeometry(st.radius[0], st.radius[1], height, 24, 1, true), shellMat)
   shell.position.y = height / 2
-  const core = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.2, height * 0.8, 12, 1, true), coreMat)
+  const core = new THREE.Mesh(new THREE.CylinderGeometry(st.core[0], st.core[1], height * 0.8, 12, 1, true), coreMat)
   core.position.y = height * 0.4
 
   // motes: each rises on its own slow spiral and fades out high up; all of it in the vertex shader
-  const seeds = new Float32Array(HOME_MOTES * 3)
-  for (let i = 0; i < HOME_MOTES; i++) seeds.set([Math.random(), Math.random(), Math.random()], i * 3)
+  const seeds = new Float32Array(st.motes * 3)
+  for (let i = 0; i < st.motes; i++) seeds.set([Math.random(), Math.random(), Math.random()], i * 3)
   const moteGeo = new THREE.BufferGeometry()
-  moteGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(HOME_MOTES * 3), 3))
+  moteGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(st.motes * 3), 3))
   moteGeo.setAttribute('aSeed', new THREE.BufferAttribute(seeds, 3))
   // the positions are computed on the GPU: a fixed box keeps the motes from being culled
   moteGeo.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, height / 2, 0), height)
   const moteMat = new THREE.ShaderMaterial({
-    uniforms: { ...uniforms, uH: { value: height * 0.7 }, uPx: { value: 4.5 * Math.min(window.devicePixelRatio, 1.5) } },
+    uniforms: { ...uniforms, uH: { value: height * 0.7 }, uPx: { value: st.moteSize * Math.min(window.devicePixelRatio, 1.5) }, uR: { value: st.moteR } },
     transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
     vertexShader: /* glsl */ `
       attribute vec3 aSeed;
-      uniform float uTime, uH, uPx;
+      uniform float uTime, uH, uPx, uR;
       varying float vA;
       void main() {
         float k = fract(uTime * (0.07 + 0.08 * aSeed.x) + aSeed.y);
         float ang = aSeed.z * 6.2832 + uTime * (0.3 + aSeed.x * 0.5);
-        float r = 0.1 + 0.55 * aSeed.x * (1.0 - 0.4 * k);
+        float r = 0.1 + uR * aSeed.x * (1.0 - 0.4 * k);
         vec3 p = vec3(sin(ang) * r, 0.15 + k * uH, cos(ang) * r);
         vA = smoothstep(0.0, 0.08, k) * (1.0 - smoothstep(0.45, 1.0, k));
         gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
@@ -1142,7 +1164,7 @@ function makeHomeBeam(height: number): Beam {
 
   // the pool on the floor: warm light spilling round its foot, with a slow ripple going out
   const poolMat = new THREE.ShaderMaterial({
-    uniforms,
+    uniforms: { ...uniforms, uPoolR: { value: st.pool.radius }, uPoolA: { value: st.pool.strength }, uRipple: { value: st.pool.ripple } },
     transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
     vertexShader: /* glsl */ `
       varying vec2 vP;
@@ -1152,20 +1174,20 @@ function makeHomeBeam(height: number): Beam {
       }
     `,
     fragmentShader: /* glsl */ `
-      uniform float uTime, uGlow;
+      uniform float uTime, uGlow, uPoolR, uPoolA, uRipple;
       uniform vec3 uAmber, uHot;
       varying vec2 vP;
       void main() {
-        float r = length(vP) / 1.7;
+        float r = length(vP) / uPoolR;
         float pool = pow(1.0 - smoothstep(0.0, 1.0, r), 2.0);
         float wave = fract(uTime * 0.35);
         float ripple = exp(-pow((r - wave) * 9.0, 2.0)) * (1.0 - wave);
-        float a = (pool * 0.5 + ripple * 0.3) * uGlow;
+        float a = (pool * uPoolA + ripple * uRipple) * uGlow;
         gl_FragColor = vec4(mix(uAmber, uHot, pool * 0.6), a);
       }
     `,
   })
-  const pool = new THREE.Mesh(new THREE.CircleGeometry(1.7, 48), poolMat)
+  const pool = new THREE.Mesh(new THREE.CircleGeometry(st.pool.radius, 48), poolMat)
   pool.rotation.x = -Math.PI / 2
   pool.position.y = DECAL_Y
 

@@ -1,5 +1,5 @@
 import { PARTS } from './abilities'
-import { STARTER_POOL } from './pool'
+import { STARTER_POOL, keepWhites } from './pool'
 import type { HomeHour } from './areas'
 
 /**
@@ -212,6 +212,7 @@ function repair(raw: Record<string, any>): SaveV1 {
   s.run = isObj(raw.run) ? (raw.run as RunSnapshot) : null
   s.hints = ids(raw.hints)
   s.doorMarks = Number.isFinite(raw.doorMarks) ? Math.max(0, raw.doorMarks) : 0
+  keepWhites(s)
   return s
 }
 

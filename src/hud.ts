@@ -1,3 +1,4 @@
+import type { ChooserSpec } from './workshop'
 import type { AbilityDef, IconState } from './abilities'
 import type { CastResult } from './combat'
 import { SLOT_NAMES, type SlotName } from './still'
@@ -85,6 +86,12 @@ export interface Hud {
    * no ability buttons, meters or pause, so nothing there can cost strain.
    */
   mode: (m: 'run' | 'workshop' | 'walk') => void
+  /** The Workshop's card for the wall and the hook: a row of parts, the one picked, one action. Null hides it. */
+  chooser: (c: ChooserSpec | null) => void
+  /** A part's icon tapped on the chooser. */
+  onChoose: (cb: (id: string) => void) => void
+  /** The chooser's action (turn to the wall, turn back, hang it). */
+  onChooserAction: (cb: () => void) => void
   onPrompt: (cb: () => void) => void
   /** The pickup card. Null hides it. `fresh`: never found before, and the card says so. */
   offer: (incoming: AbilityDef | null, fresh?: boolean) => void
@@ -153,6 +160,14 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
       <div class="info"><b class="name"></b><p class="line"></p></div>
       <div class="choices"><button type="button" class="take"></button></div>
     </div>
+    <div id="chooser">
+      <b class="title"></b>
+      <div class="items"></div>
+      <div class="detail">
+        <div class="info"><b class="name"></b><p class="line"></p><p class="note"></p></div>
+        <button type="button" class="act"></button>
+      </div>
+    </div>
     <button type="button" id="pauseBtn" aria-label="pause"><i></i><i></i></button>
   `
 
@@ -171,6 +186,15 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
   const offerLine = offerEl.querySelector<HTMLElement>('.line')!
   const offerReplaces = offerEl.querySelector<HTMLElement>('.replaces')!
   const offerNew = offerEl.querySelector<HTMLElement>('.new')!
+  const chooserEl = root.querySelector<HTMLElement>('#chooser')!
+  const chooseListeners: ((id: string) => void)[] = []
+  const chooserActListeners: (() => void)[] = []
+  chooserEl.addEventListener('pointerdown', (e) => {
+    const t = e.target as HTMLElement
+    const item = t.closest<HTMLElement>('.item')
+    if (item?.dataset.id) for (const cb of chooseListeners) cb(item.dataset.id)
+    if (t.closest('.act')) for (const cb of chooserActListeners) cb()
+  })
   const takeBtn = offerEl.querySelector<HTMLElement>('.take')!
   const compareBtn = offerEl.querySelector<HTMLElement>('.compare')!
   const pauseBtn = root.querySelector<HTMLElement>('#pauseBtn')!
@@ -475,6 +499,24 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
     mode(m) {
       root.dataset.mode = m
     },
+    chooser(c) {
+      chooserEl.classList.toggle('show', !!c)
+      if (!c) return
+      chooserEl.querySelector('.title')!.textContent = c.title
+      chooserEl.querySelector('.items')!.innerHTML = c.items.map((it) =>
+        `<button type="button" class="item ${it.state} tier-${it.tier}${it.id === c.selected ? ' sel' : ''}" data-id="${it.id}">${svg(it.icon)}</button>`).join('')
+      const d = c.detail
+      const nameEl = chooserEl.querySelector<HTMLElement>('.name')!
+      nameEl.textContent = d?.name ?? ''
+      nameEl.style.color = d?.tier ? TIER_CSS[d.tier] : ''
+      chooserEl.querySelector('.line')!.textContent = d?.line ?? ''
+      chooserEl.querySelector('.note')!.textContent = [d?.history, d?.note].filter(Boolean).join(' \u00b7 ')
+      const act = chooserEl.querySelector<HTMLElement>('.act')!
+      act.textContent = c.action ?? ''
+      act.style.display = c.action ? '' : 'none'
+    },
+    onChoose(cb) { chooseListeners.push(cb) },
+    onChooserAction(cb) { chooserActListeners.push(cb) },
     onPrompt(cb) { promptListeners.push(cb) },
 
     offer(incoming, fresh = false) {

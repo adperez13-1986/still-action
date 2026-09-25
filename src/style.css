@@ -144,6 +144,41 @@ html, body {
 #strain .notch { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: rgba(203, 215, 230, .55); text-decoration: none; }
 @keyframes strain-pulse { 50% { box-shadow: 0 0 12px rgba(200, 69, 47, .55); } }
 
+/* --- the Workshop's chooser: the wall's parts or the hook's, one picked, one action --- */
+#chooser {
+  position: absolute; display: none; flex-direction: column; gap: 8px; pointer-events: auto;
+  right: calc(env(safe-area-inset-right, 0px) + 14px); bottom: calc(env(safe-area-inset-bottom, 0px) + 18px);
+  width: 300px; padding: 10px 10px 10px 12px; border-radius: 11px;
+  background: rgba(14, 12, 10, .9); border: 1px solid #3a3026; backdrop-filter: blur(6px);
+}
+#chooser.show { display: flex; }
+#chooser .title { font: 700 11px/1 var(--ui); letter-spacing: .14em; text-transform: uppercase; color: #a8988a; }
+#chooser .items { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+#chooser .item {
+  appearance: none; height: 44px; border-radius: 9px; display: grid; place-items: center; padding: 0;
+  border: 1px solid #3a3026; background: #1a1612; color: #9fb2c6;
+}
+#chooser .item svg { width: 24px; height: 24px; }
+#chooser .item.lit.tier-white { color: var(--tier-white); }
+#chooser .item.lit.tier-blue { color: var(--tier-blue); }
+#chooser .item.lit.tier-gold { color: var(--tier-gold); }
+/* turned to the wall: its back, a plain dark board */
+#chooser .item.turned { background: #120f0c; color: #5a5048; border-style: dashed; }
+/* never found: an outline in the dark */
+#chooser .item.bare { background: #0f1113; color: #2b3138; }
+#chooser .item.disabled { opacity: .35; }
+#chooser .item.sel { border-color: #d9b98a; box-shadow: 0 0 0 1px #d9b98a inset; }
+#chooser .detail { display: flex; align-items: center; gap: 10px; min-height: 58px; }
+#chooser .info { flex: 1; min-width: 0; }
+#chooser .name { font: 700 15px/1.2 var(--display); letter-spacing: .02em; color: #e0d6ca; }
+#chooser p { margin: 3px 0 0; font-size: 12.5px; line-height: 1.25; color: #b3a595; }
+#chooser .note { color: #8a7c6e; }
+#chooser .act {
+  appearance: none; flex: none; min-width: 64px; max-width: 96px; min-height: 52px; padding: 6px 8px; border-radius: 12px;
+  border: 2px solid #d9b98a; background: #231c15; color: #f0e4d4; font: 600 12.5px/1.15 var(--ui);
+}
+#chooser .act:active { transform: scale(.94); }
+
 /* --- pickup card: sits above the ability arc, inside right-thumb reach --- */
 #offer, #prompt {
   position: absolute; display: none; align-items: center; gap: 10px; pointer-events: auto;

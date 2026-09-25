@@ -1,10 +1,12 @@
 import * as THREE from 'three'
 import { grade, DECAL_Y, type World } from './world'
 import { buildInstanced, pieceData, doorLeaf, skin, type Placement } from './kit'
-import { makeTerrain, makeBeam, key, COLD_BEAM, BEAM_H, type Box, type Circle } from './dungeon'
+import { makeTerrain, makeLightBeam, key, type BeamStyle, type Box, type Circle } from './dungeon'
 import type { Terrain } from './terrain'
 import { SLOT_NAMES, type SlotName, type Still } from './still'
-import { PARTS } from './abilities'
+import { PARTS, type AbilityDef, type Tier } from './abilities'
+import { partModel, centred, WALL_SCALE, DISPLAY_EYE, EYE_OFF } from './partmodels'
+import { canTurn, hookOffers } from './pool'
 import type { HomeHour } from './areas'
 import type { EndingKind, PartId, SaveV1 } from './save'
 import { COLD, type Vfx } from './vfx'
@@ -38,6 +40,17 @@ export interface Interactable {
   zoom: number
 }
 export type ArrivalKind = EndingKind | 'idle'
+export type PlaqueState = 'lit' | 'turned' | 'bare'
+/** The card that replaces the pickup card for the wall and the hook (hud.ts). */
+export interface ChooserSpec {
+  title: string
+  items: { id: PartId; icon: string; state: PlaqueState | 'disabled'; tier: Tier }[]
+  selected: PartId | null
+  /** `note`: the small line under it (hung, or why a turn is refused). */
+  detail: { name: string; line: string; history: string | null; tier: Tier | null; note?: string } | null
+  /** Null hides the button. */
+  action: string | null
+}
 export interface ArrivalState { kind: ArrivalKind; t: number; step: number; done: boolean }
 export interface TraceSet {
   kidsDoor: 'open-dark' | 'swings-shut' | 'ajar'
@@ -62,8 +75,12 @@ export interface Workshop {
   leave(): void
   /** One fixed step: arrival script, stick movement, collisions, zones, the beam. */
   update(dt: number, stickX: number, stickZ: number): WorkshopEvent[]
-  /** Rebuild what the save shows. Step 3: the prompts read it; plaques, cards and marks come later. */
+  /** Rebuild what the save shows: the wall (lit, turned, bare), what hangs on the hook, and his body under it. */
   refresh(s: SaveV1): void
+  /** The chooser for the wall's section or the hook, with `selected` picked (or the default). */
+  cardFor(id: 'hook' | `wall:${SlotName}`, s: SaveV1, selected: PartId | null): ChooserSpec
+  /** The zones as built (the wall's sections are sized from the models): for checks. */
+  readonly zones: readonly Interactable[]
   readonly near: InteractId | null
   readonly traces: TraceSet
   readonly arrival: ArrivalState
@@ -81,13 +98,24 @@ export interface Workshop {
 const BODY_R = 0.42
 /** The fade in from black before any arrival starts. */
 const FADE_IN = 0.6
-/** The door beam: walking into it starts the next run. The doorway is narrower than the beam, so there's no way round it. */
+/** The door beam: walking into it starts the next run. The doorway is narrower than the zone, so there's no way round it. */
 const DOOR = { x: 4, z: -5.3, radius: 1.1 }
 /**
- * Grace's light, the lamp: over the bench, a step in from the window (any nearer and
- * the wall beside it burns white). It doesn't follow him here.
+ * How the door's beam is drawn: doorway-sized, cold, and dimmer than the lamp. The
+ * maze's 9 u exit beam in this small room was the brightest thing in it; this is the
+ * way out, not the centrepiece. Textured like the warm beam, in the cold.
  */
-const LAMP = new THREE.Vector3(-3.4, 3.8, 0.3)
+const DOOR_BEAM: BeamStyle = {
+  deep: 0x3e6a9c, hot: 0x9fc0e6, radius: [0.5, 0.62], core: [0.1, 0.14], shell: 1.1, coreStrength: 1.0,
+  motes: 18, moteR: 0.45, moteSize: 3.5, pool: { radius: 1.05, strength: 0.34, ripple: 0.16 },
+}
+const DOOR_BEAM_H = 3.6
+/**
+ * Grace's light, the lamp: over the bench, a step in from the window (any nearer and
+ * the wall beside it burns white), and toward the wall of parts: the one place his
+ * steel looks warm is under her light. It doesn't follow him here.
+ */
+const LAMP = new THREE.Vector3(-3.4, 3.8, -1.0)
 const BENCH = { x: -4.6, z: 0, scale: 0.8 }
 const STOOL = { x: -4.9, z: 2.4 }
 /**
@@ -115,18 +143,44 @@ const HOME_WALK = 0.9
 /** Home: the grade eases from the run's to the room's over this, from the threshold. */
 const HOME_EASE = 1.2
 
-/** §5.6. Nearest anchor wins among the zones he's inside. */
-const ZONES: Interactable[] = [
-  ...(['head', 'torso', 'arms', 'legs'] as const).map((slot, i): Interactable => {
-    const x = -4.5 + i * 1.8
-    return { id: `wall:${slot}`, anchor: { x, z: -4.5 }, radius: 0, rect: { minX: x - 0.9, maxX: x + 0.9, minZ: -6, maxZ: -3.6 }, focus: { x, z: -5.5 }, zoom: 1.3 }
-  }),
-  { id: 'hook', anchor: { x: 2.4, z: -4.5 }, radius: 0.8, focus: { x: 2.4, z: -5.5 }, zoom: 1.3 },
+/**
+ * The wall of parts (design/parts/4-appearance.md §4, laid out as SPEC §5.7's sections):
+ * one section per slot, left to right head, torso, arms, legs, each two parts wide
+ * and four tall, whites then blues then golds. Every part hangs as worn, facing the
+ * room, at one scale, so relative sizes stay true. The appearance doc's 1.25x wants
+ * a wall about 9 x 4.5 u; the north wall has 7.4 x 3.9 before the door, so the whole
+ * wall hangs at 0.74 of it.
+ */
+const WALL_S = WALL_SCALE * 0.74
+const WALL_LEFT = -5.3
+const WALL_TOP = 3.95
+const WALL_BOTTOM = 0.05
+const CELL_GAP = 0.12
+const SECTION_GAP = 0.18
+const TIER_RANK: Record<Tier, number> = { white: 0, blue: 1, gold: 2 }
+/** Where the hook hangs, by the front door. */
+const HOOK = { x: 2.4, y: 1.4 }
+const FLIP_S = 0.18
+/** A turned part's glass: off. */
+const OFF_EYE = new THREE.MeshBasicMaterial({ color: EYE_OFF, vertexColors: true })
+OFF_EYE.userData.shared = true
+
+/** §5.6. Nearest anchor wins among the zones he's inside. The wall's four come from its layout, built with the room. */
+const FIXED_ZONES: Interactable[] = [
+  { id: 'hook', anchor: { x: HOOK.x, z: -4.5 }, radius: 0.8, focus: { x: HOOK.x, z: -5.5 }, zoom: 1.45 },
   { id: 'board', anchor: { x: -4.5, z: 3.9 }, radius: 1.1, focus: { x: -5.5, z: 3.9 }, zoom: 1.35 },
   // off the bench's end, where he can stand (the book lies on the bench at z 1.1)
   { id: 'notebook', anchor: { x: -3.3, z: 1.2 }, radius: 0.9, focus: { x: -4.2, z: 1.1 }, zoom: 1.3 },
   { id: 'doorframe', anchor: { x: -4.6, z: -2.4 }, radius: 0.9, focus: { x: -6, z: -3 }, zoom: 1.4 },
 ]
+
+/** Where a part not yet found lives (§4.10, PLACEHOLDER copy). */
+function hintFor(def: AbilityDef): string {
+  if (def.drops === 'boss') return 'The Assembler carries this.'
+  if (def.drops === 'rare') return 'An elite, a bargain, or the Assembler might carry this.'
+  return 'An elite, a bargain, or the Assembler might carry this, past the first depth.'
+}
+const SLOT_LABEL: Record<SlotName, string> = { head: 'Head', torso: 'Torso', arms: 'Arms', legs: 'Legs' }
 
 /** The room's grade (§6.1, `workshop`): multipliers on the tuned grade. Morning in the maze is 1 on all of them. */
 const ROOM = { sat: 1.18, exposure: 1, vignette: 0.55, fog: 2, fogColor: 0x0b0f16, background: 0x070a0e, hemi: 0.6, keyPos: [-14, 9, 2] as const }
@@ -431,23 +485,86 @@ export function createWorkshop(world: World, still: Still, vfx: Vfx): Workshop {
     group.add(frame)
   }
 
-  // the wall of parts: a board of planks for the four sections (the plaques come with the hook step)
-  const board = new THREE.Mesh(new THREE.BoxGeometry(7.4, 3.0, 0.12), woodMat())
+  // --- the wall of parts: every part on its own peg, in its slot's section ---
   const wallFace = -6 + wallDepth
-  board.position.set(-1.8, 2.1, wallFace + 0.07)
-  group.add(board)
   const trimMat = new THREE.MeshStandardMaterial({ color: 0x2a2018, roughness: 0.9 })
-  for (const [w, h, x, y] of [[7.6, 0.1, -1.8, 3.65], [7.6, 0.1, -1.8, 0.55], [0.1, 3.2, -5.55, 2.1], [0.1, 3.2, 1.95, 2.1], [0.06, 2.9, -3.6, 2.1], [0.06, 2.9, -1.8, 2.1], [0.06, 2.9, 0, 2.1]] as const) {
+  const pegMat = new THREE.MeshStandardMaterial({ color: 0x1c1712, roughness: 0.8 })
+  const pegGeo = new THREE.CylinderGeometry(0.025, 0.025, 0.14, 6)
+  pegGeo.rotateX(Math.PI / 2)
+  interface Peg { def: AbilityDef; holder: THREE.Group; found: boolean | null; state: PlaqueState | null; eyes: THREE.Mesh[]; flip: { from: number; to: number; t: number } | null }
+  const pegs = new Map<PartId, Peg>()
+  const sectionOf = {} as Record<SlotName, AbilityDef[]>
+  const box3 = new THREE.Box3()
+  const size = new THREE.Vector3()
+  const measure = (def: AbilityDef) => {
+    const m = partModel(def, 'found')
+    m.root.updateMatrixWorld(true)
+    return box3.setFromObject(m.root).getSize(size).clone()
+  }
+  const zones: Interactable[] = []
+  const cellH = (WALL_TOP - WALL_BOTTOM) / 4
+  let cursor = WALL_LEFT
+  const dividers: number[] = []
+  for (const slot of SLOT_NAMES) {
+    const parts = PARTS.filter((p) => p.slot === slot).sort((a, b) => TIER_RANK[a.tier] - TIER_RANK[b.tier])
+    sectionOf[slot] = parts
+    const sizes = parts.map(measure)
+    const cellW = Math.max(...sizes.map((v) => v.x)) * WALL_S + CELL_GAP
+    const x0 = cursor
+    parts.forEach((def, i) => {
+      const x = x0 + cellW * ((i % 2) + 0.5)
+      const y = WALL_TOP - cellH * (Math.floor(i / 2) + 0.5)
+      const v = sizes[i]!
+      // far enough off the board that it can turn about its middle without touching it
+      const zOff = (Math.max(v.x, v.z) / 2) * WALL_S + 0.05
+      const holder = new THREE.Group()
+      holder.name = `peg:${def.id}`
+      holder.position.set(x, y, wallFace + 0.13 + zOff)
+      group.add(holder)
+      const peg = new THREE.Mesh(pegGeo, pegMat)
+      peg.position.set(x, y + (v.y * WALL_S) / 2 - 0.02, wallFace + 0.19)
+      group.add(peg)
+      pegs.set(def.id, { def, holder, found: null, state: null, eyes: [], flip: null })
+    })
+    cursor += cellW * 2
+    const cx = (x0 + cursor) / 2
+    zones.push({
+      id: `wall:${slot}`, anchor: { x: cx, z: -4.5 }, radius: 0,
+      rect: { minX: x0 - SECTION_GAP / 2, maxX: cursor + SECTION_GAP / 2, minZ: -6, maxZ: -3.6 }, focus: { x: cx, z: -5.5 }, zoom: 1.45,
+    })
+    dividers.push(cursor + SECTION_GAP / 2)
+    cursor += SECTION_GAP
+  }
+  zones.push(...FIXED_ZONES)
+  const wallRight = cursor - SECTION_GAP + 0.15
+  const wallLeft = WALL_LEFT - 0.15
+  const boardW = wallRight - wallLeft
+  const board = new THREE.Mesh(new THREE.BoxGeometry(boardW, WALL_TOP - WALL_BOTTOM + 0.2, 0.12), woodMat())
+  board.position.set((wallLeft + wallRight) / 2, (WALL_TOP + WALL_BOTTOM) / 2, wallFace + 0.07)
+  group.add(board)
+  const bx = (wallLeft + wallRight) / 2
+  const boardH = WALL_TOP - WALL_BOTTOM + 0.3
+  for (const [w, h, x, y] of [[boardW + 0.2, 0.1, bx, WALL_TOP + 0.12], [boardW + 0.2, 0.1, bx, WALL_BOTTOM - 0.08], [0.1, boardH, wallLeft - 0.05, (WALL_TOP + WALL_BOTTOM) / 2], [0.1, boardH, wallRight + 0.05, (WALL_TOP + WALL_BOTTOM) / 2]] as const) {
     const t = new THREE.Mesh(new THREE.BoxGeometry(w, h, 0.16), trimMat)
     t.position.set(x, y, wallFace + 0.09)
+    group.add(t)
+  }
+  for (const x of dividers.slice(0, -1)) {
+    const t = new THREE.Mesh(new THREE.BoxGeometry(0.06, WALL_TOP - WALL_BOTTOM, 0.16), trimMat)
+    t.position.set(x, (WALL_TOP + WALL_BOTTOM) / 2, wallFace + 0.09)
     group.add(t)
   }
   // the hook by the door: iron, empty until something hangs on it
   const iron = new THREE.MeshStandardMaterial({ color: 0x3a3f46, roughness: 0.5, metalness: 0.6 })
   const stem = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.2, 0.06), iron)
-  stem.position.set(2.4, 1.5, wallFace + 0.05)
+  stem.position.set(HOOK.x, HOOK.y + 0.1, wallFace + 0.05)
   const crook = new THREE.Mesh(new THREE.TorusGeometry(0.12, 0.022, 6, 14, Math.PI), iron)
-  crook.position.set(2.4, 1.4, wallFace + 0.14)
+  crook.position.set(HOOK.x, HOOK.y, wallFace + 0.14)
+  // what hangs on it, as found, at the wall's scale
+  const hookHolder = new THREE.Group()
+  hookHolder.name = 'hook:part'
+  group.add(hookHolder)
+  let hookShown: PartId | null = null
   crook.rotation.set(Math.PI / 2, 0, Math.PI)
   group.add(stem, crook)
 
@@ -515,7 +632,8 @@ export function createWorkshop(world: World, still: Still, vfx: Vfx): Workshop {
   })
 
   // the way out: a cold beam across the front doorway
-  const beam = makeBeam(COLD_BEAM, BEAM_H)
+  const beam = makeLightBeam(DOOR_BEAM_H, DOOR_BEAM)
+  beam.group.name = 'beam:door'
   beam.group.position.set(DOOR.x, 0, DOOR.z)
   group.add(beam.group)
 
@@ -568,7 +686,7 @@ export function createWorkshop(world: World, still: Still, vfx: Vfx): Workshop {
   function zoneAt(x: number, z: number): Interactable | null {
     let best: Interactable | null = null
     let bestD = Infinity
-    for (const zn of ZONES) {
+    for (const zn of zones) {
       const inside = zn.rect
         ? x >= zn.rect.minX && x <= zn.rect.maxX && z >= zn.rect.minZ && z <= zn.rect.maxZ
         : Math.hypot(x - zn.anchor.x, z - zn.anchor.z) <= zn.radius
@@ -580,6 +698,81 @@ export function createWorkshop(world: World, still: Still, vfx: Vfx): Workshop {
       }
     }
     return best
+  }
+
+  // --- what the save shows: the wall, the hook, and his body under it ---
+  let save: SaveV1 | null = null
+  /** What he came home wearing, and what his body shows now (the hooked part lifts off onto the hook). */
+  let worn: (PartId | null)[] = [null, null, null, null]
+  const body: (PartId | null | undefined)[] = [undefined, undefined, undefined, undefined]
+
+  /** A model hung at the wall's scale, about its own middle. */
+  const hangModel = (holder: THREE.Group, def: AbilityDef, found: boolean): THREE.Mesh[] => {
+    holder.clear()
+    const m = partModel(def, found ? 'found' : 'unfound')
+    const { group: g } = centred(m.root, WALL_S)
+    holder.add(g)
+    const eyes: THREE.Mesh[] = []
+    g.traverse((o) => {
+      if (o instanceof THREE.Mesh && o.material === DISPLAY_EYE) eyes.push(o)
+    })
+    return eyes
+  }
+
+  /** The part on the hook, shown: hung, and (while an ending's choice is open) one of its candidates. */
+  const shownOnHook = (sv: SaveV1): PartId | null => {
+    const h = sv.hook
+    if (!h || !sv.found.includes(h)) return null
+    if (sv.pendingHook && !sv.pendingHook.candidates.includes(h)) return null
+    return h
+  }
+
+  /** His body: what he came home in, with the frame where the hooked part came off. */
+  function syncBody() {
+    // mid-reassembly the four roots belong to the arrival
+    if (still.reassembling) return
+    const hooked = save ? shownOnHook(save) : null
+    SLOT_NAMES.forEach((slot, i) => {
+      const want = worn[i] && worn[i] !== hooked ? worn[i]! : null
+      if (body[i] === want) return
+      body[i] = want
+      still.wear(slot, want ? PARTS.find((p) => p.id === want) ?? null : null)
+    })
+  }
+
+  function refreshWall(animate: boolean) {
+    if (!save) return
+    for (const peg of pegs.values()) {
+      const found = save.found.includes(peg.def.id)
+      const state: PlaqueState = !found ? 'bare' : save.turned.includes(peg.def.id) ? 'turned' : 'lit'
+      if (peg.found !== found) {
+        peg.eyes = hangModel(peg.holder, peg.def, found)
+        peg.found = found
+      }
+      const to = state === 'turned' ? Math.PI : 0
+      if (animate && peg.state && peg.state !== state && state !== 'bare') {
+        // a quick turn about its peg, with a knock of wood
+        peg.flip = { from: peg.holder.rotation.y, to, t: 0 }
+        sfx.plaqueTurn(pan(peg.holder.position.x, peg.holder.position.z))
+      } else {
+        peg.flip = null
+        peg.holder.rotation.y = to
+      }
+      // turned: its glass goes dark with its face to the wall
+      for (const e of peg.eyes) e.material = state === 'turned' ? OFF_EYE : DISPLAY_EYE
+      peg.state = state
+    }
+    const h = shownOnHook(save)
+    if (h !== hookShown) {
+      hookShown = h
+      hookHolder.clear()
+      if (h) {
+        const def = PARTS.find((p) => p.id === h)!
+        hangModel(hookHolder, def, true)
+        const v = measure(def)
+        hookHolder.position.set(HOOK.x, HOOK.y - 0.08 - (v.y * WALL_S) / 2, wallFace + 0.13 + (Math.max(v.x, v.z) / 2) * WALL_S + 0.05)
+      }
+    }
   }
 
   const ws: Workshop = {
@@ -602,11 +795,11 @@ export function createWorkshop(world: World, still: Still, vfx: Vfx): Workshop {
       leaving = false
       blackout = 1
       skyMat.color.setHex(WINDOW[hour].sky)
-      // what he came home with
-      o.worn.forEach((id, i) => {
-        const def = id ? PARTS.find((p) => p.id === id) ?? null : null
-        still.wear(SLOT_NAMES[i]!, def)
-      })
+      // what he came home with (the hooked part, if he's hung one before, on its hook instead)
+      worn = [...o.worn]
+      body.fill(undefined)
+      syncBody()
+      refreshWall(false)
       place(o.arrival)
       // the light: Home walks in from the run's; the others open on the room's
       captureLight(world, from)
@@ -740,7 +933,7 @@ export function createWorkshop(world: World, still: Still, vfx: Vfx): Workshop {
       }
 
       // --- the camera: a little toward the room's middle, and toward what he's at ---
-      const zn = near ? ZONES.find((z) => z.id === near)! : null
+      const zn = near ? zones.find((z) => z.id === near)! : null
       const fx = -0.5 + (still.pos.x + 0.5) * 0.3
       const fz = still.pos.z * 0.3
       const tx = zn ? fx + (zn.focus.x - fx) * 0.5 : fx
@@ -789,24 +982,75 @@ export function createWorkshop(world: World, still: Still, vfx: Vfx): Workshop {
         }
       }
 
+      for (const peg of pegs.values()) {
+        const f = peg.flip
+        if (!f) continue
+        f.t += dt
+        const k = clamp01(f.t / FLIP_S)
+        peg.holder.rotation.y = f.from + (f.to - f.from) * smooth(k)
+        if (k >= 1) peg.flip = null
+      }
+      // a hang chosen mid-arrival waits for the reassembly to finish
+      if (arrival.done) syncBody()
+
       beam.update(arrival.t)
       return ev
     },
 
-    refresh(_s) {
-      // plaques, the hook's plaque, cards and marks arrive with their steps; the prompts read the save live
+    refresh(sv) {
+      save = sv
+      refreshWall(group.visible)
+      syncBody()
+    },
+
+    get zones() { return zones },
+
+    cardFor(id, sv, selected) {
+      const detailOf = (def: AbilityDef, st: PlaqueState | 'disabled') => st === 'bare'
+        ? { name: 'Not found yet', line: hintFor(def), history: null, tier: null }
+        : { name: def.name, line: def.line, history: null, tier: def.tier }
+      if (id === 'hook') {
+        const offers = hookOffers(sv)
+        const items = offers.map((pid) => {
+          const def = PARTS.find((p) => p.id === pid)!
+          return { id: pid, icon: def.icon, state: (sv.turned.includes(pid) ? 'disabled' : 'lit') as PlaqueState | 'disabled', tier: def.tier }
+        })
+        // PLACEHOLDER copy throughout
+        if (items.length === 0) {
+          return { title: 'The hook by the door', items, selected: null, detail: { name: 'Nothing to hang.', line: "He'll start with a plain part.", history: null, tier: null }, action: null }
+        }
+        const sel = items.find((it) => it.id === selected)?.id ?? (sv.hook && offers.includes(sv.hook) ? sv.hook : items[0]!.id)
+        const it = items.find((i) => i.id === sel)!
+        const def = PARTS.find((p) => p.id === sel)!
+        const hung = sv.hook === sel && shownOnHook(sv) === sel
+        const turned = it.state === 'disabled'
+        return {
+          title: 'The hook by the door', items, selected: sel,
+          detail: { ...detailOf(def, 'lit'), note: hung ? 'hung \u00b7 the next run starts with it' : turned ? 'turned to the wall' : undefined },
+          action: !hung && !turned && sv.pendingHook ? 'hang it' : null,
+        }
+      }
+      const slot = id.slice(5) as SlotName
+      const parts = sectionOf[slot]
+      const stateOf = (def: AbilityDef): PlaqueState => !sv.found.includes(def.id) ? 'bare' : sv.turned.includes(def.id) ? 'turned' : 'lit'
+      const items = parts.map((def) => ({ id: def.id, icon: def.icon, state: stateOf(def) as PlaqueState | 'disabled', tier: def.tier }))
+      const found = parts.filter((d) => sv.found.includes(d.id)).length
+      const sel = items.find((it) => it.id === selected)?.id ?? items.find((it) => it.state === 'lit')?.id ?? items[0]!.id
+      const def = parts.find((d) => d.id === sel)!
+      const st = stateOf(def)
+      let action: string | null = null
+      let note: string | undefined
+      if (st === 'turned') action = 'turn back'
+      else if (st === 'lit') {
+        if (canTurn(sv, def.id)) action = 'turn to the wall'
+        else note = `the last plain ${SLOT_LABEL[slot]} part stays facing out`
+      }
+      return { title: `${SLOT_LABEL[slot]} \u00b7 ${found} of ${parts.length} found`, items, selected: sel, detail: { ...detailOf(def, st), note }, action }
     },
 
     promptFor(id, s) {
       // PLACEHOLDER copy throughout: Adrian's words
-      if (id.startsWith('wall:')) {
-        const slot = id.slice(5) as SlotName
-        const all = PARTS.filter((p) => p.slot === slot)
-        const found = all.filter((p) => s.found.includes(p.id))
-        const label = slot[0]!.toUpperCase() + slot.slice(1)
-        return { title: `${label} · ${found.length} of ${all.length} found`, line: found.map((p) => p.name).join(', '), action: null }
-      }
-      if (id === 'hook') return { title: 'The hook by the door', line: 'Nothing hangs here yet.', action: null }
+      // the wall's sections and the hook have their chooser (cardFor), not a card
       if (id === 'board') {
         const last = s.cards[s.cards.length - 1]
         return { title: `The corkboard · ${s.runs} runs`, line: last ? caption(last) : 'Nothing pinned up yet.', action: null }

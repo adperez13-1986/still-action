@@ -26,9 +26,9 @@ import { Vfx, syncTells, COLD, COLD_DEEP, EMBER } from './vfx'
 import { PartFx } from './partfx'
 import type { PartEvent } from './parts'
 import { RUN_DEPTHS, BOSS_EVERY, LEAN_HOME, FIRST_RUN_IN_MAZE, exitsAfterBoss, hourAtEnd, type HomeHour } from './areas'
-import { createWorkshop, type ArrivalKind, type Workshop } from './workshop'
+import { createWorkshop, type ArrivalKind, type InteractId, type Workshop } from './workshop'
 import { openSave, freshTally, localDate, drawerFor, trimCards, CARD_KEEP, CARD_LINES, LEADERS_MAX, type EndingKind, type RunTally, type SaveV1 } from './save'
-import { poolView, markFound, hookCandidates, facingOutWhites, type PoolView } from './pool'
+import { poolView, markFound, hookCandidates, facingOutWhites, toggleTurn, hang, applyHookDefault, startPart, type PoolView } from './pool'
 import type { DropSource } from './loot'
 
 const canvas = document.querySelector<HTMLCanvasElement>('#view')!
@@ -1185,14 +1185,15 @@ function startRun() {
   if (!run.dev) {
     // the first night: the doorframe's marks grow from here, in calendar time
     save.firstRunAt ??= new Date().toISOString()
-    // the last ending's hook choice has been made by now (the Workshop's, later)
-    save.pendingHook = null
+    // a run begun some other way than the door still settles the hook the door would have
+    applyHookDefault(save)
     store.write()
   }
   loot.clear()
-  // Still begins with one random plain part; the rest he finds. Starting deeper
-  // (?depth=) skips the levels where he'd have found them, so he gets all four.
-  const start = START_DEPTH > 1 ? STARTING : [STARTING[Math.floor(Math.random() * STARTING.length)]!]
+  // Still begins with one part: the one on the hook, else a random plain one; the rest
+  // he finds. Starting deeper (?depth=) skips the levels where he'd have found them, so
+  // he gets all four.
+  const start = START_DEPTH > 1 ? STARTING : [byId(startPart(save))]
   for (const p of start) carry(p.id)
   // the last run's anchor or decoy goes before the new loadout arrives, so nothing carries over onto its buttons
   combat.reset()
@@ -1351,6 +1352,8 @@ function continueHome() {
 /** The room now: the run's world is put away and Still arrives the way `arrival` says (the fade in is the room's). */
 function enterRoom(arrival: ArrivalKind, hour: HomeHour, worn: (string | null)[]) {
   overlay.hide()
+  // the maze's banners (a depth, a quiet) never follow him in
+  overlay.quiet(true)
   stopAllWindups()
   level?.dispose()
   level = null
@@ -1369,6 +1372,7 @@ function enterRoom(arrival: ArrivalKind, hour: HomeHour, worn: (string | null)[]
   hud.setStick(0, 0)
   rig.reset()
   sfx.restore(1)
+  workshop.refresh(save)
   workshop.enter({ arrival, hour, worn })
   fade.style.opacity = '1'
   run.phase = arrival === 'idle' ? 'workshop' : 'arriving'
@@ -1391,8 +1395,12 @@ function roomStep(dt: number) {
         store.write()
       }
     }
-    if (ev.kind === 'near') hud.prompt(ev.id ? workshop.promptFor(ev.id, save) : null)
+    if (ev.kind === 'near') showCard(ev.id)
     if (ev.kind === 'door' && run.phase === 'workshop') {
+      // the hook's choice is made at the door: what's hung starts the run (a dev run's save is memory only)
+      applyHookDefault(save)
+      store.write()
+      showCard(null)
       run.phase = 'leaving'
       run.t = 0
       hud.enabled = false
@@ -1402,8 +1410,51 @@ function roomStep(dt: number) {
   fade.style.opacity = String(workshop.blackout)
 }
 
+/** The wall's section or the hook he's at: its chooser, and which part on it is picked. */
+let chooserAt: InteractId | null = null
+let chooserSel: string | null = null
+
+/** What he's standing at: the chooser for the wall and the hook, a plain card for the rest. */
+function showCard(id: InteractId | null) {
+  chooserAt = id && (id === 'hook' || id.startsWith('wall:')) ? id : null
+  chooserSel = null
+  hud.prompt(id && !chooserAt ? workshop.promptFor(id, save) : null)
+  renderChooser()
+}
+
+function renderChooser() {
+  if (!chooserAt) {
+    hud.chooser(null)
+    return
+  }
+  const c = workshop.cardFor(chooserAt as 'hook' | `wall:${SlotName}`, save, chooserSel)
+  chooserSel = c.selected
+  hud.chooser(c)
+}
+
+hud.onChoose((id) => {
+  if (!chooserAt) return
+  chooserSel = id
+  renderChooser()
+})
+
+/** The chooser's one action: turn a part to the wall (or back), or hang one on the hook. Saved at once. */
+function chooserAction() {
+  if (!chooserAt || !chooserSel || run.phase !== 'workshop') return
+  const done = chooserAt === 'hook' ? hang(save, chooserSel) : toggleTurn(save, chooserSel)
+  if (!done) return
+  store.write()
+  workshop.refresh(save)
+  if (chooserAt === 'hook') sfx.plaqueTurn(0)
+  renderChooser()
+}
+hud.onChooserAction(chooserAction)
+
 /** Out of the room without the door (dev hooks, and a run started some other way). */
 function leaveRoom() {
+  overlay.quiet(false)
+  chooserAt = null
+  hud.chooser(null)
   if (!workshop?.group.visible) return
   workshop.leave()
   hud.mode('run')
@@ -2189,6 +2240,27 @@ if (import.meta.env.DEV) {
       enterRoom(o.arrival ?? 'idle', o.hour ?? 'afternoon', hud.slots.map((sl) => sl.def?.id ?? null))
     },
     __near: () => workshop.near,
+    __zones: () => workshop.zones.map((z) => ({ id: z.id, anchor: z.anchor })),
+    /** toggleTurn through the rules, saved and shown as the card's button would. */
+    __turn: (id: string) => {
+      const ok = toggleTurn(save, id)
+      if (ok) {
+        store.write()
+        workshop.refresh(save)
+        renderChooser()
+      }
+      return ok
+    },
+    /** The ChooserSpec the wall's section would show (with `sel` picked). */
+    __wallCard: (slot: SlotName, sel: string | null = null) => workshop.cardFor(`wall:${slot}`, save, sel),
+    __hookCard: (sel: string | null = null) => workshop.cardFor('hook', save, sel),
+    /** Tap a chooser icon / press the card's action. */
+    __choose: (id: string) => {
+      chooserSel = id
+      renderChooser()
+    },
+    __interact: () => chooserAction(),
+    __chooser: () => (chooserAt ? workshop.cardFor(chooserAt as 'hook' | `wall:${SlotName}`, save, chooserSel) : null),
     __traces: () => workshop.traces,
     /**
      * The loot rules as the older checks call them: (from, taken, source, excludeSlot?).

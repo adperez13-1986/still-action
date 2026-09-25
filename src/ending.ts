@@ -34,6 +34,8 @@ const GUARD_MS = 1200
 
 export interface Overlay {
   banner: (text: string) => void
+  /** The Workshop: any banner showing goes at once, and none are shown until it's off again. */
+  quiet: (on: boolean) => void
   /** The words, and the button that goes on from them (home). */
   show: (kind: EndingKind, depth: number, onContinue: () => void) => void
   hide: () => void
@@ -67,6 +69,7 @@ export function createOverlay(root: HTMLElement): Overlay {
   root.append(banner, end)
 
   let bannerTimer = 0
+  let hushed = false
   let onAgain: (() => void) | null = null
   let shownAt = 0
   again.addEventListener('click', () => {
@@ -75,10 +78,19 @@ export function createOverlay(root: HTMLElement): Overlay {
 
   return {
     banner(text) {
+      if (hushed) return
       banner.textContent = text
       banner.classList.add('show')
       clearTimeout(bannerTimer)
       bannerTimer = window.setTimeout(() => banner.classList.remove('show'), 1800)
+    },
+
+    quiet(on) {
+      hushed = on
+      if (on) {
+        clearTimeout(bannerTimer)
+        banner.classList.remove('show')
+      }
     },
 
     show(kind, depth, cb) {
