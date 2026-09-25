@@ -448,6 +448,8 @@ const TELL_FRAG = /* glsl */ `
   uniform float uRadius;
   uniform float uCold;
   uniform float uMolten;
+  uniform float uSweep;
+  uniform float uSweepHalf;
   varying vec2 vUv;
   varying vec3 vPos;
   float h(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
@@ -501,6 +503,27 @@ const TELL_FRAG = /* glsl */ `
       gl_FragColor = vec4(col, uOpacity * (0.82 + 0.18 * crust) * smoothstep(1.0, 0.9, r));
       return;
     }
+    if (abs(uSweep) > 0.5) {
+      // A gaze sweeping the floor (the Arbiter's wedge), laid on the floor, not a slab: shafts of
+      // ember running out from the tower like a lamp's rays through dust, brightest at the edge
+      // it's turning toward, a hot line along that edge, and heat rippling outward. Most of it is
+      // floor showing through; the whole of its reach stays faintly there to read.
+      float ang = atan(w.x, w.y);
+      float s = clamp(ang / uSweepHalf * uSweep, -1.0, 1.0);
+      float r = length(w) / uRadius;
+      float shafts = n(vec2(ang * 38.0, r * 2.0 - uTime * 0.15)) * 0.65 + n(vec2(ang * 90.0 + 3.1, r * 6.0)) * 0.35;
+      float dust = fbm(w * 2.6 + vec2(uTime * 0.2, uTime * 0.13));
+      float ripple = smoothstep(0.3, 0.0, abs(fract(r * 6.0 - uTime * 1.2) - 0.5));
+      float body = pow(s * 0.5 + 0.5, 1.4);
+      float lead = smoothstep(0.8, 0.96, s) * (1.0 - smoothstep(0.97, 1.0, s));
+      float reach = 1.0 - smoothstep(0.6, 1.0, r);
+      float heatS = clamp(body * (0.25 + shafts * 0.6) + lead * (0.8 + dust * 0.4) + ripple * body * 0.25, 0.0, 1.2);
+      vec3 colS = mix(uDeep, uHot, clamp(heatS, 0.0, 1.0)) * (0.7 + dust * 0.5);
+      float aS = uOpacity * clamp(0.12 + body * (0.25 + shafts * 0.75) * (0.6 + dust * 0.6) + lead * 1.3 + ripple * body * 0.2, 0.0, 1.0)
+        * reach * smoothstep(0.0, 0.08, r);
+      gl_FragColor = vec4(colS, aS);
+      return;
+    }
     float heat = clamp(noise * 0.8 + pattern * 0.45 + edge * 0.9, 0.0, 1.6);
     vec3 col = mix(uDeep, uHot, clamp(heat, 0.0, 1.0)) + uHot * max(0.0, heat - 1.0) * 0.6;
     float a = uOpacity * clamp(0.35 + noise * 0.5 + pattern * 0.35 + edge * 0.8, 0.0, 1.0) * cut;
@@ -529,6 +552,8 @@ export function tellMaterial(style: TellStyle, radius = 1, hot = EMBER, deep = E
       uRadius: { value: radius },
       uCold: { value: opts.cold ? 1 : 0 },
       uMolten: { value: 0 },
+      uSweep: { value: 0 },
+      uSweepHalf: { value: 0.26 },
     },
     transparent: true,
     depthWrite: false,

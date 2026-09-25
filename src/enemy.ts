@@ -4,7 +4,7 @@ import { tellMaterial, releaseTell, tellOrder } from './vfx'
 import type { Terrain } from './terrain'
 import type { EliteMod } from './combat'
 import type { Brood } from './swarm'
-import type { HazardSpec } from './hazard'
+import type { HazardSource, HazardSpec } from './hazard'
 
 /**
  * Every archetype is the same machine: approach, windup, strike, recover.
@@ -44,6 +44,8 @@ export type EnemyAction =
   | { kind: 'summon'; points: THREE.Vector3[]; maxAdds: number }
   /** A floor hazard it placed: it telegraphs, arms once, and hurts whoever is inside (hazard.ts). */
   | { kind: 'hazard'; spec: HazardSpec }
+  /** Take back its own unarmed hazards of this source (a lance cut short): they fade and never arm. */
+  | { kind: 'unhazard'; source: HazardSource }
   /** Drag Still toward a point for a while. */
   | { kind: 'pull'; center: THREE.Vector3; strength: number; seconds: number }
 
@@ -118,6 +120,11 @@ export type EnemyEvent =
   | { kind: 'broodGone'; brood: Brood }
   /** A Warden fell: its pack's seals break, nearest first. */
   | { kind: 'sealBreak'; from: THREE.Vector3; members: Enemy[] }
+  /**
+   * The Arbiter's instants, for its sounds: its gaze catching Still, a ratchet of the sweep, the
+   * vent opening and closing, a judder (`ms`), a post cracking, the scald going off.
+   */
+  | { kind: 'arbiter'; e: Enemy; what: 'catch' | 'ratchet' | 'vent' | 'ventEnd' | 'judder' | 'crack' | 'scald' | 'phase2'; at: THREE.Vector3; ms?: number }
 
 export interface Enemy {
   readonly kind: 'chaser' | 'ranged' | 'charger' | 'swarm' | 'boss'

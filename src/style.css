@@ -100,6 +100,31 @@ html, body {
 .btn.live .live { opacity: 1; }
 .btn.live .cd { opacity: 0; }
 .btn.live { box-shadow: 0 0 16px rgba(214, 235, 255, .35), 0 4px 12px rgba(0, 0, 0, .5); }
+/*
+ * Hot (the Arbiter's lance): push-only for a while. An ember rim over the tier ring, a grain of
+ * noise in it so it's never a flat red ring, its own ember sweep draining clockwise over the
+ * cooldown's, and the icon a third of the way to ember. It cools off in 150 ms.
+ */
+.btn .heat {
+  position: absolute; inset: -4px; border-radius: 50%; opacity: 0; pointer-events: none; transition: opacity .15s;
+  background:
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='48' height='48'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.55' numOctaves='3'/><feColorMatrix values='1.6 0 0 0 -.15  1.6 0 0 0 -.15  1.6 0 0 0 -.15  0 0 0 0 1'/></filter><rect width='48' height='48' filter='url(%23n)'/></svg>"),
+    conic-gradient(#ff6a3a var(--heat, 0deg), #5a1a10 0deg);
+  background-size: 48px 48px, auto;
+  background-blend-mode: multiply;
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 5px), #000 calc(100% - 4.5px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 5px), #000 calc(100% - 4.5px));
+}
+.btn.hot .heat { opacity: 1; }
+.btn.hot { border-color: #8a3a24; box-shadow: 0 0 0 2px rgba(255, 106, 58, .55), 0 0 14px rgba(255, 106, 58, .22), 0 4px 12px rgba(0, 0, 0, .5); }
+.btn.hot .lbl { color: color-mix(in srgb, currentColor 70%, #ff6a3a); }
+.btn .heatCaption {
+  /* anchored to the button's right edge: the arc's buttons sit against the screen's */
+  position: absolute; bottom: calc(100% + 10px); right: 0; white-space: nowrap; pointer-events: none;
+  font: 600 12px/1 var(--ui); letter-spacing: .06em; color: #ffc9b0; text-shadow: 0 1px 3px #000;
+  animation: heat-caption 2.4s ease-out forwards;
+}
+@keyframes heat-caption { 0% { opacity: 0; } 10% { opacity: 1; } 80% { opacity: 1; } 100% { opacity: 0; } }
 /* the price on the rim: ember dots, always visible */
 .btn .pips { position: absolute; bottom: 3px; left: 0; right: 0; z-index: 3; text-align: center; font: 700 8px/1 var(--ui); letter-spacing: 2px; color: var(--strain); pointer-events: none; }
 /* parts that change when pushed show what the push buys: dim while ready, ember while a hold would push */

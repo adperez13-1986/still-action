@@ -52,6 +52,56 @@ export interface Breakable { mesh: THREE.Mesh; x: number; z: number; r: number; 
 export type ShrineKind = 'rest' | 'plenty'
 export interface Shrine { kind: ShrineKind; x: number; z: number; used: boolean; rune: THREE.MeshBasicMaterial }
 
+/**
+ * One of the square's eight brick posts (G9): two solid circles side by side, and its own
+ * mesh, not instanced, so the Arbiter's lances can crack it for good in its second phase.
+ */
+export interface Post {
+  circles: [Circle, Circle]
+  mesh: THREE.Mesh
+  /** Lances that ended on it in the Arbiter's second phase; at 3 it cracks. */
+  lances: number
+  cracked: boolean
+  x: number
+  z: number
+}
+
+/** The square (§4.4 G9): posts on a ring round the tower, the tower's footprint, and furniture in its corners. */
+export const SQUARE = {
+  posts: 8, ring: 7.5, offsetDeg: 22.5, circleR: 0.75, spread: 0.8, crackedR: 0.45,
+  footprint: 1.2, furniture: 11,
+  floor: [['floor_tile_large', 0.8], ['floor_tile_large_rocks', 1]] as [Piece, number][],
+}
+
+/**
+ * The square's eight posts round (cx, cz): at k × 45° + 22.5° on a 7.5 ring, each two solid
+ * circles along the ring's tangent and a brick barrier drawn to match them.
+ */
+export function squarePosts(cx: number, cz: number): Post[] {
+  const { geometry, material, box } = pieceData('barrier')
+  const out: Post[] = []
+  for (let k = 0; k < SQUARE.posts; k++) {
+    const a = ((k * 360) / SQUARE.posts + SQUARE.offsetDeg) * (Math.PI / 180)
+    const x = cx + SQUARE.ring * Math.sin(a)
+    const z = cz + SQUARE.ring * Math.cos(a)
+    const tx = Math.cos(a)
+    const tz = -Math.sin(a)
+    const circles: [Circle, Circle] = [
+      { x: x + SQUARE.spread * tx, z: z + SQUARE.spread * tz, r: SQUARE.circleR },
+      { x: x - SQUARE.spread * tx, z: z - SQUARE.spread * tz, r: SQUARE.circleR },
+    ]
+    // the barrier, shortened to 3 u and thickened to the circles' 1.5: drawn is what's solid.
+    // Its length runs along local x, so rotY = a lays it along the ring's tangent.
+    const mesh = new THREE.Mesh(geometry, material)
+    mesh.position.set(x, 0, z)
+    mesh.rotation.y = a
+    mesh.scale.set(0.75, 1, (2 * SQUARE.circleR) / (box.max.z - box.min.z))
+    mesh.name = `post:${k}`
+    out.push({ circles, mesh, lances: 0, cracked: false, x, z })
+  }
+  return out
+}
+
 /** A group of enemies placed together, asleep until you come near. */
 export interface PackSpec {
   room: Room
@@ -102,6 +152,9 @@ export interface Level {
   smash: (b: Breakable) => void
   /** Boss levels: where the boss stands and what it faces. The exits stay shut until it falls. */
   boss?: { x: number; z: number; face: THREE.Vector3 }
+  /** The square only: its posts, and the tower's footprint (dead until the tower falls and leaves its husk). */
+  posts?: Post[]
+  footprint?: Circle
   /** The cold beam, on. The last Assembler's arena builds none, so there it never opens. */
   exitOpen: boolean
   openExit: () => void
@@ -693,11 +746,14 @@ export function generateLevel(
     for (let b = bands.length - 1; b >= 0; b--) if (bands[b]!.from <= p) return bands[b]!.room
     return bands[0]!.room
   }
+  const square = opts.boss?.arena === 'square' ? layout.rooms.find((r) => r.kind === 'exit')! : null
+  const inSquare = (i: number, j: number) => !!square && Math.abs(i - square.ci) <= square.rx && Math.abs(j - square.cj) <= square.rz
   for (const [i, j] of cells) {
     const corridor = layout.corridors.has(key(i, j))
     const roll = rand()
     const p = progress.cell(i, j)
-    const piece = pickFloor(corridor ? kit.floorCorridor : roomTable(p), roll)
+    // the square is paved: flags, some broken
+    const piece = pickFloor(corridor ? kit.floorCorridor : inSquare(i, j) ? SQUARE.floor : roomTable(p), roll)
     placements.push({ piece, x: i * CELL, z: j * CELL, rotY: quarter() })
     made.floors.push({ piece, p, corridor })
   }
@@ -749,9 +805,37 @@ export function generateLevel(
     }
   }
 
-  // --- the boss arena: four low cover walls to hide behind and to charge into, and crates ---
+  // --- the square: eight brick posts round a lamp tower, and furniture left in its corners ---
   let bossSpot: Level['boss']
-  if (opts.boss) {
+  const posts: Post[] = []
+  let footprint: Circle | undefined
+  const postMeshes: THREE.Mesh[] = []
+  if (square) {
+    const entrance = layout.rooms.find((r) => r.kind === 'entrance')!
+    const c = square.center
+    for (const p of squarePosts(c.x, c.z)) {
+      circles.push(...p.circles)
+      postMeshes.push(p.mesh)
+      posts.push(p)
+    }
+    footprint = { x: c.x, z: c.z, r: SQUARE.footprint, dead: true }
+    circles.push(footprint)
+    // whole furniture in the four corners, from the quarter's intact pieces: solid, never breakable
+    const fs = stream(seed, SALT.far)
+    for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]] as const) {
+      const list = gen.intact ?? kit.cover
+      const [piece, want] = list[Math.floor(fs() * list.length)]!
+      const scale = Math.min(want, gen.coverMaxH / pieceData(piece).height)
+      const x = c.x + sx * SQUARE.furniture
+      const z = c.z + sz * SQUARE.furniture
+      placements.push({ piece, x, z, rotY: Math.floor(fs() * 4) * (Math.PI / 2), scale })
+      circles.push({ x, z, r: pieceData(piece).radius * scale * 0.8 })
+      made.props.push({ piece, x, z, top: pieceData(piece).height * scale, p: 1, breakable: false, intact: true, room: layout.rooms.indexOf(square) })
+    }
+    // it stands at the centre, facing the way you come in
+    bossSpot = { x: c.x, z: c.z, face: entrance.center.clone() }
+  } else if (opts.boss) {
+    // --- the yard: four low cover walls to hide behind and to charge into, and crates ---
     const arena = layout.rooms.find((r) => r.kind === 'exit')!
     const entrance = layout.rooms.find((r) => r.kind === 'entrance')!
     const c = arena.center
@@ -786,7 +870,9 @@ export function generateLevel(
   const machines: MachinePlacement[] = []
   const { minI, maxI, minJ, maxJ, spanX, spanZ } = buildBeyond(cells, floor, rand, kit, placements, undefined, {
     machines: gen.machines, stream: stream(seed, SALT.machine), out: machines, made, clearEdges: gen.coverMaxH < Infinity,
-    farSide: gen.farSide, farStream: stream(seed, SALT.far), pAt: (x, z) => progress.cell(Math.round(x / CELL), Math.round(z / CELL)),
+    // the square is the end of the quarter: its far side at its most intact
+    farSide: gen.farSide, farStream: stream(seed, SALT.far),
+    pAt: square ? () => 1 : (x, z) => progress.cell(Math.round(x / CELL), Math.round(z / CELL)),
   })
 
   // --- packs: one per main and side room, sized by depth, never in the entrance or exit ---
@@ -1000,6 +1086,7 @@ export function generateLevel(
   for (const m of machines) if (nearEdge(floor, m.x, m.z)) made.edge.push({ piece: m.kind, x: m.x, z: m.z, top: machineTop(m) })
 
   const group = buildInstanced(placements)
+  for (const m of postMeshes) group.add(m)
   if (machines.length) group.add(buildMachines(machines))
   for (const b of breakables) group.add(b.mesh)
   for (const o of shrineParts) group.add(o)
@@ -1051,6 +1138,8 @@ export function generateLevel(
     group,
     terrain: makeTerrainNow,
     boss: bossSpot,
+    posts: square ? posts : undefined,
+    footprint,
     exitOpen: !opts.boss,
     openExit() {
       if (!cold) return

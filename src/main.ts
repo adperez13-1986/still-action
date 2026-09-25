@@ -9,6 +9,7 @@ import { STARTING, PARTS, byId, type AbilityDef, type AbilityShape, type BeatKey
 import { SLOT_NAMES, type SlotName } from './still'
 import type { Enemy, EnemyEvent } from './enemy'
 import { isBoss } from './boss'
+import { Arbiter, ARBITER, arbiterHusk } from './arbiter'
 import type { HazardSpec } from './hazard'
 import { RANGED } from './ranged'
 import { LOBBER } from './lobber'
@@ -22,7 +23,7 @@ import { Loot, LOOT, dropChance, rollPart, type GroundPart } from './loot'
 import { createPauseScreen } from './pause'
 import { createOverlay } from './ending'
 import { loadKit, setSurfaces, pieceData, surfaceNow, PIECES, type Piece } from './kit'
-import { generateLevel, generateWalkHome, makeTerrain, key, type Box, type Breakable, type Circle, type Level, type Shrine } from './dungeon'
+import { generateLevel, generateWalkHome, makeTerrain, key, squarePosts, type Box, type Breakable, type Circle, type Level, type Post, type Shrine } from './dungeon'
 import type { Terrain } from './terrain'
 import { Vfx, syncTells, COLD, COLD_DEEP, EMBER, SLAG_DROP } from './vfx'
 import { PartFx } from './partfx'
@@ -30,7 +31,7 @@ import type { PartEvent } from './parts'
 import type { NotebookPage } from './pause'
 import {
   RUN_DEPTHS, BOSS_EVERY, LEAN_HOME, FIRST_RUN_IN_MAZE, DAY, DEPTH_DAY, exitsAfterBoss, hourAtEnd, bossFor, areaOf,
-  applyDay, dayNow, currentSat, currentGrace, fogAt, dayAt, AREAS, PLACES, WALK_PLACE, ASSEMBLER_DEF, lookAt,
+  applyDay, dayNow, currentSat, currentGrace, fogAt, dayAt, AREAS, PLACES, WALK_PLACE, ASSEMBLER_DEF, ARBITER_DEF, ARBITER_AT_6, lookAt, applyLightsOut,
   type BossDef, type BossKind, type HomeHour, type PlaceDef,
 } from './areas'
 import { createWorkshop, MARKS_MAX, type ArrivalKind, type InteractId, type Workshop } from './workshop'
@@ -93,6 +94,8 @@ const at3 = (p: { x: number; z: number }, y: number) => new THREE.Vector3(p.x, y
 const RUST = new THREE.Color(0x5b3b35)
 const STEEL = new THREE.Color(0x7a8592)
 const STONE = new THREE.Color(0x5a5550)
+/** The quarter's brick, for the chips off a cracking post. */
+const BRICK = new THREE.Color(0x6a3a2c)
 const WOOD = new THREE.Color(0x6b4a30)
 const JOINT_C = new THREE.Color(0x2b2426)
 const PLATE_C = new THREE.Color(0x6e5a50)
@@ -434,6 +437,7 @@ const combat = new Combat(world.scene, OPEN, {
       const cue = e.cue
       if (cue.voice === 'aim') windups.set(e, sfx.asVoice(sfx.aim(ms, cue.lockAt, panOf(e.pos), windupGain())))
       else if (cue.voice === 'windup') windups.set(e, sfx.asVoice(sfx.windup(ms, panOf(e.pos), windupGain())))
+      else if (cue.voice === 'lob') windups.set(e, sfx.asVoice(sfx.lobAim(ms, panOf(e.pos), windupGain())))
       return
     }
     if (e.kind === 'charger') {
@@ -454,10 +458,26 @@ const combat = new Combat(world.scene, OPEN, {
       sfx.mortar(panOf(e.pos))
       sfx.whistle(LOBBER.flightMs, panOf(e.pos))
     } else if (e.kind === 'ranged') sfx.fire(panOf(e.pos))
-    else sfx.strike(panOf(e.pos))
+    else if (e instanceof Arbiter) {
+      if (e.strikeKind === 'lance') sfx.lanceFire(panOf(e.pos))
+      else if (e.strikeKind === 'shell') {
+        sfx.mortar(panOf(e.pos))
+        sfx.whistle(ARBITER.shell.flightMs, panOf(e.pos))
+      } else sfx.scald(panOf(e.pos))
+    } else sfx.strike(panOf(e.pos))
     strikeFx(e)
   },
   onHazard: (ev) => {
+    if (ev.kind === 'heat') {
+      // the lance reached him: one button goes hot, push-only for 4 s
+      const slot = pickHeat()
+      if (slot) {
+        hud.heat(slot, ARBITER.heat.ms)
+        sfx.sizzle()
+        vfx.sparks(at3(still.pos, 1.1), EMBER, 10, 3)
+      }
+      return
+    }
     const s = ev.h.spec.shape
     const slag = ev.h.spec.source === 'slag'
     if (s.kind !== 'circle') return
@@ -535,6 +555,45 @@ function packEvent(ev: EnemyEvent) {
       // one mite out of the slag heap: a spit of embers off its coal, and a pop
       vfx.embers(at3(ev.at, 0.15), 6, 0.3)
       sfx.pop(panOf(ev.at))
+      break
+    case 'arbiter':
+      arbiterBeat(ev)
+      break
+  }
+}
+
+/** The Arbiter's instants: its gaze catching, the ratchet of its sweep, a judder, a post cracking, the scald. */
+function arbiterBeat(ev: Extract<EnemyEvent, { kind: 'arbiter' }>) {
+  const pan = panOf(ev.at)
+  switch (ev.what) {
+    case 'catch':
+      sfx.catchClack(pan)
+      break
+    case 'ratchet':
+      sfx.ratchet(pan)
+      break
+    case 'phase2':
+      sfx.judder(ARBITER.phase2.judderMs, panOf(ev.e.pos))
+      shake = Math.max(shake, 0.5)
+      break
+    case 'judder':
+      sfx.judder(ev.ms ?? ARBITER.phase2.reverseJudderMs, pan)
+      break
+    case 'crack':
+      // chips at one and two lances; at three it breaks
+      vfx.sparks(ev.at, EMBER, 8, 5)
+      vfx.chunks(ev.at, (ev.ms ?? 1) >= ARBITER.phase2.crackAt ? 16 : 5, BRICK, 5, 0.14)
+      if ((ev.ms ?? 1) >= ARBITER.phase2.crackAt) {
+        sfx.crack(pan)
+        vfx.dust(ev.at, 20, 1.6, undefined, 4)
+        shake = Math.max(shake, 0.35)
+      }
+      break
+    case 'scald':
+      vfx.dust(ev.at, 26, ARBITER.scald.r, new THREE.Color(0x6f7780), 5)
+      break
+    case 'vent':
+    case 'ventEnd':
       break
   }
 }
@@ -642,6 +701,26 @@ interface RamFx { smoke: number; ember: number; walk: number; stun: number; fram
 const ramFxState = new WeakMap<Charger, RamFx>()
 const fxA = new THREE.Vector3()
 const fxB = new THREE.Vector3()
+/** The Arbiter's sweep is heard while it turns, following its gaze; a button cooling off is heard too. */
+let whirr: sfx.Voice | null = null
+function arbiterFx() {
+  const b = combat.boss
+  const sweeping = run.phase === 'crawl' && b instanceof Arbiter && !b.dead && combat.awake.includes(b) && b.sweeping
+  if (sweeping && !whirr) whirr = sfx.whirr(panOf((b as Arbiter).gazePoint(new THREE.Vector3())))
+  if (!sweeping && whirr) {
+    whirr.stop()
+    whirr = null
+  }
+  if (sweeping && whirr) whirr.pan(panOf((b as Arbiter).gazePoint(tmpGaze)))
+  for (const sl of hud.slots) {
+    const hot = hud.heatLeft(sl.slot) > 0
+    if (!hot && hotSlots.has(sl.slot)) sfx.cool()
+    if (hot) hotSlots.add(sl.slot)
+    else hotSlots.delete(sl.slot)
+  }
+}
+const tmpGaze = new THREE.Vector3()
+
 function ramFx(dt: number) {
   const rams = combat.enemies.filter((e): e is Charger => e instanceof Charger)
   if (!rams.length) return
@@ -1297,15 +1376,74 @@ let bossWasOpen = false
 /** What the run says and plays as a boss changes (PLACEHOLDER words: Adrian's). */
 const BOSS_COPY: Record<BossKind, { phase2: string; open: (pan: number) => void }> = {
   assembler: { phase2: 'the Assembler overloads', open: (pan) => sfx.clang(pan) },
+  arbiter: { phase2: 'the Arbiter opens its second eye', open: (pan) => sfx.vent(pan) },
 }
+
+/** __arena's posts, when it built them. */
+let devPosts: { posts: Post[]; group: THREE.Group } | null = null
+/** A dev check's override of ARBITER_AT_6 (null: the switch as shipped). */
+let devArbiterAt6: boolean | null = null
+/** This depth's boss, through the one switch. */
+const bossHere = (depth: number) => bossFor(depth, devArbiterAt6 ?? ARBITER_AT_6)
+
+/**
+ * Lights out (§5.2, §7): at the last depth the square follows the Arbiter's HP from dusk
+ * down to first dark, eased on game time (so a pause or hitstop holds it), and stops there.
+ */
+const lightsOut = { target: 0, shown: 0, applied: -1 }
+function trackLightsOut(dt: number) {
+  const b = combat.boss
+  if (b && !b.dead && b.def.kind === 'arbiter') lightsOut.target = Math.max(lightsOut.target, 1 - b.hp / b.maxHp)
+  lightsOut.shown += (lightsOut.target - lightsOut.shown) * Math.min(1, dt * 1.5)
+  if (level?.footprint && level.group.visible && Math.abs(lightsOut.shown - lightsOut.applied) > 1e-4) {
+    lightsOut.applied = lightsOut.shown
+    applyLightsOut(world, lightsOut.shown)
+  }
+}
+
+/** The fallen tower, where it stood: solid again, its footprint a husk you walk round. */
+function raiseHusk(x: number, z: number, headYaw: number) {
+  if (!level?.footprint) return
+  level.footprint.dead = false
+  level.group.add(arbiterHusk(x, z, headYaw))
+}
+
+/**
+ * H5: the lance heats one button. Among the filled ones that are ready, the one with the
+ * longest cooldown (the one he'd most want); else the one nearest ready; ties in slot order.
+ */
+function pickHeat(): SlotName | null {
+  const filled = hud.slots.filter((s) => s.def)
+  if (!filled.length) return null
+  const ready = filled.filter((s) => hud.isReady(s.slot))
+  if (ready.length) return ready.reduce((b, s) => (s.def!.cooldownMs > b.def!.cooldownMs ? s : b)).slot
+  return filled.reduce((b, s) => (hud.readyIn(s.slot) < hud.readyIn(b.slot) ? s : b)).slot
+}
+/** Slots that were hot last frame: their cooling off is heard. */
+const hotSlots = new Set<SlotName>()
 
 /**
  * The Assembler falls: the beams open, and it leaves the best of what it was made from.
  * Before the last depth that's on and home; after the last one, home only.
  */
 function bossDown(at: THREE.Vector3) {
+  const felled = combat.boss
+  const arbiter = felled instanceof Arbiter
   combat.boss = null
   hud.bossBar(null)
+  if (arbiter) {
+    // the lens goes out; the tower stands as a husk, solid; the square is at first dark
+    sfx.lensOut(panOf(at))
+    raiseHusk(at.x, at.z, felled.aim)
+    lightsOut.target = lightsOut.shown = 1
+    lightsOut.applied = -1
+    applyLightsOut(world, 1)
+    // its drops land outside the footprint, toward him
+    const dx = still.pos.x - at.x
+    const dz = still.pos.z - at.z
+    const d = Math.hypot(dx, dz) || 1
+    at = new THREE.Vector3(at.x + (dx / d) * 1.9, 0, at.z + (dz / d) * 1.9)
+  }
   for (const kind of exitsAfterBoss(run.depth)) {
     if (kind === 'cold') level?.openExit()
     else level?.openHome()
@@ -1323,8 +1461,8 @@ function bossDown(at: THREE.Vector3) {
   loot.dropScrap(new THREE.Vector3(at.x + 1.2, 0, at.z))
   loot.dropScrap(new THREE.Vector3(at.x - 1.2, 0, at.z))
   overlay.banner(`area ${run.depth / BOSS_EVERY} cleared`)
-  // parts remember: each one worn through it saw the Assembler
-  for (const sl of hud.slots) if (sl.def) run.tally.assemblers[sl.def.id] = (run.tally.assemblers[sl.def.id] ?? 0) + 1
+  // parts remember: each one worn through it saw the Assembler (the Arbiter's count arrives with save v2)
+  if (!arbiter) for (const sl of hud.slots) if (sl.def) run.tally.assemblers[sl.def.id] = (run.tally.assemblers[sl.def.id] ?? 0) + 1
   // a beam save: a reload here comes back to the beams open and no boss, with its drops
   run.bossFelled = true
   run.bossLoot = [blue, gold].filter((d): d is AbilityDef => !!d).map((d) => d.id)
@@ -1379,7 +1517,7 @@ function resumeRun(snap: RunSnapshot) {
   const worn = loadout.filter((d): d is AbilityDef => !!d)
   hud.resetLoadout(worn)
   SLOT_NAMES.forEach((slot, i) => still.wear(slot, loadout[i] ?? null))
-  enterLevel(depth, { seed: snap.seed, bossFelled: !!snap.bossFelled && !!bossFor(depth), resume: true })
+  enterLevel(depth, { seed: snap.seed, bossFelled: !!snap.bossFelled && !!bossHere(depth), resume: true })
   if (run.bossFelled && level) {
     // what it left, lying where it fell, unless he's wearing it
     const on = new Set(worn.map((d) => d.id))
@@ -1409,23 +1547,29 @@ function enterLevel(depth: number, o: { seed?: number; bossFelled?: boolean; res
   run.bossFelled = !!o.bossFelled
   run.bossLoot = []
   const place = lookAt(depth)
-  level = generateLevel(depth, run.seed, { boss: bossFor(depth), place })
+  level = generateLevel(depth, run.seed, { boss: bossHere(depth), place })
   world.scene.add(level.group)
   combat.terrain = level.terrain
   loot.terrain = level.terrain
   for (const p of level.packs) combat.addPack(p.members, p.room.kind === 'side', p.elite, p.look)
   combat.breakables = level.breakables
-  const boss = bossFor(depth)
-  if (level.boss && boss && !run.bossFelled) combat.addBoss(level.boss.x, level.boss.z, level.boss.face, boss)
-  // a felled boss is never fought again: its beams are open, as they were when it fell
-  if (run.bossFelled) for (const kind of exitsAfterBoss(depth)) kind === 'cold' ? level.openExit() : level.openHome()
+  const boss = bossHere(depth)
+  if (level.boss && boss && !run.bossFelled) combat.addBoss(level.boss.x, level.boss.z, level.boss.face, boss, level.posts)
+  // a felled boss is never fought again: its beams are open, as they were when it fell, and a tower stands as its husk
+  if (run.bossFelled) {
+    for (const kind of exitsAfterBoss(depth)) kind === 'cold' ? level.openExit() : level.openHome()
+    if (level.footprint && level.boss) raiseHusk(level.boss.x, level.boss.z, 0)
+  }
   // this level's names (§7.2), from their own stream; nothing met here yet
   run.names = assignNames(depth, run.seed, save.notebook)
   run.met = new Set()
   namedLabels.length = 0
   // the place's look (every place wears the ruin's today; setSurfaces is a no-op until they don't)
   setSurfaces(place.surfaces)
-  applyDay(world, DEPTH_DAY[Math.min(RUN_DEPTHS, depth)] ?? 'dusk')
+  // the square goes dark with the Arbiter: dusk now, first dark once it's down (a resume there)
+  lightsOut.shown = lightsOut.target = run.bossFelled ? 1 : 0
+  if (boss?.kind === 'arbiter') applyLightsOut(world, lightsOut.shown)
+  else applyDay(world, DEPTH_DAY[Math.min(RUN_DEPTHS, depth)] ?? 'dusk')
   run.fought = false
   run.quietT = 0
   run.killed = false
@@ -2273,6 +2417,7 @@ function simulate(realDt: number) {
   still.aim = target ? Math.atan2(target.x - still.pos.x, target.z - still.pos.z) : null
 
   combat.update(dt, still.pos)
+  trackLightsOut(dt)
   partFx.update(dt)
   loot.update(dt, still.pos)
   updateOffer()
@@ -2438,6 +2583,18 @@ function trackReach() {
   if (r && level) run.reached = Math.max(run.reached, level.progressOf(r))
 }
 
+/**
+ * A tall boss's head, as the ground point it hides on screen: the camera frames ground points,
+ * and the Arbiter's lens 4.9 u up would sit under the boss bar without this.
+ */
+function tallFrame(awake: readonly Enemy[]): THREE.Vector3[] {
+  const b = combat.boss
+  if (!(b instanceof Arbiter) || b.dead || !awake.includes(b)) return []
+  const flat = Math.hypot(camOffset.x, camOffset.z)
+  const back = b.labelY * (flat / camOffset.y)
+  return [new THREE.Vector3(b.pos.x - (camOffset.x / flat) * back, 0, b.pos.z - (camOffset.z / flat) * back)]
+}
+
 /** The place he's in: the depth's look, or the quarter at night on the walk home. */
 function placeNow(): PlaceDef {
   return level?.house ? PLACES[WALK_PLACE] : lookAt(run.depth)
@@ -2582,7 +2739,7 @@ function frame(nowMs: number) {
   } else {
     camTarget.set(x, 0, z)
     // a locked or rushing lane's end is a threat too: an 11 u lane must never end off screen
-    rig.update(elapsed, camTarget, [...awake.map((e) => e.pos), ...combat.threatEnds()], !fighting)
+    rig.update(elapsed, camTarget, [...awake.map((e) => e.pos), ...combat.threatEnds(), ...tallFrame(awake)], !fighting)
   }
   world.camera.position.copy(camTarget).add(camOffset)
   if (shake > 0) {
@@ -2615,6 +2772,7 @@ function frame(nowMs: number) {
     ambientFx(elapsed)
     footsteps(now)
     ramFx(elapsed)
+    arbiterFx()
     broodFx(elapsed)
     skitter(elapsed)
     for (const [e, v] of loops) v.pan(panOf(e.pos))
@@ -2710,8 +2868,9 @@ if (import.meta.env.DEV) {
     /** One enemy as its own pack of 1. awake = true wakes it at once. A boss is the variant's (default the Assembler). */
     __spawn: (kind: Archetype, x: number, z: number, awake = true, elite?: EliteMod, variant?: BossKind | 'lobber'): Enemy => {
       if (kind === 'boss') {
-        const defs: Record<BossKind, BossDef> = { assembler: ASSEMBLER_DEF }
-        const b = combat.addBoss(x, z, new THREE.Vector3(x, 0, z - 1), defs[(variant ?? 'assembler') as BossKind])
+        const defs: Record<BossKind, BossDef> = { assembler: ASSEMBLER_DEF, arbiter: ARBITER_DEF }
+        // the Arbiter stands among __arena's posts, when it built them
+        const b = combat.addBoss(x, z, new THREE.Vector3(x, 0, z - 1), defs[(variant ?? 'assembler') as BossKind], devPosts?.posts ?? [])
         if (awake) combat.wake(combat.packs[combat.packs.length - 1]!)
         return b
       }
@@ -2723,13 +2882,23 @@ if (import.meta.env.DEV) {
      * A clean test floor: cells i, j in [-3, 3] (x, z in [-14, 14]) plus these solids.
      * Nothing else in the world; Still at (0, 0) facing +z, whole, unstrained, every button ready.
      */
-    __arena: (o: { boxes?: Box[]; circles?: Circle[]; auto?: boolean } = {}) => {
+    __arena: (o: { boxes?: Box[]; circles?: Circle[]; auto?: boolean; posts?: boolean } = {}) => {
       leaveRoom()
       fadeInT = 0
       namedLabels.length = 0
       const floor = new Set<string>()
       for (let i = -3; i <= 3; i++) for (let j = -3; j <= 3; j++) floor.add(key(i, j))
-      const terrain = makeTerrain(floor, o.boxes ?? [], o.circles ?? [])
+      // posts: the square's eight round (0, 0), solid and drawn, for the Arbiter's checks
+      if (devPosts) world.scene.remove(devPosts.group)
+      devPosts = null
+      if (o.posts) {
+        const posts = squarePosts(0, 0)
+        const group = new THREE.Group()
+        for (const p of posts) group.add(p.mesh)
+        world.scene.add(group)
+        devPosts = { posts, group }
+      }
+      const terrain = makeTerrain(floor, o.boxes ?? [], [...(o.circles ?? []), ...(devPosts?.posts.flatMap((p) => p.circles) ?? [])])
       combat.reset()
       loot.clear()
       partFx.clear()
@@ -2820,6 +2989,19 @@ if (import.meta.env.DEV) {
     __assignNames: (depth: number, seed: number) => assignNames(depth, seed, save.notebook),
     __openNotebook: () => openNotebook(),
     __adds: () => combat.adds(),
+    /** The Arbiter's state for checks (null for any other boss). */
+    __boss: () => {
+      const b = combat.boss
+      if (!(b instanceof Arbiter)) return b ? { kind: b.def.kind, hp: b.hp, phase2: b.phase2, open: b.open } : null
+      return {
+        kind: 'arbiter', hp: b.hp, phase2: b.phase2, open: b.open, state: b.state, wedges: [...b.wedges], omega: b.omega, aim: b.aim,
+        cut: b.cut ? { x: b.cut.x, z: b.cut.z } : null, posts: b.posts.map((p) => ({ x: p.x, z: p.z, lances: p.lances, cracked: p.cracked, r: p.circles[0].r })),
+      }
+    },
+    /** Flip the Arbiter's switch for this session (false: Home's second Assembler at 6); null restores it. */
+    __arbiterAt6: (on: boolean | null) => { devArbiterAt6 = on },
+    /** Posts built by __arena({ posts: true }), for the checks. */
+    __posts: () => devPosts?.posts ?? null,
     /** A floor hazard now, as a boss or a slag core would make one. */
     __hazard: (spec: HazardSpec) => combat.addHazard(spec),
     /** Every hazard on the floor: its clocks, and who it hit ('still', or an index into __combat.enemies). */
@@ -2886,6 +3068,7 @@ if (import.meta.env.DEV) {
     __day: () => ({
       day: dayNow().key, hour: dayNow().hour, sat: world.gradePass.uniforms.uSaturation!.value, fogNear: world.fog.near, fogFar: world.fog.far,
       keyLight: world.key.intensity, grace: world.graceLight.intensity, keyColor: world.key.color.getHex(), fogColor: world.fog.color.getHex(),
+      exposure: world.renderer.toneMappingExposure, lightsOut: dayNow().lightsOut ?? null, progress: lightsOut.shown,
     }),
     __DAY: DAY,
     __grade: grade,

@@ -5,11 +5,15 @@ import { slide, statusTint, disposeBody, distToSegment, type Enemy, type EnemyAc
 import { LaneTell, type LaneEnd } from './lane'
 import type { Terrain } from './terrain'
 import type { BossDef } from './areas'
+import type { Post } from './dungeon'
+import { Arbiter } from './arbiter'
 
 /** The current windup's sound shape: heavy moves rise like the hulk, aimed ones whistle and click like the sentinel. */
 export type BossCue =
   | { voice: 'windup' }
   | { voice: 'aim'; lockAt: number }
+  /** A mortar tilting (the Arbiter's shell). */
+  | { voice: 'lob' }
   | { voice: 'none' }
 
 /**
@@ -42,10 +46,11 @@ export interface Boss extends Enemy {
 }
 export const isBoss = (e: Enemy): e is Boss => e.kind === 'boss'
 
-/** The one place a boss is built from its def. */
-export function makeBoss(def: BossDef, x: number, z: number): Boss {
+/** The one place a boss is built from its def. The Arbiter stands among the square's posts, and cracks them. */
+export function makeBoss(def: BossDef, x: number, z: number, face: THREE.Vector3, posts: Post[] = []): Boss {
   switch (def.kind) {
     case 'assembler': return new Assembler(def, x, z)
+    case 'arbiter': return new Arbiter(def, x, z, face, posts)
   }
 }
 

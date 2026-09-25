@@ -190,8 +190,7 @@ const quarter: PlaceDef = {
     arenaCover: 'barrier_column',
   },
   surfaces: { paving: 'Tiles093', rock: 'Bricks097', wood: 'Planks023A', ground: 'PavingStones142', grate: 'MetalWalkway014' },
-  // the square's own tone arrives with the Arbiter (step 4); until then its boss level is the Assembler's
-  ambience: { crawl: 'quarter', boss: 'boss' },
+  ambience: { crawl: 'quarter', boss: 'square' },
   footsteps: 'wood',
   music: 'II',
   gen: {
@@ -227,18 +226,18 @@ export const areaOf = (depth: number): AreaDef =>
 
 // --- bosses -----------------------------------------------------------------------
 
-/** The Arbiter's step adds kind 'arbiter', adds 'none', and ARBITER_AT_6 (the switch back to this Assembler). */
-export type BossKind = 'assembler'
+export type BossKind = 'assembler' | 'arbiter'
 /** INV: every boss is 900 HP, never hits above 22, never winds up under 620 ms. */
 export interface BossDef {
   kind: BossKind
   /** Shown on the boss bar. */
   name: string
   hp: 900
-  adds: 'hulks' | 'rams-mites'
+  adds: 'hulks' | 'rams-mites' | 'none'
   /** Its notebook page. */
   roster: RosterId
-  arena: 'yard'
+  /** The Assembler's yard of low walls and crates; the Arbiter's square of brick posts. */
+  arena: 'yard' | 'square'
   /** The bar while its ×1.5 window is open. */
   openWord: string
 }
@@ -246,15 +245,30 @@ export interface BossDef {
 export const ASSEMBLER_DEF: BossDef = {
   kind: 'assembler', name: 'The Assembler', hp: 900, adds: 'hulks', roster: 'the-first-warden', arena: 'yard', openWord: 'stunned',
 }
-/** The only place a depth is decided to have a boss. The second Assembler's adds are rams and mites. */
-export function bossFor(depth: number): BossDef | null {
+/** The last fight (design/content/SPEC.md §5): a lamp tower in the quarter's square. */
+export const ARBITER_DEF: BossDef = {
+  // PLACEHOLDER name (Adrian's)
+  kind: 'arbiter', name: 'The Arbiter', hp: 900, adds: 'none', roster: 'the-thermal-arbiter', arena: 'square', openWord: 'venting',
+}
+/**
+ * false restores Home's second Assembler at depth 6, with rams and mites for adds: the
+ * one-evening fallback if the Arbiter doesn't land.
+ */
+export const ARBITER_AT_6 = true
+
+/**
+ * The only place a depth is decided to have a boss. `arbiterAt6` is the switch above
+ * (dev checks flip it to test the fallback).
+ */
+export function bossFor(depth: number, arbiterAt6 = ARBITER_AT_6): BossDef | null {
   if (depth % BOSS_EVERY !== 0) return null
+  if (depth === RUN_DEPTHS && arbiterAt6) return ARBITER_DEF
   return { ...ASSEMBLER_DEF, adds: depth === RUN_DEPTHS ? 'rams-mites' : 'hulks' }
 }
 
 // --- the one day -----------------------------------------------------------------------
 
-export type DayKey = 'morning' | 'late-morning' | 'noon' | 'afternoon' | 'late-afternoon' | 'dusk' | 'night'
+export type DayKey = 'morning' | 'late-morning' | 'noon' | 'afternoon' | 'late-afternoon' | 'dusk' | 'first-dark' | 'night'
 /** Multipliers on `grade` (world.ts), plus the colours. morning is today's look, exactly. */
 export interface DayPreset {
   /** x grade.saturation / exposure / vignette / fogNear and fogFar. */
@@ -290,6 +304,12 @@ export const DAY: Record<DayKey | 'workshop', DayPreset> = {
   afternoon: { sat: 0.96, exposure: 0.96, vignette: 1.0, fog: 0.95, fogColor: 0x0c1017, background: 0x070a0e, hemi: 1.0, key: 1.0, keyColor: 0x98aad2, keyDir: [-10, 11, 2], grace: 1, hemiSky: 0x486cb8 },
   'late-afternoon': { sat: 0.9, exposure: 0.9, vignette: 1.05, fog: 0.88, fogColor: 0x0b0e17, background: 0x06090f, hemi: 1.05, key: 0.95, keyColor: 0x8e9ac4, keyDir: [-12, 8, 5], grace: 1, hemiSky: 0x4868b8 },
   dusk: { sat: 0.82, exposure: 0.82, vignette: 1.12, fog: 0.8, fogColor: 0x090c17, background: 0x05070e, hemi: 1.1, key: 0.9, keyColor: 0x7486d2, keyDir: [-13, 5, 8], grace: 1, hemiSky: 0x3a54cc },
+  /**
+   * The Arbiter at 0 HP: the last of dusk, where lights out stops (it never reaches night in a
+   * level). §4.6's ratios on Home's dusk. Grace x exposure is held at dusk's, so she stays the
+   * one steady light while everything else goes.
+   */
+  'first-dark': { sat: 0.74, exposure: 0.78, vignette: 1.2, fog: 0.74, fogColor: 0x070a14, background: 0x04060b, hemi: 0.81, key: 0.49, keyColor: 0x6a78c4, keyDir: [-13, 3, 9], grace: 0.82 / 0.78, hemiSky: 0x3448bc },
   night: { sat: 0.7, exposure: 0.72, vignette: 1.25, fog: 0.7, fogColor: 0x05070d, background: 0x030409, hemi: 1.0, key: 0.55, keyColor: 0x6c7cc4, keyDir: [-6, 12, -10], grace: 1, hemiSky: 0x3448bc },
   // the room: its key light, its colour and Grace's lamp come by the hour (WINDOW)
   workshop: { sat: 1.18, exposure: 1.0, vignette: 0.55, fog: 2.0, fogColor: 0x0b0f16, background: 0x070a0e, hemi: 0.6, key: 1, keyColor: 0x98a8c4, keyDir: [-14, 9, 2], grace: 1.2 },
@@ -314,8 +334,11 @@ export const WINDOW: Record<HomeHour, { sky: number; key: number; keyColor: numb
 /** Grace's reach: the room's lamp stops at its barriers; in the maze she carries further. */
 export const GRACE_REACH = { run: 34, room: 16 }
 
-/** What's applied now: reapplyDay puts it back after the grade panel moves the base. */
-let current: { key: DayKey | 'workshop'; hour: HomeHour } = { key: 'morning', hour: 'afternoon' }
+/**
+ * What's applied now: reapplyDay puts it back after the grade panel moves the base. `lightsOut`,
+ * 0..1: the Arbiter's square going from dusk toward first dark with its HP.
+ */
+let current: { key: DayKey | 'workshop'; hour: HomeHour; lightsOut?: number } = { key: 'morning', hour: 'afternoon' }
 
 /** The preset as it stands at an hour: the room's key, colour and lamp come from its window. */
 export function presetOf(key: DayKey | 'workshop', hour: HomeHour = 'afternoon'): DayPreset {
@@ -367,18 +390,35 @@ export function applyDay(world: World, key: DayKey | 'workshop', hour: HomeHour 
   applyPreset(world, presetOf(key, hour), key === 'workshop')
 }
 
+/** The square's fog is held back past its far corner: the camera is ~40 u off, the corner ~16 u deeper. */
+export const SQUARE_FOG_FAR = 58
+
+/**
+ * Lights out (§4.6, §5.2): dusk mixed toward first dark by `k`, and the fog held beyond the
+ * arena, so the square darkens without closing in. Capped: k never takes it past first dark.
+ */
+export function applyLightsOut(world: World, k: number, hour: HomeHour = 'afternoon') {
+  const p = Math.max(0, Math.min(1, k))
+  current = { key: 'dusk', hour, lightsOut: p }
+  applyPreset(world, mixPreset(DAY.dusk, DAY['first-dark'], p))
+  world.fog.far = Math.max(world.fog.far, SQUARE_FOG_FAR)
+}
+
 /** After the grade panel moves the base: the hour goes back on top. */
 export function reapplyDay(world: World) {
-  applyDay(world, current.key, current.hour)
+  if (current.lightsOut !== undefined) applyLightsOut(world, current.lightsOut, current.hour)
+  else applyDay(world, current.key, current.hour)
 }
 
 /** Which hour is on, for checks and the room's arrival. */
 export const dayNow = () => current
 
+/** The preset on now, lights out included. */
+const presetNow = () => (current.lightsOut !== undefined ? mixPreset(DAY.dusk, DAY['first-dark'], current.lightsOut) : presetOf(current.key, current.hour))
 /** Saturation the hour asks for: Stopped drains colour from this, not from the base. */
-export const currentSat = () => grade.saturation * presetOf(current.key, current.hour).sat
-/** Grace's intensity at this hour (constant, by design). */
-export const currentGrace = () => grade.graceLight * presetOf(current.key, current.hour).grace
+export const currentSat = () => grade.saturation * presetNow().sat
+/** Grace's intensity at this hour (constant, by design; held against the exposure as the square goes dark). */
+export const currentGrace = () => grade.graceLight * presetNow().grace
 
 /**
  * Seam for the content step's "day moves with you": a depth's preset leaned toward
@@ -387,7 +427,12 @@ export const currentGrace = () => grade.graceLight * presetOf(current.key, curre
 export function dayAt(depth: number, progress01: number): DayPreset {
   const a = DAY[DEPTH_DAY[Math.max(1, Math.min(RUN_DEPTHS, depth))]!]
   const b = DAY[DEPTH_DAY[Math.min(RUN_DEPTHS, depth + 1)]!]
-  const k = Math.max(0, Math.min(1, progress01))
+  return mixPreset(a, b, progress01)
+}
+
+/** Two presets mixed by k (colours in linear RGB). */
+export function mixPreset(a: DayPreset, b: DayPreset, k01: number): DayPreset {
+  const k = Math.max(0, Math.min(1, k01))
   const m = (x: number, y: number) => x + (y - x) * k
   const c = (x: number, y: number) => new THREE.Color(x).lerp(new THREE.Color(y), k).getHex()
   return {

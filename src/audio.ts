@@ -1771,3 +1771,130 @@ export function homeBeam() {
   }
   sample(c, 'bell', d, 0.25, 1.5, 0.05)
 }
+
+// --- the Arbiter: its sweep, its lance, its vent, its scald, and the heat it leaves on a button ---
+
+/** The sweep's loop: a low saw through a lowpass, beating at 3 Hz. Its pan follows the gaze. */
+export function whirr(pan: number): Voice {
+  const c = live()
+  if (!c) return asVoice(() => {})
+  const t = c.currentTime
+  const p = livePan(c, 'enemy', pan)
+  const g = c.createGain()
+  g.gain.setValueAtTime(0.0001, t)
+  g.gain.setTargetAtTime(0.05, t, 0.3)
+  g.connect(p)
+  const o = c.createOscillator()
+  o.type = 'sawtooth'
+  o.frequency.value = 70
+  const lp = c.createBiquadFilter()
+  lp.type = 'lowpass'
+  lp.frequency.value = 400
+  const trem = c.createGain()
+  trem.gain.value = 0.6
+  const lfo = c.createOscillator()
+  lfo.frequency.value = 3
+  const depth = c.createGain()
+  depth.gain.value = 0.4
+  lfo.connect(depth).connect(trem.gain)
+  o.connect(lp).connect(trem).connect(g)
+  o.start(t)
+  lfo.start(t)
+  return {
+    stop: (hard) => {
+      const now = c.currentTime
+      g.gain.cancelScheduledValues(now)
+      if (hard) g.gain.setValueAtTime(0, now)
+      else g.gain.setTargetAtTime(0.0001, now, 0.15)
+      o.stop(now + (hard ? 0.02 : 0.8))
+      lfo.stop(now + (hard ? 0.02 : 0.8))
+    },
+    pan: (v) => p.pan.setTargetAtTime(clampPan(v), c.currentTime, 0.05),
+  }
+}
+
+/** One tick of the sweep, every 10°: tin, and a short square click. */
+export function ratchet(pan: number) {
+  const c = live()
+  if (!c || limited('ratchet', 0.05, c.currentTime)) return
+  const d = out(c, 'enemy', pan)
+  sample(c, 'tin', d, 0.12, 2.0)
+  tone(c, d, 'square', c.currentTime, 1900, 1900, 0.01, 0.02)
+}
+
+/** The gaze stops on him. */
+export function catchClack(pan: number) {
+  const c = live()
+  if (!c) return
+  sample(c, 'metalMedium', out(c, 'enemy', pan), 0.5, 0.8)
+}
+
+/** The lance: a hiss that cracks, a low bell, and a drop. */
+export function lanceFire(pan: number) {
+  const c = live()
+  if (!c) return
+  const t = c.currentTime
+  const d = out(c, 'enemy', pan)
+  hiss(c, d, t, 0.5, 0.4, 'highpass', 3000, 3000, 0.7)
+  sample(c, 'bell', d, 0.3, 0.5)
+  tone(c, d, 'sine', t, 180, 60, 0.25, 0.4)
+}
+
+/** The vent: steam over its whole 1.2 s, and a plate knocked open at the start. */
+export function vent(pan: number) {
+  const c = live()
+  if (!c) return
+  const d = out(c, 'enemy', pan)
+  hiss(c, d, c.currentTime, 1.2, 0.3, 'highpass', 2500, 2500, 0.7, 0.05)
+  sample(c, 'plateHeavy', d, 0.5, 0.7)
+}
+
+/** A judder: tin ticking every 40 ms, then the clank. */
+export function judder(ms: number, pan: number) {
+  const c = live()
+  if (!c) return
+  const d = out(c, 'enemy', pan)
+  for (let at = 0; at < ms / 1000; at += 0.04) sample(c, 'tin', d, 0.1, 1.4, at)
+  sample(c, 'metalHeavy', d, 0.5, 0.6, ms / 1000)
+}
+
+/** The scald going off: a burst of steam. */
+export function scald(pan: number) {
+  const c = live()
+  if (!c) return
+  hiss(c, out(c, 'enemy', pan), c.currentTime, 0.4, 0.5, 'highpass', 2000, 2000, 0.7)
+}
+
+/** Heat on Still: a sizzle, and a tin tick. */
+export function sizzle() {
+  const c = live()
+  if (!c) return
+  const d = out(c, 'hits', 0)
+  hiss(c, d, c.currentTime, 0.4, 0.2, 'bandpass', 4000, 4000, 2)
+  sample(c, 'tin', d, 0.15, 2.6)
+}
+
+/** A button's heat ending: a soft falling hiss. */
+export function cool() {
+  const c = live()
+  if (!c) return
+  hiss(c, out(c, 'abilities', 0), c.currentTime, 0.35, 0.05, 'bandpass', 3000, 900, 1.5, 0.02)
+}
+
+/** A post cracking: broken brick, and wood giving way under it. */
+export function crack(pan: number) {
+  const c = live()
+  if (!c) return
+  const d = out(c, 'hits', pan)
+  sample(c, 'mining', d, 0.8, 0.7)
+  sample(c, 'woodHeavy', d, 0.6, 0.6, 0.03)
+}
+
+/** The Arbiter's death: its lens going out, a long falling sine and a glass tink. */
+export function lensOut(pan: number) {
+  const c = live()
+  if (!c) return
+  const d = out(c, 'enemy', pan)
+  tone(c, d, 'sine', c.currentTime, 900, 60, 1.5, 0.08, 0.01)
+  sample(c, 'tin', d, 0.3, 3)
+}

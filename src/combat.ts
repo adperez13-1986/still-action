@@ -16,7 +16,7 @@ const ADDS_HP_CAP = 72
 const SUMMON_RAM = { hp: 22, size: 0.85 }
 const SUMMON_MITES = 6
 import type { Terrain } from './terrain'
-import type { Breakable } from './dungeon'
+import type { Breakable, Post } from './dungeon'
 import type { AbilityDef, BeatKey } from './abilities'
 import type { SlotName } from './still'
 import { PART, History, bankShot, type EnemyStatus, type Flip, type Held, type PartEvent, type PartRuntime, type StillMove, type Zone } from './parts'
@@ -258,7 +258,8 @@ export interface CombatEvents {
   /** A part did something this instant. Lasting things are polled instead (parts.ts). */
   onPart: (ev: PartEvent) => void
   /** A floor hazard's instants: made, armed, done, and each body it hit. */
-  onHazard: (ev: { kind: 'spawn' | 'arm' | 'end'; h: Hazard } | { kind: 'hit'; h: Hazard; who: Enemy | 'still'; at: THREE.Vector3 }) => void
+  /** `heat`: a heating hazard (the lance) reached Still, taken or braced: the run heats a button. */
+  onHazard: (ev: { kind: 'spawn' | 'arm' | 'end' | 'heat'; h: Hazard } | { kind: 'hit'; h: Hazard; who: Enemy | 'still'; at: THREE.Vector3 }) => void
 }
 
 export class Combat {
@@ -455,6 +456,7 @@ export class Combat {
       if (action?.kind === 'wave') this.startWave(action.center, action.gaps, action.damage, action.gapWidth, action.minGap)
       if (action?.kind === 'summon' && pack) this.summon(pack, action.points, action.maxAdds)
       if (action?.kind === 'hazard') this.addHazard(action.spec)
+      if (action?.kind === 'unhazard') for (const h of this.live) if (h.spec.owner === e && h.spec.source === action.source && !h.armed) this.endHazard(h)
       if (action?.kind === 'pull') this.pull = { center: action.center, strength: action.strength, t: action.seconds }
       if (e instanceof Charger && e.sweep) this.trample(e)
       if (e.dead) this.bury(i)
@@ -1842,11 +1844,14 @@ export class Combat {
     const covered = (x: number, z: number) => s.cover === 'fromCentre' && sh.kind === 'circle' && !this.terrain.lineClear(sh.x, sh.z, x, z, 0.1)
     if (!h.hit.has('still') && inShape(sh, player.x, player.z) && !covered(player.x, player.z)) {
       h.hit.add('still')
-      if (!this.guardTakes(s, player)) this.hurtPlayer(s.damage, s.hurt, s.owner)
+      const taken = !this.guardTakes(s, player)
+      if (taken) this.hurtPlayer(s.damage, s.hurt, s.owner)
       this.events.onHazard({ kind: 'hit', h, who: 'still', at: player.clone() })
+      // H5: warded, it never heats; taken or braced, it does
+      if (taken && s.heat) this.events.onHazard({ kind: 'heat', h })
     }
     for (const e of this.enemies) {
-      if (e.dead || h.hit.has(e) || this.held.has(e)) continue
+      if (e.dead || h.hit.has(e) || this.held.has(e) || (s.sparesOwner && e === s.owner)) continue
       if (!inShape(sh, e.pos.x, e.pos.z, e.radius - PLAYER_RADIUS) || covered(e.pos.x, e.pos.z)) continue
       h.hit.add(e)
       // not a part: it never uses a mark. A sleeper hit this way wakes its pack (hpSeen).
@@ -1967,8 +1972,8 @@ export class Combat {
   }
 
   /** The area's boss, as its def says: its own pack, woken by walking into the arena, never leashed. */
-  addBoss(x: number, z: number, face: THREE.Vector3, def: BossDef): Boss {
-    const b = makeBoss(def, x, z)
+  addBoss(x: number, z: number, face: THREE.Vector3, def: BossDef, posts: Post[] = []): Boss {
+    const b = makeBoss(def, x, z, face, posts)
     this.scene.add(b.group, b.tellGroup, b.worldGroup)
     this.enemies.push(b)
     b.setAsleep(true)

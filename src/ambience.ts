@@ -23,8 +23,8 @@ import { beatClock } from './music'
  * And home, the Workshop: the stone goes, and a small wooden room is left with
  * a clock ticking in it and Grace's tone under everything, never ending.
  */
-/** The Arbiter's step adds 'square'. */
-export type AmbienceMood = 'crawl' | 'boss' | 'workshop' | 'works' | 'quarter'
+/** 'square': the quarter's open air round the Arbiter, and quieter still. */
+export type AmbienceMood = 'crawl' | 'boss' | 'workshop' | 'works' | 'quarter' | 'square'
 
 interface Engine {
   ctx: AudioContext
@@ -237,7 +237,7 @@ function clockTick(e: Engine, when: number) {
 }
 
 /** The reverb the mood is in: the Works' iron room, or the stone one. */
-const roomOf = (e: Engine) => (mood === 'works' ? e.worksRoom : mood === 'quarter' ? e.airRoom : e.room)
+const roomOf = (e: Engine) => (mood === 'works' ? e.worksRoom : mood === 'quarter' || mood === 'square' ? e.airRoom : e.room)
 
 function drip(e: Engine) {
   const { ctx } = e
@@ -425,7 +425,7 @@ function tick() {
   e.nextTick = t + 1
   const boss = mood === 'boss'
   const works = mood === 'works'
-  const air = mood === 'quarter'
+  const air = mood === 'quarter' || mood === 'square'
   if (works) forge(e)
   if (air) {
     // open air: no water, no machinery; wind, a curtain, and something far off
@@ -435,7 +435,8 @@ function tick() {
     }
     if (t >= e.nextFar) {
       farOff(e)
-      e.nextFar = t + 16 + Math.random() * 18
+      // round the Arbiter, something far off is rarer: the square is listening
+      e.nextFar = t + (mood === 'square' ? 30 + Math.random() * 30 : 16 + Math.random() * 18)
     }
   } else if (t >= e.nextDrip) {
     drip(e)
@@ -498,11 +499,12 @@ export function updateAmbience(next: AmbienceMood) {
     const t = engine.ctx.currentTime
     // the Works hums with the foundry at 0.6, over half the stone's tone
     engine.foundry.gain.setTargetAtTime(next === 'boss' ? 1 : next === 'works' ? 0.6 : 0, t, 1.5)
-    engine.toneGain.gain.setTargetAtTime(next === 'works' || next === 'quarter' ? 0.035 : 0.07, t, 1.5)
+    const open = next === 'quarter' || next === 'square'
+    engine.toneGain.gain.setTargetAtTime(next === 'works' || open ? 0.035 : 0.07, t, 1.5)
     // the quarter: the hum lower, and the drafts a wider, lower wind
-    engine.toneLp.frequency.setTargetAtTime(next === 'quarter' ? 180 : 260, t, 1.5)
-    engine.draftBp.frequency.setTargetAtTime(next === 'quarter' ? 450 : 700, t, 1.5)
-    engine.draftBp.Q.setTargetAtTime(next === 'quarter' ? 0.4 : 0.6, t, 1.5)
+    engine.toneLp.frequency.setTargetAtTime(open ? 180 : 260, t, 1.5)
+    engine.draftBp.frequency.setTargetAtTime(open ? 450 : 700, t, 1.5)
+    engine.draftBp.Q.setTargetAtTime(open ? 0.4 : 0.6, t, 1.5)
     // home: the stone fades out over about 1.2 s, and the room comes up under it
     const home = next === 'workshop'
     engine.stone.gain.setTargetAtTime(home ? 0 : 1, t, 0.4)

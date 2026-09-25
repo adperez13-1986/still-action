@@ -26,6 +26,9 @@ const SLOT_ICON: Record<SlotName, string> = {
   legs: svg('<path d="M9 3l3 8-4 9"/><path d="M8 20h3"/><path d="M15 3l-1 8 3 9"/><path d="M16 20h3"/>'),
 }
 const PUSH_HOLD_MS = 180
+/** PLACEHOLDER words (Adrian's): the one-time caption over the first button a lance ever heats. */
+const HEAT_CAPTION = 'hot \u00b7 hold to push'
+const HEAT_CAPTION_MS = 2400
 
 /** What the run tells the button after a press: start the cooldown, stay live, or nothing happened. */
 export type FireResult = Pick<CastResult, 'cooldown'>
@@ -39,6 +42,9 @@ interface ButtonState {
   /** Which of the part's icons is showing (Frayed's width, Plumb's snap). Null is the base icon. */
   icon: IconState | null
   readyAt: number
+  /** Heat (the Arbiter's lance): push-only until this, whatever the cooldown says. A second timer, never a lock. */
+  hotUntil: number
+  hotMs: number
   pointerId: number | null
   downAt: number
   pushed: boolean
@@ -109,8 +115,17 @@ export interface Hud {
   live: (slot: SlotName, frac: number | null) => void
   /** Swap a button to one of its part's alternate icons, or back (null). Repaints only on change. */
   iconState: (slot: SlotName, s: IconState | null) => void
-  /** Whether a slot's button is ready to fire (not cooling). An empty slot is never ready. */
+  /** Whether a slot's button is ready to fire (not cooling, not hot). An empty slot is never ready. */
   isReady: (slot: SlotName) => boolean
+  /** ms until a slot's cooldown is done (0 when it is): for picking what the heat takes. */
+  readyIn: (slot: SlotName) => number
+  /**
+   * Heat a slot: push-only for `ms`. INV: never makes a push impossible (a hold past the push
+   * time fires it, +2 strain), never touches an empty slot, and waiting frees it.
+   */
+  heat: (slot: SlotName, ms: number) => void
+  /** ms of heat left (0 when cool). */
+  heatLeft: (slot: SlotName) => number
   /**
    * N8: `n` strain points fly as ember pips from a screen point to the meter (at
    * most 4 drawn; the last carries the rest). The meter shows strain minus what's
@@ -238,12 +253,12 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
   }
   const buttons: ButtonState[] = SLOT_NAMES.map((slot, i) => {
     const el = document.createElement('div')
-    el.innerHTML = `<div class="cd"></div><div class="live"></div><span class="lbl" aria-label="${KEYS[slot]}"></span><span class="pips"></span>`
+    el.innerHTML = `<div class="cd"></div><div class="heat"></div><div class="live"></div><span class="lbl" aria-label="${KEYS[slot]}"></span><span class="pips"></span>`
     const th = (ARC_DEG[i] ?? 0) * (Math.PI / 180)
     el.style.right = `calc(env(safe-area-inset-right, 0px) + ${PAD + ARC_R * Math.cos(th) - BTN / 2}px)`
     el.style.bottom = `calc(env(safe-area-inset-bottom, 0px) + ${PAD + ARC_R * Math.sin(th) - BTN / 2}px)`
     root.appendChild(el)
-    const b: ButtonState = { el, cdEl: el.querySelector<HTMLElement>('.cd')!, slot, def: null, icon: null, readyAt: 0, pointerId: null, downAt: 0, pushed: false, wasReady: true }
+    const b: ButtonState = { el, cdEl: el.querySelector<HTMLElement>('.cd')!, slot, def: null, icon: null, readyAt: 0, hotUntil: 0, hotMs: 0, pointerId: null, downAt: 0, pushed: false, wasReady: true }
     paint(b)
     return b
   })
@@ -373,10 +388,13 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
         b.pointerId = null
         b.el.classList.remove('press')
         if (b.pushed) return
-        if (state.clock >= b.readyAt) fire(b, false)
+        if (isReadyAt(b, state.clock)) fire(b, false)
       })
     }
   }
+
+  /** Ready: its cooldown done, and not hot. */
+  const isReadyAt = (b: ButtonState, now: number) => now >= b.readyAt && now >= b.hotUntil
 
   function fire(b: ButtonState, pushed: boolean) {
     if (!state.enabled || !b.def) return
@@ -387,8 +405,9 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
       setTimeout(() => b.el.classList.remove('refused'), 300)
       return
     }
-    // a live part (a planted anchor) keeps its button ready for the second press
-    b.readyAt = r.cooldown === 'hold' ? state.clock : state.clock + b.def.cooldownMs
+    // a live part (a planted anchor) keeps its button ready for the second press; a hot one
+    // pushed out of its heat still waits the heat out before it's ready again
+    b.readyAt = Math.max(r.cooldown === 'hold' ? state.clock : state.clock + b.def.cooldownMs, b.hotUntil)
     navigator.vibrate?.(pushed ? [14, 26, 14] : 12)
   }
 
@@ -415,9 +434,13 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
       for (const b of buttons) {
         if (!b.def) continue
         const left = b.readyAt - now
-        const ready = left <= 0
+        const ready = isReadyAt(b, now)
+        // hot: an ember rim and its own sweep over the cooldown's, draining clockwise
+        const hot = now < b.hotUntil
+        b.el.classList.toggle('hot', hot)
+        b.el.style.setProperty('--heat', hot ? `${Math.min(360, ((b.hotUntil - now) / Math.max(1, b.hotMs)) * 360)}deg` : '0deg')
         b.el.classList.toggle('ready', ready)
-        b.cdEl.style.setProperty('--sweep', ready ? '0deg' : `${Math.min(360, (left / b.def.cooldownMs) * 360)}deg`)
+        b.cdEl.style.setProperty('--sweep', left <= 0 ? '0deg' : `${Math.min(360, (left / b.def.cooldownMs) * 360)}deg`)
         const pushShaped = b.def.mod?.kind === 'overrun' || b.def.mod?.kind === 'charge'
         if (b.wasReady && !ready && pushShaped && !hinted(b.def.id)) {
           // the button telling you, once, that holding it now does something different
@@ -475,6 +498,7 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
       for (const b of buttons) {
         b.def = parts.find((p) => p.slot === b.slot) ?? null
         b.readyAt = 0
+        b.hotUntil = 0
         paint(b)
       }
       drawNotches()
@@ -589,7 +613,30 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
     },
     isReady(slot) {
       const b = buttons.find((x) => x.slot === slot)!
-      return !!b.def && state.clock >= b.readyAt
+      return !!b.def && isReadyAt(b, state.clock)
+    },
+    readyIn(slot) {
+      const b = buttons.find((x) => x.slot === slot)!
+      return Math.max(0, b.readyAt - state.clock)
+    },
+    heat(slot, ms) {
+      const b = buttons.find((x) => x.slot === slot)!
+      if (!b.def) return
+      b.hotUntil = state.clock + ms
+      b.hotMs = ms
+      if (!hinted('heat')) {
+        // the first heat ever: a caption over the button, once per save
+        markHinted('heat')
+        const cap = document.createElement('div')
+        cap.className = 'heatCaption'
+        cap.textContent = HEAT_CAPTION
+        b.el.appendChild(cap)
+        setTimeout(() => cap.remove(), HEAT_CAPTION_MS)
+      }
+    },
+    heatLeft(slot) {
+      const b = buttons.find((x) => x.slot === slot)!
+      return Math.max(0, b.hotUntil - state.clock)
     },
     charge(slot, c) {
       buttons.find((x) => x.slot === slot)!.el.style.setProperty('--charge', c.toFixed(3))
@@ -604,7 +651,7 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
 
     fireSlot(slot, pushed) {
       const b = buttons.find((x) => x.slot === slot)!
-      const ready = state.clock >= b.readyAt
+      const ready = isReadyAt(b, state.clock)
       // as the fingers would: a tap on a cooling button does nothing, and a hold on a ready one fires as a tap
       if (!ready && !pushed) return
       fire(b, pushed && !ready)

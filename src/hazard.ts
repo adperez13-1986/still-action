@@ -41,6 +41,10 @@ export interface HazardSpec {
   cancelOnDeath?: boolean
   /** Draw only: the owner's own tell already shows the arm clock, so the arming draw is skipped. */
   quiet?: boolean
+  /** The lance only: a hit on Still (taken, or turned to strain by Brace) heats one of his buttons. */
+  heat?: boolean
+  /** Its maker is never hurt by it: the Arbiter's scald is its own steam. Every other hazard hurts its owner too. */
+  sparesOwner?: boolean
   /** Draw only: a shell thrown from here, arcing `peak` high, landing on the arm tick. */
   flight?: { x: number; y: number; z: number; peak: number }
 }
