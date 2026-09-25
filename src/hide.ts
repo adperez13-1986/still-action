@@ -119,6 +119,15 @@ export const HIDES = {
     finish: { scale: [2, 9, 2], grain: 0.18, roughVar: 0.28, tone: [1.35, 1.35, 1.38], mask: 0.66, toneRough: -0.1, toneMetal: 0, bump: 0.15 },
     jointFinish: GRAIN_ONLY,
   },
+  /**
+   * The Signalman (area III): creosoted timber, tar-black brown, grain running up the post;
+   * iron straps. The first body that isn't metal. Fallback: body 0x26221e (further from the thief's).
+   */
+  signal: {
+    body: 0x2f2620, joint: 0x1c1b1a, rough: 0.9, metal: 0.05, jointRough: 0.6, jointMetal: 0.55,
+    finish: { scale: [2, 14, 2], grain: 0.22, roughVar: 0.12, tone: [0.72, 0.66, 0.6], mask: 0.6, toneRough: 0.05, toneMetal: 0, bump: 0.45 },
+    jointFinish: GRAIN_ONLY,
+  },
 } satisfies Record<string, Hide>
 export type HideKind = keyof typeof HIDES
 

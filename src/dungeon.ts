@@ -5,7 +5,7 @@ import type { Terrain, WallFace } from './terrain'
 import type { BreachHole } from './parts'
 import { ELITE_MODS, type Archetype, type EliteMod } from './combat'
 import { BROOD, HEAP } from './swarm'
-import { exitsAfterBoss, lookAt, type BossDef, type ExitKind, type KitPreset, type MachineKind, type PlaceDef, type PlaceId } from './areas'
+import { exitsAfterBoss, lookAt, type BossDef, type ExitKind, type KitPreset, type MachineKind, type PlaceDef, type PlaceId, type RouteId } from './areas'
 import { buildMachines, machineTop, CHIMNEY_H, type MachinePlacement } from './machines'
 import { THIEF } from './thief'
 
@@ -176,13 +176,17 @@ export interface Level {
   exit: THREE.Vector3
   update: (t: number) => void
   dispose: () => void
+  /** INV: non-null only on the crossroads, length 2, routes ['II', 'III'] in that order (design/area3/SPEC.md §3). */
+  roads?: { route: RouteId; at: THREE.Vector3; label: string }[]
+  /** The crossroads: no lean, no banner, no packs. */
+  crossroads?: true
 }
 
 /** A grid cell's name in the floor set. */
 export const key = (i: number, j: number) => `${i},${j}`
 const DIRS: [number, number][] = [[1, 0], [0, 1], [-1, 0], [0, -1]]
 
-function rng(seed: number) {
+export function rng(seed: number) {
   let s = seed % 2147483647 || 1
   return () => (s = (s * 16807) % 2147483647) / 2147483647
 }
@@ -717,7 +721,7 @@ function pickLessonRoom(rooms: Room[], rand: () => number): Room | null {
 }
 
 /** A floor cell's piece: the first whose cumulative threshold the cell's one roll is under. */
-const pickFloor = (table: [Piece, number][], roll: number): Piece => (table.find(([, t]) => roll < t) ?? table[table.length - 1]!)[0]
+export const pickFloor = (table: [Piece, number][], roll: number): Piece => (table.find(([, t]) => roll < t) ?? table[table.length - 1]!)[0]
 
 /**
  * `place` (default: the depth's, lookAt) is what it's built with; `boss` is bossFor(depth).
@@ -1403,7 +1407,7 @@ const RUN_DEPTHS_WALK = 7
  * a wall turns a corner or ends. Uses no rand(). `solid` cells (the lit house) get no
  * wall on their side: they bring their own.
  */
-function buildWalls(
+export function buildWalls(
   cells: [number, number][], floor: Set<string>, kit: KitPreset, placements: Placement[], boxes: Box[], circles: Circle[], solid?: Set<string>,
 ) {
   const open = (i: number, j: number) => !floor.has(key(i, j)) && !solid?.has(key(i, j))
@@ -1457,7 +1461,7 @@ function buildWalls(
  * sight line past them falls on no floor, sunk rubble where it would. `avoid`
  * keeps a place clear (the lit house's footprint) without costing a rand().
  */
-function buildBeyond(
+export function buildBeyond(
   cells: [number, number][], floor: Set<string>, rand: () => number, kit: KitPreset, placements: Placement[], avoid?: (x: number, z: number) => boolean,
   more: {
     /** G6: this share of the tall picks become machinery (the Works), drawn from `stream`. */

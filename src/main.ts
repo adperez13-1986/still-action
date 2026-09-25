@@ -25,7 +25,8 @@ import { updateAmbience } from './ambience'
 import { Loot, LOOT, dropChance, rollPart, type GroundPart } from './loot'
 import { createPauseScreen } from './pause'
 import { createOverlay } from './ending'
-import { loadKit, setSurfaces, pieceData, surfaceNow, PIECES, type Piece } from './kit'
+import { loadKit, setSurfaces, pieceData, surfaceNow, buildInstanced, PIECES, type Piece } from './kit'
+import { generateCrossroads, dressRoad, labelAlpha, RoadSmoke, ROAD_LABEL, CROSSROADS, type Dressing } from './crossroads'
 import { generateLevel, generateWalkHome, makeTerrain, key, squarePosts, type Box, type Breakable, type Circle, type Level, type Post, type Room, type Shrine } from './dungeon'
 import type { Terrain } from './terrain'
 import { Vfx, syncTells, COLD, COLD_DEEP, EMBER, SLAG_DROP } from './vfx'
@@ -66,6 +67,8 @@ const START_DEPTH = Math.min(RUN_DEPTHS, Math.max(1, Number(DEPTH_PARAM) || 1))
 const devParam = (k: string): string | null => (import.meta.env.DEV ? params.get(k) : null)
 /** `?route=II|III` (DEV): the run starts on that road and never sees the crossroads; with ?depth=4-6 it starts there. */
 const ROUTE_PARAM: RouteId | null = devParam('route') === 'III' ? 'III' : devParam('route') === 'II' ? 'II' : null
+/** `?crossroads=1` (DEV): the crossroads after the Assembler, whatever the switch and the save say. */
+const CROSSROADS_PARAM = devParam('crossroads') === '1'
 
 /**
  * The save. A dev run (?depth=) reads it and never writes, so tuning at the boss
@@ -1214,6 +1217,28 @@ hud.onPrompt(() => {
 
 // --- elite names, D2-style, floating over the leader ---
 
+/** §3.3: each road's name over its beam, faded in from 5 u to 3 u. */
+const roadLabelsShown = new Set<string>()
+function drawRoadLabels() {
+  const want: { id: string; text: string; at: THREE.Vector3 }[] = []
+  if (level?.group.visible && run.phase === 'crawl') {
+    if (level.roads) for (const r of level.roads) want.push({ id: `road:${r.route}`, text: r.label, at: r.at })
+    if (yardDressing) want.push({ id: `yard:${yardDressing.route}`, text: ROAD_LABEL[yardDressing.route], at: yardDressing.at })
+  }
+  const seen = new Set<string>()
+  for (const w of want) {
+    const alpha = labelAlpha(Math.hypot(still.pos.x - w.at.x, still.pos.z - w.at.z))
+    labelTmp.set(w.at.x, CROSSROADS.labelY, w.at.z).project(world.camera)
+    const on = alpha > 0 && Math.abs(labelTmp.x) <= 1 && Math.abs(labelTmp.y) <= 1
+    const at = on ? { x: (labelTmp.x * 0.5 + 0.5) * window.innerWidth, y: (-labelTmp.y * 0.5 + 0.5) * window.innerHeight } : null
+    hud.beamLabel(w.id, w.text, at, alpha)
+    if (at) seen.add(w.id)
+  }
+  for (const id of roadLabelsShown) if (!seen.has(id)) hud.beamLabel(id, '', null, 0)
+  roadLabelsShown.clear()
+  for (const id of seen) roadLabelsShown.add(id)
+}
+
 const eliteLabels = document.createElement('div')
 eliteLabels.style.cssText = 'position:absolute;inset:0;pointer-events:none;z-index:3'
 hudRoot.appendChild(eliteLabels)
@@ -1521,7 +1546,7 @@ const bossHere = (depth: number) => bossFor(depth, devArbiterAt6 ?? ARBITER_AT_6
 const day = new DayTracker()
 let dayApplied = -1
 function trackDay(dt: number) {
-  if (!level || level.house || !level.group.visible) return
+  if (!level || level.house || level.crossroads || !level.group.visible) return
   day.update(dt, level, still.pos, combat.boss)
   if (Math.abs(day.shown - dayApplied) > 1e-4) {
     dayApplied = day.shown
@@ -1576,6 +1601,7 @@ function bossDown(at: THREE.Vector3) {
     if (kind === 'cold') level?.openExit()
     else level?.openHome()
   }
+  dressYardBeam()
   armBeams()
   sfx.bossDown()
   shake = 1.2
@@ -1614,6 +1640,7 @@ function writeSnapshot() {
     s: 1, build: __BUILD__, id: run.id, startedAt: run.startedAt, depth: run.depth, seed: run.seed,
     bossFelled: run.bossFelled, bossLoot: [...run.bossLoot], strain: run.strain,
     loadout: hud.slots.map((sl) => sl.def?.id ?? null), tally: structuredClone(run.tally), route: run.route,
+    ...(level?.crossroads ? { crossroads: true as const } : {}),
   }
   save.run = snap
   store.write()
@@ -1640,7 +1667,8 @@ function resumeRun(snap: RunSnapshot) {
   const depth = Math.min(RUN_DEPTHS, Math.max(1, Math.floor(snap.depth) || 1))
   // the road: a v2 snapshot (undefined) or anything unknown is the Works'; the Line only while it's on.
   // Before depth 4 an unchosen road stays unchosen, so the crossroads still comes.
-  const route: RouteId | null = snap.route === 'III' && flag('line') ? 'III' : snap.route === 'II' || depth >= 4 || snap.route === 'III' ? 'II' : null
+  const route: RouteId | null = snap.crossroads ? null
+    : snap.route === 'III' && flag('line') ? 'III' : snap.route === 'II' || depth >= 4 || snap.route === 'III' ? 'II' : null
   Object.assign(run, {
     phase: 'crawl', t: 0, swapped: false, ramStunSeen: false, dev: false, committed: false, ending: null, stats: [], taps: [],
     breakRule: combat.breakRule, id: snap.id, startedAt: snap.startedAt, strain: Math.min(19, Math.max(0, Math.round(snap.strain) || 0)), tally, route,
@@ -1652,8 +1680,10 @@ function resumeRun(snap: RunSnapshot) {
   const worn = loadout.filter((d): d is AbilityDef => !!d)
   hud.resetLoadout(worn)
   SLOT_NAMES.forEach((slot, i) => still.wear(slot, loadout[i] ?? null))
-  enterLevel(depth, { seed: snap.seed, bossFelled: !!snap.bossFelled && !!bossHere(depth), resume: true })
-  if (run.bossFelled && level) {
+  // §3.5: a run saved in the crossroads comes back to it, with the road still to choose
+  if (snap.crossroads) enterCrossroads(snap.seed)
+  else enterLevel(depth, { seed: snap.seed, bossFelled: !!snap.bossFelled && !!bossHere(depth), resume: true })
+  if (run.bossFelled && level && !level.crossroads) {
     // what it left, lying where it fell, unless he's wearing it
     const on = new Set(worn.map((d) => d.id))
     for (const id of snap.bossLoot ?? []) {
@@ -1675,6 +1705,8 @@ function resumeRun(snap: RunSnapshot) {
 function enterLevel(depth: number, o: { seed?: number; bossFelled?: boolean; resume?: boolean } = {}) {
   beamArmed.exit = true
   beamArmed.home = true
+  clearYardDressing()
+  roadSmokeAt = []
   level?.dispose()
   hud.bossBar(null)
   loot.clear()
@@ -1700,6 +1732,10 @@ function enterLevel(depth: number, o: { seed?: number; bossFelled?: boolean; res
   if (run.bossFelled) {
     for (const kind of exitsAfterBoss(depth)) kind === 'cold' ? level.openExit() : level.openHome()
     if (level.footprint && level.boss) raiseHusk(level.boss.x, level.boss.z, 0)
+  }
+  if (run.bossFelled) {
+    run.depth = depth
+    dressYardBeam()
   }
   // this level's names (§7.2), from their own stream; nothing met here yet
   run.names = assignNames(depth, run.seed, save.notebook)
@@ -1804,6 +1840,106 @@ function descend() {
   updateOffer()
   updateShrinePrompt()
   stopAllWindups()
+}
+
+/**
+ * §3.1. The crossroads comes after the Assembler when the road isn't chosen yet, the room is
+ * the road choice, the Line is on, and it's open (the run after the first Assembler fell).
+ * DEV ?crossroads=1 forces it (it works with the switch off, as ?route= does).
+ */
+function crossroadsDue(): boolean {
+  if (run.route || level?.crossroads) return false
+  if (CROSSROADS_PARAM) return true
+  return roadChoice() === 'crossroads' && flag('line') && save.roads.includes('III')
+}
+
+/** Which roads are armed: a beam takes him only once he's been outside it (he arrives 7.6 u off both). */
+const roadArmed = new Set<RouteId>()
+/** Soot from the Works' frame: the crossroads', or the alternate's dressed yard beam. */
+const roadSmoke = new RoadSmoke()
+let roadSmokeAt: THREE.Vector3[] = []
+/** The alternate's dressing on the Assembler's cold beam, and the road it names. */
+let yardDressing: { route: RouteId; at: THREE.Vector3; d: Dressing; kit: THREE.Group } | null = null
+function clearYardDressing() {
+  if (!yardDressing) return
+  yardDressing.d.dispose()
+  yardDressing.kit.removeFromParent()
+  for (const o of yardDressing.kit.children) if (o instanceof THREE.InstancedMesh) o.dispose()
+  yardDressing = null
+  roadSmokeAt = []
+}
+
+/**
+ * §3.6, the fallback: with no room, the Assembler's cold beam is dressed as the road it leads
+ * to, with its name. Only once it's open, only at depth 3, only while the alternate is on.
+ */
+function dressYardBeam() {
+  clearYardDressing()
+  if (!level || run.depth !== 3 || !level.exitOpen || run.route) return
+  if (roadChoice() !== 'alternate' || !flag('line') || !save.roads.includes('III')) return
+  const route = routeForAlternate()
+  const at = level.exit.clone()
+  // the Line's rails run in from past the floor's far-right edge (−z), into the beam's foot
+  let z = at.z
+  while (level.floor.has(key(Math.round(at.x / 4), Math.round(z / 4)))) z -= 1
+  const d = dressRoad(route, at, new THREE.Vector3(at.x, 0, z - 12))
+  const kitGroup = buildInstanced(d.placements)
+  level.group.add(d.group, kitGroup)
+  yardDressing = { route, at, d, kit: kitGroup }
+  roadSmokeAt = d.smoke
+}
+
+/**
+ * The crossroads now (§3.2): depth 3, its boss down, the road not chosen. HP is whole, strain
+ * carries; no stats, no banner, no packs. A resume passes the room's seed.
+ */
+function enterCrossroads(seed = Math.floor(Math.random() * 1e9)) {
+  beamArmed.exit = true
+  beamArmed.home = true
+  clearYardDressing()
+  level?.dispose()
+  hud.bossBar(null)
+  loot.clear()
+  combat.reset()
+  partFx.clear()
+  run.seed = seed
+  run.bossFelled = true
+  run.bossLoot = []
+  run.route = null
+  const room = generateCrossroads(seed)
+  level = room
+  world.scene.add(room.group)
+  combat.terrain = room.terrain
+  loot.terrain = room.terrain
+  combat.breakables = []
+  arenaFloor = null
+  lastThief = null
+  namedLabels.length = 0
+  // both open from the first tick: he arrives outside both, so both are armed at once
+  roadArmed.clear()
+  for (const r of room.roads) if (Math.hypot(room.entrance.x - r.at.x, room.entrance.z - r.at.z) >= EXIT_RADIUS) roadArmed.add(r.route)
+  roadSmokeAt = room.smoke
+  setSurfaces(PLACES.ruin.surfaces)
+  // the afternoon, with no span: the day doesn't move in here
+  day.enter(3)
+  dayApplied = day.shown
+  applyDay(world, 'afternoon')
+  run.fought = false
+  run.quietT = 0
+  run.killed = false
+  lastStep.clear()
+  still.pos.copy(room.entrance)
+  still.facing = CROSSROADS.facing
+  prev.copy(still.pos)
+  graceLean.set(0, 0, 0)
+  run.depth = 3
+}
+
+/** §3.4: into a road's beam. The route is set, the save remembers it, and the swap goes to depth 4. */
+function takeRoad(route: RouteId) {
+  run.route = route
+  if (!run.dev) save.lastRoad = route
+  descend()
 }
 
 /**
@@ -1929,6 +2065,8 @@ function commit(kind: EndingKind) {
   save.pendingHook = { candidates: hookCandidates(save, worn) }
   save.lastEnding = { kind, hour, depth: run.depth, worn, cardId: run.id, arrived: false }
   save.run = null
+  // §3.1, opening the road: a run that felled an Assembler opens the Line, from the next run on
+  if (flag('line') && (run.depth >= 4 || (run.depth === 3 && run.bossFelled)) && !save.roads.includes('III')) save.roads.push('III')
   store.write()
 }
 
@@ -2575,9 +2713,15 @@ function simulate(realDt: number) {
     run.t += realDt
     if (!run.swapped && run.t >= DESCEND_OUT) {
       run.swapped = true
-      // the road is set on the way down from the Assembler (the crossroads comes in A2)
-      if (run.depth === 3) run.route ??= routeForAlternate()
-      enterLevel(run.depth + 1)
+      // §3.1: down from the Assembler, the crossroads when it's due; otherwise the road is set here
+      if (run.depth === 3 && crossroadsDue()) enterCrossroads()
+      else {
+        if (run.depth === 3 && !run.route) {
+          run.route = routeForAlternate()
+          if (!run.dev && roadChoice() === 'alternate' && flag('line')) save.lastRoad = run.route
+        }
+        enterLevel(run.depth + 1)
+      }
       // a beam save: a reload comes back to the start of this depth
       writeSnapshot()
     }
@@ -2718,6 +2862,17 @@ function simulate(realDt: number) {
   if (run.phase === 'crawl' && level?.home && level.homeOpen && beamArmed.home && toHome < EXIT_RADIUS) {
     beginHoming(level.home)
     return
+  }
+  // §3.4: the crossroads' two roads, each armed once he's outside it
+  if (run.phase === 'crawl' && level?.roads) {
+    for (const r of level.roads) {
+      const d = Math.hypot(still.pos.x - r.at.x, still.pos.z - r.at.z)
+      if (d > BEAM_REARM) roadArmed.add(r.route)
+      if (roadArmed.has(r.route) && d < EXIT_RADIUS) {
+        takeRoad(r.route)
+        return
+      }
+    }
   }
 
   still.group.scale.lerp(new THREE.Vector3(1, 1, 1), Math.min(1, dt * 9))
@@ -2986,6 +3141,7 @@ let ambientT = 0
 let slagT = 0
 const SLAG_DRIP_S = 0.33
 function ambientFx(dt: number) {
+  if (level?.group.visible) roadSmoke.tick(dt, vfx, roadSmokeAt)
   ambientT -= dt
   const tick = ambientT <= 0
   if (tick) ambientT = 0.09
@@ -3031,7 +3187,9 @@ function frame(nowMs: number) {
 
   // Grace's light drifts a little toward the exit: the light you carry points the way.
   // Once an Assembler is down, it points home.
-  if (level && run.phase === 'crawl') {
+  // §3.3: in the crossroads it's held: neither road is the way
+  if (level?.crossroads) graceLean.set(0, 0, 0)
+  else if (level && run.phase === 'crawl') {
     const to = LEAN_HOME && level.home && level.homeOpen ? level.home : level.exit
     const ex = to.x - x
     const ez = to.z - z
@@ -3096,6 +3254,7 @@ function frame(nowMs: number) {
   })
   if (!paused) clock += elapsed * 1000
   drawEliteLabels()
+  drawRoadLabels()
   partFaces(elapsed)
   hud.update(clock)
   if (!paused) {
@@ -3436,7 +3595,30 @@ if (import.meta.env.DEV) {
       return flagsNow()
     },
     /** The road: this run's, whether he's in the crossroads, and the save's roads. */
-    __route: () => ({ route: run.route, atCrossroads: false, roads: [...save.roads], lastRoad: save.lastRoad }),
+    __route: () => ({ route: run.route, atCrossroads: !!level?.crossroads, roads: [...save.roads], lastRoad: save.lastRoad }),
+    /** The crossroads' two roads, or null anywhere else. */
+    __roads: () => level?.roads?.map((r) => ({ route: r.route, x: r.at.x, z: r.at.z, open: true, armed: roadArmed.has(r.route) })) ?? null,
+    /** Into the crossroads now: depth 3, its boss down, the road unchosen (and its beam save). */
+    __crossroads: () => {
+      Object.assign(run, { phase: 'crawl', committed: false, ending: null })
+      enterCrossroads()
+      hud.mode('run')
+      hud.enabled = true
+      writeSnapshot()
+    },
+    /** Walk into a road's beam and step until the crawl at depth 4. Returns the route taken. */
+    __takeRoad: (r: RouteId) => {
+      const road = level?.roads?.find((x) => x.route === r)
+      if (!road) return null
+      roadArmed.add(r)
+      still.pos.set(road.at.x, 0, road.at.z)
+      for (let i = 0; i < 600 && !(run.phase === 'crawl' && run.depth === 4); i++) devTick()
+      return run.route
+    },
+    /** The road labels showing now (text and alpha). */
+    __beamLabels: () => hud.beamLabels.map((l) => ({ ...l })),
+    /** The alternate's dressed yard beam: the road it names, or null. */
+    __yardRoad: () => (yardDressing ? { route: yardDressing.route, label: ROAD_LABEL[yardDressing.route] } : null),
     __zones: () => workshop.zones.map((z) => ({ id: z.id, anchor: z.anchor })),
     /** toggleTurn through the rules, saved and shown as the card's button would. */
     __turn: (id: string) => {

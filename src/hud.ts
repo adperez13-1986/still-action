@@ -112,6 +112,14 @@ export interface Hud {
   /** The boss's health across the top. Null hides it. */
   /** `open`: its ×1.5 window, named on the bar by `openWord` ('stunned'). */
   bossBar: (b: { name: string; frac: number; phase2: boolean; open: boolean; openWord: string } | null) => void
+  /**
+   * A road's name over its beam (the crossroads, and the alternate's dressed yard beam):
+   * the elite-name label's element and style. `at` is the screen point (px) under the name;
+   * null takes the label away. `alpha` fades it with distance.
+   */
+  beamLabel: (id: string, text: string, at: { x: number; y: number } | null, alpha: number) => void
+  /** The road labels showing now, for checks. */
+  readonly beamLabels: readonly { id: string; text: string; alpha: number }[]
   /** A generic prompt in the card's place (shrines, the Workshop's things). Null hides it; a null action hides its button. */
   prompt: (p: { title: string; line: string; action: string | null } | null) => void
   /**
@@ -225,6 +233,17 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
     <button type="button" id="pauseBtn" aria-label="pause"><i></i><i></i></button>
   `
 
+  // the road labels: the elite names' layer and look, made on first use
+  const beamEls = new Map<string, HTMLElement>()
+  let beamRoot: HTMLElement | null = null
+  const beamLayer = () => {
+    if (!beamRoot) {
+      beamRoot = document.createElement('div')
+      beamRoot.style.cssText = 'position:absolute;inset:0;pointer-events:none;z-index:3'
+      root.appendChild(beamRoot)
+    }
+    return beamRoot
+  }
   const zone = root.querySelector<HTMLElement>('#stickZone')!
   const base = root.querySelector<HTMLElement>('#stickBase')!
   const knob = root.querySelector<HTMLElement>('#stickKnob')!
@@ -609,6 +628,29 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
         paint(b)
       }
       drawNotches()
+    },
+
+    beamLabel(id, text, at, alpha) {
+      let el = beamEls.get(id)
+      if (!at || alpha <= 0) {
+        el?.remove()
+        beamEls.delete(id)
+        return
+      }
+      if (!el) {
+        el = document.createElement('div')
+        el.className = 'elite named beam'
+        el.appendChild(document.createElement('b'))
+        beamLayer().appendChild(el)
+        beamEls.set(id, el)
+      }
+      el.querySelector('b')!.textContent = text
+      el.style.left = `${at.x}px`
+      el.style.top = `${at.y}px`
+      el.style.opacity = alpha.toFixed(3)
+    },
+    get beamLabels() {
+      return [...beamEls].map(([id, el]) => ({ id, text: el.textContent ?? '', alpha: Number(el.style.opacity) }))
     },
 
     bossBar(b) {
