@@ -35,6 +35,26 @@ function surfaceOf(name: string): Surface {
   return 'rock'
 }
 
+/** Which ambientCG set each role wears now, and every material's handle on it, so an area can swap them. */
+const surfaceIds: Record<Surface, string> = { paving: 'PavingStones142', rock: 'Rock035', wood: 'Planks023A', ground: 'Ground108' }
+const skinned: Record<Surface, { uAlb: { value: THREE.Texture }; uNrm: { value: THREE.Texture } }[]> = { paving: [], rock: [], wood: [], ground: [] }
+
+/**
+ * An area's surfaces: each role whose texture set differs is swapped on every material
+ * wearing it (textures load on first use). Area I and II share one set today, so this is
+ * a no-op until the content step gives area II its own.
+ */
+export function setSurfaces(ids: Record<Surface, string>) {
+  for (const role of Object.keys(ids) as Surface[]) {
+    if (surfaceIds[role] === ids[role]) continue
+    surfaceIds[role] = ids[role]
+    for (const u of skinned[role]) {
+      u.uAlb.value = tex(`${ids[role]}_Color`, true)
+      u.uNrm.value = tex(`${ids[role]}_NormalGL`, false)
+    }
+  }
+}
+
 /** Look-test values. Shared uniforms, so they can still be tuned live. */
 export const SURF = {
   uGrime: { value: 0.7 },
@@ -64,15 +84,15 @@ function tex(file: string, color: boolean) {
  * the Workshop's boards are wider and darker than a crate's.
  */
 export function skin(m: THREE.MeshStandardMaterial, surface: Surface, tune: { scale?: number; gain?: number } = {}) {
-  const { id } = SURFACE_TEX[surface]
   const scale = tune.scale ?? SURFACE_TEX[surface].scale
   const gain = tune.gain ?? SURFACE_TEX[surface].gain
   const own = {
-    uAlb: { value: tex(`${id}_Color`, true) },
-    uNrm: { value: tex(`${id}_NormalGL`, false) },
+    uAlb: { value: tex(`${surfaceIds[surface]}_Color`, true) },
+    uNrm: { value: tex(`${surfaceIds[surface]}_NormalGL`, false) },
     uScale: { value: 1 / scale },
     uGain: { value: gain },
   }
+  skinned[surface].push(own)
   m.roughness = 1
   m.metalness = 0
   m.onBeforeCompile = (shader) => {

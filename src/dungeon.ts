@@ -5,7 +5,7 @@ import type { Terrain, WallFace } from './terrain'
 import type { BreachHole } from './parts'
 import { ELITE_MODS, type Archetype, type EliteMod } from './combat'
 import { BROOD } from './swarm'
-import { exitsAfterBoss, type ExitKind } from './areas'
+import { exitsAfterBoss, areaOf, type AreaDef, type BossDef, type ExitKind, type KitPreset } from './areas'
 
 /**
  * A D2-style crawl level on a 4-unit grid (KayKit's floor tile). A main path of
@@ -84,6 +84,8 @@ export interface Level {
   openHome: () => void
   /** The warm beam's brightness over its breathing: 1 at rest, up to 2 as he walks into it. */
   homeGlow: number
+  /** Walk home only: the lit house's door zone and where Grace's light ends up inside it. */
+  house?: { door: THREE.Vector3; inside: THREE.Vector3 }
   group: THREE.Group
   terrain: Terrain
   rooms: Room[]
@@ -539,7 +541,17 @@ function pickLessonRoom(rooms: Room[], rand: () => number): Room | null {
   return pool.length ? pool[Math.floor(rand() * pool.length)]! : null
 }
 
-export function generateLevel(depth: number, seed = Math.floor(Math.random() * 1e9), opts: { boss?: boolean } = {}): Level {
+/** A floor cell's piece: the first whose cumulative threshold the cell's one roll is under. */
+const pickFloor = (table: [Piece, number][], roll: number): Piece => (table.find(([, t]) => roll < t) ?? table[table.length - 1]!)[0]
+
+/**
+ * `area` (default: the depth's) is what it's built with; `boss` is bossFor(depth).
+ * INV: area I builds exactly what this built before areas existed, rand() for rand().
+ */
+export function generateLevel(
+  depth: number, seed = Math.floor(Math.random() * 1e9), opts: { boss?: BossDef | null; area?: AreaDef; bossFelled?: boolean } = {},
+): Level {
+  const kit = (opts.area ?? areaOf(depth)).kit
   const rand = rng(seed)
   const layout = opts.boss ? generateBossLayout(rand) : generateLayout(rand, 2 + Math.floor(rand() * 2))
   const { floor } = layout
@@ -554,59 +566,15 @@ export function generateLevel(depth: number, seed = Math.floor(Math.random() * 1
   for (const [i, j] of cells) {
     const corridor = layout.corridors.has(key(i, j))
     const roll = rand()
-    const piece: Piece = corridor
-      ? roll < 0.35 ? 'floor_dirt_large' : 'floor_tile_large'
-      : roll < 0.14 ? 'floor_tile_large_rocks' : roll < 0.22 ? 'floor_dirt_large' : 'floor_tile_large'
+    const piece = pickFloor(corridor ? kit.floorCorridor : kit.floorRoom, roll)
     placements.push({ piece, x: i * CELL, z: j * CELL, rotY: quarter() })
   }
 
-  // --- walls: a barrier on every floor edge facing nothing ---
-  // vertices are grid corners; count wall edges meeting at each to place columns
-  const vx = new Map<string, { along: number; across: number }>()
-  const touch = (a: number, b: number, axis: 'along' | 'across') => {
-    const v = vx.get(key(a, b)) ?? { along: 0, across: 0 }
-    v[axis]++
-    vx.set(key(a, b), v)
-  }
-  const h = CELL / 2
-  for (const [i, j] of cells) {
-    const x = i * CELL
-    const z = j * CELL
-    if (!floor.has(key(i + 1, j))) {
-      placements.push({ piece: 'barrier', x: x + h, z, rotY: Math.PI / 2 })
-      boxes.push({ minX: x + h - WALL_HALF, maxX: x + h + WALL_HALF, minZ: z - h, maxZ: z + h })
-      touch(i + 1, j, 'across'); touch(i + 1, j + 1, 'across')
-    }
-    if (!floor.has(key(i - 1, j))) {
-      placements.push({ piece: 'barrier', x: x - h, z, rotY: Math.PI / 2 })
-      boxes.push({ minX: x - h - WALL_HALF, maxX: x - h + WALL_HALF, minZ: z - h, maxZ: z + h })
-      touch(i, j, 'across'); touch(i, j + 1, 'across')
-    }
-    if (!floor.has(key(i, j + 1))) {
-      placements.push({ piece: 'barrier', x, z: z + h })
-      boxes.push({ minX: x - h, maxX: x + h, minZ: z + h - WALL_HALF, maxZ: z + h + WALL_HALF })
-      touch(i, j + 1, 'along'); touch(i + 1, j + 1, 'along')
-    }
-    if (!floor.has(key(i, j - 1))) {
-      placements.push({ piece: 'barrier', x, z: z - h })
-      boxes.push({ minX: x - h, maxX: x + h, minZ: z - h - WALL_HALF, maxZ: z - h + WALL_HALF })
-      touch(i, j, 'along'); touch(i + 1, j, 'along')
-    }
-  }
-  // a column wherever a wall turns a corner or ends; straight runs stay plain
-  for (const [k, v] of vx) {
-    const [a, b] = k.split(',').map(Number) as [number, number]
-    if ((v.along > 0 && v.across > 0) || v.along + v.across === 1) {
-      const x = a * CELL - h
-      const z = b * CELL - h
-      placements.push({ piece: 'column', x, z })
-      circles.push({ x, z, r: COLUMN_R })
-    }
-  }
+  buildWalls(cells, floor, kit, placements, boxes, circles)
 
   // --- cover: a few props per room, kept off the lines between doorways ---
-  const PROPS: [Piece, number][] = [['crates_stacked', 1], ['barrel_large', 0.7], ['box_large', 0.8], ['rubble_half', 0.42], ['box_stacked', 0.55], ['barrel_large', 0.7], ['box_large', 0.8]]
-  const BREAKABLE = new Set<Piece>(['barrel_large', 'box_large', 'box_stacked'])
+  const PROPS = kit.cover
+  const BREAKABLE = new Set<Piece>(kit.breakable)
   const breakables: Breakable[] = []
   for (const room of layout.rooms) {
     if (room.kind === 'entrance' || room.kind === 'exit') continue
@@ -651,7 +619,7 @@ export function generateLevel(depth: number, seed = Math.floor(Math.random() * 1
     for (const [ox, oz, along] of [[-6.5, 0, 'z'], [6.5, 0, 'z'], [0, -6.5, 'x'], [0, 6.5, 'x']] as const) {
       const x = c.x + ox
       const z = c.z + oz
-      placements.push({ piece: 'barrier_column', x, z, rotY: along === 'z' ? Math.PI / 2 : 0 })
+      placements.push({ piece: kit.arenaCover, x, z, rotY: along === 'z' ? Math.PI / 2 : 0 })
       boxes.push(along === 'z'
         ? { minX: x - 0.35, maxX: x + 0.35, minZ: z - 2, maxZ: z + 2 }
         : { minX: x - 2, maxX: x + 2, minZ: z - 0.35, maxZ: z + 0.35 })
@@ -659,8 +627,8 @@ export function generateLevel(depth: number, seed = Math.floor(Math.random() * 1
     for (const [ox, oz] of [[-9.5, -9.5], [9.5, -9.5], [-9.5, 9.5], [9.5, 9.5], [-3.5, 10], [3.5, -10]] as const) {
       const x = c.x + ox
       const z = c.z + oz
-      const piece: Piece = rand() < 0.5 ? 'barrel_large' : 'box_large'
-      const scale = piece === 'barrel_large' ? 0.7 : 0.8
+      const piece: Piece = rand() < 0.5 ? kit.breakable[0]! : kit.breakable[1]!
+      const scale = piece === kit.breakable[0] ? 0.7 : 0.8
       const { geometry, material } = pieceData(piece)
       const mesh = new THREE.Mesh(geometry, material)
       mesh.position.set(x, 0, z)
@@ -676,50 +644,7 @@ export function generateLevel(depth: number, seed = Math.floor(Math.random() * 1
   }
 
   // --- the beyond ---
-  let minI = Infinity, maxI = -Infinity, minJ = Infinity, maxJ = -Infinity
-  for (const [i, j] of cells) {
-    minI = Math.min(minI, i); maxI = Math.max(maxI, i); minJ = Math.min(minJ, j); maxJ = Math.max(maxJ, j)
-  }
-  const nearFloor = (x: number, z: number, cellsAway: number) => {
-    const ci = Math.round(x / CELL)
-    const cj = Math.round(z / CELL)
-    for (let i = ci - cellsAway; i <= ci + cellsAway; i++) for (let j = cj - cellsAway; j <= cj + cellsAway; j++) {
-      if (floor.has(key(i, j))) return true
-    }
-    return false
-  }
-  // The camera looks from +x,+z. A tall ruin hides whatever lies behind it along
-  // (-1,-1), so it's only allowed where that shadow falls on no floor.
-  const hidesFloor = (x: number, z: number) => {
-    for (let s = 0; s <= 7; s += 0.75) {
-      for (const side of [-1.8, 0, 1.8]) {
-        const px = x - s * Math.SQRT1_2 + side * Math.SQRT1_2
-        const pz = z - s * Math.SQRT1_2 - side * Math.SQRT1_2
-        if (floor.has(key(Math.round(px / CELL), Math.round(pz / CELL)))) return true
-      }
-    }
-    return false
-  }
-  const TALL: Piece[] = ['wall_broken', 'wall_broken', 'pillar', 'rubble_large', 'wall', 'barrier_column']
-  const spanX = (maxI - minI + 10) * CELL
-  const spanZ = (maxJ - minJ + 10) * CELL
-  const ruinCount = Math.floor((spanX * spanZ) / 90)
-  for (let n = 0; n < ruinCount; n++) {
-    const x = (minI - 5) * CELL + rand() * spanX
-    const z = (minJ - 5) * CELL + rand() * spanZ
-    if (nearFloor(x, z, 0) || (nearFloor(x, z, 1) && rand() < 0.7)) continue
-    if (hidesFloor(x, z)) {
-      placements.push({ piece: rand() < 0.5 ? 'rubble_half' : 'floor_dirt_large_rocky', x, z, rotY: rand() * 6.3, y: -2.4 - rand() * 0.6, scale: 0.8 + rand() * 0.4 })
-    } else {
-      placements.push({ piece: pick(TALL), x, z, rotY: rand() * 6.3, y: -rand() * 1.6, scale: 0.8 + rand() * 0.5 })
-    }
-  }
-  for (let n = 0; n < ruinCount / 3; n++) {
-    const x = (minI - 5) * CELL + rand() * spanX
-    const z = (minJ - 5) * CELL + rand() * spanZ
-    if (nearFloor(x, z, 0)) continue
-    placements.push({ piece: 'floor_dirt_large_rocky', x, z, rotY: rand() * 6.3, y: -0.08 })
-  }
+  const { minI, maxI, minJ, maxJ, spanX, spanZ } = buildBeyond(cells, floor, rand, kit, placements)
 
   // --- packs: one per main and side room, sized by depth, never in the entrance or exit ---
   const makeTerrainNow = makeTerrain(floor, boxes, circles)
@@ -963,6 +888,275 @@ export function generateLevel(depth: number, seed = Math.floor(Math.random() * 1
       for (const o of group.children) if (o instanceof THREE.InstancedMesh) o.dispose()
     },
   }
+}
+
+// --- the walk home -------------------------------------------------------------------
+
+/** The walk home (§6.4): a start room, a short path up the screen, the yard, and the lit house. */
+const WALK = {
+  path: [[-1, 0], [-2, 0], [-3, 0], [-3, -1], [-3, -2], [-4, -2], [-5, -2], [-5, -3], [-5, -4], [-6, -4]] as [number, number][],
+  yard: { i: [-8, -6] as [number, number], j: [-6, -4] as [number, number] },
+  house: { i: [-8, -6] as [number, number], j: [-9, -7] as [number, number] },
+  /** The door zone and where Grace's light ends up inside. The house's south face is at z = -26. */
+  door: new THREE.Vector3(-28, 0, -25),
+  doorRadius: 1.3,
+  inside: new THREE.Vector3(-28, 2.5, -27.5),
+}
+/**
+ * The one light: the lamp in the house is hers, and what spills from it (never a second
+ * light source). A deep amber, like the warm beam's, and brighter than white, so it blooms:
+ * at night's saturation any warm colour that doesn't glow reads as a flat pink.
+ */
+const HOUSE_WARM = new THREE.Color(0xff8a33).multiplyScalar(2.4)
+
+/**
+ * The walk home, built with an area's kit at night: no packs, no crates, no shrines,
+ * nothing that can hurt or cost him. It ends at the lit house (§6.5), seen from
+ * outside, where only its south and east faces show; walking into its door zone is
+ * the Home ending. `house.door` is that zone.
+ */
+export function generateWalkHome(seed: number, area: AreaDef): Level {
+  const kit = area.kit
+  const rand = rng(seed)
+  const floor = new Set<string>()
+  const add = (i: number, j: number) => floor.add(key(i, j))
+  for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) add(i, j)
+  for (const [i, j] of WALK.path) add(i, j)
+  for (let i = WALK.yard.i[0]; i <= WALK.yard.i[1]; i++) for (let j = WALK.yard.j[0]; j <= WALK.yard.j[1]; j++) add(i, j)
+  const solid = new Set<string>()
+  for (let i = WALK.house.i[0]; i <= WALK.house.i[1]; i++) for (let j = WALK.house.j[0]; j <= WALK.house.j[1]; j++) solid.add(key(i, j))
+  const cells = [...floor].map((k) => k.split(',').map(Number) as [number, number])
+  const placements: Placement[] = []
+  const boxes: Box[] = []
+  const circles: Circle[] = []
+
+  // dirt and broken paving: the way home is worn, not built
+  for (const [i, j] of cells) {
+    placements.push({ piece: rand() < 0.55 ? 'floor_dirt_large' : 'floor_tile_large_rocks', x: i * CELL, z: j * CELL, rotY: Math.floor(rand() * 4) * (Math.PI / 2) })
+  }
+  buildWalls(cells, floor, kit, placements, boxes, circles, solid)
+  // the house is solid all through: he stops at its door
+  const hx0 = WALK.house.i[0] * CELL - CELL / 2
+  const hx1 = WALK.house.i[1] * CELL + CELL / 2
+  const hz0 = WALK.house.j[0] * CELL - CELL / 2
+  const hz1 = WALK.house.j[1] * CELL + CELL / 2
+  boxes.push({ minX: hx0, maxX: hx1, minZ: hz0, maxZ: hz1 + 0.5 })
+  const { minI, maxI, minJ, maxJ, spanX, spanZ } = buildBeyond(cells, floor, rand, kit, placements, (x, z) => x > hx0 - 1.5 && x < hx1 + 1.5 && z > hz0 - 1.5 && z < hz1 + 1.5)
+
+  const group = buildInstanced(placements)
+  const groundMat = new THREE.MeshStandardMaterial({ color: 0x151b24 })
+  skin(groundMat, 'ground')
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(spanX + 80, spanZ + 80), groundMat)
+  ground.rotation.x = -Math.PI / 2
+  ground.position.set(((minI + maxI) / 2) * CELL, -0.12, ((minJ + maxJ) / 2) * CELL)
+  group.add(ground)
+
+  // --- the lit house: the Workshop, seen from outside ---
+  const faceZ = hz1
+  const faceX = hx1
+  const house: Placement[] = [
+    { piece: 'wall', x: -32, z: faceZ }, { piece: 'wall_doorway', x: -28, z: faceZ }, { piece: 'wall_window_open', x: -24, z: faceZ },
+    // the east face spans the footprint (z -38..-26; §6.5's -38/-34/-30 left its south corner open)
+    { piece: 'wall', x: faceX, z: hz0 + 2, rotY: Math.PI / 2 }, { piece: 'wall', x: faceX, z: hz0 + 6, rotY: Math.PI / 2 }, { piece: 'wall', x: faceX, z: hz0 + 10, rotY: Math.PI / 2 },
+  ]
+  const houseGroup = buildInstanced(house, { surface: { wall: 'wood', wall_doorway: 'wood', wall_window_open: 'wood' }, tune: { gain: 0.5 } })
+  group.add(houseGroup)
+  const own: { geometry: THREE.BufferGeometry; material: THREE.Material }[] = []
+  const keep = <T extends THREE.Mesh>(m: T) => {
+    own.push({ geometry: m.geometry, material: m.material as THREE.Material })
+    group.add(m)
+    return m
+  }
+  // the door, filled with warm light spilling out; a lit window beside it
+  const warmMat = new THREE.MeshBasicMaterial({ color: HOUSE_WARM, fog: false, transparent: true, opacity: 0.95 })
+  const doorLight = keep(new THREE.Mesh(new THREE.PlaneGeometry(2.0, 2.75), warmMat))
+  doorLight.position.set(-28, 1.375, faceZ - 0.3)
+  const winLight = keep(new THREE.Mesh(new THREE.PlaneGeometry(4, 4), warmMat.clone()))
+  winLight.position.set(-24, 2, faceZ - 0.62)
+  // a fan of warm light on the yard in front of the door
+  const fanTex = (() => {
+    const c = document.createElement('canvas')
+    c.width = c.height = 128
+    const g = c.getContext('2d')!
+    // spreading from the threshold (the texture's top edge), gone before the plane's edges
+    const grad = g.createRadialGradient(64, 0, 2, 64, 0, 64)
+    grad.addColorStop(0, 'rgba(255, 130, 50, 0.9)')
+    grad.addColorStop(0.45, 'rgba(255, 110, 40, 0.35)')
+    grad.addColorStop(1, 'rgba(255, 100, 30, 0)')
+    g.fillStyle = grad
+    g.fillRect(0, 0, 128, 128)
+    const t = new THREE.CanvasTexture(c)
+    t.colorSpace = THREE.SRGBColorSpace
+    return t
+  })()
+  const fanMat = new THREE.MeshBasicMaterial({ map: fanTex, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, fog: false })
+  const fan = keep(new THREE.Mesh(new THREE.PlaneGeometry(5, 4), fanMat))
+  fan.rotation.x = -Math.PI / 2
+  fan.position.set(-28, DECAL_Y, faceZ + 2 + 0.5)
+  // roofed, so the room is only ever seen from inside; a stub of chimney
+  const roof = keep(new THREE.Mesh(new THREE.BoxGeometry(12.6, 0.4, 12.6), new THREE.MeshStandardMaterial({ color: 0x1a1614, roughness: 1 })))
+  roof.position.set((hx0 + hx1) / 2, 4.2, (hz0 + hz1) / 2)
+  const chimney = new THREE.Mesh(pieceData('pillar').geometry, pieceData('pillar').material)
+  chimney.scale.setScalar(0.4)
+  chimney.position.set(hx1 - 3, 4.4, hz0 + 3)
+  group.add(chimney)
+
+  const start: Room = { kind: 'entrance', ci: 0, cj: 0, rx: 1, rz: 1, center: new THREE.Vector3() }
+  const yard: Room = { kind: 'exit', ci: -7, cj: -5, rx: 1, rz: 1, center: new THREE.Vector3(-28, 0, -20) }
+  return {
+    depth: RUN_DEPTHS_WALK,
+    group,
+    terrain: makeTerrain(floor, boxes, circles),
+    exitOpen: false,
+    openExit() {},
+    home: null,
+    homeOpen: false,
+    openHome() {},
+    homeGlow: 1,
+    packs: [],
+    breakables: [],
+    shrines: [],
+    smash() {},
+    rooms: [start, yard],
+    entrance: new THREE.Vector3(0, 0, 0),
+    // Grace leans toward the door on the way
+    exit: WALK.door.clone(),
+    house: { door: WALK.door.clone(), inside: WALK.inside.clone() },
+    update(t) {
+      // the light in there moves a little, as a lamp's does
+      const flicker = 0.92 + 0.05 * Math.sin(t * 2.3) + 0.03 * Math.sin(t * 7.1)
+      warmMat.opacity = flicker
+      ;(winLight.material as THREE.MeshBasicMaterial).opacity = flicker * 0.95
+    },
+    dispose() {
+      group.removeFromParent()
+      ground.geometry.dispose()
+      groundMat.dispose()
+      for (const o of own) {
+        o.geometry.dispose()
+        o.material.dispose()
+      }
+      fanTex.dispose()
+      for (const o of group.children) if (o instanceof THREE.InstancedMesh) o.dispose()
+      for (const o of houseGroup.children) if (o instanceof THREE.InstancedMesh) o.dispose()
+    },
+  }
+}
+/** The walk home is past the last depth; nothing reads its number but the banner, and it shows none. */
+const RUN_DEPTHS_WALK = 7
+
+/**
+ * A wall (the kit's barrier) on every floor edge facing nothing, and a column wherever
+ * a wall turns a corner or ends. Uses no rand(). `solid` cells (the lit house) get no
+ * wall on their side: they bring their own.
+ */
+function buildWalls(
+  cells: [number, number][], floor: Set<string>, kit: KitPreset, placements: Placement[], boxes: Box[], circles: Circle[], solid?: Set<string>,
+) {
+  const open = (i: number, j: number) => !floor.has(key(i, j)) && !solid?.has(key(i, j))
+  // vertices are grid corners; count wall edges meeting at each to place columns
+  const vx = new Map<string, { along: number; across: number }>()
+  const touch = (a: number, b: number, axis: 'along' | 'across') => {
+    const v = vx.get(key(a, b)) ?? { along: 0, across: 0 }
+    v[axis]++
+    vx.set(key(a, b), v)
+  }
+  const h = CELL / 2
+  for (const [i, j] of cells) {
+    const x = i * CELL
+    const z = j * CELL
+    if (open(i + 1, j)) {
+      placements.push({ piece: kit.wall, x: x + h, z, rotY: Math.PI / 2 })
+      boxes.push({ minX: x + h - WALL_HALF, maxX: x + h + WALL_HALF, minZ: z - h, maxZ: z + h })
+      touch(i + 1, j, 'across'); touch(i + 1, j + 1, 'across')
+    }
+    if (open(i - 1, j)) {
+      placements.push({ piece: kit.wall, x: x - h, z, rotY: Math.PI / 2 })
+      boxes.push({ minX: x - h - WALL_HALF, maxX: x - h + WALL_HALF, minZ: z - h, maxZ: z + h })
+      touch(i, j, 'across'); touch(i, j + 1, 'across')
+    }
+    if (open(i, j + 1)) {
+      placements.push({ piece: kit.wall, x, z: z + h })
+      boxes.push({ minX: x - h, maxX: x + h, minZ: z + h - WALL_HALF, maxZ: z + h + WALL_HALF })
+      touch(i, j + 1, 'along'); touch(i + 1, j + 1, 'along')
+    }
+    if (open(i, j - 1)) {
+      placements.push({ piece: kit.wall, x, z: z - h })
+      boxes.push({ minX: x - h, maxX: x + h, minZ: z - h - WALL_HALF, maxZ: z - h + WALL_HALF })
+      touch(i, j, 'along'); touch(i + 1, j, 'along')
+    }
+  }
+  // a column wherever a wall turns a corner or ends; straight runs stay plain
+  for (const [k, v] of vx) {
+    const [a, b] = k.split(',').map(Number) as [number, number]
+    if ((v.along > 0 && v.across > 0) || v.along + v.across === 1) {
+      const x = a * CELL - h
+      const z = b * CELL - h
+      placements.push({ piece: kit.column, x, z })
+      circles.push({ x, z, r: COLUMN_R })
+    }
+  }
+
+}
+
+/**
+ * The ruins beyond the walls, fading into the fog: tall only where the camera's
+ * sight line past them falls on no floor, sunk rubble where it would. `avoid`
+ * keeps a place clear (the lit house's footprint) without costing a rand().
+ */
+function buildBeyond(
+  cells: [number, number][], floor: Set<string>, rand: () => number, kit: KitPreset, placements: Placement[], avoid?: (x: number, z: number) => boolean,
+) {
+  const pick = <T>(list: readonly T[]) => list[Math.floor(rand() * list.length)]!
+  let minI = Infinity, maxI = -Infinity, minJ = Infinity, maxJ = -Infinity
+  for (const [i, j] of cells) {
+    minI = Math.min(minI, i); maxI = Math.max(maxI, i); minJ = Math.min(minJ, j); maxJ = Math.max(maxJ, j)
+  }
+  const nearFloor = (x: number, z: number, cellsAway: number) => {
+    const ci = Math.round(x / CELL)
+    const cj = Math.round(z / CELL)
+    for (let i = ci - cellsAway; i <= ci + cellsAway; i++) for (let j = cj - cellsAway; j <= cj + cellsAway; j++) {
+      if (floor.has(key(i, j))) return true
+    }
+    return false
+  }
+  // The camera looks from +x,+z. A tall ruin hides whatever lies behind it along
+  // (-1,-1), so it's only allowed where that shadow falls on no floor.
+  const hidesFloor = (x: number, z: number) => {
+    for (let s = 0; s <= 7; s += 0.75) {
+      for (const side of [-1.8, 0, 1.8]) {
+        const px = x - s * Math.SQRT1_2 + side * Math.SQRT1_2
+        const pz = z - s * Math.SQRT1_2 - side * Math.SQRT1_2
+        if (floor.has(key(Math.round(px / CELL), Math.round(pz / CELL)))) return true
+      }
+    }
+    return false
+  }
+  const TALL = kit.beyondTall
+  const spanX = (maxI - minI + 10) * CELL
+  const spanZ = (maxJ - minJ + 10) * CELL
+  const ruinCount = Math.floor((spanX * spanZ) / 90)
+  for (let n = 0; n < ruinCount; n++) {
+    const x = (minI - 5) * CELL + rand() * spanX
+    const z = (minJ - 5) * CELL + rand() * spanZ
+    if (nearFloor(x, z, 0) || (nearFloor(x, z, 1) && rand() < 0.7)) continue
+    if (hidesFloor(x, z)) {
+      const piece = rand() < 0.5 ? kit.beyondLow[0]! : kit.beyondLow[1]!
+      const place = { piece, x, z, rotY: rand() * 6.3, y: -2.4 - rand() * 0.6, scale: 0.8 + rand() * 0.4 }
+      if (!avoid?.(x, z)) placements.push(place)
+    } else {
+      const place = { piece: pick(TALL), x, z, rotY: rand() * 6.3, y: -rand() * 1.6, scale: 0.8 + rand() * 0.5 }
+      if (!avoid?.(x, z)) placements.push(place)
+    }
+  }
+  for (let n = 0; n < ruinCount / 3; n++) {
+    const x = (minI - 5) * CELL + rand() * spanX
+    const z = (minJ - 5) * CELL + rand() * spanZ
+    if (nearFloor(x, z, 0)) continue
+    const place = { piece: kit.beyondLow[1]!, x, z, rotY: rand() * 6.3, y: -0.08 }
+    if (!avoid?.(x, z)) placements.push(place)
+  }
+  return { minI, maxI, minJ, maxJ, spanX, spanZ }
 }
 
 // --- the beams ---------------------------------------------------------------

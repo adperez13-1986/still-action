@@ -7,6 +7,7 @@ import { Charger, CHARGER } from './charger'
 import { Mite, Brood, MiteBatch } from './swarm'
 import { KILL_WEIGHT } from './loot'
 import { Assembler, BOSS } from './boss'
+import type { BossDef } from './areas'
 import type { Terrain } from './terrain'
 import type { Breakable } from './dungeon'
 import type { AbilityDef, BeatKey } from './abilities'
@@ -252,6 +253,8 @@ export class Combat {
   breakables: Breakable[] = []
   /** The boss, while one is alive. */
   boss: Assembler | null = null
+  /** What it is: its name and HP for the bar, and which adds it summons. */
+  bossDef: BossDef | null = null
   private waves: Wave[] = []
   private readonly waveGeo = new THREE.BoxGeometry(0.5, 0.35, 0.28)
   private readonly waveMat = new THREE.MeshBasicMaterial({ color: 0xff8a50, transparent: true, opacity: 0.85, depthWrite: false, blending: THREE.AdditiveBlending })
@@ -1798,8 +1801,10 @@ export class Combat {
   }
 
   /** The area's boss: its own pack, woken by walking into the arena, never leashed. */
-  addBoss(x: number, z: number, face: THREE.Vector3): Assembler {
+  /** `def`: which boss and its adds (rams and mites for the second Assembler arrive with the last step). */
+  addBoss(x: number, z: number, face: THREE.Vector3, def?: BossDef): Assembler {
     const b = new Assembler(x, z)
+    this.bossDef = def ?? null
     this.scene.add(b.group, b.tellGroup, b.worldGroup)
     this.enemies.push(b)
     b.setAsleep(true)

@@ -1,3 +1,4 @@
+import { reapplyDay } from './areas'
 import { grade, type World } from './world'
 import { mix, applyMix, setMuted } from './audio'
 import { ZOOM } from './camera'
@@ -129,5 +130,7 @@ export function apply(world: World) {
   world.graceLight.intensity = grade.graceLight
   world.gradePass.uniforms.uVignette!.value = grade.vignette
   world.gradePass.uniforms.uSaturation!.value = grade.saturation
+  // the sliders move the base; the hour (a depth's, the walk home's, the room's) goes back on top
+  reapplyDay(world)
   world.resize()
 }

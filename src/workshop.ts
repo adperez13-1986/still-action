@@ -7,10 +7,11 @@ import { SLOT_NAMES, type SlotName, type Still } from './still'
 import { PARTS, type AbilityDef, type Tier } from './abilities'
 import { partModel, centred, WALL_SCALE, DISPLAY_EYE, EYE_OFF } from './partmodels'
 import { canTurn, hookOffers } from './pool'
-import type { HomeHour } from './areas'
+import { presetOf, applyDay, WINDOW, GRACE_REACH, BASE_HEMI, BASE_KEY, type HomeHour } from './areas'
 import type { EndingKind, PartId, SaveV1 } from './save'
 import { COLD, type Vfx } from './vfx'
 import * as sfx from './audio'
+import { setRain } from './ambience'
 
 /**
  * Home: the Workshop. A small iso room in the same engine, built once at boot and
@@ -182,30 +183,25 @@ function hintFor(def: AbilityDef): string {
 }
 const SLOT_LABEL: Record<SlotName, string> = { head: 'Head', torso: 'Torso', arms: 'Arms', legs: 'Legs' }
 
-/** The room's grade (§6.1, `workshop`): multipliers on the tuned grade. Morning in the maze is 1 on all of them. */
-const ROOM = { sat: 1.18, exposure: 1, vignette: 0.55, fog: 2, fogColor: 0x0b0f16, background: 0x070a0e, hemi: 0.6, keyPos: [-14, 9, 2] as const }
-/** Through the window, by the hour (§5.3). Daylight is always cold; warm is only for Grace. */
-const WINDOW: Record<HomeHour, { sky: number; key: number; keyColor: number; grace: number }> = {
-  morning: { sky: 0x9fb3cc, key: 0.45, keyColor: 0x9fb8dc, grace: 1.0 },
-  noon: { sky: 0xc4d2e2, key: 0.55, keyColor: 0xb8c8e0, grace: 0.9 },
-  afternoon: { sky: 0x93a3ba, key: 0.4, keyColor: 0x98a8c4, grace: 1.0 },
-  dusk: { sky: 0x4a5670, key: 0.22, keyColor: 0x7c86a6, grace: 1.15 },
-  night: { sky: 0x121826, key: 0.08, keyColor: 0x6c7c9e, grace: 1.3 },
-}
-/** The maze's own light, as world.ts builds it: what leaving the room puts back. */
-const RUN = { hemi: 1.6, key: 1.15, keyColor: 0x8fb0da, keyPos: [-8, 14, -6] as const, fogColor: 0x0b1018, background: 0x070a0e, graceDist: 34 }
-/** Short enough that her light stops at the barriers: the ruins outside stay cold and dark. */
-const ROOM_GRACE_DIST = 16
 /** The boards: wider planks than a crate's and a darker, richer brown; the walls darker still. */
 const FLOOR_WOOD = { scale: 3.2, gain: 0.62 }
 const WALL_WOOD = { gain: 0.5 }
 
-/** The kids, as traces. Static at the afternoon until the one-day step gives each hour its own. */
-const AFTERNOON: TraceSet = {
-  kidsDoor: 'swings-shut', shoes: true, blocks: 'tower', crayons: true,
-  sounds: { steps: true, pencilEvery: [8, 15], tumble: true, rain: false },
+/**
+ * The kids, as traces, by the hour (§5.9). Morning and noon they're out: their door
+ * open on a dark room, the blocks left scattered. Afternoon they're in and awake:
+ * their door pulled to as he comes home, small shoes by the front door, a tower
+ * built, a pencil going. Dusk, quieter. Night, asleep: the door ajar, the blocks
+ * boxed, the crayons tidied away, and rain on the window.
+ */
+const TRACES: Record<HomeHour, TraceSet> = {
+  morning: { kidsDoor: 'open-dark', shoes: false, blocks: 'scattered', crayons: true, sounds: { steps: false, pencilEvery: null, tumble: false, rain: false } },
+  noon: { kidsDoor: 'open-dark', shoes: false, blocks: 'scattered', crayons: true, sounds: { steps: false, pencilEvery: null, tumble: false, rain: false } },
+  afternoon: { kidsDoor: 'swings-shut', shoes: true, blocks: 'tower', crayons: true, sounds: { steps: true, pencilEvery: [8, 15], tumble: true, rain: false } },
+  dusk: { kidsDoor: 'ajar', shoes: true, blocks: 'tower', crayons: true, sounds: { steps: false, pencilEvery: [12, 20], tumble: false, rain: false } },
+  night: { kidsDoor: 'ajar', shoes: true, blocks: 'boxed', crayons: false, sounds: { steps: false, pencilEvery: null, tumble: false, rain: true } },
 }
-const tracesFor = (_hour: HomeHour): TraceSet => AFTERNOON
+const tracesFor = (hour: HomeHour): TraceSet => TRACES[hour]
 
 // --- light -----------------------------------------------------------------------
 
@@ -219,39 +215,22 @@ const newLight = (): Light => ({
   hemi: 0, key: 0, keyColor: new THREE.Color(), keyPos: new THREE.Vector3(), grace: 0, graceDist: 0,
 })
 
+/** The room at an hour, as a Light to ease between: the `workshop` preset with its window (areas.ts). */
 function roomLight(hour: HomeHour, out = newLight()): Light {
-  const w = WINDOW[hour]
-  out.sat = grade.saturation * ROOM.sat
-  out.vignette = grade.vignette * ROOM.vignette
-  out.exposure = grade.exposure * ROOM.exposure
-  out.fogNear = grade.fogNear * ROOM.fog
-  out.fogFar = grade.fogFar * ROOM.fog
-  out.fog.setHex(ROOM.fogColor)
-  out.bg.setHex(ROOM.background)
-  out.hemi = RUN.hemi * ROOM.hemi
-  out.key = RUN.key * w.key
-  out.keyColor.setHex(w.keyColor)
-  out.keyPos.set(...ROOM.keyPos)
-  out.grace = grade.graceLight * 1.2 * w.grace
-  out.graceDist = ROOM_GRACE_DIST
-  return out
-}
-
-/** The maze's look (morning, as tuned): what the run is lit by when he walks out. */
-export function runLight(out = newLight()): Light {
-  out.sat = grade.saturation
-  out.vignette = grade.vignette
-  out.exposure = grade.exposure
-  out.fogNear = grade.fogNear
-  out.fogFar = grade.fogFar
-  out.fog.setHex(RUN.fogColor)
-  out.bg.setHex(RUN.background)
-  out.hemi = RUN.hemi
-  out.key = RUN.key
-  out.keyColor.setHex(RUN.keyColor)
-  out.keyPos.set(...RUN.keyPos)
-  out.grace = grade.graceLight
-  out.graceDist = RUN.graceDist
+  const d = presetOf('workshop', hour)
+  out.sat = grade.saturation * d.sat
+  out.vignette = grade.vignette * d.vignette
+  out.exposure = grade.exposure * d.exposure
+  out.fogNear = grade.fogNear * d.fog
+  out.fogFar = grade.fogFar * d.fog
+  out.fog.setHex(d.fogColor)
+  out.bg.setHex(d.background)
+  out.hemi = BASE_HEMI * d.hemi
+  out.key = BASE_KEY * d.key
+  out.keyColor.setHex(d.keyColor)
+  out.keyPos.set(...d.keyDir)
+  out.grace = grade.graceLight * d.grace
+  out.graceDist = GRACE_REACH.room
   return out
 }
 
@@ -590,14 +569,16 @@ export function createWorkshop(world: World, still: Still, vfx: Vfx): Workshop {
   // --- the kids' things ---
   const traceGroup = new THREE.Group()
   group.add(traceGroup)
-  // shoes by the front door: two pairs, two sizes
+  // shoes by the front door: two pairs, two sizes (home only while they are)
+  const shoeGroup = new THREE.Group()
+  traceGroup.add(shoeGroup)
   const shoeMats = [new THREE.MeshStandardMaterial({ color: 0x6a4c46, roughness: 0.9 }), new THREE.MeshStandardMaterial({ color: 0x46566e, roughness: 0.9 })]
   ;[[0.26, 0, 0.35], [0.2, 0.34, -0.2]].forEach(([len, dx, yaw], k) => {
     for (const side of [-1, 1]) {
       const shoe = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.08, len!), shoeMats[k]!)
       shoe.position.set(SHOES.x + dx! + side * 0.07, 0.04, SHOES.z + side * 0.02)
       shoe.rotation.y = yaw! + side * 0.08
-      traceGroup.add(shoe)
+      shoeGroup.add(shoe)
     }
   })
   // blocks: a tower of five, the colours muted, none of them lit
@@ -610,25 +591,43 @@ export function createWorkshop(world: World, still: Still, vfx: Vfx): Workshop {
     return b
   })
   circles.push({ x: BLOCKS.x, z: BLOCKS.z, r: 0.3 })
-  const stackBlocks = () => {
+  // at night they're put away: a small toy crate where the tower stood
+  const toyBox = new THREE.Mesh(pieceData('box_large').geometry, pieceData('box_large').material)
+  toyBox.scale.setScalar(0.42)
+  toyBox.position.set(BLOCKS.x, 0, BLOCKS.z)
+  toyBox.rotation.y = 0.5
+  traceGroup.add(toyBox)
+  /** A tower of five, a scatter left mid-game, or boxed. */
+  const placeBlocks = (how: TraceSet['blocks']) => {
+    toyBox.visible = how === 'boxed'
     blocks.forEach((b, i) => {
-      b.position.set(BLOCKS.x + (r() - 0.5) * 0.03, 0.11 + i * 0.22, BLOCKS.z + (r() - 0.5) * 0.03)
-      b.rotation.set(0, (r() - 0.5) * 0.4, 0)
+      b.visible = how !== 'boxed'
+      if (how === 'tower') {
+        b.position.set(BLOCKS.x + (r() - 0.5) * 0.03, 0.11 + i * 0.22, BLOCKS.z + (r() - 0.5) * 0.03)
+        b.rotation.set(0, (r() - 0.5) * 0.4, 0)
+      } else {
+        const a = r() * Math.PI * 2
+        const d = 0.25 + r() * 0.55
+        b.position.set(BLOCKS.x + Math.sin(a) * d, 0.11, BLOCKS.z + Math.cos(a) * d * 0.7)
+        b.rotation.set(0, r() * Math.PI, 0)
+      }
     })
   }
-  stackBlocks()
-  // crayons on a sheet of paper, left mid-drawing
+  placeBlocks('tower')
+  // crayons on a sheet of paper, left mid-drawing (tidied away at night)
+  const crayonGroup = new THREE.Group()
+  traceGroup.add(crayonGroup)
   // off-white and small: a white sheet this near the lamp reads as a hole in the floor
   const paper = new THREE.Mesh(new THREE.PlaneGeometry(0.34, 0.24), new THREE.MeshStandardMaterial({ color: 0x9d9384, roughness: 1 }))
   paper.rotation.set(-Math.PI / 2, 0, 0.3)
   paper.position.set(CRAYONS.x, DECAL_Y + 0.01, CRAYONS.z)
-  traceGroup.add(paper)
+  crayonGroup.add(paper)
   const crayonGeo = new THREE.CylinderGeometry(0.026, 0.026, 0.15, 6)
   ;[0x6f9bd1, 0x8a5a44, 0xd9653b, 0xf2a950].forEach((c, i) => {
     const cr = new THREE.Mesh(crayonGeo, new THREE.MeshStandardMaterial({ color: c, roughness: 0.7 }))
     cr.rotation.set(Math.PI / 2, 0, 0.4 + i * 1.3)
     cr.position.set(CRAYONS.x + 0.28 + (i % 2) * 0.1, 0.02, CRAYONS.z - 0.12 + i * 0.09)
-    traceGroup.add(cr)
+    crayonGroup.add(cr)
   })
 
   // the way out: a cold beam across the front doorway
@@ -642,7 +641,7 @@ export function createWorkshop(world: World, still: Still, vfx: Vfx): Workshop {
   // --- state ---
   const arrival: ArrivalState = { kind: 'idle', t: 0, step: 0, done: true }
   let hour: HomeHour = 'afternoon'
-  let traces = AFTERNOON
+  let traces = TRACES.afternoon
   let near: InteractId | null = null
   let leaving = false
   let blackout = 1
@@ -810,7 +809,7 @@ export function createWorkshop(world: World, still: Still, vfx: Vfx): Workshop {
       } else if (o.arrival === 'stopped') {
         applyLight(world, dimmed(0))
       } else {
-        applyLight(world, room)
+        applyDay(world, 'workshop', hour)
       }
       if (o.arrival === 'broken') {
         still.reassemble()
@@ -831,7 +830,10 @@ export function createWorkshop(world: World, still: Still, vfx: Vfx): Workshop {
       doorAngle = traces.kidsDoor === 'swings-shut' || traces.kidsDoor === 'open-dark' ? 1.4 : traces.kidsDoor === 'ajar' ? 0.35 : 0
       kidsHinge.rotation.y = doorAngle
       doorSwingT = traces.kidsDoor === 'swings-shut' ? 1.5 : -1
-      stackBlocks()
+      placeBlocks(traces.blocks)
+      shoeGroup.visible = traces.shoes
+      crayonGroup.visible = traces.crayons
+      setRain(traces.sounds.rain)
       tumbling = null
       tumbleT = traces.sounds.tumble ? 6 + Math.random() * 8 : -1
       const pe = traces.sounds.pencilEvery
@@ -847,7 +849,8 @@ export function createWorkshop(world: World, still: Still, vfx: Vfx): Workshop {
     leave() {
       group.visible = false
       near = null
-      applyLight(world, runLight(lit))
+      setRain(false)
+      applyDay(world, 'morning')
     },
 
     update(dt, stickX, stickZ) {
@@ -903,7 +906,8 @@ export function createWorkshop(world: World, still: Still, vfx: Vfx): Workshop {
           if (crossedAt >= 0 && t - crossedAt >= HOME_EASE) arrival.done = true
         }
         if (arrival.done) {
-          if (kind === 'stopped') applyLight(world, room)
+          // the eased light lands exactly on the room's hour, and the grade panel can reapply it from here
+          applyDay(world, 'workshop', hour)
           ev.push({ kind: 'arrived' })
         }
       }

@@ -29,6 +29,9 @@ interface Engine {
   /** Everything of home: the clock, Grace's tone, the wooden room. */
   home: GainNode
   wood: AudioNode
+  /** Rain on the Workshop's window, at night only. */
+  rainBed: GainNode
+  nextDrop: number
   nextTick: number
   tickN: number
   nextDrip: number
@@ -156,9 +159,24 @@ function build(a: NonNullable<ReturnType<typeof ambienceContext>>): Engine {
     o.start()
   }
 
+  // rain: a band of noise on the glass, silent until the night asks for it
+  const rainBed = ctx.createGain()
+  rainBed.gain.value = 0
+  rainBed.connect(home)
+  const rainNoise = loopNoise(a)
+  const rhp = ctx.createBiquadFilter()
+  rhp.type = 'highpass'
+  rhp.frequency.value = 400
+  const rlp = ctx.createBiquadFilter()
+  rlp.type = 'lowpass'
+  rlp.frequency.value = 3500
+  const rg = ctx.createGain()
+  rg.gain.value = 0.012
+  rainNoise.connect(rhp).connect(rlp).connect(rg).connect(rainBed)
+
   const t = ctx.currentTime
   return {
-    ...a, out: stone, room, draft, foundry, stone, home, wood, nextTick: t + 1, tickN: 0,
+    ...a, out: stone, room, draft, foundry, stone, home, wood, rainBed, nextDrop: t, nextTick: t + 1, tickN: 0,
     nextDrip: t + 1.5, nextClank: t + 5, nextGust: t + 2, nextSteam: t + 3,
   }
 }
@@ -268,6 +286,12 @@ function tick() {
       if (e.nextTick >= t) clockTick(e, e.nextTick)
       e.nextTick += 1
     }
+    // and the drops on the glass, when it rains
+    while (raining && e.nextDrop < t + 0.3) {
+      if (e.nextDrop >= t) droplet(e, e.nextDrop)
+      e.nextDrop += 0.05 + Math.random() * 0.25
+    }
+    if (!raining) e.nextDrop = t
     return
   }
   e.nextTick = t + 1
@@ -290,12 +314,41 @@ function tick() {
   }
 }
 
+let raining = false
+
+/** One drop on the window: a tiny bright tick, somewhere across the glass. */
+function droplet(e: Engine, when: number) {
+  const { ctx } = e
+  const s = ctx.createBufferSource()
+  s.buffer = e.noise
+  const bp = ctx.createBiquadFilter()
+  bp.type = 'bandpass'
+  bp.frequency.value = 2500 + Math.random() * 3000
+  bp.Q.value = 4
+  const g = ctx.createGain()
+  g.gain.setValueAtTime(0.0001, when)
+  g.gain.linearRampToValueAtTime(0.02 + Math.random() * 0.03, when + 0.002)
+  g.gain.exponentialRampToValueAtTime(0.0001, when + 0.02)
+  const pan = ctx.createStereoPanner()
+  pan.pan.value = -0.6 + Math.random() * 0.5
+  s.connect(bp).connect(g).connect(pan).connect(e.rainBed)
+  s.start(when, Math.random() * 0.5)
+  s.stop(when + 0.04)
+}
+
+/** Rain on the Workshop's window: the night's trace. */
+export function setRain(on: boolean) {
+  raining = on
+  if (engine) engine.rainBed.gain.setTargetAtTime(on ? 1 : 0, engine.ctx.currentTime, on ? 1.2 : 0.4)
+}
+
 /** Call every frame. Starts itself once audio runs; the mood follows the level. */
 export function updateAmbience(next: AmbienceMood) {
   if (!engine) {
     const a = ambienceContext()
     if (!a) return
     engine = build(a)
+    engine.rainBed.gain.value = raining ? 1 : 0
     window.setInterval(tick, 200)
   }
   if (next !== mood) {

@@ -3,7 +3,7 @@ import * as THREE from 'three'
 import { createWorld, grade } from './world'
 import { Still } from './still'
 import { createHud } from './hud'
-import { createGradePanel } from './grade'
+import { createGradePanel, apply as applyGrade } from './grade'
 import { Combat, eliteLine, type Archetype, type CastResult, type EliteMod, type Pack } from './combat'
 import { STARTING, PARTS, byId, type AbilityDef, type AbilityShape, type BeatKey } from './abilities'
 import { SLOT_NAMES, type SlotName } from './still'
@@ -19,13 +19,16 @@ import { updateAmbience } from './ambience'
 import { Loot, LOOT, dropChance, rollPart, type GroundPart } from './loot'
 import { createPauseScreen } from './pause'
 import { createOverlay } from './ending'
-import { loadKit } from './kit'
-import { generateLevel, makeTerrain, key, type Box, type Breakable, type Circle, type Level, type Shrine } from './dungeon'
+import { loadKit, setSurfaces } from './kit'
+import { generateLevel, generateWalkHome, makeTerrain, key, type Box, type Breakable, type Circle, type Level, type Shrine } from './dungeon'
 import type { Terrain } from './terrain'
 import { Vfx, syncTells, COLD, COLD_DEEP, EMBER } from './vfx'
 import { PartFx } from './partfx'
 import type { PartEvent } from './parts'
-import { RUN_DEPTHS, BOSS_EVERY, LEAN_HOME, FIRST_RUN_IN_MAZE, exitsAfterBoss, hourAtEnd, type HomeHour } from './areas'
+import {
+  RUN_DEPTHS, BOSS_EVERY, LEAN_HOME, FIRST_RUN_IN_MAZE, DAY, DEPTH_DAY, exitsAfterBoss, hourAtEnd, bossFor, areaOf,
+  applyDay, dayNow, currentSat, currentGrace, fogAt, dayAt, AREAS, WALK_AREA, type HomeHour,
+} from './areas'
 import { createWorkshop, type ArrivalKind, type InteractId, type Workshop } from './workshop'
 import { openSave, freshTally, localDate, drawerFor, trimCards, CARD_KEEP, CARD_LINES, LEADERS_MAX, type EndingKind, type RunTally, type SaveV1 } from './save'
 import { poolView, markFound, hookCandidates, facingOutWhites, toggleTurn, hang, applyHookDefault, startPart, type PoolView } from './pool'
@@ -878,7 +881,7 @@ const HOMING_SECONDS = 0.6
  * terminal sequences (the ending is already kept by then); ending is the words,
  * and arriving the way into the room.
  */
-type Phase = 'boot' | 'workshop' | 'leaving' | 'crawl' | 'descending' | 'broken' | 'stopping' | 'homing' | 'ending' | 'arriving'
+type Phase = 'boot' | 'workshop' | 'leaving' | 'crawl' | 'descending' | 'broken' | 'stopping' | 'homing' | 'toWalk' | 'walkHome' | 'ending' | 'arriving'
 
 /** One depth of a run, for __runStats: the phone test measures whether Stopped is reachable at all. */
 interface DepthStats { depth: number; pushes: number; quiets: number; strainIn: number; strainOut: number | null }
@@ -1150,19 +1153,24 @@ function bossDown(at: THREE.Vector3) {
   overlay.banner(`area ${run.depth / BOSS_EVERY} cleared`)
 }
 
-/** Build a level and put Still at its entrance. HP is whole again; strain carries. */
-function enterLevel(depth: number) {
+/** Build a level and put Still at its entrance. HP is whole again; strain carries. `seed` repeats a layout (resume, checks). */
+function enterLevel(depth: number, o: { seed?: number } = {}) {
   level?.dispose()
+  hud.bossBar(null)
   loot.clear()
   combat.reset()
   partFx.clear()
-  level = generateLevel(depth, undefined, { boss: depth % BOSS_EVERY === 0 })
+  level = generateLevel(depth, o.seed, { boss: bossFor(depth) })
   world.scene.add(level.group)
   combat.terrain = level.terrain
   loot.terrain = level.terrain
   for (const p of level.packs) combat.addPack(p.members, p.room.kind === 'side', p.elite)
   combat.breakables = level.breakables
-  if (level.boss) combat.addBoss(level.boss.x, level.boss.z, level.boss.face)
+  const boss = bossFor(depth)
+  if (level.boss && boss) combat.addBoss(level.boss.x, level.boss.z, level.boss.face, boss)
+  // the area's look and sound (both areas share one today; setSurfaces is a no-op until they don't)
+  setSurfaces(areaOf(depth).surfaces)
+  applyDay(world, DEPTH_DAY[Math.min(RUN_DEPTHS, depth)] ?? 'dusk')
   run.fought = false
   run.quietT = 0
   run.killed = false
@@ -1202,8 +1210,6 @@ function startRun() {
   enterLevel(START_DEPTH)
   hud.bossBar(null)
   rig.reset()
-  world.gradePass.uniforms.uSaturation!.value = grade.saturation
-  world.graceLight.intensity = grade.graceLight
   hud.enabled = true
   overlay.hide()
   sfx.restore()
@@ -1819,6 +1825,10 @@ function simulate(realDt: number) {
     homing(realDt)
     return
   }
+  if (run.phase === 'toWalk' || run.phase === 'walkHome') {
+    walkStep(realDt)
+    return
+  }
 
   if (run.phase === 'descending') {
     run.t += realDt
@@ -1853,7 +1863,8 @@ function simulate(realDt: number) {
     dt = realDt * (1 - ease)
     still.setSlowdown(ease)
     rig.hold = 1 + ease * 0.45
-    world.gradePass.uniforms.uSaturation!.value = grade.saturation * (1 - ease * 0.8)
+    // the colour drains from the hour's, not the base's: a stop at dusk goes from dusk
+    world.gradePass.uniforms.uSaturation!.value = currentSat() * (1 - ease * 0.8)
     if (run.t >= STOP_SECONDS + 0.5) {
       end('stopped')
       return
@@ -1904,7 +1915,8 @@ function simulate(realDt: number) {
   const boss = combat.boss
   if (boss && !boss.dead) {
     const awakeBoss = combat.awake.includes(boss)
-    hud.bossBar(awakeBoss ? { name: 'The Assembler', frac: boss.hp / BOSS_HP, overloaded: boss.overloaded, stunned: boss.stunned } : null)
+    const def = combat.bossDef
+    hud.bossBar(awakeBoss ? { name: def?.name ?? 'The Assembler', frac: boss.hp / (def?.hp ?? BOSS_HP), overloaded: boss.overloaded, stunned: boss.stunned } : null)
     if (boss.justOverloaded) {
       overlay.banner('the Assembler overloads')
       sfx.roar()
@@ -1951,9 +1963,70 @@ function homing(dt: number) {
   if (!still.vaulting) combat.terrain.pushOut(still.pos, BODY_RADIUS)
   still.group.scale.lerp(new THREE.Vector3(1, 1, 1), Math.min(1, dt * 9))
   if (level) level.homeGlow = 1 + ease
-  world.graceLight.intensity = grade.graceLight * (1 + 0.4 * ease)
-  if (run.t >= HOMING_SECONDS) end('home')
+  world.graceLight.intensity = currentGrace() * (1 + 0.4 * ease)
+  if (run.t < HOMING_SECONDS) return
+  // before the last depth, the words; after it, the walk home first
+  if (run.depth < RUN_DEPTHS) {
+    end('home')
+    return
+  }
+  run.phase = 'toWalk'
+  run.t = 0
+  run.swapped = false
 }
+
+/**
+ * The walk home (§6.4): the last "level", at night, with nothing in it that can hurt
+ * or cost him. HUD in walk mode (the stick, nothing else), so strain can't rise.
+ */
+function enterWalkHome() {
+  level?.dispose()
+  loot.clear()
+  combat.reset()
+  partFx.clear()
+  stopAllWindups()
+  level = generateWalkHome(Math.floor(Math.random() * 1e9), AREAS.find((a) => a.id === WALK_AREA)!)
+  world.scene.add(level.group)
+  combat.terrain = level.terrain
+  loot.terrain = level.terrain
+  combat.breakables = []
+  still.pos.copy(level.entrance)
+  still.facing = Math.PI
+  prev.copy(still.pos)
+  graceLean.set(0, 0, 0)
+  applyDay(world, 'night')
+  hud.mode('walk')
+  hud.bossBar(null)
+  hud.enabled = true
+  sfx.restore(1)
+}
+
+/** The fade between the last warm beam and the walk, and the walk itself. */
+function walkStep(dt: number) {
+  if (run.phase === 'toWalk') {
+    run.t += dt
+    if (!run.swapped && run.t >= DESCEND_OUT) {
+      run.swapped = true
+      enterWalkHome()
+    }
+    const out = Math.min(1, run.t / DESCEND_OUT)
+    const back = run.swapped ? Math.min(1, (run.t - DESCEND_OUT) / DESCEND_IN) : 0
+    fade.style.opacity = String(run.swapped ? 1 - back : out)
+    if (run.swapped && back >= 1) run.phase = 'walkHome'
+    if (!run.swapped) return
+  }
+  still.update(dt, hud.moveX, hud.moveZ)
+  if (!still.vaulting) combat.terrain.pushOut(still.pos, BODY_RADIUS)
+  still.group.scale.lerp(new THREE.Vector3(1, 1, 1), Math.min(1, dt * 9))
+  // in at the door: the Home words (the room fades in behind them on continue)
+  const h = level?.house
+  if (run.phase === 'walkHome' && h && Math.hypot(still.pos.x - h.door.x, still.pos.z - h.door.z) < WALK_DOOR_R) {
+    hud.enabled = false
+    end('home')
+  }
+}
+/** The house's door zone (§4.25). */
+const WALK_DOOR_R = 1.3
 
 /** Footsteps: a step sounds each time a foot lands, quieter with distance. */
 const lastStep = new Map<object, number>()
@@ -1965,10 +2038,10 @@ const STEPS_MAX = 3
 function footsteps(now: number) {
   // his own steps into the warm beam, and at home, still land; the held world's don't
   const home = inRoom()
-  if (run.phase !== 'crawl' && run.phase !== 'homing' && !home) return
+  if (run.phase !== 'crawl' && run.phase !== 'homing' && run.phase !== 'walkHome' && !home) return
   const k = Math.floor(still.stride / Math.PI)
   // at home the boards start at the threshold; outside it is still stone
-  if (still.walking && k !== lastStep.get(still)) sfx.step('still', 0, 1, home && still.pos.z >= -6 ? 'wood' : 'stone')
+  if (still.walking && k !== lastStep.get(still)) sfx.step('still', 0, 1, home ? (still.pos.z >= -6 ? 'wood' : 'stone') : areaOf(run.depth).footsteps)
   lastStep.set(still, k)
   if (run.phase !== 'crawl') return
   while (stepTimes.length && now - stepTimes[0]! > STEP_WINDOW) stepTimes.shift()
@@ -2044,9 +2117,22 @@ function frame(nowMs: number) {
     const k = Math.min(1, d / 6) * GRACE_LEAN
     graceLean.lerp(tmpLean.set(d > 0.01 ? (ex / d) * k : 0, 0, d > 0.01 ? (ez / d) * k : 0), Math.min(1, elapsed * 2))
   }
+  // on the walk home the light he carries leans to the door, and becomes the one inside the house
+  const walk = level?.house && (run.phase === 'walkHome' || run.phase === 'toWalk' || (run.phase === 'ending' && !!level.house))
+  if (walk && level?.house) {
+    const h = level.house
+    const ex = h.door.x - x
+    const ez = h.door.z - z
+    const d = Math.hypot(ex, ez)
+    const k = Math.min(1, d / 6) * GRACE_LEAN
+    graceLean.lerp(tmpLean.set(d > 0.01 ? (ex / d) * k : 0, 0, d > 0.01 ? (ez / d) * k : 0), Math.min(1, elapsed * 2))
+    const inside = 1 - Math.min(1, Math.max(0, (d - 2) / 10))
+    const e = inside * inside * (3 - 2 * inside)
+    world.graceLight.position.set(x + graceLean.x, GRACE_Y, z + graceLean.z).lerp(h.inside, e)
+  }
   // in the room Grace's light is the lamp, and stays where it hangs
   const home = inRoom()
-  if (!home) world.graceLight.position.set(x + graceLean.x, GRACE_Y, z + graceLean.z)
+  if (!home && !walk) world.graceLight.position.set(x + graceLean.x, GRACE_Y, z + graceLean.z)
   level?.update(now)
 
   shake = Math.max(0, shake - elapsed * 3.2)
@@ -2071,7 +2157,8 @@ function frame(nowMs: number) {
   }
   world.camera.lookAt(camTarget)
 
-  updateAmbience(home ? 'workshop' : level?.boss ? 'boss' : 'crawl')
+  const area = areaOf(run.depth)
+  updateAmbience(home ? 'workshop' : level?.boss ? area.ambience.boss : area.ambience.crawl)
   const bossAwake = !!combat.boss && !combat.boss.dead && awake.includes(combat.boss)
   updateMusic({
     boss: bossAwake,
@@ -2141,7 +2228,7 @@ if (import.meta.env.DEV) {
     },
     /** A level's packs, generated and thrown away without entering it. */
     __gen: (depth: number, seed: number) => {
-      const l = generateLevel(depth, seed, { boss: depth % BOSS_EVERY === 0 })
+      const l = generateLevel(depth, seed, { boss: bossFor(depth) })
       const out = l.packs.map((p) => ({
         room: p.room.kind, rx: p.room.rx, rz: p.room.rz, kinds: p.members.map((m) => m.kind),
         elite: p.elite?.mod ?? null, name: p.elite?.name ?? null, lesson: !!p.lesson, budget: p.budget ?? null, template: p.template ?? null,
@@ -2202,8 +2289,7 @@ if (import.meta.env.DEV) {
       prev.copy(still.pos)
       combat.hp = 100
       Object.assign(run, { phase: 'crawl', strain: 0, t: 0, fought: false, quietT: 0, killed: false, committed: false, ending: null })
-      world.gradePass.uniforms.uSaturation!.value = grade.saturation
-      world.graceLight.intensity = grade.graceLight
+      applyDay(world, 'morning')
       fade.style.opacity = '0'
       sfx.restore()
       hud.resetLoadout(hud.loadout)
@@ -2213,6 +2299,27 @@ if (import.meta.env.DEV) {
       hitstop = 0
       partLog.length = 0
       enemyLog.length = 0
+    },
+    /**
+     * A level's whole build, generated and thrown away: every kit instance's transform per
+     * mesh (in build order), the breakables, the shrines, the rooms and the solids. For
+     * proving a refactor of the generator changes nothing.
+     */
+    __genKit: (depth: number, seed: number) => {
+      const l = generateLevel(depth, seed, { boss: bossFor(depth) })
+      const r = (v: number) => Math.round(v * 1e4) / 1e4
+      const out = {
+        meshes: l.group.children.filter((o): o is THREE.InstancedMesh => o instanceof THREE.InstancedMesh).map((m) => ({
+          count: m.count, verts: m.geometry.getAttribute('position').count, m: Array.from(m.instanceMatrix.array, r).join(','),
+        })),
+        breakables: l.breakables.map((b) => [r(b.x), r(b.z), r(b.r)]),
+        shrines: l.shrines.map((sh) => [sh.kind, r(sh.x), r(sh.z)]),
+        rooms: l.rooms.map((rm) => [rm.kind, rm.ci, rm.cj, rm.rx, rm.rz]),
+        boss: l.boss ? [r(l.boss.x), r(l.boss.z)] : null,
+        exit: [r(l.exit.x), r(l.exit.z)], entrance: [r(l.entrance.x), r(l.entrance.z)],
+      }
+      l.dispose()
+      return out
     },
     /** A breakable with a stand-in mesh. It isn't solid: only hits find it. */
     __crate: (x: number, z: number): Breakable => {
@@ -2225,21 +2332,39 @@ if (import.meta.env.DEV) {
       return b
     },
     /** A level at this depth, now. From the room, it walks out first (no door, no fade). */
-    __enter: (depth: number) => {
-      if (inRoom() || run.phase === 'arriving' || run.phase === 'ending') {
+    __enter: (depth: number, seed?: number) => {
+      if (inRoom() || run.phase === 'arriving' || run.phase === 'ending' || run.phase === 'toWalk' || run.phase === 'walkHome') {
         leaveRoom()
         overlay.hide()
+        hud.mode('run')
         Object.assign(run, { phase: 'crawl', committed: false, ending: null })
         hud.enabled = true
         fade.style.opacity = '0'
       }
-      enterLevel(depth)
+      enterLevel(depth, { seed })
     },
     /** Into the room now: an arrival (default idle) at an hour, wearing what he has on. */
     __workshop: (o: { arrival?: ArrivalKind; hour?: HomeHour } = {}) => {
       enterRoom(o.arrival ?? 'idle', o.hour ?? 'afternoon', hud.slots.map((sl) => sl.def?.id ?? null))
     },
     __near: () => workshop.near,
+    /** The hour on now, and what it set. */
+    __day: () => ({
+      day: dayNow().key, hour: dayNow().hour, sat: world.gradePass.uniforms.uSaturation!.value, fogNear: world.fog.near, fogFar: world.fog.far,
+      keyLight: world.key.intensity, grace: world.graceLight.intensity, keyColor: world.key.color.getHex(), fogColor: world.fog.color.getHex(),
+    }),
+    __DAY: DAY,
+    __grade: grade,
+    /** The grade panel's apply: the base moves, the hour goes back on top. */
+    __applyGrade: () => applyGrade(world),
+    __hourAtEnd: hourAtEnd,
+    __fogAt: fogAt,
+    __dayAt: dayAt,
+    __AREAS: AREAS,
+    /** Put any hour on the world now (look checks). */
+    __applyDay: (k: keyof typeof DAY, hour?: HomeHour) => applyDay(world, k, hour),
+    __bossFor: bossFor,
+    __areaOf: (d: number) => areaOf(d).id,
     __zones: () => workshop.zones.map((z) => ({ id: z.id, anchor: z.anchor })),
     /** toggleTurn through the rules, saved and shown as the card's button would. */
     __turn: (id: string) => {
