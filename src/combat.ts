@@ -4,6 +4,7 @@ import { tellMaterial, releaseTell, COLD, EMBER, type Vfx } from './vfx'
 import { Chaser, shoveVelocity, distToSegment, PLAYER_RADIUS, type Enemy, type EnemyCtx, type EnemyEvent } from './enemy'
 import { Ranged } from './ranged'
 import { Charger, CHARGER } from './charger'
+import { Mite, Brood, MiteBatch } from './swarm'
 import { KILL_WEIGHT } from './loot'
 import { Assembler, BOSS } from './boss'
 import type { Terrain } from './terrain'
@@ -155,10 +156,14 @@ export const ELITE_MODS: Record<Exclude<Archetype, 'boss'>, EliteMod[]> = {
   chaser: ['swift', 'plated', 'splitting', 'warding'],
   ranged: ['swift', 'plated', 'warding'],
   charger: ['swift', 'plated', 'splitting', 'warding'],
+  // a swarm already is many, and a 16-HP body at half damage is a number, not a decision
+  swarm: ['swift', 'warding'],
 }
 /** The line under an elite's name. A Plated ram's plate lifts in a stun, so it says so. */
 export function eliteLine(kind: Archetype, mod: EliteMod): string {
   if (kind === 'charger' && mod === 'plated') return 'takes half damage, until it hits a wall'
+  if (kind === 'swarm' && mod === 'swift') return 'her whole brood moves fast'
+  if (kind === 'swarm' && mod === 'warding') return 'her brood takes little damage while she stands'
   return ELITE_LINE[mod]
 }
 export interface Elite {
@@ -181,6 +186,8 @@ export interface Pack {
   weight: number
   /** The ram holding the pack's windup/rush: two rams of one pack never run at you on the same beat. */
   token: Enemy | null
+  /** Set when any member is a mite: the pack's one mind. */
+  brood?: Brood
   homes: Map<Enemy, THREE.Vector3>
   /** Where each member looks while it sleeps. */
   gaze: Map<Enemy, THREE.Vector3>
@@ -266,6 +273,11 @@ export class Combat {
   private readonly summoned = new WeakSet<Enemy>()
   /** Halves of a Many: the elite's own guaranteed drop is the payout, so they weigh 0. */
   private readonly splitBorn = new WeakSet<Enemy>()
+  /** One per pack with mites. Ticked after the packs, before the enemies. */
+  readonly broods: Brood[] = []
+  /** Draws every mite in the level in 8 calls. */
+  readonly miteBatch: MiteBatch
+  private broodIndex = 0
   /** Game time, seconds. The lock book runs on it. */
   time = 0
   readonly book = new LockBook(() => this.time)
@@ -322,7 +334,9 @@ export class Combat {
     /** Swapped for each level. */
     public terrain: Terrain,
     private readonly events: CombatEvents,
-  ) {}
+  ) {
+    this.miteBatch = new MiteBatch(scene)
+  }
 
   /** Enemies that are actually after you. Sleeping and homeward packs don't count. */
   get awake(): Enemy[] {
@@ -344,6 +358,7 @@ export class Combat {
     this.hurtCooldown = Math.max(0, this.hurtCooldown - dt)
     this.updatePacks(player)
     this.book.prune()
+    this.tickBroods(dt)
 
     // --- enemies ---
     for (let i = this.enemies.length - 1; i >= 0; i--) {
@@ -385,7 +400,8 @@ export class Combat {
       const target = this.targetFor(e, player)
       const before = e.phase
       const action = e.update(dt, target, this.terrain, this.ctx)
-      if (e.phase !== before) {
+      // a mite has no windup of its own: its brood's surge is the one tell and the one sound
+      if (e.phase !== before && e.kind !== 'swarm') {
         if (e.phase === 'windup') this.events.onWindup(e, e.windupMs)
         if (e.phase === 'strike') this.events.onStrike(e)
       }
@@ -693,6 +709,13 @@ export class Combat {
     for (const s of this.shots) this.scene.remove(s.mesh)
     this.shots.length = 0
     this.later.length = 0
+    for (const b of this.broods) {
+      this.emitEnemy({ kind: 'broodGone', brood: b })
+      b.dispose()
+    }
+    this.broods.length = 0
+    this.broodIndex = 0
+    this.miteBatch.clear()
     this.book.clear()
     this.hasPrev = false
     this.hurtMax = 0
@@ -1022,6 +1045,8 @@ export class Combat {
       const summoned = this.summoned.has(e)
       const weight = summoned || this.splitBorn.has(e) ? 0 : KILL_WEIGHT[e.kind]
       this.events.onKill(e.pos, e.kind, pack, wasElite, summoned, weight)
+      // after its pop: the brood's end is the last thing heard
+      if (e instanceof Mite) this.buryMite(e, pack)
       if (pack.members.length === 0) this.packs.splice(this.packs.indexOf(pack), 1)
     }
     this.events.onGone(e)
@@ -1728,6 +1753,11 @@ export class Combat {
     switch (kind) {
       case 'ranged': return new Ranged(x, z)
       case 'charger': return new Charger(x, z)
+      case 'swarm': {
+        const m = new Mite(x, z)
+        this.miteBatch.add(m)
+        return m
+      }
       default: return new Chaser(x, z)
     }
   }
@@ -1750,6 +1780,13 @@ export class Combat {
       pack.gaze.set(e, m.face ? new THREE.Vector3(m.face.x, 0, m.face.z) : new THREE.Vector3(m.x + Math.sin(a), 0, m.z + Math.cos(a)))
       this.packOf.set(e, pack)
       e.idle(0, pack.gaze.get(e)!)
+    }
+    // mites share one mind: the brood
+    const mites = pack.members.filter((e): e is Mite => e instanceof Mite)
+    if (mites.length) {
+      pack.brood = new Brood(pack, this.broodIndex++, this.scene)
+      for (const m of mites) pack.brood.add(m)
+      this.broods.push(pack.brood)
     }
     if (elite && pack.members[0]) this.crown(pack, pack.members[0], elite.mod, elite.name)
     pack.hpSeen = this.hpOf(pack)
@@ -1821,11 +1858,14 @@ export class Combat {
       leader.knockMul = 0.3
     }
     leader.setElite?.(mod)
+    if (leader instanceof Mite && pack.brood) pack.brood.queen = leader
     const aura = new THREE.Mesh(
       new THREE.RingGeometry(0.9, 1.15, 32),
       new THREE.MeshBasicMaterial({ color: 0x7d98ff, transparent: true, opacity: 0.55, depthWrite: false }),
     )
     aura.rotation.x = -Math.PI / 2
+    // the brood-mother's aura hugs her, so it doesn't sprawl over the biters beside her
+    if (leader.kind === 'swarm') aura.scale.setScalar((leader.radius + 0.25) / 0.9)
     this.scene.add(aura)
     pack.elite = { name, mod, leader, aura }
   }
@@ -1889,7 +1929,8 @@ export class Combat {
     }
     // awake bodies don't stack on each other: each pair keeps its two radii apart.
     // A rushing ram is committed to its line, so nothing nudges it off it.
-    const moving = this.enemies.filter((e) => this.packOf.get(e)?.state !== 'asleep' && !(e instanceof Charger && e.rushing))
+    // Nor a lunging mite: it's landing where the bite is.
+    const moving = this.enemies.filter((e) => this.packOf.get(e)?.state !== 'asleep' && !(e instanceof Charger && e.rushing) && !(e instanceof Mite && e.phase === 'strike'))
     for (let a = 0; a < moving.length; a++) {
       for (let b = a + 1; b < moving.length; b++) {
         const p = moving[a]!.pos
@@ -1913,14 +1954,47 @@ export class Combat {
     const home = pack.homes.get(e)!
     const d = e.pos.distanceTo(home)
     if (d < 0.05) return
-    const to = this.terrain.nextStep(e.pos.x, e.pos.z, home.x, home.z, 0.5)
+    const to = this.terrain.nextStep(e.pos.x, e.pos.z, home.x, home.z, e.radius)
     const sx = to.x - e.pos.x
     const sz = to.z - e.pos.z
     const sd = Math.hypot(sx, sz) || 1
     const step = Math.min(d, HOME_SPEED * dt)
     e.pos.x += (sx / sd) * step
     e.pos.z += (sz / sd) * step
-    this.terrain.pushOut(e.pos, 0.5)
+    this.terrain.pushOut(e.pos, e.radius)
+  }
+
+  /**
+   * The broods, before the enemies: roles, slots, the surge. The four-biter cap
+   * holds across every awake brood, so two swarms never bite harder than one.
+   * The nearest brood picks first.
+   */
+  private tickBroods(dt: number) {
+    for (const b of this.broods) if (b.pack.state !== 'awake' && b.isActive) b.reset()
+    const awake = this.broods.filter((b) => b.pack.state === 'awake')
+    if (!awake.length) return
+    const cap = { used: awake.reduce((n, b) => n + (b.isActive ? b.innerCount() : 0), 0) }
+    for (const b of awake) b.seatQueen(cap, awake)
+    const p = this.ctx.player
+    awake.sort((a, b) => a.nearestTo(p) - b.nearestTo(p))
+    for (const b of awake) {
+      const bite = b.tick(dt, this.terrain, this.ctx, cap, this.parts.decoy)
+      if (bite) this.hurtPlayer(bite.damage, 'melee', bite.source)
+    }
+  }
+
+  /** A mite leaves its brood; the last one takes the brood with it. */
+  private buryMite(m: Mite, pack: Pack) {
+    this.miteBatch.remove(m)
+    const b = pack.brood
+    if (!b) return
+    b.remove(m)
+    if (b.mites.length > 0) return
+    this.emitEnemy({ kind: 'broodEnd', at: m.pos.clone() })
+    this.book.unbook(b)
+    this.broods.splice(this.broods.indexOf(b), 1)
+    b.dispose()
+    delete pack.brood
   }
 
 }

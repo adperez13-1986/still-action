@@ -128,7 +128,8 @@ export class Assembler implements Enemy {
   private readonly sectorEdge: THREE.Mesh
   private readonly lanes = new THREE.Group()
   private readonly fan = new THREE.Group()
-  readonly laneTell = new LaneTell()
+  /** Its lane is 3.14 wide and up to 27 long: lit like the ram's it was a flat slab, so the core and wash stay low. */
+  readonly laneTell = new LaneTell({ wash: [0.07, 0.1], core: [0.26, 0.4], cap: [0.1, 0.14] })
   /** World-space telegraphs, apart from the tell group that follows the body: the piles and the lane. */
   private readonly worldTells = new THREE.Group()
   private readonly magnetDisc: THREE.Mesh

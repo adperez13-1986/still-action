@@ -4,6 +4,7 @@ import { buildInstanced, pieceData, skin, type Piece, type Placement } from './k
 import type { Terrain, WallFace } from './terrain'
 import type { BreachHole } from './parts'
 import { ELITE_MODS, type Archetype, type EliteMod } from './combat'
+import { BROOD } from './swarm'
 
 /**
  * A D2-style crawl level on a 4-unit grid (KayKit's floor tile). A main path of
@@ -467,7 +468,7 @@ export function makeTerrain(floor: Set<string>, boxes: Box[], circles: Circle[])
 
 // --- pack templates: deeper levels mix archetypes at the same budget ---
 
-/** C ram, H hulk, S sentinel; M8/M6 a swarm of mites (Step 3: until then a row with mites is today's pack). */
+/** C ram, H hulk, S sentinel; M8/M6 a swarm of eight or six mites. */
 type Member = 'C' | 'H' | 'S' | 'M8' | 'M6'
 type Row = { today: true; weight: number; members?: undefined } | { today?: false; weight: number; members: Member[] }
 
@@ -477,7 +478,11 @@ type Row = { today: true; weight: number; members?: undefined } | { today?: fals
  */
 const BE: Record<Member, number> = { C: 1.5, H: 1, S: 1, M8: 2, M6: 1.5 }
 const beOf = (ms: readonly Member[]) => ms.reduce((a, m) => a + BE[m], 0)
-const kindOf = (m: Member): Archetype => (m === 'C' ? 'charger' : m === 'S' ? 'ranged' : 'chaser')
+const kindOf = (m: Member): Archetype => (m === 'C' ? 'charger' : m === 'S' ? 'ranged' : m === 'H' ? 'chaser' : 'swarm')
+/** A template's bodies, in order: a swarm member is its whole brood. */
+const bodies = (ms: readonly Member[]): Archetype[] => ms.flatMap((m) => (m === 'M8' ? Array(8).fill('swarm') : m === 'M6' ? Array(6).fill('swarm') : [kindOf(m)]))
+/** A swarm too big for the room's budget comes as six. */
+const shrink = (ms: readonly Member[], budget: number): Member[] => (beOf(ms) > budget + 1 ? ms.map((m) => (m === 'M8' ? 'M6' : m)) : [...ms])
 
 /** The first listed member leads (it becomes the elite if the pack is picked). */
 const D4: Row[] = [{ members: ['C', 'H', 'H'], weight: 2 }, { members: ['C', 'H', 'S'], weight: 1 }]
@@ -716,15 +721,18 @@ export function generateLevel(depth: number, seed = Math.floor(Math.random() * 1
   const rangedPack = Math.floor(rand() * packRooms.length)
   // depth 2 meets the ram: one big main room holds a ram and a hulk, alone and easy to read
   const lessonRoom = depth === 2 ? pickLessonRoom(packRooms, rand) : null
-  // depth 4: one or two main rooms get a ram template; the rest are today's packs
+  // depth 4 meets the swarm: eight mites alone in a big main room, so the rings can be seen before they bite
+  const swarmLesson = depth === 4 ? pickLessonRoom(packRooms, rand) : null
+  // and one or two other main rooms get a ram template; the rest are today's packs
   const d4Rooms = new Set<Room>()
   if (depth === 4) {
-    const mains = packRooms.filter((r) => r.kind === 'main')
+    const mains = packRooms.filter((r) => r.kind === 'main' && r !== swarmLesson)
     const n = 1 + (rand() < 0.5 ? 1 : 0)
     while (d4Rooms.size < Math.min(n, mains.length)) d4Rooms.add(mains.splice(Math.floor(rand() * mains.length), 1)[0]!)
   }
   const caps = CAPS(depth)
   let chargerPacks = 0
+  let swarmPacks = 0
   packRooms.forEach((room, idx) => {
     const big = room.rx >= 2 || room.rz >= 2
     // the room's budget, in body-equivalents: today's size formula, unchanged
@@ -741,41 +749,63 @@ export function generateLevel(depth: number, seed = Math.floor(Math.random() * 1
 
     // which template, if any: the lesson, depth 4's rams, or a pick from the depth's list
     let tpl: Member[] | null = null
+    const lesson = room === lessonRoom || room === swarmLesson
     if (room === lessonRoom) tpl = ['C', 'H']
+    else if (room === swarmLesson) tpl = ['M8']
     else if (d4Rooms.has(room)) tpl = fill(pickWeighted(D4, rand).members ?? [], size, Infinity)
     else if (depth >= 5) {
-      const rows = (depth >= 7 ? D7 : D5).filter((row) => {
+      const rows = (depth >= 7 ? D7 : D5).map((row) => (row.today ? row : { ...row, members: shrink(row.members, size) })).filter((row) => {
         if (row.today) return true
-        const kinds = row.members.map(kindOf)
+        const kinds = bodies(row.members)
         const rams = kinds.filter((k) => k === 'charger').length
+        // rams never in a side room (every rush would stun on a wall, so it's free); swarms may be
         if (rams > 0 && (room.kind === 'side' || chargerPacks >= caps.chargerPacks)) return false
+        if (kinds.includes('swarm') && swarmPacks >= caps.swarmPacks) return false
         return rams <= caps.chargersPerPack && new Set(kinds).size <= caps.kinds && beOf(row.members) <= size + 1
       })
       const row = rows.length ? pickWeighted(rows, rand) : null
-      // until the swarm exists, a row with mites stands in as today's pack
-      if (row && !row.today && !row.members.some((m) => m === 'M8' || m === 'M6')) tpl = fill(row.members, size, caps.kinds)
+      if (row && !row.today) tpl = fill(row.members, size, caps.kinds)
     }
 
     if (tpl) {
-      // the first member leads; everyone sits a little out from the spot, so a ram has room to stand and show its lane
-      for (const m of tpl) {
-        const kind = kindOf(m)
-        // 12 tries in the ring, then 12 more anywhere near the spot: a big template in a hall shouldn't lose members
-        for (let tries = 0; tries < 24; tries++) {
+      const want = bodies(tpl)
+      const spots: ({ x: number; z: number } | null)[] = want.map(() => null)
+      // mites first, as a nest round the spot; then everyone else a little out from it, so a
+      // ram has room to stand and show its lane. The first listed member still leads.
+      const order = [...want.keys()].sort((a, b) => Number(want[b] === 'swarm') - Number(want[a] === 'swarm'))
+      for (const i of order) {
+        const kind = want[i]!
+        const mite = kind === 'swarm'
+        // 12 tries in the ring, then more a little wider: a big template in a hall, or a nest by a
+        // crate, shouldn't lose members (a nest widens slowly, so it stays a nest)
+        for (let tries = 0; tries < (mite ? 48 : 24); tries++) {
           const a = rand() * Math.PI * 2
-          const r = tries < 12 ? 1.8 + rand() * 1.2 : 0.8 + rand() * 3.7
+          const wide = tries >= 12
+          const r = mite ? rand() * BROOD.nestR * (1 + Math.max(0, tries - 12) / 24) : wide ? 0.8 + rand() * 3.7 : 1.8 + rand() * 1.2
           const x = cx + Math.cos(a) * r
           const z = cz + Math.sin(a) * r
-          if (makeTerrainNow.blocked(x, z, kind === 'charger' ? 0.8 : 0.7)) continue
-          if (members.some((o) => Math.hypot(o.x - x, o.z - z) < 1.3)) continue
-          // the lesson ram sleeps facing into the room: you walk in on its side, not its face
-          const face = room === lessonRoom && kind === 'charger' ? { x: room.center.x, z: room.center.z } : undefined
-          members.push({ kind, x, z, face })
+          if (makeTerrainNow.blocked(x, z, mite ? 0.4 : kind === 'charger' ? 0.8 : 0.7)) continue
+          const clash = spots.some((o, j) => {
+            if (!o) return false
+            const d = Math.hypot(o.x - x, o.z - z)
+            const other = want[j] === 'swarm'
+            return mite ? d < (other ? BROOD.nestGap : 1.0) : d < (other ? 1.0 : 1.3)
+          })
+          if (clash) continue
+          spots[i] = { x, z }
           break
         }
       }
+      want.forEach((kind, i) => {
+        const at = spots[i]
+        if (!at) return
+        // the lesson ram sleeps facing into the room: you walk in on its side, not its face
+        const face = room === lessonRoom && kind === 'charger' ? { x: room.center.x, z: room.center.z } : undefined
+        members.push({ kind, x: at.x, z: at.z, face })
+      })
       if (members.some((m) => m.kind === 'charger')) chargerPacks++
-      if (members.length) packs.push({ room, members, lesson: room === lessonRoom || undefined, budget: size, template: tpl.join('+') })
+      if (members.some((m) => m.kind === 'swarm')) swarmPacks++
+      if (members.length) packs.push({ room, members, lesson: lesson || undefined, budget: size, template: tpl.join('+') })
       return
     }
     for (let n = 0; n < size; n++) {
@@ -797,7 +827,7 @@ export function generateLevel(depth: number, seed = Math.floor(Math.random() * 1
   const FIRST = ['Rust', 'Hollow', 'Cinder', 'Grim', 'Ash', 'Pale', 'Iron', 'Gutter', 'Shard', 'Mourn']
   const SECOND = ['jaw', 'maw', 'grip', 'wake', 'hook', 'coil', 'heart', 'knell']
   /** Half the time a leader is named for what it is: Cinderhorn, not Cindermaw. */
-  const POOL: Partial<Record<Archetype, string[]>> = { charger: ['horn', 'brow', 'skull', 'hoof'] }
+  const POOL: Partial<Record<Archetype, string[]>> = { charger: ['horn', 'brow', 'skull', 'hoof'], swarm: ['mother', 'nest', 'hive', 'brood'] }
   const TITLES: Record<EliteMod, string> = { swift: 'the Quick', plated: 'the Plated', splitting: 'the Many', warding: 'the Warden' }
   const mainPacks = packs.filter((p) => p.room.kind === 'main' && p.members.length >= 2 && !p.lesson)
   const eliteCount = Math.min(mainPacks.length, 1 + Math.floor((depth - 1) / 2))

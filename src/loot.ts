@@ -34,19 +34,21 @@ export const LOOT = {
 }
 
 const TREASURE: Record<Archetype, Record<SlotName, number>> = {
-  // chasers are all arms and torso; ranged ones are all eyes and legs; rams are legs
+  // chasers are all arms and torso; ranged ones are all eyes and legs; rams are legs; mites are eyes
   chaser: { head: 1, torso: 3, arms: 3, legs: 1 },
   ranged: { head: 3, torso: 1, arms: 1, legs: 3 },
   charger: { head: 2, torso: 1, arms: 1, legs: 4 },
+  swarm: { head: 4, torso: 1, arms: 1, legs: 2 },
   boss: { head: 1, torso: 1, arms: 1, legs: 1 },
 }
 
 /**
  * A kill's share of its pack's payout. A pack weighs the sum of its members at
  * birth, so a pack pays out the same whatever it's made of. Split halves and boss
- * adds weigh 0 (Combat passes 0 for them).
+ * adds weigh 0 (Combat passes 0 for them). A mite is a quarter: a
+ * brood of 8 pays out like two hulks.
  */
-export const KILL_WEIGHT: Record<Archetype, number> = { chaser: 1, ranged: 1, charger: 1, boss: 1 }
+export const KILL_WEIGHT: Record<Archetype, number> = { chaser: 1, ranged: 1, charger: 1, swarm: 0.25, boss: 1 }
 
 export const TIER_COLOR: Record<Tier, number> = {
   white: 0xdfe6ee,

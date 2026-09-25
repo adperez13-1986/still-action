@@ -5,6 +5,7 @@ import { PART, type BreachHole, type EnemyStatus, type PartEvent, type PartRunti
 import type { Terrain } from './terrain'
 import type { Enemy } from './enemy'
 import type { Still } from './still'
+import { WALL_TOP } from './lane'
 
 /**
  * Something in the air that will land: its mark on the floor closes on its true
@@ -60,10 +61,10 @@ const FADE_S = 0.25
 const CROWD = 5
 /** Falling frost motes, at most this many a beat across every slowed enemy. */
 const MOTES_MAX = 12
-/** Barrier tops: where a breach rim and the bank tick sit, so the wall never hides them. */
-const WALL_TOP = 1.0
 /** The path flash, and a rim's ember flare when a shot goes through its hole. */
 const PATH_S = 0.15
+/** The throw's wall tick is this tall: it stands on the wall top. */
+const TICK = 0.3
 const FLARE_S = 0.1
 const RIM_COLD = new THREE.Color(0xcfe4ff)
 /** The decoy glows less than a dash afterimage: additive on a lit floor, anything brighter reads as a white slab. */
@@ -152,7 +153,7 @@ export class PartFx {
   /** Ricochet's ready tick: one cold mark on the wall where it would bounce. */
   private readonly bankMark = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.14, 0.14), new THREE.MeshBasicMaterial({ color: 0xeef6ff, blending: THREE.AdditiveBlending, transparent: true, opacity: 0.9 }))
   private readonly bracketGeo = new THREE.BoxGeometry(0.035, 0.035, 0.2)
-  private readonly tickGeo = new THREE.BoxGeometry(0.12, 0.3, 0.12)
+  private readonly tickGeo = new THREE.BoxGeometry(0.12, TICK, 0.12)
   private readonly tickMat = new THREE.MeshBasicMaterial({ color: 0xeef6ff, blending: THREE.AdditiveBlending, transparent: true })
   private beams: Beam[] = []
   private tethers: Tether[] = []
@@ -217,7 +218,7 @@ export class PartFx {
         const d = Math.hypot(dx, dz) || 1
         const reach = ev.enemy.radius + 0.2
         l.tick = new THREE.Mesh(this.tickGeo, this.tickMat)
-        l.tick.position.set(ev.to.x + (dx / d) * reach, 0.9, ev.to.z + (dz / d) * reach)
+        l.tick.position.set(ev.to.x + (dx / d) * reach, WALL_TOP + TICK / 2, ev.to.z + (dz / d) * reach)
         this.scene.add(l.tick)
       }
       this.landings.push(l)
@@ -354,7 +355,7 @@ export class PartFx {
   /** Where a Ricochet Lens would bank right now, or null: one small cold tick on the wall. */
   bankTick(at: THREE.Vector3 | null) {
     this.bankMark.visible = !!at
-    if (at) this.bankMark.position.set(at.x, WALL_TOP * 0.9, at.z)
+    if (at) this.bankMark.position.set(at.x, WALL_TOP + 0.07, at.z)
   }
 
   /** Where a rewind would take him (1.5 s behind), or null while it isn't available. */

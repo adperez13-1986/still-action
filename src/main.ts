@@ -11,6 +11,7 @@ import type { Enemy, EnemyEvent } from './enemy'
 import type { Assembler } from './boss'
 import { RANGED } from './ranged'
 import { Charger, CHARGER } from './charger'
+import { Mite, BROOD, type Brood } from './swarm'
 import * as sfx from './audio'
 import { createCameraRig } from './camera'
 import { updateMusic } from './music'
@@ -60,6 +61,10 @@ const JOINT_C = new THREE.Color(0x2b2426)
 const PLATE_C = new THREE.Color(0x6e5a50)
 /** A sleeping ram's banked fire: a thin grey wisp, "asleep, not scrap". */
 const BANKED = new THREE.Color(0x4a4744)
+/** The heat coming off a spent clump of mites. */
+const CLUMP_SMOKE = new THREE.Color(0x3a3430)
+/** Mites killed this tick: a Vent through a brood is one crunch, however many die. */
+let miteKills = 0
 /** The cold grit a near miss blows off Still's feet. */
 const COLD_GRIT = new THREE.Color(0x55606c)
 /** A ram's lane direction, on the floor. */
@@ -156,6 +161,18 @@ const combat = new Combat(world.scene, OPEN, {
       bossDown(at)
       return
     }
+    if (kind === 'swarm') {
+      // a pop, not a crunch: a few rust flecks, embers, no dust. Eight of them are still one crunch.
+      vfx.chunks(at3(at, 0.2), 3, RUST, 3.5, 0.08)
+      vfx.sparks(at3(at, 0.25), EMBER, 5, 4)
+      vfx.flash(at3(at, 0.25), EMBER, wasElite ? 0.6 : 0.35)
+      sfx.pop(panOf(at), wasElite)
+      miteKills++
+      shake = Math.max(shake, miteKills >= 3 ? 0.12 : 0.06)
+      hitstop = Math.max(hitstop, miteKills >= 3 ? 0.03 : 0.02)
+      maybeDrop(at, kind, pack, wasElite, summoned, weight)
+      return
+    }
     sfx.kill(panOf(at))
     if (kind === 'charger') {
       // the boiler's last breath: rust, the two hatch plates thrown high, smoke rising
@@ -191,7 +208,8 @@ const combat = new Combat(world.scene, OPEN, {
       enemyLog.push({ t: combat.time, ev })
       if (enemyLog.length > 2000) enemyLog.shift()
     }
-    if (ev.e instanceof Charger) ramEvent(ev.e, ev)
+    if ('e' in ev && ev.e instanceof Charger) ramEvent(ev.e, ev)
+    else broodEvent(ev)
   },
   onPart: (ev) => {
     if (import.meta.env.DEV) {
@@ -399,6 +417,91 @@ const combat = new Combat(world.scene, OPEN, {
   },
 })
 
+/** A brood's instants: its one surge voice, the ring's pieces breaking, the bite, the end. */
+function broodEvent(ev: EnemyEvent) {
+  switch (ev.kind) {
+    case 'surge': {
+      if (run.phase === 'crawl') windups.set(ev.brood, sfx.chitter(ev.ms, ev.biters, panOf(ev.at)))
+      // the stamp: six embers thrown off the ring's edge
+      for (let k = 0; k < 6; k++) {
+        const a = (k * Math.PI) / 3
+        const dir = new THREE.Vector3(Math.sin(a), 0, Math.cos(a))
+        vfx.sparks(new THREE.Vector3(ev.at.x + dir.x * BROOD.ringR, 0.15, ev.at.z + dir.z * BROOD.ringR), EMBER, 1, 2, dir, 0.2)
+      }
+      break
+    }
+    case 'biterLost':
+      // one jaw fewer in the chitter; the other jaws are still coming, so it isn't cut
+      windups.get(ev.brood)?.lose?.()
+      if (ev.why === 'parry') vfx.sparks(ev.arc, COLD, 6, 3)
+      else vfx.sparks(ev.arc, EMBER, 3, 2)
+      break
+    case 'bite':
+      sfx.snap(ev.biters, ev.hit, panOf(ev.at))
+      windups.delete(ev.brood)
+      break
+    case 'landed':
+      for (const p of ev.at) vfx.dust(p, 2, 0.25, undefined, 2)
+      break
+    case 'broodEnd':
+      // the mind leaving: a column of embers where the last one fell
+      sfx.broodEnd(panOf(ev.at))
+      vfx.embers(at3(ev.at, 0.2), 12, 0.3)
+      shake = Math.max(shake, 0.15)
+      break
+    case 'broodGone':
+      windups.get(ev.brood)?.stop(true)
+      windups.delete(ev.brood)
+      break
+  }
+}
+
+/** What a brood does between its moments: the lunge's trails, the spent clump's heat, a flung mite landing. */
+const broodSmoke = new WeakMap<Brood, number>()
+function broodFx(dt: number) {
+  for (const b of combat.broods) {
+    if (b.state === 'strike') {
+      for (const m of b.biters) if (!m.dead && m.phase === 'strike' && m.t < 50) vfx.trail(m.rig.core.getWorldPosition(fxA), EMBER, 0.1)
+    }
+    if (b.state === 'recover' && b.L) {
+      const t = (broodSmoke.get(b) ?? 0) - dt
+      if (t <= 0) vfx.smokePuff(fxA.set(b.L.x, 0.2, b.L.z), 1, CLUMP_SMOKE)
+      broodSmoke.set(b, t <= 0 ? 0.2 : t)
+    }
+    for (const m of b.mites) {
+      if (!m.landed) continue
+      m.landed = false
+      vfx.dust(m.pos, 1, 0.2)
+    }
+  }
+}
+
+/**
+ * Each brood is one rustling thing: mites never step. A tick rate that thickens
+ * with the mites on the move, capped per brood and across broods, panned at a
+ * random moving mite, and ducked under any windup so it never covers a tell.
+ */
+const skitterAcc = new Map<Brood, number>()
+function skitter(dt: number) {
+  if (run.phase !== 'crawl') return
+  const awake = combat.broods.filter((b) => b.pack.state === 'awake')
+  const rates = awake.map((b) => Math.min(24, 6 * Math.min(b.movingCount(), 4) * (b.queen?.quick ? 1.45 : 1)))
+  const sum = rates.reduce((a, r) => a + r, 0)
+  const scale = sum > 36 ? 36 / sum : 1
+  const duck = windups.size > 0 ? 0.5 : 1
+  awake.forEach((b, i) => {
+    let acc = (skitterAcc.get(b) ?? 0) + rates[i]! * scale * dt
+    const moving = b.mites.filter((m) => !m.dead && m.moving)
+    while (acc >= 1 && moving.length) {
+      acc -= 1
+      const m = moving[Math.floor(Math.random() * moving.length)]!
+      const d = b.nearestTo(still.pos)
+      sfx.skitterTick(panOf(m.pos), Math.max(0, 1 - d / STEP_HEAR) * duck)
+    }
+    skitterAcc.set(b, Math.min(acc, 1))
+  })
+}
+
 /** A ram's instants: the lock, the pawing, the ways a rush ends. */
 function ramEvent(c: Charger, ev: EnemyEvent) {
   const pan = panOf(c.pos)
@@ -573,6 +676,8 @@ function landFx(at: THREE.Vector3, what: 'flare' | 'signal' | 'throw' | 'wall') 
 
 /** N9: an enemy's live tell shatters into cold shards along its own outline. */
 function tellBreak(e: Enemy) {
+  // a mite's piece of the ring shatters through its brood (biterLost), not round its own body
+  if (e instanceof Mite) return
   if (e instanceof Charger) {
     // strewn along both rails of the lane it was drawing
     const fx = Math.sin(e.aim)
@@ -1368,6 +1473,7 @@ const tmpLean = new THREE.Vector3()
 
 function simulate(realDt: number) {
   prev.copy(still.pos)
+  miteKills = 0
 
   if (run.phase === 'over') return
 
@@ -1591,9 +1697,12 @@ function frame(nowMs: number) {
     ambientFx(elapsed)
     footsteps()
     ramFx(elapsed)
+    broodFx(elapsed)
+    skitter(elapsed)
     for (const [e, v] of loops) v.pan(panOf(e.pos))
   }
   syncTells()
+  combat.miteBatch.sync(world.camera, now)
   world.render()
   requestAnimationFrame(frame)
 }

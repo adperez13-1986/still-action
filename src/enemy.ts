@@ -3,6 +3,7 @@ import { DECAL_Y } from './world'
 import { tellMaterial, releaseTell } from './vfx'
 import type { Terrain } from './terrain'
 import type { EliteMod } from './combat'
+import type { Brood } from './swarm'
 
 /**
  * Every archetype is the same machine: approach, windup, strike, recover.
@@ -95,9 +96,21 @@ export type EnemyEvent =
   | { kind: 'skid'; e: Enemy }
   /** The rush's front passed within 2.0 of Still without hitting him. `at` is where he stood. */
   | { kind: 'nearMiss'; e: Enemy; at: THREE.Vector3 }
+  /** A brood's surge starts: its ring is laid at `at` (L), with this many biters. */
+  | { kind: 'surge'; brood: Brood; at: THREE.Vector3; ms: number; biters: number }
+  /** A biter left the surge: killed, Parried, or flung (grabbed, or shoved out of reach). `arc` is its piece of the ring. */
+  | { kind: 'biterLost'; brood: Brood; mite: Enemy; why: 'dead' | 'parry' | 'flung'; arc: THREE.Vector3 }
+  /** The 550 tick: the bite, on Still or on air. */
+  | { kind: 'bite'; brood: Brood; at: THREE.Vector3; biters: number; hit: boolean }
+  /** The biters touch down in the clump. */
+  | { kind: 'landed'; brood: Brood; at: THREE.Vector3[] }
+  /** The last mite of a brood died. */
+  | { kind: 'broodEnd'; at: THREE.Vector3 }
+  /** A level change took a brood away: stop its voices. */
+  | { kind: 'broodGone'; brood: Brood }
 
 export interface Enemy {
-  readonly kind: 'chaser' | 'ranged' | 'charger' | 'boss'
+  readonly kind: 'chaser' | 'ranged' | 'charger' | 'swarm' | 'boss'
   /** Where an elite's name floats, before size. */
   readonly labelY: number
   /**

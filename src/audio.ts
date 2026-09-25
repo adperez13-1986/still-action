@@ -226,6 +226,8 @@ export interface Voice {
   pan: (p: number) => void
   /** The cheap Doppler at a rush's closest pass. */
   dip?: () => void
+  /** A surge lost a biter: its jaw drops out of the flam. */
+  lose?: () => void
 }
 /** An old stop-only voice, as a Voice. */
 export const asVoice = (stop: (hard?: boolean) => void): Voice => ({ stop, pan: () => {} })
@@ -795,6 +797,148 @@ export function ramSplit(pan: number) {
   const c = live()
   if (!c) return
   sample(c, 'metalHeavy', out(c, 'hits', pan), 0.7, 1.1)
+}
+
+// --- the swarm: the only enemy above 3 kHz, clicks and air ---
+
+/** One tick of a brood's rustle; the scheduler in main paces them. */
+export function skitterTick(pan: number, loud: number) {
+  const c = live()
+  if (!c || loud <= 0.02) return
+  const t = c.currentTime
+  const d = out(c, 'enemy', pan)
+  if (Math.random() < 1 / 3) sample(c, 'tin', d, 0.05 * loud, vary(3.0, 0.15))
+  else {
+    const f = vary(3400, 0.08)
+    tone(c, d, 'square', t, f, 2200, 0.006, 0.04 * loud, 0.0005)
+    hiss(c, d, t, 0.008, 0.03 * loud, 'highpass', 6000, 6000, 0.7)
+  }
+}
+
+/**
+ * The surge's one windup: a rising chirp at the lock, a kettle hiss, and mandible
+ * clicks tightening to the bite, each click flammed once per biter. A four-jaw
+ * surge sounds thicker than a one-jaw one; lose() drops a jaw.
+ */
+export function chitter(ms: number, biters: number, pan: number, gain = 1): Voice {
+  const c = live()
+  if (!c) return asVoice(() => {})
+  const t = c.currentTime
+  const dur = ms / 1000
+  const g = c.createGain()
+  g.gain.value = gain
+  g.connect(out(c, 'enemy', pan))
+  // the onset is its lock: rising, where the sentinel's clack falls and the ram's latch is low
+  tone(c, g, 'square', t, 2600, 3400, 0.03, 0.18, 0.0008)
+  sample(c, 'tin', g, 0.4, 2.4)
+  const s = c.createBufferSource()
+  s.buffer = noise
+  s.loop = true
+  const bp = c.createBiquadFilter()
+  bp.type = 'bandpass'
+  bp.Q.value = 6
+  bp.frequency.setValueAtTime(1800, t)
+  bp.frequency.exponentialRampToValueAtTime(4800, t + dur)
+  const rise = c.createGain()
+  rise.gain.setValueAtTime(0.04, t)
+  rise.gain.linearRampToValueAtTime(0.22, t + dur)
+  rise.gain.setValueAtTime(0.0001, t + dur)
+  s.connect(bp).connect(rise).connect(g)
+  s.start(t, Math.random() * 0.5)
+  s.stop(t + dur + 0.02)
+  const flam = [0, 1, 2, 3].map((k) => {
+    const fg = c.createGain()
+    fg.gain.value = k < biters ? 1 : 0
+    fg.connect(g)
+    return fg
+  })
+  let at = 0
+  while (at < dur - 0.01) {
+    for (let k = 0; k < 4; k++) tone(c, flam[k]!, 'square', t + at + k * 0.004, 4200, 3000, 0.005, 0.07, 0.0005)
+    // 70 ms tightening to 22 ms: the hulk ratchet's shape, an octave up
+    at += 0.07 - 0.048 * (at / dur)
+  }
+  let n = biters
+  return {
+    stop: gate(g, c, t + dur),
+    pan: () => {},
+    lose: () => {
+      if (n <= 0) return
+      n--
+      flam[n]!.gain.setValueAtTime(0, c.currentTime)
+    },
+  }
+}
+
+/** The 550 tick: n jaws, flammed 7 ms apart. On air, a dry hiss and the landing patter; on him, hurt() says it. */
+export function snap(biters: number, hit: boolean, pan: number) {
+  const c = live()
+  if (!c) return
+  const t = c.currentTime
+  const d = out(c, 'enemy', pan)
+  for (let k = 0; k < biters; k++) {
+    tone(c, d, 'square', t + k * 0.007, 3000, 1100, 0.02, 0.18)
+    hiss(c, d, t + k * 0.007, 0.015, 0.2, 'bandpass', 3500, 3500, 3)
+  }
+  sample(c, 'tin', d, 0.3, 1.6)
+  if (!hit) {
+    hiss(c, d, t, 0.06, 0.12, 'highpass', 5000, 5000, 0.7)
+    sample(c, 'softMedium', d, 0.2, 1.8, 0.15)
+  }
+}
+
+let lastPop = -1
+let clusterUntil = -1
+const popTimes: number[] = []
+/** A mite dying: a small bright pop, not kill(). Pops keep 35 ms apart; a third inside 120 ms becomes one cluster. */
+export function pop(pan: number, queen = false) {
+  const c = live()
+  if (!c) return
+  const t = c.currentTime
+  while (popTimes.length && t - popTimes[0]! > 0.12) popTimes.shift()
+  popTimes.push(t)
+  if (t < clusterUntil) return
+  if (popTimes.length >= 3) {
+    popCluster(popTimes.length, pan)
+    clusterUntil = t + 0.12
+    return
+  }
+  if (t - lastPop < 0.035) return
+  lastPop = t
+  // the queen: an octave down, and a plate
+  const d = out(c, 'hits', pan)
+  const o = queen ? 0.5 : 1
+  tone(c, d, 'triangle', t, vary(1500, 0.1) * o, 700 * o, 0.06, 0.2)
+  tone(c, d, 'sine', t, 260 * o, 110 * o, 0.07, 0.35)
+  sample(c, 'tin', d, 0.3, vary(1.8, 0.1) * o)
+  if (queen) sample(c, 'plateHeavy', d, 0.3, 1.4)
+}
+
+/** A Vent through a brood: one crunch, with a scatter of tin in it. */
+function popCluster(n: number, pan: number) {
+  const c = live()
+  if (!c) return
+  const t = c.currentTime
+  const d = out(c, 'hits', pan)
+  tone(c, d, 'sine', t, 180, 60, 0.15, 0.5)
+  for (let i = 0; i < Math.min(n, 5); i++) sample(c, 'tin', d, 0.18, 1.6 + Math.random() * 0.8, Math.random() * 0.1)
+  sample(c, 'metalMedium', d, 0.5, 1.5)
+}
+
+/** The last mite of a brood: clicks slowing and falling, an exhale, one small clear tone. The mind gone quiet; not cleared(). */
+export function broodEnd(pan: number) {
+  const c = live()
+  if (!c) return
+  const t = c.currentTime
+  const d = out(c, 'enemy', pan)
+  let at = 0
+  for (let i = 0; i < 6; i++) {
+    at += 0.022 + 0.0136 * i
+    const f = 3400 - 400 * i
+    tone(c, d, 'square', t + at, f, f * 0.7, 0.008, 0.12 - 0.016 * i, 0.0005)
+  }
+  hiss(c, d, t + 0.05, 0.5, 0.08, 'bandpass', 3000, 900, 1)
+  tone(c, d, 'sine', t + 0.35, 660, 655, 0.25, 0.05, 0.01)
 }
 
 /** A pack noticing you: two sharp rising notes, so you know you've pulled them even off screen. */

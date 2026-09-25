@@ -42,6 +42,18 @@ export interface LaneState {
   from: number
 }
 
+/**
+ * How bright each piece is, locked and rushing. The rails always carry the hit
+ * edge; a wide lane (the Assembler's, 3.14 across) lights its core and wash far
+ * less, or it becomes a flat red slab and the texture is lost.
+ */
+export interface LaneLook {
+  wash: [locked: number, rush: number]
+  core: [locked: number, rush: number]
+  cap: [locked: number, rush: number]
+}
+const RAM_LOOK: LaneLook = { wash: [0.18, 0.3], core: [0.55, 0.9], cap: [0.18, 0.3] }
+
 /** Floor units per unit of strip uv: the chevrons keep one spacing whatever the length. */
 const UV_LEN = 12
 /** The tracking rails stop this short of the end: the aim isn't set yet, so neither is the end. */
@@ -120,10 +132,12 @@ export class LaneTell {
   private readonly star: THREE.Mesh
 
   private stage: LaneState['stage'] = 'off'
+  private readonly look: LaneLook
   /** Seconds since the lock stamped its end mark. */
   private stampT = 0
 
-  constructor() {
+  constructor(look: LaneLook = RAM_LOOK) {
+    this.look = look
     // the half-disc past the end: the lane's tip is as wide as the rails, rounded
     this.cap = new THREE.Mesh(new THREE.CircleGeometry(1, 16, Math.PI, Math.PI), this.capMat)
     this.cap.rotation.x = -Math.PI / 2
@@ -196,9 +210,10 @@ export class LaneTell {
       else this.stampT += dt
       const rush = s.stage === 'rush'
       this.railMat.opacity = 0.7
-      this.washMat.opacity = rush ? 0.3 : 0.18
-      this.coreMat.opacity = rush ? 0.9 : 0.55
-      this.capMat.opacity = rush ? 0.3 : 0.18
+      const at = rush ? 1 : 0
+      this.washMat.opacity = this.look.wash[at]
+      this.coreMat.opacity = this.look.core[at]
+      this.capMat.opacity = this.look.cap[at]
       const k = this.stampT + dt
       mark = rush ? 0.9 : k < 0.04 ? (0.9 * k) / 0.04 : 0.6 + 0.3 * Math.exp(-(k - 0.04) * 5)
     }
