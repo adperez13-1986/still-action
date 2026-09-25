@@ -3,6 +3,7 @@ import { DECAL_Y } from './world'
 import { tellMaterial, releaseTell, TELL_CROWD, COLD, EMBER, type Vfx } from './vfx'
 import { Chaser, shoveVelocity, distToSegment, PLAYER_RADIUS, type Enemy, type EnemyCtx, type EnemyEvent } from './enemy'
 import { Ranged } from './ranged'
+import { Lobber } from './lobber'
 import { Charger, CHARGER } from './charger'
 import { Mite, Brood, MiteBatch, MITE } from './swarm'
 import { KILL_WEIGHT } from './loot'
@@ -241,7 +242,7 @@ export interface CombatEvents {
   /** `amount`: what was actually lost. A top-up inside a hurt window reports only the difference. */
   onPlayerHurt: (amount: number, source: HurtSource) => void
   /** `summoned`: a boss add, scrap that never drops anything. `weight`: this kill's share of the pack's payout. */
-  onKill: (at: THREE.Vector3, kind: Archetype, pack: Pack, wasElite: boolean, summoned: boolean, weight: number) => void
+  onKill: (at: THREE.Vector3, kind: Archetype, pack: Pack, wasElite: boolean, summoned: boolean, weight: number, e: Enemy) => void
   /** An enemy's instant (a lock, a rush ending, a trample). Lasting state is polled instead. */
   onEnemy: (ev: EnemyEvent) => void
   /** A pack woke: where, and the pack (the notebook meets its names). */
@@ -272,6 +273,10 @@ export class Combat {
   private readonly live: LiveHazard[] = []
   get hazards(): readonly Hazard[] {
     return this.live
+  }
+  /** Every shell in the air, where it is (the run trails embers behind them). */
+  *shellsInFlight(): IterableIterator<THREE.Vector3> {
+    for (const h of this.live) if (h.tell.shell?.visible) yield h.tell.shell.position
   }
   /** Whether a body carries a slag core (the run drips embers from it). */
   isSlagged(e: Enemy) {
@@ -1088,7 +1093,7 @@ export class Combat {
       }
       const summoned = this.summoned.has(e)
       const weight = summoned || this.splitBorn.has(e) ? 0 : KILL_WEIGHT[e.kind]
-      this.events.onKill(e.pos, e.kind, pack, wasElite, summoned, weight)
+      this.events.onKill(e.pos, e.kind, pack, wasElite, summoned, weight, e)
       // after its pop: the brood's end is the last thing heard
       if (e instanceof Mite) this.buryMite(e, pack)
       if (pack.members.length === 0) this.packs.splice(this.packs.indexOf(pack), 1)
@@ -1772,6 +1777,7 @@ export class Combat {
   addHazard(spec: HazardSpec): Hazard {
     const h = new LiveHazard(spec)
     this.scene.add(h.tell.group)
+    if (h.tell.shell) this.scene.add(h.tell.shell)
     this.live.push(h)
     h.tell.update(0, h)
     this.events.onHazard({ kind: 'spawn', h })
@@ -1902,9 +1908,9 @@ export class Combat {
 
   /** Put a sleeping pack in the level. Packs are placed, not spawned from a rim. */
   /** One body of any archetype but the boss. */
-  private make(kind: Archetype, x: number, z: number): Enemy {
+  private make(kind: Archetype, x: number, z: number, variant?: 'lobber'): Enemy {
     switch (kind) {
-      case 'ranged': return new Ranged(x, z)
+      case 'ranged': return variant === 'lobber' ? new Lobber(x, z) : new Ranged(x, z)
       case 'charger': return new Charger(x, z)
       case 'swarm': {
         const m = new Mite(x, z)
@@ -1921,7 +1927,7 @@ export class Combat {
    * `look: 'heap'`: its mites sleep under a slag heap (the Works).
    */
   addPack(
-    members: { kind: Archetype; x: number; z: number; face?: { x: number; z: number }; slag?: true }[], side: boolean,
+    members: { kind: Archetype; variant?: 'lobber'; x: number; z: number; face?: { x: number; z: number }; slag?: true }[], side: boolean,
     elite?: { mod: EliteMod; name: string }, look?: 'heap',
   ): Pack {
     const pack: Pack = {
@@ -1930,7 +1936,7 @@ export class Combat {
     }
     const gazeAt = Math.random() * Math.PI * 2
     for (const m of members) {
-      const e = this.make(m.kind, m.x, m.z)
+      const e = this.make(m.kind, m.x, m.z, m.variant)
       // mites never carry one: eight puddles would be noise
       if (m.slag && e.kind !== 'swarm') {
         this.slagged.add(e)
@@ -2250,6 +2256,8 @@ export class Combat {
       if (this.packOf.get(e)?.state !== 'awake') continue
       if (e instanceof Charger) n += (e.phase === 'windup' && e.locked) || e.rushing ? 1 : 0
       else if (e instanceof Ranged) n += e.phase === 'windup' && e.locked ? 1 : 0
+      // a Lobber's shell in the air is its committed tell
+      else if (e instanceof Lobber) n += e.locked ? 1 : 0
       else if (e instanceof Chaser || isBoss(e)) n += e.phase === 'windup' ? 1 : 0
     }
     for (const b of this.broods) n += b.state === 'windup' ? 1 : 0

@@ -12,7 +12,7 @@ import { localDate, LEADERS_MAX } from './save'
  * From design/meta/SPEC.md §7.3 (ids are still's ALL_ENEMIES keys).
  */
 
-export type RosterRole = 'hulk' | 'sentinel' | 'ram' | 'mites' | 'elite' | 'fragment' | 'boss' | 'reserved'
+export type RosterRole = 'hulk' | 'sentinel' | 'ram' | 'mites' | 'elite' | 'fragment' | 'boss' | 'lobber' | 'heap' | 'reserved'
 export interface RosterEntry {
   id: RosterId
   name: string
@@ -43,7 +43,7 @@ export const ROSTER: readonly RosterEntry[] = [
   E('iron-crawler', 'Iron Crawler', 'ram', 'I'),
   E('glitch-node', 'Glitch Node', 'sentinel', 'I'),
   E('sentinel-shard', 'Sentinel Shard', 'sentinel', 'I'),
-  E('hollow-repeater', 'Hollow Repeater', 'reserved', 'II', { reservedFor: 'the Lobber' }),
+  E('hollow-repeater', 'Hollow Repeater', 'lobber', 'II'),
   E('drifting-frame', 'Drifting Frame', 'hulk', 'I'),
   E('echo-construct', 'Echo Construct', 'hulk', 'I'),
   E('thermal-scanner', 'Thermal Scanner', 'sentinel', 'I'),
@@ -54,7 +54,7 @@ export const ROSTER: readonly RosterEntry[] = [
   E('the-first-warden', 'The First Warden', 'boss', 'any', { boss: 'assembler', line: 'It does not remember what it was built to protect. It only remembers the door.' }),
   E('thermal-leech', 'Thermal Leech', 'mites', 'II'),
   E('wire-jammer', 'Wire Jammer', 'sentinel', 'II'),
-  E('slag-heap', 'Slag Heap', 'reserved', 'II', { reservedFor: 'the slag heap brood' }),
+  E('slag-heap', 'Slag Heap', 'heap', 'II'),
   E('feedback-loop', 'Feedback Loop', 'sentinel', 'II'),
   E('phase-drone', 'Phase Drone', 'sentinel', 'II'),
   E('furnace-tick', 'Furnace Tick', 'mites', 'II'),
@@ -86,6 +86,9 @@ const ROLE_OF: Record<Exclude<Archetype, 'boss'>, RosterRole> = { chaser: 'hulk'
 const bandOf = (depth: number): 'I' | 'II' => (depth <= 3 ? 'I' : 'II')
 /** The Assembler's page, both depths. */
 export const BOSS_PAGE: RosterId = 'the-first-warden'
+/** The Lobber's page, and the slag heap's: one each, whatever the level names its ranged and its mites. */
+export const LOBBER_PAGE: RosterId = 'hollow-repeater'
+export const HEAP_PAGE: RosterId = 'slag-heap'
 /** The halves of a Many split. */
 export const FRAGMENT_PAGE: RosterId = 'fracture-fragment'
 
@@ -155,5 +158,7 @@ export function addLeader(e: NotebookEntry, name: string) {
 
 /** What the page says it is. */
 export const WHAT: Record<RosterRole, string> = {
-  hulk: 'a hulk', sentinel: 'a sentinel', ram: 'a ram', mites: 'mites', elite: 'an elite', boss: 'the boss', fragment: 'pieces of one', reserved: '',
+  // PLACEHOLDER words for the two content pages
+  hulk: 'a hulk', sentinel: 'a sentinel', ram: 'a ram', mites: 'mites', elite: 'an elite', boss: 'the boss', fragment: 'pieces of one',
+  lobber: 'a lobber', heap: 'a slag heap', reserved: '',
 }

@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 
 /**
  * The dungeon's art: KayKit shapes (CC0) wearing ambientCG surfaces (CC0).
@@ -19,6 +20,9 @@ export const PIECES = [
   'wall_doorway', 'wall_window_open', 'table_long', 'stool',
   // the Works
   'floor_tile_big_grate', 'keg', 'wall_gated', 'wall_scaffold',
+  // the workers' quarter: what's left of its rooms, broken near the Works and whole toward home
+  'table_long_broken', 'table_medium_broken', 'chair', 'floor_wood_large_dark',
+  'cabinet_small', 'cabinet_medium', 'couch', 'chair_A_wood', 'table_medium',
 ] as const
 export type Piece = (typeof PIECES)[number]
 
@@ -41,7 +45,19 @@ const SURFACE_TEX: Record<string, { scale: number; gain: number; tint?: [number,
   Metal063: { scale: 3, gain: 0.6, tint: [1, 0.74, 0.58] },
   // already rust; darkened a little so a grate reads as rust, not as a warm pink patch on the plate
   MetalWalkway014: { scale: 3, gain: 0.62, tint: [0.95, 0.86, 0.8] },
+  // the quarter: flagstone streets and old brick
+  Tiles093: { scale: 3, gain: 0.75 },
+  Bricks097: { scale: 2.5, gain: 0.85 },
 }
+/**
+ * A set worn in a role it wasn't tuned for: the quarter's ground is the ruin's paving, and
+ * the beyond has to recede as Ground108 does, not compete with the room as a floor.
+ */
+const ROLE_TEX: Partial<Record<Surface, Record<string, { scale: number; gain: number }>>> = {
+  ground: { PavingStones142: { scale: 7, gain: 0.18 } },
+}
+const texOf = (role: Surface, id: string) => ({ ...SURFACE_TEX[id]!, ...ROLE_TEX[role]?.[id] })
+
 function surfaceOf(name: string): Surface {
   if (/grate/.test(name)) return 'grate'
   if (/^floor_wood/.test(name)) return 'wood'
@@ -74,7 +90,7 @@ export function setSurfaces(ids: Record<Surface, string>) {
   for (const role of Object.keys(ids) as Surface[]) {
     if (surfaceIds[role] === ids[role]) continue
     surfaceIds[role] = ids[role]
-    const t = SURFACE_TEX[ids[role]]!
+    const t = texOf(role, ids[role])
     for (const u of skinned[role]) {
       u.uAlb.value = tex(`${ids[role]}_Color`, true)
       u.uNrm.value = tex(`${ids[role]}_NormalGL`, false)
@@ -118,7 +134,7 @@ function tex(file: string, color: boolean) {
  * the Workshop's boards are wider and darker than a crate's.
  */
 export function skin(m: THREE.MeshStandardMaterial, surface: Surface, tune: { scale?: number; gain?: number } = {}) {
-  const set = SURFACE_TEX[surfaceIds[surface]]!
+  const set = texOf(surface, surfaceIds[surface])
   const scale = tune.scale ?? set.scale
   const gain = tune.gain ?? set.gain
   const own: Skinned = {
@@ -217,6 +233,43 @@ export const FALLBACK: Partial<Record<Piece, Piece | (() => THREE.BufferGeometry
   keg: 'barrel_large',
   wall_gated: 'wall',
   wall_scaffold: 'wall_broken',
+  table_long_broken: () => table(2, 1.1, 4, true),
+  table_medium_broken: () => table(2, 0.95, 2, true),
+  chair: () => chair(),
+  floor_wood_large_dark: 'floor_tile_large',
+  cabinet_small: () => new THREE.BoxGeometry(1, 1, 1).translate(0, 0.5, 0),
+  cabinet_medium: () => new THREE.BoxGeometry(2, 1, 1).translate(0, 0.5, 0),
+  couch: () => couch(),
+  chair_A_wood: () => chair(),
+  table_medium: () => table(2, 1, 2, false),
+}
+
+/** A fallback made of boxes, merged into one geometry. */
+function boxes(parts: [w: number, h: number, d: number, x: number, y: number, z: number, rz?: number][]) {
+  const g = mergeGeometries(parts.map(([w, h, d, x, y, z, rz]) => {
+    const b = new THREE.BoxGeometry(w, h, d)
+    if (rz) b.rotateZ(rz)
+    return b.translate(x, y, z)
+  }))!
+  g.computeBoundingBox()
+  return g
+}
+/** A table: a top and four legs inset 0.15 from its corners. Broken, the +x +z leg is gone and the top rolled 12 degrees. */
+function table(w: number, h: number, d: number, broken: boolean) {
+  const lx = w / 2 - 0.15 - 0.06
+  const lz = d / 2 - 0.15 - 0.06
+  const corners: [number, number][] = [[-lx, -lz], [lx, -lz], [-lx, lz], [lx, lz]]
+  const legs = corners
+    .filter(([x, z]) => !(broken && x > 0 && z > 0))
+    .map(([x, z]): [number, number, number, number, number, number] => [0.12, h - 0.1, 0.12, x, (h - 0.1) / 2, z])
+  return boxes([[w, 0.1, d, 0, h - 0.05, 0, broken ? (12 * Math.PI) / 180 : 0], ...legs])
+}
+function chair() {
+  const legs = [[-0.29, -0.29], [0.29, -0.29], [-0.29, 0.29], [0.29, 0.29]].map(([x, z]) => [0.08, 0.46, 0.08, x!, 0.23, z!] as [number, number, number, number, number, number])
+  return boxes([[0.7, 0.08, 0.7, 0, 0.5, 0], [0.7, 0.7, 0.08, 0, 0.9, -0.31], ...legs])
+}
+function couch() {
+  return boxes([[3, 0.5, 1.5, 0, 0.25, 0], [3, 0.7, 0.3, 0, 0.85, -0.6], [0.3, 0.8, 1.5, -1.35, 0.4, 0], [0.3, 0.8, 1.5, 1.35, 0.4, 0]])
 }
 
 /** Floor pieces are one 4 u cell: a file a little off is scaled to fit at load. */

@@ -59,7 +59,7 @@ export interface PackSpec {
    * `face`: where a member looks while it sleeps; without one the pack faces a random way together.
    * `slag`: it carries a slag core (area II), and leaves a burning puddle where it dies.
    */
-  members: { kind: Archetype; x: number; z: number; face?: { x: number; z: number }; slag?: true }[]
+  members: { kind: Archetype; variant?: 'lobber'; x: number; z: number; face?: { x: number; z: number }; slag?: true }[]
   /** 'heap': a Works brood asleep as a slag heap, a mound with six coals (a look, not a rule). */
   look?: 'heap'
   /** The first member leads, named and with one modifier. */
@@ -74,11 +74,14 @@ export interface PackSpec {
 
 /** What a level was built from, for the look checks (__genLook): props, the tall beyond, floors. */
 export interface LevelMade {
-  props: { piece: Piece; x: number; z: number; top: number; p: number; breakable: boolean; intact: boolean }[]
+  /** `room`: its index in `rooms` (-1 on the walk home). */
+  props: { piece: Piece; x: number; z: number; top: number; p: number; breakable: boolean; intact: boolean; room: number }[]
   tall: { what: Piece | MachineKind; x: number; z: number; hides: boolean }[]
   floors: { piece: Piece; p: number; corridor: boolean }[]
   /** Everything standing within 0.5 u of a floor edge that isn't the wall or a column (INV: none that's tall). */
   edge: { piece: string; x: number; z: number; top: number }[]
+  /** The far side's upright pieces (the quarter's door frames): p is the nearest room's progress, cells how far from floor. */
+  far: { piece: Piece; x: number; z: number; p: number; hides: boolean; cells: number }[]
 }
 
 export interface Level {
@@ -582,19 +585,22 @@ export function makeTerrain(floor: Set<string>, boxes: Box[], circles: Circle[])
 
 // --- pack templates: deeper levels mix archetypes at the same budget ---
 
-/** C ram, H hulk, S sentinel; M8/M6 a swarm of eight or six mites. */
-type Member = 'C' | 'H' | 'S' | 'M8' | 'M6'
+/** C ram, H hulk, S sentinel, L Lobber (a sentinel that lobs); M8/M6 a swarm of eight or six mites. */
+type Member = 'C' | 'H' | 'S' | 'L' | 'M8' | 'M6'
 type Row = { today: true; weight: number; members?: undefined } | { today?: false; weight: number; members: Member[] }
 
 /**
  * Body-equivalents: what a member costs of a room's budget. A ram is half again a
  * hulk, a mite a quarter. Deeper is more varied, never more HP or damage.
  */
-const BE: Record<Member, number> = { C: 1.5, H: 1, S: 1, M8: 2, M6: 1.5 }
+const BE: Record<Member, number> = { C: 1.5, H: 1, S: 1, L: 1, M8: 2, M6: 1.5 }
 const beOf = (ms: readonly Member[]) => ms.reduce((a, m) => a + BE[m], 0)
-const kindOf = (m: Member): Archetype => (m === 'C' ? 'charger' : m === 'S' ? 'ranged' : m === 'H' ? 'chaser' : 'swarm')
+/** The Lobber is a ranged body, for the kinds cap too. */
+const kindOf = (m: Member): Archetype => (m === 'C' ? 'charger' : m === 'S' || m === 'L' ? 'ranged' : m === 'H' ? 'chaser' : 'swarm')
 /** A template's bodies, in order: a swarm member is its whole brood. */
 const bodies = (ms: readonly Member[]): Archetype[] => ms.flatMap((m) => (m === 'M8' ? Array(8).fill('swarm') : m === 'M6' ? Array(6).fill('swarm') : [kindOf(m)]))
+/** Which of those bodies are Lobbers, in the same order. */
+const lobbersOf = (ms: readonly Member[]): boolean[] => ms.flatMap((m) => (m === 'M8' ? Array(8).fill(false) : m === 'M6' ? Array(6).fill(false) : [m === 'L']))
 /** A swarm too big for the room's budget comes as six. */
 const shrink = (ms: readonly Member[], budget: number): Member[] => (beOf(ms) > budget + 1 ? ms.map((m) => (m === 'M8' ? 'M6' : m)) : [...ms])
 
@@ -605,6 +611,9 @@ const D5: Row[] = [
   { members: ['C', 'C', 'H'], weight: 1 }, // bulls
   { members: ['C', 'H', 'H', 'S'], weight: 1 },
   { members: ['M6', 'H', 'H'], weight: 1 },
+  { members: ['L', 'H', 'H'], weight: 1 }, // circles over the furniture (after the lesson)
+  { members: ['M6', 'L'], weight: 1 }, // rings on the floor, circles from the sky
+  { members: ['C', 'H', 'L'], weight: 1 }, // the ram flushes you, the shell punishes hiding
   { today: true, weight: 2 },
 ]
 const D7: Row[] = [
@@ -615,13 +624,16 @@ const D7: Row[] = [
   { today: true, weight: 2 },
 ]
 /**
- * Per level: how many packs may hold rams or mites, rams per pack, and distinct archetypes
- * per pack. Depth 4 has two broods: the open lesson, and the Works' slag heap after it.
+ * Per level: how many packs may hold rams, mites or Lobbers, rams per pack, and distinct
+ * archetypes per pack. Depth 4 has two broods: the open lesson, and the Works' slag heap
+ * after it. Lobbers start at 5, where the quarter's cover gets dense enough to punish.
  */
 const CAPS = (d: number) => d <= 4
-  ? { chargerPacks: 2, swarmPacks: 2, chargersPerPack: 1, kinds: 2 }
-  : d <= 6 ? { chargerPacks: 3, swarmPacks: 2, chargersPerPack: 2, kinds: 3 }
-  : { chargerPacks: 3, swarmPacks: 2, chargersPerPack: 2, kinds: 4 }
+  ? { chargerPacks: 2, swarmPacks: 2, chargersPerPack: 1, kinds: 2, lobberPacks: 0 }
+  : d <= 6 ? { chargerPacks: 3, swarmPacks: 2, chargersPerPack: 2, kinds: 3, lobberPacks: 3 }
+  : { chargerPacks: 3, swarmPacks: 2, chargersPerPack: 2, kinds: 4, lobberPacks: 3 }
+/** INV: no pack holds more than this many shooters, Lobbers and sentinels together. */
+const SHOOTERS_MAX = 2
 
 function pickWeighted<T extends { weight: number }>(rows: T[], rand: () => number): T {
   let r = rand() * rows.reduce((a, row) => a + row.weight, 0)
@@ -665,7 +677,7 @@ export function generateLevel(
   const layout = opts.boss ? generateBossLayout(rand) : generateLayout(rand, 2 + Math.floor(rand() * 2))
   const { floor } = layout
   const progress = progressMap(layout.rooms, !!opts.boss)
-  const made: LevelMade = { props: [], tall: [], floors: [], edge: [] }
+  const made: LevelMade = { props: [], tall: [], floors: [], edge: [], far: [] }
   const placements: Placement[] = []
   const boxes: Box[] = []
   const circles: Circle[] = []
@@ -733,7 +745,7 @@ export function generateLevel(
       } else {
         placements.push({ piece, x, z, rotY, scale })
       }
-      made.props.push({ piece, x, z, top: pieceData(piece).height * scale, p, breakable: BREAKABLE.has(piece), intact })
+      made.props.push({ piece, x, z, top: pieceData(piece).height * scale, p, breakable: BREAKABLE.has(piece), intact, room: layout.rooms.indexOf(room) })
     }
   }
 
@@ -774,6 +786,7 @@ export function generateLevel(
   const machines: MachinePlacement[] = []
   const { minI, maxI, minJ, maxJ, spanX, spanZ } = buildBeyond(cells, floor, rand, kit, placements, undefined, {
     machines: gen.machines, stream: stream(seed, SALT.machine), out: machines, made, clearEdges: gen.coverMaxH < Infinity,
+    farSide: gen.farSide, farStream: stream(seed, SALT.far), pAt: (x, z) => progress.cell(Math.round(x / CELL), Math.round(z / CELL)),
   })
 
   // --- packs: one per main and side room, sized by depth, never in the entrance or exit ---
@@ -806,9 +819,19 @@ export function generateLevel(
     const pool = plain.length ? plain : rams.length ? rams : sides
     if (hs() < HEAP.chance && pool.length) heapRoom = pool[Math.floor(hs() * pool.length)]!
   }
+  // depth 5 meets the Lobber: in the densest room, the main room furthest along (a full one, else a hall)
+  let lobberLesson: Room | null = null
+  if (depth === 5) {
+    const mains = packRooms.filter((r) => r.kind === 'main')
+    const full = mains.filter((r) => r.rx === 2 && r.rz === 2)
+    const pool = full.length ? full : mains.filter((r) => r.rx >= 2 || r.rz >= 2)
+    for (const r of pool) if (!lobberLesson || progress.of(r) > progress.of(lobberLesson)) lobberLesson = r
+  }
   const caps = CAPS(depth)
   let chargerPacks = 0
   let swarmPacks = 0
+  // the lesson's Lobber counts from the start, wherever its room falls in the order
+  let lobberPacks = lobberLesson ? 1 : 0
   packRooms.forEach((room, idx) => {
     const big = room.rx >= 2 || room.rz >= 2
     // the room's budget, in body-equivalents: today's size formula, unchanged
@@ -825,9 +848,11 @@ export function generateLevel(
 
     // which template, if any: the lesson, depth 4's rams, or a pick from the depth's list
     let tpl: Member[] | null = null
-    const lesson = room === lessonRoom || room === swarmLesson
+    const lesson = room === lessonRoom || room === swarmLesson || room === lobberLesson
     if (room === lessonRoom) tpl = ['C', 'H']
     else if (room === swarmLesson) tpl = ['M8']
+    // the lesson: as it is, not filled, so the one new thing is what you read
+    else if (room === lobberLesson) tpl = ['L', 'H', 'H']
     else if (room === heapRoom) tpl = fill(['M6', 'H'], size, caps.kinds)
     else if (d4Rooms.has(room)) tpl = fill(pickWeighted(D4, rand).members ?? [], size, Infinity)
     else if (depth >= 5) {
@@ -838,6 +863,9 @@ export function generateLevel(
         // rams never in a side room (every rush would stun on a wall, so it's free); swarms may be
         if (rams > 0 && (room.kind === 'side' || chargerPacks >= caps.chargerPacks)) return false
         if (kinds.includes('swarm') && swarmPacks >= caps.swarmPacks) return false
+        const lobbers = row.members.filter((m) => m === 'L').length
+        if (lobbers > 0 && lobberPacks >= caps.lobberPacks) return false
+        if (kinds.filter((k) => k === 'ranged').length > SHOOTERS_MAX) return false
         return rams <= caps.chargersPerPack && new Set(kinds).size <= caps.kinds && beOf(row.members) <= size + 1
       })
       const row = rows.length ? pickWeighted(rows, rand) : null
@@ -846,6 +874,7 @@ export function generateLevel(
 
     if (tpl) {
       const want = bodies(tpl)
+      const lobs = lobbersOf(tpl)
       const spots: ({ x: number; z: number } | null)[] = want.map(() => null)
       // mites first, as a nest round the spot; then everyone else a little out from it, so a
       // ram has room to stand and show its lane. The first listed member still leads.
@@ -881,10 +910,11 @@ export function generateLevel(
         if (!at) return
         // the lesson ram sleeps facing into the room: you walk in on its side, not its face
         const face = room === lessonRoom && kind === 'charger' ? { x: room.center.x, z: room.center.z } : undefined
-        members.push({ kind, x: at.x, z: at.z, face })
+        members.push({ kind, variant: lobs[i] ? 'lobber' : undefined, x: at.x, z: at.z, face })
       })
       if (members.some((m) => m.kind === 'charger')) chargerPacks++
       if (members.some((m) => m.kind === 'swarm')) swarmPacks++
+      if (room !== lobberLesson && members.some((m) => m.variant === 'lobber')) lobberPacks++
       if (members.length) packs.push({ room, members, lesson: lesson || undefined, budget: size, template: tpl.join('+'), look: heap ? 'heap' : undefined })
       return
     }
@@ -926,7 +956,8 @@ export function generateLevel(
     for (const p of packs) {
       if (p.lesson) continue
       p.members.forEach((m, i) => {
-        if (p.elite && i === 0) return
+        // a Lobber's disc is its tell: it never carries a core as well
+        if ((p.elite && i === 0) || m.variant) return
         const chance = gen.slag[m.kind as 'chaser' | 'charger' | 'ranged']
         if (chance && ss() < chance) m.slag = true
       })
@@ -1071,6 +1102,8 @@ const WALK = {
   path: [[-1, 0], [-2, 0], [-3, 0], [-3, -1], [-3, -2], [-4, -2], [-5, -2], [-5, -3], [-5, -4], [-6, -4]] as [number, number][],
   yard: { i: [-8, -6] as [number, number], j: [-6, -4] as [number, number] },
   house: { i: [-8, -6] as [number, number], j: [-9, -7] as [number, number] },
+  /** G10: intact furniture, two in the start room and two in the yard, clear of the path and the door. */
+  furniture: [[-3, 3], [3, 3], [-31, -17], [-25, -21]] as [number, number][],
   /** The door zone and where Grace's light ends up inside. The house's south face is at z = -26. */
   door: new THREE.Vector3(-28, 0, -25),
   doorRadius: 1.3,
@@ -1103,19 +1136,40 @@ export function generateWalkHome(seed: number, place: PlaceDef): Level {
   const placements: Placement[] = []
   const boxes: Box[] = []
   const circles: Circle[] = []
+  const made: LevelMade = { props: [], tall: [], floors: [], edge: [], far: [] }
+  const gen = place.gen
+  // G10: the walk is the last of the quarter, at its most intact (p = 1)
+  const bands = gen.floorBands
+  const last = bands ? bands[bands.length - 1]!.room : null
 
-  // dirt and broken paving: the way home is worn, not built
+  // dirt and broken paving: the way home is worn, not built (in the quarter, its last floors)
   for (const [i, j] of cells) {
-    placements.push({ piece: rand() < 0.55 ? 'floor_dirt_large' : 'floor_tile_large_rocks', x: i * CELL, z: j * CELL, rotY: Math.floor(rand() * 4) * (Math.PI / 2) })
+    const roll = rand()
+    const piece: Piece = last ? pickFloor(last, roll) : roll < 0.55 ? 'floor_dirt_large' : 'floor_tile_large_rocks'
+    placements.push({ piece, x: i * CELL, z: j * CELL, rotY: Math.floor(rand() * 4) * (Math.PI / 2) })
+    made.floors.push({ piece, p: 1, corridor: false })
   }
   buildWalls(cells, floor, kit, placements, boxes, circles, solid)
+  // and a few pieces of intact furniture, two in the start room and two in the yard: solid, never breakable
+  if (gen.intact) {
+    const fs = stream(seed, SALT.far)
+    for (const [x, z] of WALK.furniture) {
+      const [piece, want] = gen.intact[Math.floor(fs() * gen.intact.length)]!
+      const scale = Math.min(want, gen.coverMaxH / pieceData(piece).height)
+      placements.push({ piece, x, z, rotY: Math.floor(fs() * 4) * (Math.PI / 2), scale })
+      circles.push({ x, z, r: pieceData(piece).radius * scale * 0.8 })
+      made.props.push({ piece, x, z, top: pieceData(piece).height * scale, p: 1, breakable: false, intact: true, room: -1 })
+    }
+  }
   // the house is solid all through: he stops at its door
   const hx0 = WALK.house.i[0] * CELL - CELL / 2
   const hx1 = WALK.house.i[1] * CELL + CELL / 2
   const hz0 = WALK.house.j[0] * CELL - CELL / 2
   const hz1 = WALK.house.j[1] * CELL + CELL / 2
   boxes.push({ minX: hx0, maxX: hx1, minZ: hz0, maxZ: hz1 + 0.5 })
-  const { minI, maxI, minJ, maxJ, spanX, spanZ } = buildBeyond(cells, floor, rand, kit, placements, (x, z) => x > hx0 - 1.5 && x < hx1 + 1.5 && z > hz0 - 1.5 && z < hz1 + 1.5)
+  const { minI, maxI, minJ, maxJ, spanX, spanZ } = buildBeyond(cells, floor, rand, kit, placements, (x, z) => x > hx0 - 1.5 && x < hx1 + 1.5 && z > hz0 - 1.5 && z < hz1 + 1.5, {
+    made, clearEdges: gen.coverMaxH < Infinity, farSide: gen.farSide, farStream: stream(seed ^ 0x1, SALT.far), pAt: () => 1,
+  })
 
   const group = buildInstanced(placements)
   const groundMat = new THREE.MeshStandardMaterial({ color: 0x151b24 })
@@ -1184,7 +1238,7 @@ export function generateWalkHome(seed: number, place: PlaceDef): Level {
     // the last of the day: all the way along
     progressOf: () => 1,
     spineAt: () => null,
-    made: { props: [], tall: [], floors: [], edge: [] },
+    made,
     group,
     terrain: makeTerrain(floor, boxes, circles),
     exitOpen: false,
@@ -1294,6 +1348,10 @@ function buildBeyond(
     made?: LevelMade
     /** Nothing of the beyond right against a floor edge (area II: the walls stay the only thing there). Costs no rand(). */
     clearEdges?: boolean
+    /** G5: upright far-side pieces, from `farStream`, more often the further along the nearest room is (`pAt`). */
+    farSide?: { pieces: Piece[]; chance: [number, number] }
+    farStream?: () => number
+    pAt?: (x: number, z: number) => number
   } = {},
 ) {
   const pick = <T>(list: readonly T[]) => list[Math.floor(rand() * list.length)]!
@@ -1360,6 +1418,36 @@ function buildBeyond(
     if (nearFloor(x, z, 0)) continue
     const place = { piece: kit.beyondLow[1]!, x, z, rotY: rand() * 6.3, y: -0.08 }
     if (!avoid?.(x, z)) placements.push(place)
+  }
+  // G5, the far side: door frames and windows still standing where rooms were, facing the floor.
+  // Two cells out, never one (no frame on a wall's edge), never where the camera would lose floor.
+  const fs = more.farSide
+  const fr = more.farStream
+  if (fs && fr) {
+    for (let n = 0; n < ruinCount / 2; n++) {
+      const x = (minI - 5) * CELL + fr() * spanX
+      const z = (minJ - 5) * CELL + fr() * spanZ
+      if (nearFloor(x, z, 1) || !nearFloor(x, z, 2) || hidesFloor(x, z) || avoid?.(x, z)) continue
+      const p = more.pAt?.(x, z) ?? 1
+      if (fr() >= fs.chance[0] + (fs.chance[1] - fs.chance[0]) * p) continue
+      const piece = fs.pieces[Math.floor(fr() * fs.pieces.length)]!
+      // its face toward the nearest floor cell, snapped to the grid
+      const ci = Math.round(x / CELL)
+      const cj = Math.round(z / CELL)
+      let best: [number, number] | null = null
+      let bestD = Infinity
+      for (let i = ci - 2; i <= ci + 2; i++) for (let j = cj - 2; j <= cj + 2; j++) {
+        const d = Math.hypot(i * CELL - x, j * CELL - z)
+        if (floor.has(key(i, j)) && d < bestD) {
+          bestD = d
+          best = [i, j]
+        }
+      }
+      const face = best ? Math.atan2(best[0] * CELL - x, best[1] * CELL - z) : 0
+      const rotY = Math.round(face / (Math.PI / 2)) * (Math.PI / 2)
+      placements.push({ piece, x, z, rotY })
+      more.made?.far.push({ piece, x, z, p, hides: hidesFloor(x, z), cells: bestD / CELL })
+    }
   }
   return { minI, maxI, minJ, maxJ, spanX, spanZ }
 }

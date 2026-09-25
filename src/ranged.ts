@@ -14,7 +14,7 @@ const BODY = 0x7a8592
 const JOINT = 0x3a414b
 const CORE = 0xff5a3c
 
-function rod(a: THREE.Vector3, b: THREE.Vector3, r: number, mat: THREE.Material) {
+export function rod(a: THREE.Vector3, b: THREE.Vector3, r: number, mat: THREE.Material) {
   const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, a.distanceTo(b), 8), mat)
   m.position.copy(a).add(b).multiplyScalar(0.5)
   m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), b.clone().sub(a).normalize())

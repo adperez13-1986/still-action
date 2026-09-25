@@ -168,8 +168,50 @@ export function step(who: 'still' | 'hulk' | 'tripod' | 'ram' | 'boss', pan: num
       sample(c, 'metalHeavy', d, 0.2 * loudness, 0.5)
       break
   }
-  // theirs ring on plate too, at half his layer
+  // theirs ring on plate too, and knock on boards, at half his layer
   if (who !== 'still' && surface === 'plate') sample(c, 'metalLight', d, 0.08 * loudness, 1.5)
+  if (who !== 'still' && surface === 'wood') sample(c, 'plank', d, 0.15 * loudness, 1.1)
+}
+
+// --- the Lobber: a mortar tilting, the shell's whistle, its landing ---
+
+/** The crucible tilting back to aim: a creak, and a sine rising over the windup. Cut when it's broken. */
+export function lobAim(ms: number, pan: number, gain = 1): (hard?: boolean) => void {
+  const c = live()
+  if (!c) return () => {}
+  const t = c.currentTime
+  const g = c.createGain()
+  g.gain.value = gain
+  g.connect(out(c, 'enemy', pan))
+  sample(c, 'plank', g, 0.4, 0.7)
+  tone(c, g, 'sine', t, 200, 320, ms / 1000, 0.05, 0.02)
+  return gate(g, c, t + ms / 1000 + 0.05)
+}
+
+/** The launch: a soft heavy thud and a low drop. */
+export function mortar(pan: number) {
+  const c = live()
+  if (!c) return
+  const d = out(c, 'enemy', pan)
+  sample(c, 'softHeavy', d, 0.6, 0.6)
+  tone(c, d, 'sine', c.currentTime, 90, 40, 0.2, 0.3)
+}
+
+/** The shell in the air: a thin falling whistle, the whole flight long. */
+export function whistle(ms: number, pan: number) {
+  const c = live()
+  if (!c) return
+  tone(c, out(c, 'enemy', pan), 'sine', c.currentTime, 1400, 700, ms / 1000, 0.03, 0.05)
+}
+
+/** It lands: broken stone, and the strike's body under it. */
+export function shellLand(pan: number) {
+  const c = live()
+  if (!c) return
+  const d = out(c, 'enemy', pan)
+  sample(c, 'mining', d, 0.7, 0.8)
+  tone(c, d, 'sine', c.currentTime, 110, 45, 0.25, 0.35)
+  hiss(c, d, c.currentTime, 0.2, 0.12, 'lowpass', 1800, 500)
 }
 
 // --- slag: a core spilling where its body fell, and the puddle catching ---

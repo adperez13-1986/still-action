@@ -121,6 +121,8 @@ export type EnemyEvent =
 
 export interface Enemy {
   readonly kind: 'chaser' | 'ranged' | 'charger' | 'swarm' | 'boss'
+  /** 'lobber' for the sentinel variant that lobs shells; loot, budget and treasure follow `kind`. */
+  readonly variant?: 'lobber'
   /** Where an elite's name floats, before size. */
   readonly labelY: number
   /**

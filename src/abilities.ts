@@ -220,7 +220,7 @@ export const PARTS: AbilityDef[] = [
   }),
   part({
     id: 'ward', slot: 'torso', name: 'Ward', tier: 'white', beat: 'ward',
-    line: 'A brief shield that destroys enemy shots.',
+    line: 'A brief shield that destroys enemy shots. Not shells.',
     shape: 'ward', cooldownMs: 7000, damage: 0, range: 0, radius: 1.8, windowMs: 1400,
     icon: '<circle cx="12" cy="12" r="8.5" stroke-dasharray="4.2 2.5"/><circle cx="12" cy="12" r="2.5"/>',
   }),
@@ -245,7 +245,7 @@ export const PARTS: AbilityDef[] = [
   }),
   part({
     id: 'mirror-ward', slot: 'torso', name: 'Mirror Ward', tier: 'blue', beat: 'mirror',
-    line: 'A brief shield that sends enemy shots back at whoever fired them.',
+    line: 'A brief shield that sends enemy shots back at whoever fired them. Not shells.',
     shape: 'ward', mod: { kind: 'reflect', max: 6, damage: 8 }, cooldownMs: 7000, damage: 0, range: 0, radius: 1.8, windowMs: 800,
     icon: '<path d="M16 3.5a9 9 0 0 1 0 17"/><path d="M3 5.5 13.5 12 3 18.5"/><path d="M4.7 15.1 3 18.5h3.8"/>',
   }),

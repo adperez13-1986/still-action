@@ -166,12 +166,48 @@ const works: PlaceDef = {
   },
 }
 
-/** INV (for now): the quarter is the ruin but for its id. Step 3 gives it its own. */
-export const PLACES: Record<PlaceId, PlaceDef> = {
-  ruin,
-  works,
-  quarter: { ...structuredClone(ruin), id: 'quarter' },
+/**
+ * Depth 5, the square at 6, and the walk home: the workers' quarter, more intact the closer
+ * it gets to home. Broken furniture near the Works, whole toward the house; tile and then
+ * wood underfoot; door frames still standing on the far side. "More intact" is never taller:
+ * the walls stay the waist-high barrier, and every prop is capped at its reach. Cover gets
+ * denser as you go (1/8 to 1/3 a cell), which is what the Lobber punishes. INV: no cot,
+ * bed or toy in any list: the kids are too near.
+ */
+const quarter: PlaceDef = {
+  id: 'quarter',
+  kit: {
+    floorRoom: [['floor_tile_large_rocks', 0.25], ['floor_wood_large_dark', 0.45], ['floor_tile_large', 1]],
+    // the street between rooms
+    floorCorridor: [['floor_dirt_large', 0.4], ['floor_tile_large_rocks', 1]],
+    wall: 'barrier',
+    column: 'column',
+    cover: [['table_long_broken', 0.8], ['table_medium_broken', 0.9], ['chair', 0.9], ['rubble_half', 0.42], ['box_large', 0.8], ['barrel_large', 0.7]],
+    // the arena's crates are the first two: a barrel and a box, as ever
+    breakable: ['barrel_large', 'box_large', 'chair', 'chair_A_wood', 'cabinet_small'],
+    beyondTall: ['wall_broken', 'wall', 'pillar', 'rubble_large'],
+    beyondLow: ['rubble_half', 'floor_dirt_large_rocky'],
+    arenaCover: 'barrier_column',
+  },
+  surfaces: { paving: 'Tiles093', rock: 'Bricks097', wood: 'Planks023A', ground: 'PavingStones142', grate: 'MetalWalkway014' },
+  // the square's own tone arrives with the Arbiter (step 4); until then its boss level is the Assembler's
+  ambience: { crawl: 'quarter', boss: 'boss' },
+  footsteps: 'wood',
+  music: 'II',
+  gen: {
+    cover: [0.125, 0.33], coverGap: 2.6, coverTries: 60, coverMaxH: 1.4,
+    intact: [['couch', 0.9], ['cabinet_small', 1], ['cabinet_medium', 0.9], ['table_medium', 1], ['chair_A_wood', 1], ['table_long', 0.8]],
+    floorBands: [
+      { from: 0, room: [['floor_dirt_large_rocky', 0.3], ['floor_tile_large_rocks', 0.65], ['floor_tile_large', 1]] },
+      { from: 0.34, room: [['floor_tile_large_rocks', 0.25], ['floor_wood_large_dark', 0.45], ['floor_tile_large', 1]] },
+      { from: 0.67, room: [['floor_wood_large_dark', 0.45], ['floor_tile_large', 1]] },
+    ],
+    farSide: { pieces: ['wall_doorway', 'wall_window_open'], chance: [0.05, 0.35] },
+    slag: { chaser: 0.4, charger: 0.4, ranged: 0.25 },
+  },
 }
+
+export const PLACES: Record<PlaceId, PlaceDef> = { ruin, works, quarter }
 export const PLACE_OF: Record<number, PlaceId> = { 1: 'ruin', 2: 'ruin', 3: 'ruin', 4: 'works', 5: 'quarter', 6: 'quarter' }
 /** The walk home is the last of the quarter, at night. */
 export const WALK_PLACE: PlaceId = 'quarter'

@@ -11,6 +11,7 @@ import type { Enemy, EnemyEvent } from './enemy'
 import { isBoss } from './boss'
 import type { HazardSpec } from './hazard'
 import { RANGED } from './ranged'
+import { LOBBER } from './lobber'
 import { Charger, CHARGER } from './charger'
 import { Mite, BROOD, type Brood } from './swarm'
 import * as sfx from './audio'
@@ -37,7 +38,7 @@ import { createDrawings, HANDS, CARD_ASPECT, type Moment } from './crayon'
 import { composeCard } from './cards'
 import { openSave, freshTally, localDate, drawerFor, trimCards, CARD_KEEP, CARD_LINES, LEADERS_MAX, type EndingKind, type RunSnapshot, type RunTally, type SaveV1 } from './save'
 import { poolView, markFound, hookCandidates, facingOutWhites, toggleTurn, hang, applyHookDefault, startPart, partName, historyLine, type PoolView } from './pool'
-import { assignNames, elitePage, meet, addLeader, ROSTER, ROSTER_BY_ID, WHAT, BOSS_PAGE, FRAGMENT_PAGE, namesFor } from './notebook'
+import { assignNames, elitePage, meet, addLeader, ROSTER, ROSTER_BY_ID, WHAT, BOSS_PAGE, FRAGMENT_PAGE, LOBBER_PAGE, HEAP_PAGE, namesFor } from './notebook'
 import type { DropSource } from './loot'
 
 const canvas = document.querySelector<HTMLCanvasElement>('#view')!
@@ -200,9 +201,9 @@ const combat = new Combat(world.scene, OPEN, {
     rig.punch(-0.03)
     navigator.vibrate?.(30)
   },
-  onKill: (at, kind, pack, wasElite, summoned, weight) => {
+  onKill: (at, kind, pack, wasElite, summoned, weight, e) => {
     run.killed = true
-    felled(kind, pack, wasElite, summoned, weight)
+    felled(kind, pack, wasElite, summoned, weight, pageOf(e, pack))
     if (kind === 'boss') {
       bossDown(at)
       return
@@ -439,7 +440,9 @@ const combat = new Combat(world.scene, OPEN, {
       windups.set(e, sfx.rev(ms, CHARGER.lockAt, panOf(e.pos), windupGain()))
       return
     }
-    const stop = e.kind === 'ranged' ? sfx.aim(ms, RANGED.lockAt, panOf(e.pos), windupGain()) : sfx.windup(ms, panOf(e.pos), windupGain())
+    // the Lobber's crucible creaks back as it aims; there's no line to click
+    const stop = e.variant === 'lobber' ? sfx.lobAim(ms, panOf(e.pos), windupGain())
+      : e.kind === 'ranged' ? sfx.aim(ms, RANGED.lockAt, panOf(e.pos), windupGain()) : sfx.windup(ms, panOf(e.pos), windupGain())
     windups.set(e, sfx.asVoice(stop))
   },
   onStrike: (e) => {
@@ -447,6 +450,9 @@ const combat = new Combat(world.scene, OPEN, {
     // the rush roars on and follows the ram across the screen
     if (e.kind === 'charger') {
       if (run.phase === 'crawl') loops.set(e, sfx.rush(panOf(e.pos)))
+    } else if (e.variant === 'lobber') {
+      sfx.mortar(panOf(e.pos))
+      sfx.whistle(LOBBER.flightMs, panOf(e.pos))
     } else if (e.kind === 'ranged') sfx.fire(panOf(e.pos))
     else sfx.strike(panOf(e.pos))
     strikeFx(e)
@@ -461,8 +467,15 @@ const combat = new Combat(world.scene, OPEN, {
       vfx.sparks(at3(s, 0.3), SLAG_DROP, 8, 3)
     }
     if (ev.kind !== 'arm') return
-    // the arm: the floor catches
+    // the arm: the floor catches; a shell comes down in stone and dust
     if (slag) sfx.slagArm(panOf(at3(s, 0)))
+    if (ev.h.spec.source === 'shell') {
+      sfx.shellLand(panOf(at3(s, 0)))
+      vfx.dust(at3(s, 0), 18, s.r, undefined, 5)
+      vfx.chunks(at3(s, 0.3), 8, STONE, 4, 0.12)
+      vfx.flash(at3(s, 0.3), EMBER, 1.2)
+      shake = Math.max(shake, 0.2)
+    }
     vfx.embers(at3(s, 0.1), Math.round(4 + s.r * 3), s.r * 0.8)
   },
   onShotBlocked: (at) => {
@@ -870,6 +883,12 @@ function strikeFx(e: Enemy) {
     vfx.sparks(at3(rear, 0.1), EMBER, 8, 6, aim3(e).negate(), 0.6)
     vfx.flash(e.prowPoint(new THREE.Vector3()), EMBER, 0.6)
     shake = Math.max(shake, 0.12)
+  } else if (e.variant === 'lobber') {
+    // the shell leaves the crucible's mouth: a puff of smoke and sparks thrown up
+    const mouth = at3(e.pos, 1.5 * e.size)
+    vfx.flash(mouth, EMBER, 0.6)
+    vfx.sparks(mouth, EMBER, 8, 4, new THREE.Vector3(0, 1, 0), 0.8)
+    vfx.smokePuff(mouth, 3)
   } else if (e.kind === 'ranged') {
     const dir = new THREE.Vector3(still.pos.x - e.pos.x, 0, still.pos.z - e.pos.z).normalize()
     const muzzle = at3(e.pos, 1.45).addScaledVector(dir, 0.95)
@@ -1094,7 +1113,7 @@ function metPack(pack: Pack) {
       if (meet(save.notebook, id, depth, run.met)) wrote = true
       addLeader(save.notebook[id]!, pack.elite.name)
       continue
-    } else id = run.names[e.kind]
+    } else id = pageOf(e, pack) ?? run.names[e.kind]
     if (!id) continue
     if (meet(save.notebook, id, depth, run.met)) {
       wrote = true
@@ -1113,11 +1132,19 @@ function metPack(pack: Pack) {
 }
 
 /** Felled: counted on its page, written with the next event write. Adds count for nothing. */
-function felled(kind: Archetype, pack: Pack, wasElite: boolean, summoned: boolean, weight: number) {
+/** A body's own page when it has one whatever the level's names are: a Lobber's, a slag heap's mites'. */
+function pageOf(e: Enemy, pack: Pack): string | undefined {
+  if (e.variant === 'lobber') return LOBBER_PAGE
+  if (e.kind === 'swarm' && pack.brood?.heap) return HEAP_PAGE
+  return undefined
+}
+
+function felled(kind: Archetype, pack: Pack, wasElite: boolean, summoned: boolean, weight: number, own?: string) {
   if (run.dev || summoned) return
   let id: string | undefined
   // the boss is still combat's on the tick it's felled: bossDown clears it after
   if (kind === 'boss') id = combat.boss?.def.roster ?? BOSS_PAGE
+  else if (own && !wasElite) id = own
   else if (wasElite && pack.elite) id = elitePage(pack.elite.mod, run.depth)
   // a Many's halves weigh nothing and weren't summoned
   else if (weight === 0) id = FRAGMENT_PAGE
@@ -2483,6 +2510,8 @@ function ambientFx(dt: number) {
       if (e.kind === 'chaser' && e.phase === 'windup') vfx.embers(at3(e.pos, 1.0 * e.size), 1, 0.3)
     }
   }
+  // a shell in the air trails embers, like a shot
+  for (const p of combat.shellsInFlight()) vfx.trail(p, EMBER, 0.3)
   // a slag core drips while it's awake: the puddle is on the body before the kill
   slagT -= dt
   if (slagT <= 0) {
@@ -2632,7 +2661,7 @@ if (import.meta.env.DEV) {
     /** The crowd's mix: live windup voices, the gain a new one would get, the hush. */
     __mix: { windups, windupGain, hush },
     /** A pack from members, like addPack (a member with `slag: true` carries a slag core). awake = true wakes it at once. */
-    __pack: (members: { kind: Archetype; x: number; z: number; slag?: true }[], awake = true, elite?: EliteMod, look?: 'heap'): Pack => {
+    __pack: (members: { kind: Archetype; variant?: 'lobber'; x: number; z: number; slag?: true }[], awake = true, elite?: EliteMod, look?: 'heap'): Pack => {
       const pack = combat.addPack(members, false, elite ? { mod: elite, name: 'Test' } : undefined, look)
       if (awake) combat.wake(pack)
       return pack
@@ -2656,11 +2685,14 @@ if (import.meta.env.DEV) {
       const l = generateLevel(depth, seed, { boss: bossFor(depth) })
       const out = {
         place: l.place, props: l.made.props, tall: l.made.tall, floors: l.made.floors,
+        rooms: l.rooms.map((r) => ({ kind: r.kind, rx: r.rx, rz: r.rz, p: l.progressOf(r) })),
         packs: l.packs.map((p) => ({
-          room: p.room.kind, p: l.progressOf(p.room), kinds: p.members.map((m) => m.kind), slag: p.members.map((m) => !!m.slag),
+          room: p.room.kind, index: l.rooms.indexOf(p.room), p: l.progressOf(p.room), kinds: p.members.map((m) => m.kind),
+          lobbers: p.members.map((m) => m.variant === 'lobber'), slag: p.members.map((m) => !!m.slag),
           elite: p.elite?.mod ?? null, lesson: !!p.lesson, template: p.template ?? null, look: p.look ?? null,
         })),
         edge: l.made.edge,
+        far: l.made.far,
         thief: null,
       }
       l.dispose()
@@ -2676,14 +2708,14 @@ if (import.meta.env.DEV) {
     },
     __stick: (x: number, z: number) => hud.setStick(x, z),
     /** One enemy as its own pack of 1. awake = true wakes it at once. A boss is the variant's (default the Assembler). */
-    __spawn: (kind: Archetype, x: number, z: number, awake = true, elite?: EliteMod, variant: BossKind = 'assembler'): Enemy => {
+    __spawn: (kind: Archetype, x: number, z: number, awake = true, elite?: EliteMod, variant?: BossKind | 'lobber'): Enemy => {
       if (kind === 'boss') {
         const defs: Record<BossKind, BossDef> = { assembler: ASSEMBLER_DEF }
-        const b = combat.addBoss(x, z, new THREE.Vector3(x, 0, z - 1), defs[variant])
+        const b = combat.addBoss(x, z, new THREE.Vector3(x, 0, z - 1), defs[(variant ?? 'assembler') as BossKind])
         if (awake) combat.wake(combat.packs[combat.packs.length - 1]!)
         return b
       }
-      const pack = combat.addPack([{ kind, x, z }], false, elite ? { mod: elite, name: 'Test' } : undefined)
+      const pack = combat.addPack([{ kind, x, z, variant: variant === 'lobber' ? 'lobber' : undefined }], false, elite ? { mod: elite, name: 'Test' } : undefined)
       if (awake) combat.wake(pack)
       return pack.members[0]!
     },

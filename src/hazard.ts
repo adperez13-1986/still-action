@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import { DECAL_Y } from './world'
-import { tellMaterial, releaseTell, tellOrder, EMBER_DEEP } from './vfx'
+import { tellMaterial, releaseTell, tellOrder, haloTexture, EMBER_DEEP } from './vfx'
 import { Quads, UV_LEN } from './lane'
 import type { Enemy } from './enemy'
 
@@ -41,6 +41,8 @@ export interface HazardSpec {
   cancelOnDeath?: boolean
   /** Draw only: the owner's own tell already shows the arm clock, so the arming draw is skipped. */
   quiet?: boolean
+  /** Draw only: a shell thrown from here, arcing `peak` high, landing on the arm tick. */
+  flight?: { x: number; y: number; z: number; peak: number }
 }
 
 export interface Hazard {
@@ -73,6 +75,12 @@ const ARM_FLASH_MS = 120
 /** The lance's raised beam burns this much past its live time, ms. */
 const BEAM_EXTRA_MS = 150
 const BEAM_Y = 1.2
+/**
+ * A shell in flight: a dark iron ball in an ember glow. A lit ball on its own read as a
+ * flat white dot against the dusk; this reads as something hot and heavy coming down.
+ */
+const SHELL = { r: 0.22, iron: 0x2a1512, glow: 0xff7a40, halo: 1.1 }
+const shellGeo = new THREE.SphereGeometry(SHELL.r, 12, 8)
 /** A burning strip's layers. The spec's whole strip at 0.95 read as a flat slab on the floor, so it's a wash under a core. */
 const LIVE = { wash: 0.45, core: 0.9, rails: 0.95 }
 /** Where a live puddle's heat ends: the deep ember, darker. */
@@ -162,6 +170,9 @@ export class HazardTell {
   private beamMat?: THREE.ShaderMaterial
   private core?: Quads
   private beam?: THREE.Mesh
+  /** A thrown shell: world space, apart from the landing ring's group. */
+  shell: THREE.Group | null = null
+  private shellMats: THREE.Material[] = []
 
   constructor(private readonly spec: HazardSpec) {
     const s = spec.shape
@@ -176,6 +187,15 @@ export class HazardTell {
       this.disc = this.mesh(new THREE.Mesh(discGeo, this.discMat))
       for (const m of [this.ring, this.disc]) m.rotation.x = -Math.PI / 2
       this.disc.scale.setScalar(0.001)
+      if (spec.flight) {
+        const iron = new THREE.MeshBasicMaterial({ color: SHELL.iron, fog: false })
+        const glow = new THREE.SpriteMaterial({ map: haloTexture(), color: SHELL.glow, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, fog: false })
+        const halo = new THREE.Sprite(glow)
+        halo.scale.setScalar(SHELL.halo)
+        this.shellMats.push(iron, glow)
+        this.shell = new THREE.Group()
+        this.shell.add(halo, new THREE.Mesh(shellGeo, iron))
+      }
     } else {
       const dx = s.bx - s.ax
       const dz = s.bz - s.az
@@ -220,8 +240,22 @@ export class HazardTell {
     return m
   }
 
+  /** Where the shell is, k (0..1) of the way through its flight: a parabola peaking at `peak`. */
+  shellAt(k: number, out: THREE.Vector3) {
+    const f = this.spec.flight!
+    const sh = this.spec.shape as { x: number; z: number }
+    return out.set(f.x + (sh.x - f.x) * k, f.y * (1 - k) + 4 * f.peak * k * (1 - k), f.z + (sh.z - f.z) * k)
+  }
+
   update(dt: number, h: LiveHazard) {
     const s = this.spec
+    if (this.shell) {
+      const k = Math.min(1, Math.max(0, 1 - h.armIn / Math.max(1, s.armMs)))
+      this.shellAt(k, this.shell.position)
+      this.shell.visible = !h.armed && !h.done
+      // the glow flickers a little; the ball doesn't
+      this.shell.children[0]!.scale.setScalar(SHELL.halo * (0.85 + Math.random() * 0.3))
+    }
     if (h.done) {
       // from wherever each piece was, down to nothing over the fade; one that armed and
       // ended on the same tick (a shell, a scald) fades from its arm flash
@@ -305,6 +339,8 @@ export class HazardTell {
   }
 
   dispose() {
+    this.shell?.removeFromParent()
+    for (const m of this.shellMats) m.dispose()
     for (const q of this.quads) q.dispose()
     for (const g of this.geos) g.dispose()
     for (const m of this.mats) releaseTell(m)
