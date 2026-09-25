@@ -18,7 +18,8 @@ export type HazardShape =
   | { kind: 'circle'; x: number; z: number; r: number }
   /** a → b is already cut at cover by whoever made it. halfW is the drawn half-width. */
   | { kind: 'strip'; ax: number; az: number; bx: number; bz: number; halfW: number }
-export type HazardSource = 'slag' | 'shell' | 'lance' | 'scald'
+/** 'train', 'steam', 'wagon': the Line's (design/area3/SPEC.md §2.3). A train's is drawn by its rail tell. */
+export type HazardSource = 'slag' | 'shell' | 'lance' | 'scald' | 'train' | 'steam' | 'wagon'
 
 export interface HazardSpec {
   source: HazardSource
@@ -47,6 +48,13 @@ export interface HazardSpec {
   sparesOwner?: boolean
   /** Draw only: a shell thrown from here, arcing `peak` high, landing on the arm tick. */
   flight?: { x: number; y: number; z: number; peak: number }
+  /** Hazards sharing a group share one hit set: a body is hit once per group (one train's segments). */
+  group?: object
+  /**
+   * On a hit: a slide `along` the direction (dx, dz), plus `across` away from the strip's centre
+   * line, for Still and enemies alike (an enemy's through its knockMul).
+   */
+  shove?: { dx: number; dz: number; along: number; across: number }
 }
 
 export interface Hazard {
@@ -181,6 +189,8 @@ export class HazardTell {
 
   constructor(private readonly spec: HazardSpec) {
     const s = spec.shape
+    // a train's segment: the lane's rail tell and the rake are its whole drawing (drawn = hit)
+    if (spec.source === 'train') return
     if (s.kind === 'circle') {
       this.group.position.set(s.x, DECAL_Y, s.z)
       // the ring is fixed at the real radius; the disc fills it, so its growth is the clock
@@ -254,6 +264,7 @@ export class HazardTell {
 
   update(dt: number, h: LiveHazard) {
     const s = this.spec
+    if (s.source === 'train') return
     if (this.shell) {
       const k = Math.min(1, Math.max(0, 1 - h.armIn / Math.max(1, s.armMs)))
       this.shellAt(k, this.shell.position)

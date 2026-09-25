@@ -450,6 +450,7 @@ const TELL_FRAG = /* glsl */ `
   uniform float uMolten;
   uniform float uSweep;
   uniform float uSweepHalf;
+  uniform float uPlain;
   varying vec2 vUv;
   varying vec3 vPos;
   float h(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
@@ -473,7 +474,8 @@ const TELL_FRAG = /* glsl */ `
     if (uStrip > 0.5) {
       float along = vUv.y;
       float across = abs(vUv.x - 0.5) * 2.0;
-      pattern = cold ? 0.0 : smoothstep(0.35, 0.0, abs(fract(along * 9.0 - uTime * 2.2 + across * 0.35) - 0.5));
+      // plain (the rail tell): noise and edge only. Only a body draws chevrons
+      pattern = cold || uPlain > 0.5 ? 0.0 : smoothstep(0.35, 0.0, abs(fract(along * 9.0 - uTime * 2.2 + across * 0.35) - 0.5));
       edge = smoothstep(0.7, 1.0, across);
       if (cold) {
         float dash = step(0.45, fract(along * 16.0));
@@ -537,9 +539,10 @@ export type TellStyle = 'radial' | 'strip'
  * A telegraph material. Code keeps setting `.opacity` as before; `syncTells()`
  * copies it into the shader each frame. `radius` is the shape's world radius,
  * so the ripples and edge line up with it. `cold` is Still's variant (N1):
- * the same shape, but it can never be mistaken for an enemy's tell.
+ * the same shape, but it can never be mistaken for an enemy's tell. `plain` (a strip only):
+ * no chevrons, noise and edge alone. INV: every rail tell is plain, and nothing else is.
  */
-export function tellMaterial(style: TellStyle, radius = 1, hot = EMBER, deep = EMBER_DEEP, opts: { cold?: boolean } = {}): THREE.ShaderMaterial {
+export function tellMaterial(style: TellStyle, radius = 1, hot = EMBER, deep = EMBER_DEEP, opts: { cold?: boolean; plain?: boolean } = {}): THREE.ShaderMaterial {
   const m = new THREE.ShaderMaterial({
     vertexShader: TELL_VERT,
     fragmentShader: TELL_FRAG,
@@ -554,6 +557,7 @@ export function tellMaterial(style: TellStyle, radius = 1, hot = EMBER, deep = E
       uMolten: { value: 0 },
       uSweep: { value: 0 },
       uSweepHalf: { value: 0.26 },
+      uPlain: { value: opts.plain ? 1 : 0 },
     },
     transparent: true,
     depthWrite: false,

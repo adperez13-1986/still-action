@@ -191,6 +191,8 @@ export interface Level {
   sidings?: SidingDef[]
   /** The lanes' lamps (the trains light them, stage A4): lamp instances per lane id. */
   lamps?: { mesh: THREE.InstancedMesh | null; of: Map<number, number[]> }
+  /** §5.1: a lane's own sub-stream for its trains' directions, stream(seed ^ lane.id, SALT.rail). */
+  railStream?: (laneId: number) => () => number
 }
 
 /** A grid cell's name in the floor set. */
@@ -1474,6 +1476,7 @@ export function generateLevel(
     lanes: line?.lanes,
     sidings: line?.sidings,
     lamps: linePieces ? { mesh: linePieces.lampMesh, of: linePieces.lamps } : undefined,
+    railStream: line ? (laneId: number) => stream(seed ^ laneId, SALT.rail) : undefined,
     exitOpen: !opts.boss,
     openExit() {
       if (!cold) return

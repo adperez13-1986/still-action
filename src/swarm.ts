@@ -1008,10 +1008,13 @@ export class Brood {
         const need = Math.min(BROOD.need, inner.length)
         // its ring is fixed from the start, so its lock is now: booked like any other
         if (near.length === 0 || near.length < need || !ctx.canLock(0)) break
+        // the Line's brood rule: no bite starts on a lit lane (it tries again next tick)
+        const L = this.lead(terrain, ctx)
+        if (ctx.nearLit?.(L.x, L.z)) break
         ctx.book(this, 0)
         let biters = near.slice(0, 4)
         if (this.queen && near.includes(this.queen) && !biters.includes(this.queen)) biters = [...biters.slice(0, 3), this.queen]
-        this.L = this.lead(terrain, ctx)
+        this.L = L
         this.biters = biters
         for (const m of biters) {
           m.phase = 'windup'

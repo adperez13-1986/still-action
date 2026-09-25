@@ -128,6 +128,15 @@ export const HIDES = {
     finish: { scale: [2, 14, 2], grain: 0.22, roughVar: 0.12, tone: [0.72, 0.66, 0.6], mask: 0.6, toneRough: 0.05, toneMetal: 0, bump: 0.45 },
     jointFinish: GRAIN_ONLY,
   },
+  /**
+   * The Engine, and the trains' engines (area III): gloss lamp-black enamel, chipped to iron at
+   * the edges. Told apart by its shine. Fallback: mask 0.86 (fewer chips).
+   */
+  enamel: {
+    body: 0x141416, joint: 0x2a2826, rough: 0.22, metal: 0.1, jointRough: 0.6, jointMetal: 0.6,
+    finish: { scale: [2.2, 2.2, 2.2], grain: 0.06, roughVar: 0.1, tone: [3.2, 3.2, 3.3], mask: 0.8, toneRough: 0.35, toneMetal: 0.7, bump: 0.1 },
+    jointFinish: GRAIN_ONLY,
+  },
 } satisfies Record<string, Hide>
 export type HideKind = keyof typeof HIDES
 

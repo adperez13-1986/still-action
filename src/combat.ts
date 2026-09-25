@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import { DECAL_Y } from './world'
 import { tellMaterial, releaseTell, TELL_CROWD, COLD, EMBER, type Vfx } from './vfx'
-import { Chaser, shoveVelocity, distToSegment, PLAYER_RADIUS, type Enemy, type EnemyCtx, type EnemyEvent } from './enemy'
+import { Chaser, shoveVelocity, distToSegment, PLAYER_RADIUS, KNOCK_DECAY, type Enemy, type EnemyCtx, type EnemyEvent } from './enemy'
 import { Ranged } from './ranged'
 import { Lobber } from './lobber'
 import { Thief, type ThiefEvent } from './thief'
@@ -10,7 +10,9 @@ import { Mite, Brood, MiteBatch, MITE } from './swarm'
 import { KILL_WEIGHT } from './loot'
 import { BOSS, isBoss, makeBoss, type Boss } from './boss'
 import type { BossDef } from './areas'
-import { LiveHazard, SLAG, inShape, slagArm, threatPoint, type Hazard, type HazardSpec } from './hazard'
+import { LiveHazard, SLAG, inShape, slagArm, threatPoint, type Hazard, type HazardShape, type HazardSpec } from './hazard'
+import { LINE, type Line } from './line'
+import type { Room } from './dungeon'
 
 /** §4.24: the second Assembler's adds. Live add HP never passes today's four hulks' worth (4 x 18). */
 const ADDS_HP_CAP = 72
@@ -18,6 +20,8 @@ const SUMMON_RAM = { hp: 22, size: 0.85 }
 const SUMMON_MITES = 6
 import type { Terrain } from './terrain'
 import type { Breakable, Post } from './dungeon'
+/** A train strip breaks every crate its segment's strip overlaps, grown this much (§5.4). */
+const TRAIN_SMASH_GROW = 0.2
 import type { AbilityDef, BeatKey } from './abilities'
 import type { SlotName } from './still'
 import { PART, History, bankShot, type EnemyStatus, type Flip, type Held, type PartEvent, type PartRuntime, type StillMove, type Zone } from './parts'
@@ -252,7 +256,8 @@ export interface CombatEvents {
   onEnemy: (ev: EnemyEvent) => void
   /** A pack woke: where, and the pack (the notebook meets its names). */
   onWake: (at: THREE.Vector3, pack: Pack) => void
-  onSmash: (b: Breakable) => void
+  /** `loot` false: a train smashed it, and it rolls nothing (§5.7). */
+  onSmash: (b: Breakable, loot?: boolean) => void
   /** A boss volley leaving the cannon. */
   onVolley: (at: THREE.Vector3) => void
   onShot: () => void
@@ -326,6 +331,16 @@ export class Combat {
   private broodIndex = 0
   /** Game time, seconds. The lock book runs on it. */
   time = 0
+  /** The Line's trains on this level (design/area3/SPEC.md §5), or null. Ticked after the enemies. */
+  line: Line | null = null
+  /** Still's own slide (train shoves only): decays by KNOCK_DECAY, moved with terrain.clampMove at PLAYER_RADIUS. */
+  private readonly playerKnock = new THREE.Vector3()
+  /** One hit set per hazard group (a train): a body is hit once per group. */
+  private readonly groupHits = new WeakMap<object, Set<Enemy | 'still'>>()
+  /** Where each enemy stood before its own move this tick, while a lane is lit: a stepping-off body's move is the step. */
+  private readonly beforeMove = new Map<Enemy, { x: number; z: number }>()
+  /** Which way each body is stepping off which lane (+1/−1 across its a → b), kept until it's off. */
+  private readonly stepSide = new WeakMap<Enemy, { lane: object; go: number }>()
   readonly book = new LockBook(() => this.time)
   /** Still's velocity this tick, from where he was on the last one. */
   private readonly playerVel = new THREE.Vector3()
@@ -371,6 +386,7 @@ export class Combat {
     },
     held: (e) => this.held.has(e),
     emit: (ev) => this.emitEnemy(ev),
+    nearLit: (x, z) => !!this.line?.nearLit(x, z, LINE.halfW + LINE.broodPad),
   }
 
   // Still's bolts are cold light; enemy shots are embers. Both leave trails.
@@ -406,6 +422,7 @@ export class Combat {
     this.ctx.player = player
     this.ctx.now = this.time
     this.lastPlayer = player
+    this.slidePlayer(player, dt)
     this.hurtCooldown = Math.max(0, this.hurtCooldown - dt)
     this.updatePacks(player)
     this.book.prune()
@@ -413,6 +430,9 @@ export class Combat {
     this.tickBroods(dt)
 
     // --- enemies ---
+    // a lit lane: where each stood before its own move, for the step-off
+    this.beforeMove.clear()
+    if (this.line?.lit().length) for (const e of this.enemies) this.beforeMove.set(e, { x: e.pos.x, z: e.pos.z })
     for (let i = this.enemies.length - 1; i >= 0; i--) {
       const e = this.enemies[i]!
       // killed between ticks (a cast, a bolt): buried before it can act, so a hulk
@@ -477,6 +497,9 @@ export class Combat {
       if (e instanceof Thief) for (const ev of e.drain()) this.events.onThief(ev)
       if (e.dead) this.bury(i)
     }
+    // the Line after the enemies: its tells start, its books close, its hazards spawn; then who steps off
+    this.line?.tick(dt, player)
+    this.stepOff(dt)
     this.tickParts(dt)
     this.tickHazards(dt, player)
 
@@ -784,6 +807,10 @@ export class Combat {
     this.hurtCaught = false
     for (const f of this.fx) this.scene.remove(f.mesh)
     this.fx.length = 0
+    this.line?.dispose()
+    this.line = null
+    this.playerKnock.set(0, 0, 0)
+    this.beforeMove.clear()
     this.parts.patientSince = PATIENT_START
     this.parts.guard = null
     this.parts.anvil = null
@@ -1218,13 +1245,149 @@ export class Combat {
     if (best) this.wake(best)
   }
 
-  private smashNear(x: number, z: number, pad: number) {
+  private smashNear(x: number, z: number, pad: number, opts: { loot?: boolean } = {}) {
     for (const b of this.breakables) {
       if (!b.broken && Math.hypot(b.x - x, b.z - z) < b.r + pad) {
-        this.events.onSmash(b)
+        this.events.onSmash(b, opts.loot ?? true)
         return
       }
     }
+  }
+
+  /** §5.4, §5.7: a train segment arming breaks every crate whose circle overlaps its strip (grown), and each rolls nothing. */
+  smashIn(shape: HazardShape, grow: number) {
+    for (const b of this.breakables) if (!b.broken && inShape(shape, b.x, b.z, b.r + grow)) this.events.onSmash(b, false)
+  }
+
+  /** The Line's liveness (§5.1): a pack whose members sleep (or slept) inside this room is awake. */
+  roomAwake(room: Room): boolean {
+    const hx = (room.rx + 0.5) * 4, hz = (room.rz + 0.5) * 4
+    return this.packs.some((p) => p.state === 'awake' && [...p.homes.values()].some((h) => Math.abs(h.x - room.center.x) <= hx && Math.abs(h.z - room.center.z) <= hz))
+  }
+
+  /** The train hit sets, for the checks: who a group (a train) has hit. */
+  groupHitsOf(group: object): ReadonlySet<Enemy | 'still'> {
+    return this.groupHits.get(group) ?? new Set()
+  }
+
+  /**
+   * §5.8: committed bodies don't step off a lit lane. Anything past its approach, sliding,
+   * held in the clamp, a ram rushing or stunned, a mite biting in a live surge, a boss, a thief.
+   */
+  static committed(e: Enemy, held: boolean): boolean {
+    if (e.kind === 'boss' || e.kind === 'thief') return true
+    if (e.phase !== 'approach' || held) return true
+    if (e.knock.lengthSq() > 1.5 * 1.5) return true
+    if (e instanceof Charger && (e.rushing || e.stunned)) return true
+    if (e instanceof Mite && e.brood.state !== 'gather' && e.brood.biters.includes(e)) return true
+    return false
+  }
+
+  /**
+   * §5.8: every awake or homeward body that isn't committed and stands in a lit lane's floor
+   * strip (grown by its radius and a pad) moves straight off it, toward the nearer edge (away
+   * from Still on a tie), at 4.5 u/s × its speed. That step is its whole move this tick, so a
+   * body walking at the lane stalls at its edge until the tail has passed.
+   */
+  private stepOff(dt: number) {
+    const lit = this.line?.lit()
+    if (!lit?.length) return
+    for (const e of this.enemies) {
+      if (e.dead) continue
+      const st = this.packOf.get(e)?.state
+      if (st !== 'awake' && st !== 'returning') continue
+      if (Combat.committed(e, this.held.has(e))) continue
+      for (const l of lit) {
+        const grow = LINE.halfW + e.radius + LINE.stepOff.pad
+        const len = Math.hypot(l.bx - l.ax, l.bz - l.az)
+        const ux = (l.bx - l.ax) / len, uz = (l.bz - l.az) / len
+        // across: the lane's right-hand normal, signed
+        const across = (e.pos.x - l.ax) * uz - (e.pos.z - l.az) * ux
+        const along = (e.pos.x - l.ax) * ux + (e.pos.z - l.az) * uz
+        if (along < -e.radius || along > len + e.radius || Math.abs(across) > grow) {
+          if (this.stepSide.get(e)?.lane === l) this.stepSide.delete(e)
+          continue
+        }
+        // its own move this tick is undone: the step is the move
+        const was = this.beforeMove.get(e)
+        if (was) {
+          e.pos.x = was.x
+          e.pos.z = was.z
+        }
+        const a = (e.pos.x - l.ax) * uz - (e.pos.z - l.az) * ux
+        let side = Math.sign(a)
+        if (side === 0) {
+          const p = this.lastPlayer
+          side = -Math.sign((p.x - l.ax) * uz - (p.z - l.az) * ux) || 1
+        }
+        // the nearer edge, unless a crate or a column stops it short of it there (a lane's mouth at
+        // its wall gap); then whichever way leaves the least of the strip to cross, kept until the
+        // nearer edge is clear again (so it can't dither between two blocked ways)
+        const leftOf = (sd: number) => {
+          const need = grow - a * sd + 1e-3
+          const p = this.terrain.clampMove(e.pos.x, e.pos.z, e.pos.x + uz * sd * need, e.pos.z - ux * sd * need, e.radius)
+          return need - Math.hypot(p.x - e.pos.x, p.z - e.pos.z)
+        }
+        let go = side
+        const nearLeft = leftOf(side)
+        if (nearLeft <= 0.25) this.stepSide.delete(e)
+        else {
+          let chosen = this.stepSide.get(e)
+          if (!chosen || chosen.lane !== l) {
+            chosen = { lane: l, go: nearLeft <= leftOf(-side) ? side : -side }
+            this.stepSide.set(e, chosen)
+          }
+          go = chosen.go
+        }
+        const want = Math.min(LINE.stepOff.speed * e.speedMul * dt, grow - a * go + 1e-3)
+        if (want <= 0) break
+        // boxed in (the columns either side of a wall gap): off at a slant into the room, or along
+        // into the room; the first that gets at least half its step
+        const toMid = Math.sign(len / 2 - (e.pos.x - l.ax) * ux - (e.pos.z - l.az) * uz) || 1
+        const tries: [number, number][] = [[uz * go, -ux * go], [(uz * go + ux * toMid) * Math.SQRT1_2, (-ux * go + uz * toMid) * Math.SQRT1_2], [ux * toMid, uz * toMid]]
+        let to: { x: number; z: number } | null = null
+        for (const [vx, vz] of tries) {
+          const p = this.terrain.clampMove(e.pos.x, e.pos.z, e.pos.x + vx * want, e.pos.z + vz * want, e.radius)
+          if (Math.hypot(p.x - e.pos.x, p.z - e.pos.z) >= want * 0.5) {
+            to = p
+            break
+          }
+        }
+        if (!to) {
+          // stuck every way: the other side next tick
+          this.stepSide.set(e, { lane: l, go: -go })
+          break
+        }
+        e.pos.x = to.x
+        e.pos.z = to.z
+        break
+      }
+    }
+  }
+
+  /** Still's train shove: a slide that bleeds off, stopped by walls. */
+  private slidePlayer(player: THREE.Vector3, dt: number) {
+    const k = this.playerKnock
+    if (k.lengthSq() < 1e-6) return
+    const to = this.terrain.clampMove(player.x, player.z, player.x + k.x * dt, player.z + k.z * dt, PLAYER_RADIUS)
+    player.x = to.x
+    player.z = to.z
+    k.multiplyScalar(Math.exp(-KNOCK_DECAY * dt))
+    if (k.lengthSq() < 1e-4) k.set(0, 0, 0)
+  }
+
+  /**
+   * A shove off a strip: `along` its direction, `across` away from its centre line toward the
+   * side the body is on (on a tie, the side away from its lamps: the left of a → b).
+   */
+  private stripShove(sh: HazardShape, shove: NonNullable<HazardSpec['shove']>, x: number, z: number): THREE.Vector3 {
+    const v = shoveVelocity(shove.dx, shove.dz, shove.along)
+    if (sh.kind !== 'strip' || shove.across <= 0) return v
+    const len = Math.hypot(sh.bx - sh.ax, sh.bz - sh.az) || 1
+    const ux = (sh.bx - sh.ax) / len, uz = (sh.bz - sh.az) / len
+    // the right-hand normal of the strip's own a → b; a lane's lamps stand on the right of its a → b
+    const side = Math.sign((x - sh.ax) * uz - (z - sh.az) * ux) || (ux + uz > 0 ? -1 : 1)
+    return v.add(shoveVelocity(uz * side, -ux * side, shove.across))
   }
 
   /** A projectile's line: see mode, so a breach lets a shot through both ways. */
@@ -1912,6 +2075,8 @@ export class Combat {
         // a hair of slack: 30 ticks of 1/60 s must arm a 500 ms hazard on the 30th
         if (h.armIn <= 1e-6) {
           h.armed = true
+          // a train's segment breaks what's on the rails as the rake reaches it
+          if (h.spec.source === 'train') this.smashIn(h.spec.shape, TRAIN_SMASH_GROW)
           this.events.onHazard({ kind: 'arm', h })
         }
       } else {
@@ -1938,22 +2103,36 @@ export class Combat {
     const s = h.spec
     const sh = s.shape
     const covered = (x: number, z: number) => s.cover === 'fromCentre' && sh.kind === 'circle' && !this.terrain.lineClear(sh.x, sh.z, x, z, 0.1)
-    if (!h.hit.has('still') && inShape(sh, player.x, player.z) && !covered(player.x, player.z)) {
+    // a group (one train) shares one hit set: a body shoved from segment to segment is hit once
+    let group: Set<Enemy | 'still'> | undefined
+    if (s.group) {
+      group = this.groupHits.get(s.group)
+      if (!group) this.groupHits.set(s.group, (group = new Set()))
+    }
+    if (!h.hit.has('still') && !group?.has('still') && inShape(sh, player.x, player.z) && !covered(player.x, player.z)) {
       h.hit.add('still')
+      group?.add('still')
       const taken = !this.guardTakes(s, player)
       if (taken) this.hurtPlayer(s.damage, s.hurt, s.owner)
+      if (s.shove) this.playerKnock.add(this.stripShove(sh, s.shove, player.x, player.z))
       this.events.onHazard({ kind: 'hit', h, who: 'still', at: player.clone() })
       // H5: warded, it never heats; taken or braced, it does
       if (taken && s.heat) this.events.onHazard({ kind: 'heat', h })
     }
     for (const e of this.enemies) {
       // H2: hazards never hurt the thief
-      if (e.dead || e.kind === 'thief' || h.hit.has(e) || this.held.has(e) || (s.sparesOwner && e === s.owner)) continue
+      if (e.dead || e.kind === 'thief' || h.hit.has(e) || group?.has(e) || this.held.has(e) || (s.sparesOwner && e === s.owner)) continue
       if (!inShape(sh, e.pos.x, e.pos.z, e.radius - PLAYER_RADIUS) || covered(e.pos.x, e.pos.z)) continue
       h.hit.add(e)
+      group?.add(e)
+      // a rushing ram reads knockMul 0
+      if (s.shove) e.knock.add(this.stripShove(sh, s.shove, e.pos.x, e.pos.z).multiplyScalar(e.knockMul))
       // not a part: it never uses a mark. A sleeper hit this way wakes its pack (hpSeen).
-      if (e.hit(s.damage)) this.hazardKilled.add(e)
-      this.events.onHit(e.pos, e)
+      // The harmless lesson train (damage 0) passes through without a flash.
+      if (s.damage > 0) {
+        if (e.hit(s.damage)) this.hazardKilled.add(e)
+        this.events.onHit(e.pos, e)
+      }
       this.events.onHazard({ kind: 'hit', h, who: e, at: e.pos.clone() })
     }
   }
@@ -2373,6 +2552,8 @@ export class Combat {
       else if (e instanceof Chaser || isBoss(e)) n += e.phase === 'windup' ? 1 : 0
     }
     for (const b of this.broods) n += b.state === 'windup' ? 1 : 0
+    // a committed train is a locked tell, until its tail leaves the floor
+    n += this.line?.lockedCount() ?? 0
     TELL_CROWD.locked = n
   }
 

@@ -2092,3 +2092,115 @@ export function uiBack() {
   hiss(c, d, t, 0.01, 0.4 * UI.back, 'highpass', 4200, 3400, 0.8, 0.001)
   tone(c, d, 'triangle', t, vary(1750, 0.03), 1250, 0.035, UI.back, 0.001)
 }
+
+// --- the Line's trains (design/area3/SPEC.md §5.3): every one synthesised, over the kit's recordings ---
+
+/**
+ * The rail hum, from t0: the rails start to sing and a low rumble comes up under them, rising
+ * over `ms` (the 2000 to the arrival), panned to the side the train comes from. It rides the
+ * hits bus, so the duck before the arrival takes the other windups and not this.
+ */
+export function railHum(pan: number, ms = 2000): Voice {
+  const c = live()
+  if (!c) return asVoice(() => {})
+  const t = c.currentTime
+  const dur = ms / 1000
+  const p = livePan(c, 'hits', pan)
+  const g = c.createGain()
+  g.connect(p)
+  // the rumble: a low sine climbing a little, and filtered noise opening as it nears
+  const o = c.createOscillator()
+  o.type = 'sine'
+  o.frequency.setValueAtTime(38, t)
+  o.frequency.exponentialRampToValueAtTime(52, t + dur)
+  const og = c.createGain()
+  og.gain.setValueAtTime(0.0001, t)
+  og.gain.exponentialRampToValueAtTime(0.32, t + dur)
+  og.gain.setTargetAtTime(0.0001, t + dur, 0.12)
+  o.connect(og).connect(g)
+  o.start(t)
+  o.stop(t + dur + 0.8)
+  const s = c.createBufferSource()
+  s.buffer = noise
+  s.loop = true
+  const lp = c.createBiquadFilter()
+  lp.type = 'lowpass'
+  lp.frequency.setValueAtTime(160, t)
+  lp.frequency.exponentialRampToValueAtTime(700, t + dur)
+  const sg = c.createGain()
+  sg.gain.setValueAtTime(0.0001, t)
+  sg.gain.exponentialRampToValueAtTime(0.28, t + dur)
+  sg.gain.setTargetAtTime(0.0001, t + dur, 0.12)
+  s.connect(lp).connect(sg).connect(g)
+  s.start(t, Math.random() * 0.5)
+  s.stop(t + dur + 0.8)
+  // the rails singing: a thin band, high, wavering
+  const r = c.createBufferSource()
+  r.buffer = noise
+  r.loop = true
+  const bp = c.createBiquadFilter()
+  bp.type = 'bandpass'
+  bp.Q.value = 18
+  bp.frequency.setValueAtTime(2300, t)
+  bp.frequency.linearRampToValueAtTime(2700, t + dur)
+  const rg = c.createGain()
+  rg.gain.setValueAtTime(0.0001, t)
+  rg.gain.exponentialRampToValueAtTime(0.16, t + dur)
+  rg.gain.setTargetAtTime(0.0001, t + dur, 0.08)
+  r.connect(bp).connect(rg).connect(g)
+  r.start(t, Math.random() * 0.5)
+  r.stop(t + dur + 0.6)
+  return { stop: gate(g, c, t + dur + 0.8), pan: (v) => p.pan.setTargetAtTime(clampPan(v), c.currentTime, 0.05) }
+}
+
+/** The two-tone horn at the commit: a held chord, high then low, from the train's side. */
+export function horn(pan: number) {
+  const c = live()
+  if (!c) return
+  const t = c.currentTime
+  const d = out(c, 'hits', pan)
+  const lp = c.createBiquadFilter()
+  lp.type = 'lowpass'
+  lp.frequency.value = 1800
+  lp.Q.value = 0.8
+  lp.connect(d)
+  for (const [f, at, len] of [[370, 0, 0.36], [294, 0.38, 0.5]] as const) {
+    for (const det of [-4, 4]) {
+      const o = c.createOscillator()
+      o.type = 'sawtooth'
+      o.frequency.value = f
+      o.detune.value = det
+      const g = c.createGain()
+      g.gain.setValueAtTime(0.0001, t + at)
+      g.gain.linearRampToValueAtTime(0.09, t + at + 0.03)
+      g.gain.setValueAtTime(0.09, t + at + len - 0.05)
+      g.gain.exponentialRampToValueAtTime(0.0001, t + at + len)
+      o.connect(g).connect(lp)
+      o.start(t + at)
+      o.stop(t + at + len + 0.02)
+    }
+  }
+}
+
+/** One wheel clack of the pass (every 0.18 s from the arrival): light iron over a thump, by distance. */
+export function clack(pan: number, gain: number) {
+  const c = live()
+  if (!c || gain <= 0.01) return
+  const t = c.currentTime
+  const d = out(c, 'hits', pan)
+  tone(c, d, 'sine', t, 90, 48, 0.07, 0.35 * gain)
+  sample(c, 'metalLight', d, 0.7 * gain, 0.72)
+}
+
+/** 150 ms before a train's arrival every windup voice dips 40%, as the mix makes room for it. */
+export function windupDip(ms: number) {
+  const c = live()
+  if (!c) return
+  const t = c.currentTime
+  const g = buses.enemy.gain
+  g.cancelScheduledValues(t)
+  g.setValueAtTime(g.value, t)
+  g.linearRampToValueAtTime(mix.enemy * 0.6, t + 0.02)
+  g.setValueAtTime(mix.enemy * 0.6, t + ms / 1000)
+  g.linearRampToValueAtTime(mix.enemy, t + ms / 1000 + 0.08)
+}

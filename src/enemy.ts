@@ -88,6 +88,8 @@ export interface EnemyCtx {
   /** In the clamp's throw. */
   held(e: Enemy): boolean
   emit(ev: EnemyEvent): void
+  /** The Line's brood rule (design/area3/SPEC.md §5.8): (x, z) is within halfW + broodPad of a lit lane's floor span. */
+  nearLit?(x: number, z: number): boolean
 }
 
 /** Instants the run dresses (sound, sparks, the log). Lasting state is polled instead. */

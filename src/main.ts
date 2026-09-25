@@ -12,6 +12,7 @@ import { isBoss, Assembler } from './boss'
 import { Arbiter, ARBITER, arbiterHusk } from './arbiter'
 import { DayTracker } from './day'
 import type { HazardSpec } from './hazard'
+import { Line, LINE, type LineEvent, type Train } from './line'
 import { RANGED } from './ranged'
 import { LOBBER } from './lobber'
 import { Thief, type ThiefEvent, type ThiefWorld } from './thief'
@@ -426,7 +427,7 @@ const combat = new Combat(world.scene, OPEN, {
     still.attack({ beat: 'shot', pushed: false })
     vfx.flash(still.lensPoint(new THREE.Vector3()), COLD_DEEP, 0.25)
   },
-  onSmash: (b) => {
+  onSmash: (b, rolls = true) => {
     level?.smash(b)
     const at = new THREE.Vector3(b.x, 0, b.z)
     combat.burst(at, 0xb89a7a)
@@ -434,6 +435,8 @@ const combat = new Combat(world.scene, OPEN, {
     vfx.chunks(at3(at, 0.5), 14, WOOD, 4.5, 0.16)
     vfx.dust(at, 10, 0.7, new THREE.Color(0x6a5a48))
     shake = Math.max(shake, 0.12)
+    // a train-smashed crate rolls nothing (design/area3/SPEC.md §5.7)
+    if (!rolls) return
     const roll = Math.random()
     if (roll < LOOT.crateParts) {
       const taken = [...hud.loadout, ...loot.ground.map((g) => g.def)]
@@ -515,6 +518,17 @@ const combat = new Combat(world.scene, OPEN, {
     }
     const s = ev.h.spec.shape
     const slag = ev.h.spec.source === 'slag'
+    // a train hitting Still (§5.5): the ram's crash without its bell, and a harder punch
+    if (ev.kind === 'hit' && ev.h.spec.source === 'train' && ev.h.spec.damage > 0) {
+      if (ev.who === 'still') {
+        sfx.ramCrash(panOf(ev.at), false)
+        shake = Math.max(shake, 0.5)
+        hitstop = Math.max(hitstop, 0.08)
+        rig.punch(0.06)
+      }
+      vfx.sparks(at3(ev.at, 0.8), EMBER, 10, 6)
+      return
+    }
     if (s.kind !== 'circle') return
     if (ev.kind === 'spawn' && slag) {
       // the core breaks open where it fell
@@ -1701,6 +1715,84 @@ function resumeRun(snap: RunSnapshot) {
   writeSnapshot()
 }
 
+/** Each train's rail hum, while it sounds. At most two at once (§5.3). */
+const hums = new Map<Train, sfx.Voice>()
+/** A passing train's next wheel clack, on the Line's clock. */
+const clacks = new Map<Train, number>()
+/** Dev only: what each train sounded and when, on the Line's clock. */
+const trainLog: { t: number; lane: number; kind: LineEvent['kind']; buzz?: boolean }[] = []
+const HUMS_MAX = 2
+/** The pass: a clack every 0.18 s, fading out by this distance. */
+const CLACK = { every: 0.18, hear: 30 }
+
+/** What Combat gives the Line: its clock and book, its hazards, and the run's ears. */
+const lineHost = {
+  get time() { return combat.time },
+  get book() { return combat.book },
+  addHazard: (spec: HazardSpec) => combat.addHazard(spec),
+  roomAwake: (room: Room) => combat.roomAwake(room),
+  smashIn: (shape: Parameters<Combat['smashIn']>[0], grow: number) => combat.smashIn(shape, grow),
+  emit: (ev: LineEvent) => lineEvent(ev),
+}
+
+/** A train's instants: the hum at t0, the horn and the buzz at the commit, the duck, the wheels. */
+function lineEvent(ev: LineEvent) {
+  if (import.meta.env.DEV) {
+    trainLog.push({ t: combat.line?.t ?? 0, lane: ev.train.lane.id, kind: ev.kind, ...(ev.kind === 'commit' ? { buzz: ev.buzz } : {}) })
+    if (trainLog.length > 2000) trainLog.shift()
+  }
+  // once Still is stopping (or broken), the world is slowing with him: no new voices
+  if (run.phase !== 'crawl') return
+  switch (ev.kind) {
+    case 'coming':
+      if (hums.size < HUMS_MAX) hums.set(ev.train, sfx.railHum(panOf(ev.from), LINE.comingMs + LINE.committedMs))
+      break
+    case 'commit':
+      sfx.horn(panOf(ev.from))
+      // standing on the lane (or at its edge) as it commits: one short buzz
+      if (ev.buzz) navigator.vibrate?.(40)
+      break
+    case 'duck':
+      sfx.windupDip(150)
+      break
+    case 'arrive':
+      hums.delete(ev.train)
+      clacks.set(ev.train, combat.line?.t ?? 0)
+      break
+    case 'gone':
+      hums.get(ev.train)?.stop()
+      hums.delete(ev.train)
+      clacks.delete(ev.train)
+      break
+  }
+}
+
+/** The Line the voices below belong to: a new level (or none) stops them. */
+let fxLine: Line | null = null
+/** The pass, heard: wheels over the joints, by how far the rake is from Still. */
+function trainFx() {
+  const line = combat.line
+  if (line !== fxLine) {
+    for (const v of hums.values()) v.stop()
+    hums.clear()
+    clacks.clear()
+    fxLine = line
+  }
+  if (!line) return
+  const at = new THREE.Vector3()
+  for (const [tr, next] of clacks) {
+    let n = next
+    while (line.t >= n) {
+      if (line.rakeAt(tr, at) && run.phase === 'crawl') {
+        const d = Math.hypot(at.x - still.pos.x, at.z - still.pos.z)
+        sfx.clack(panOf(at), Math.max(0, 1 - d / CLACK.hear))
+      }
+      n += CLACK.every
+    }
+    clacks.set(tr, n)
+  }
+}
+
 /** Build a level and put Still at its entrance. HP is whole again; strain carries. `seed` repeats a layout (resume, checks). */
 function enterLevel(depth: number, o: { seed?: number; bossFelled?: boolean; resume?: boolean } = {}) {
   beamArmed.exit = true
@@ -1726,6 +1818,11 @@ function enterLevel(depth: number, o: { seed?: number; bossFelled?: boolean; res
     combat.addPack(members, p.room.kind === 'side', p.elite, p.look === 'heap' ? 'heap' : undefined)
   }
   combat.breakables = level.breakables
+  // the Line's trains (design/area3/SPEC.md §5): their clock starts with the level
+  if (level.lanes?.length) {
+    combat.line = new Line(level, run.seed, lineHost)
+    world.scene.add(combat.line.group)
+  }
   const boss = bossHere(depth)
   if (level.boss && boss && !run.bossFelled) combat.addBoss(level.boss.x, level.boss.z, level.boss.face, boss, level.posts)
   // G8: a thief in its nest, with no pack (it never spawns carrying)
@@ -3270,6 +3367,7 @@ function frame(nowMs: number) {
     ramFx(elapsed)
     arbiterFx()
     broodFx(elapsed)
+    trainFx()
     skitter(elapsed)
     for (const [e, v] of loops) v.pan(panOf(e.pos))
   }
@@ -3651,6 +3749,35 @@ if (import.meta.env.DEV) {
       l.dispose()
       return out
     },
+    /** The Line's constants, live (checks may override the shove). */
+    __LINE: LINE,
+    /** The current level's lanes, with their timetable and whether each is lit. */
+    __lanes: () => {
+      const line = combat.line
+      if (!line) return []
+      const lit = new Set(line.lit())
+      return line.lanes.map((l) => ({
+        id: l.id, kind: l.kind, ax: l.ax, az: l.az, bx: l.bx, bz: l.bz, period: l.period, phase: l.phase, lesson: l.lesson,
+        lit: lit.has(l), nextAt: line.nextAt(l), room: l.room && level ? level.rooms.indexOf(l.room) : null,
+      }))
+    },
+    /** The Line's clock now (s). */
+    __lineT: () => combat.line?.t ?? null,
+    /** A tell on a lane now, as a call (with slip). Returns t0 − now in ms, or null if refused. */
+    __train: (laneId: number, dir?: 1 | -1) => {
+      const line = combat.line
+      const lane = line?.lanes.find((l) => l.id === laneId)
+      if (!line || !lane || !line.call(lane, dir)) return null
+      const tr = line.trains()[line.trains().length - 1]!
+      return Math.round((tr.t0 - line.t) * 1e6) / 1e3
+    },
+    /** Every train this level has run: its lane, direction, stage, clocks, and whom it hit ('still' or an index into __combat.enemies). */
+    __trains: () => (combat.line?.trains() ?? []).map((tr) => ({
+      lane: tr.lane.id, dir: tr.dir, stage: tr.stage, t0: tr.t0, at: tr.at, lesson: tr.lesson, how: tr.how,
+      hit: [...combat.groupHitsOf(tr)].map((w) => (w === 'still' ? 'still' : combat.enemies.indexOf(w))),
+    })),
+    __trainLog: trainLog,
+    __hums: () => hums.size,
     /** The road labels showing now (text and alpha). */
     __beamLabels: () => hud.beamLabels.map((l) => ({ ...l })),
     /** The alternate's dressed yard beam: the road it names, or null. */
