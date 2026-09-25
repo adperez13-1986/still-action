@@ -316,8 +316,8 @@ html, body {
 #bossBar b { display: block; margin-bottom: 5px; font: 700 15px/1 var(--display); letter-spacing: .2em; color: #e6c9c2; text-shadow: 0 1px 3px #000; }
 #bossBar .track { height: 8px; border-radius: 4px; overflow: hidden; background: rgba(8, 12, 18, .8); border: 1px solid #3a2522; }
 #bossBar i { display: block; height: 100%; background: linear-gradient(90deg, #7a2a22, #ff5a3c); transition: width .15s; }
-#bossBar.overloaded i { background: linear-gradient(90deg, #a13a1e, #ffa04a); }
-#bossBar.stunned b { color: #fff0d0; }
+#bossBar.phase2 i { background: linear-gradient(90deg, #a13a1e, #ffa04a); }
+#bossBar.open b { color: #fff0d0; }
 
 /* --- elite names: cold blue like D2's champions, with what makes them dangerous --- */
 .elite { position: absolute; transform: translate(-50%, -100%); text-align: center; white-space: nowrap; text-shadow: 0 1px 3px #000, 0 0 6px #000; }

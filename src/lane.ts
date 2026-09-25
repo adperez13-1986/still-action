@@ -59,7 +59,7 @@ export interface LaneLook {
 const RAM_LOOK: LaneLook = { wash: [0.18, 0.3], core: [0.55, 0.9], cap: [0.18, 0.3] }
 
 /** Floor units per unit of strip uv: the chevrons keep one spacing whatever the length. */
-const UV_LEN = 12
+export const UV_LEN = 12
 /** The tracking rails stop this short of the end: the aim isn't set yet, so neither is the end. */
 const OPEN_END = 0.6
 const FADE = 5
@@ -69,7 +69,7 @@ const FADE = 5
  * the lane moves, so the tell's noise keeps its real-world grain instead of being
  * stretched by a scale.
  */
-class Quads {
+export class Quads {
   readonly mesh: THREE.Mesh
   private readonly pos: THREE.BufferAttribute
   private readonly uv: THREE.BufferAttribute

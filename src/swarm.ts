@@ -283,13 +283,13 @@ export class Mite implements Enemy {
   setElite(mod: EliteMod) {
     this.queen = true
     this.quick = mod === 'swift'
-    const sacMat = new THREE.MeshBasicMaterial({ color: CORE })
+    const sacMat = new THREE.MeshBasicMaterial({ color: CORE, fog: false })
     const sac = new THREE.Mesh(new THREE.SphereGeometry(0.16, 10, 8), sacMat)
     sac.position.set(0, 0.08, -0.3)
     sac.scale.z = 1.35
     const spineMat = new THREE.MeshStandardMaterial({ color: JOINT, roughness: 0.6, metalness: 0.5 })
     const spines = new THREE.Mesh(mergeGeometries([-0.1, 0.02, 0.14].map((z) => new THREE.ConeGeometry(0.03, 0.12, 5).translate(0, 0.17, z)))!, spineMat)
-    const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: haloTexture(), blending: THREE.AdditiveBlending, depthWrite: false, transparent: true }))
+    const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: haloTexture(), blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, fog: false }))
     glow.position.copy(sac.position)
     this.rig.body.add(sac, spines, glow)
     this.extras = { sac, sacMat, spineMat, glow }
@@ -489,8 +489,9 @@ export class MiteBatch {
   constructor(scene: THREE.Scene) {
     const shellMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.85, metalness: 0.3 })
     const jointMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.6, metalness: 0.5 })
-    const coreMat = new THREE.MeshBasicMaterial({ color: 0xffffff })
-    const haloMat = new THREE.MeshBasicMaterial({ map: haloTexture(), blending: THREE.AdditiveBlending, transparent: true, depthWrite: false })
+    // cores and halos ignore the fog (the lights-out rule)
+    const coreMat = new THREE.MeshBasicMaterial({ color: 0xffffff, fog: false })
+    const haloMat = new THREE.MeshBasicMaterial({ map: haloTexture(), blending: THREE.AdditiveBlending, transparent: true, depthWrite: false, fog: false })
     const shell = new THREE.SphereGeometry(0.27, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2)
     shell.scale(1, 0.62, 1.2)
     const jaw = new THREE.BoxGeometry(0.045, 0.04, 0.15)

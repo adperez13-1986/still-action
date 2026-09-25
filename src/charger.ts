@@ -230,15 +230,16 @@ export class Charger implements Enemy {
   private readonly jointMat = new THREE.MeshStandardMaterial({ color: JOINT, roughness: 0.6, metalness: 0.5 })
   private readonly wornMat = new THREE.MeshStandardMaterial({ color: WORN, roughness: 0.5, metalness: 0.6 })
   private readonly plateMat = new THREE.MeshStandardMaterial({ color: PLATE, roughness: 0.5, metalness: 0.55 })
-  private readonly coreMat = new THREE.MeshBasicMaterial({ color: CORE })
-  private readonly fireMat = new THREE.MeshBasicMaterial({ color: CORE })
-  private readonly seamMats = Array.from({ length: 5 }, () => new THREE.MeshBasicMaterial({ color: CORE }))
+  // its lights ignore the fog (the lights-out rule): lamp, firebox, seams and their glow
+  private readonly coreMat = new THREE.MeshBasicMaterial({ color: CORE, fog: false })
+  private readonly fireMat = new THREE.MeshBasicMaterial({ color: CORE, fog: false })
+  private readonly seamMats = Array.from({ length: 5 }, () => new THREE.MeshBasicMaterial({ color: CORE, fog: false }))
   /**
    * Heat over the seam. Additive over lit rust, the halo at full strength washed the
    * whole back flat pink, seams and core included; dimmed, it stays a glow.
    */
   private readonly glowMat = new THREE.MeshBasicMaterial({
-    map: haloTexture(), color: GLOW, blending: THREE.AdditiveBlending, transparent: true, depthWrite: false, opacity: 0,
+    map: haloTexture(), color: GLOW, blending: THREE.AdditiveBlending, transparent: true, depthWrite: false, opacity: 0, fog: false,
   })
   /** Visual offsets live here, in the facing frame, never in pos. */
   private readonly grp = new THREE.Group()
@@ -380,7 +381,7 @@ export class Charger implements Enemy {
       cage.position.set(x, 1.45, z)
       const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.07, 10, 8), this.coreMat)
       lamp.position.set(x, 1.45, z)
-      this.lampGlow = new THREE.Sprite(new THREE.SpriteMaterial({ map: haloTexture(), blending: THREE.AdditiveBlending, depthWrite: false, transparent: true }))
+      this.lampGlow = new THREE.Sprite(new THREE.SpriteMaterial({ map: haloTexture(), blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, fog: false }))
       this.lampGlow.scale.setScalar(0.5)
       this.lampGlow.position.set(x, 1.45, z)
       this.body.add(mast, cage, lamp, this.lampGlow)

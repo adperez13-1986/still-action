@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import type { Piece } from './kit'
+import type { RosterId } from './save'
 import { grade, FOCUS_DEPTH, type World } from './world'
 
 /**
@@ -50,15 +51,19 @@ export function hourAtEnd(kind: 'broken' | 'stopped' | 'home', depth: number): H
   return 'dusk'
 }
 
-// --- areas --------------------------------------------------------------------------
+// --- areas and places ------------------------------------------------------------------
 
 export type AreaId = 'I' | 'II'
 export type SurfaceRole = 'paving' | 'rock' | 'wood' | 'ground'
 export type FootSurface = 'stone' | 'wood' | 'plate'
-/** The content step adds 'works' | 'quarter'. */
+/** The content steps add 'works' | 'quarter' | 'square'. */
 export type AmbienceMood = 'crawl' | 'boss' | 'workshop'
+/** A depth's look (design/content/SPEC.md §2.1): area II has two, the Works and the quarter. */
+export type PlaceId = 'ruin' | 'works' | 'quarter'
+/** The Works' beyond: code-built machinery standing in the fog (the Works step builds them). */
+export type MachineKind = 'chimney' | 'crucible' | 'press' | 'hopper'
 
-/** What an area builds with. Area II starts as a copy of I; the content step replaces it. */
+/** What a place builds with. The ruin's is exactly what the generator built before areas existed. */
 export interface KitPreset {
   /** Cumulative thresholds against ONE rand() per cell, in order (keeps __gen stable). */
   floorRoom: [Piece, number][]
@@ -74,14 +79,41 @@ export interface KitPreset {
   beyondLow: Piece[]
   arenaCover: Piece
 }
-export interface AreaDef {
-  id: AreaId
-  depths: readonly number[]
+
+/**
+ * Generator knobs area I doesn't have. INV: the ruin's reproduce today's rand() sequence
+ * exactly. The Works and quarter steps read them; until then every place is the ruin's.
+ */
+export interface GenPreset {
+  /** Props per room cell at room progress 0 and 1. ruin: [0.25, 0.25], so n = round(cells / 4) as today. */
+  cover: [start: number, end: number]
+  /** Min distance between props, and placement tries per room. */
+  coverGap: number
+  coverTries: number
+  /** INV: no prop's top exceeds this; a taller piece is scaled to fit. Infinity in the ruin (its props untouched). */
+  coverMaxH: number
+  /** Intact cover: at room progress p a prop is drawn from here with chance p (one extra rand(), only when present). */
+  intact?: [Piece, number][]
+  /** Floor tables by progress band: the last band whose `from` <= p. Absent: kit.floorRoom. */
+  floorBands?: { from: number; room: [Piece, number][] }[]
+  /** Upright far-side pieces (door frames), only where the floor isn't hidden. Chance by nearest-room progress. */
+  farSide?: { pieces: Piece[]; chance: [atP0: number, atP1: number] }
+  /** Share of the beyond's tall picks that become machinery instead. */
+  machines?: { kinds: MachineKind[]; share: number }
+  /** Chance a body carries a slag core, by archetype. ruin: {} (never). */
+  slag: Partial<Record<'chaser' | 'charger' | 'ranged', number>>
+}
+
+/** Everything a depth looks, sounds and generates like. */
+export interface PlaceDef {
+  id: PlaceId
   kit: KitPreset
   /** Which ambientCG set skins each role. */
   surfaces: Record<SurfaceRole, string>
   ambience: { crawl: AmbienceMood; boss: AmbienceMood }
   footsteps: FootSurface
+  music: 'I' | 'II'
+  gen: GenPreset
 }
 
 /** Area I: the ruin, exactly as the generator built it before areas existed. */
@@ -97,32 +129,59 @@ const RUIN_KIT: KitPreset = {
   arenaCover: 'barrier_column',
 }
 const RUIN_SURFACES: Record<SurfaceRole, string> = { paving: 'PavingStones142', rock: 'Rock035', wood: 'Planks023A', ground: 'Ground108' }
+const RUIN_GEN: GenPreset = { cover: [0.25, 0.25], coverGap: 3.2, coverTries: 40, coverMaxH: Infinity, slag: {} }
 
-const areaI: AreaDef = { id: 'I', depths: [1, 2, 3], kit: RUIN_KIT, surfaces: RUIN_SURFACES, ambience: { crawl: 'crawl', boss: 'boss' }, footsteps: 'stone' }
-/** INV (for now): deep-equal to area I except its id and depths. The content step gives it its own. */
-const areaII: AreaDef = { ...structuredClone(areaI), id: 'II', depths: [4, 5, 6] }
+const ruin: PlaceDef = {
+  id: 'ruin', kit: RUIN_KIT, surfaces: RUIN_SURFACES, ambience: { crawl: 'crawl', boss: 'boss' }, footsteps: 'stone', music: 'I', gen: RUIN_GEN,
+}
+/** INV (for now): the Works and the quarter are the ruin but for their id. Steps 2 and 3 give them their own. */
+export const PLACES: Record<PlaceId, PlaceDef> = {
+  ruin,
+  works: { ...structuredClone(ruin), id: 'works' },
+  quarter: { ...structuredClone(ruin), id: 'quarter' },
+}
+export const PLACE_OF: Record<number, PlaceId> = { 1: 'ruin', 2: 'ruin', 3: 'ruin', 4: 'works', 5: 'quarter', 6: 'quarter' }
+/** The walk home is the last of the quarter, at night. */
+export const WALK_PLACE: PlaceId = 'quarter'
+/** INV: the only way anything picks a look. areaOf(depth) stays for bosses, the hour and the banner. */
+export const lookAt = (depth: number): PlaceDef => PLACES[PLACE_OF[Math.max(1, Math.min(RUN_DEPTHS, depth))]!]
+
+/** An area: its depths, and a look for what still asks by area (I the ruin's; II the quarter's, where it ends). */
+export interface AreaDef extends Omit<PlaceDef, 'id'> {
+  id: AreaId
+  depths: readonly number[]
+}
+const areaI: AreaDef = { ...PLACES.ruin, id: 'I', depths: [1, 2, 3] }
+const areaII: AreaDef = { ...PLACES.quarter, id: 'II', depths: [4, 5, 6] }
 export const AREAS: readonly AreaDef[] = [areaI, areaII]
 export const areaOf = (depth: number): AreaDef =>
   AREAS[Math.min(AREAS.length, Math.ceil(Math.max(1, Math.min(depth, RUN_DEPTHS)) / BOSS_EVERY)) - 1]!
-/** The walk home is built with area II's kit, at night. */
-export const WALK_AREA: AreaId = 'II'
 
 // --- bosses -----------------------------------------------------------------------
 
-/** INV: bosses stay 900 HP. The content step adds kind 'arbiter' and swaps depth 6. */
+/** The Arbiter's step adds kind 'arbiter', adds 'none', and ARBITER_AT_6 (the switch back to this Assembler). */
+export type BossKind = 'assembler'
+/** INV: every boss is 900 HP, never hits above 22, never winds up under 620 ms. */
 export interface BossDef {
-  kind: 'assembler'
+  kind: BossKind
   /** Shown on the boss bar. */
   name: string
   hp: 900
   adds: 'hulks' | 'rams-mites'
   /** Its notebook page. */
-  roster: string
+  roster: RosterId
+  arena: 'yard'
+  /** The bar while its ×1.5 window is open. */
+  openWord: string
 }
-/** The only place a depth is decided to have a boss. The second Assembler's adds are rams and mites (the last step). */
+/** The Assembler, as it closes area I. */
+export const ASSEMBLER_DEF: BossDef = {
+  kind: 'assembler', name: 'The Assembler', hp: 900, adds: 'hulks', roster: 'the-first-warden', arena: 'yard', openWord: 'stunned',
+}
+/** The only place a depth is decided to have a boss. The second Assembler's adds are rams and mites. */
 export function bossFor(depth: number): BossDef | null {
   if (depth % BOSS_EVERY !== 0) return null
-  return { kind: 'assembler', name: 'The Assembler', hp: 900, adds: depth === RUN_DEPTHS ? 'rams-mites' : 'hulks', roster: 'the-first-warden' }
+  return { ...ASSEMBLER_DEF, adds: depth === RUN_DEPTHS ? 'rams-mites' : 'hulks' }
 }
 
 // --- the one day -----------------------------------------------------------------------

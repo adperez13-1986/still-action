@@ -5,7 +5,7 @@ import type { Terrain, WallFace } from './terrain'
 import type { BreachHole } from './parts'
 import { ELITE_MODS, type Archetype, type EliteMod } from './combat'
 import { BROOD } from './swarm'
-import { exitsAfterBoss, areaOf, type AreaDef, type BossDef, type ExitKind, type KitPreset } from './areas'
+import { exitsAfterBoss, lookAt, type BossDef, type ExitKind, type KitPreset, type PlaceDef } from './areas'
 
 /**
  * A D2-style crawl level on a 4-unit grid (KayKit's floor tile). A main path of
@@ -545,13 +545,13 @@ function pickLessonRoom(rooms: Room[], rand: () => number): Room | null {
 const pickFloor = (table: [Piece, number][], roll: number): Piece => (table.find(([, t]) => roll < t) ?? table[table.length - 1]!)[0]
 
 /**
- * `area` (default: the depth's) is what it's built with; `boss` is bossFor(depth).
- * INV: area I builds exactly what this built before areas existed, rand() for rand().
+ * `place` (default: the depth's, lookAt) is what it's built with; `boss` is bossFor(depth).
+ * INV: the ruin builds exactly what this built before places existed, rand() for rand().
  */
 export function generateLevel(
-  depth: number, seed = Math.floor(Math.random() * 1e9), opts: { boss?: BossDef | null; area?: AreaDef; bossFelled?: boolean } = {},
+  depth: number, seed = Math.floor(Math.random() * 1e9), opts: { boss?: BossDef | null; place?: PlaceDef; bossFelled?: boolean } = {},
 ): Level {
-  const kit = (opts.area ?? areaOf(depth)).kit
+  const kit = (opts.place ?? lookAt(depth)).kit
   const rand = rng(seed)
   const layout = opts.boss ? generateBossLayout(rand) : generateLayout(rand, 2 + Math.floor(rand() * 2))
   const { floor } = layout
@@ -910,13 +910,13 @@ const WALK = {
 const HOUSE_WARM = new THREE.Color(0xff8a33).multiplyScalar(2.4)
 
 /**
- * The walk home, built with an area's kit at night: no packs, no crates, no shrines,
+ * The walk home, built with a place's kit at night: no packs, no crates, no shrines,
  * nothing that can hurt or cost him. It ends at the lit house (§6.5), seen from
  * outside, where only its south and east faces show; walking into its door zone is
  * the Home ending. `house.door` is that zone.
  */
-export function generateWalkHome(seed: number, area: AreaDef): Level {
-  const kit = area.kit
+export function generateWalkHome(seed: number, place: PlaceDef): Level {
+  const kit = place.kit
   const rand = rng(seed)
   const floor = new Set<string>()
   const add = (i: number, j: number) => floor.add(key(i, j))

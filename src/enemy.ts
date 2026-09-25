@@ -4,6 +4,7 @@ import { tellMaterial, releaseTell, tellOrder } from './vfx'
 import type { Terrain } from './terrain'
 import type { EliteMod } from './combat'
 import type { Brood } from './swarm'
+import type { HazardSpec } from './hazard'
 
 /**
  * Every archetype is the same machine: approach, windup, strike, recover.
@@ -34,10 +35,15 @@ export type EnemyAction =
   | { kind: 'shot'; dir: THREE.Vector3; damage: number; bounces?: number }
   /** A fan of shots from one point (the boss's cannon). */
   | { kind: 'shots'; from: THREE.Vector3; dirs: THREE.Vector3[]; damage: number }
-  /** A ring rolling outward with gaps to stand in. Angles in radians, world space. */
-  | { kind: 'wave'; center: THREE.Vector3; gaps: number[]; damage: number }
-  /** Scrap piles that become small hulks. */
-  | { kind: 'summon'; points: THREE.Vector3[] }
+  /**
+   * A ring rolling outward with gaps to stand in. Angles in radians, world space. A gap
+   * is `gapWidth` radians, but never narrower than `minGap` units, even close in.
+   */
+  | { kind: 'wave'; center: THREE.Vector3; gaps: number[]; damage: number; gapWidth: number; minGap: number }
+  /** Scrap piles that become small adds, never more than `maxAdds` standing. */
+  | { kind: 'summon'; points: THREE.Vector3[]; maxAdds: number }
+  /** A floor hazard it placed: it telegraphs, arms once, and hurts whoever is inside (hazard.ts). */
+  | { kind: 'hazard'; spec: HazardSpec }
   /** Drag Still toward a point for a while. */
   | { kind: 'pull'; center: THREE.Vector3; strength: number; seconds: number }
 
@@ -328,7 +334,8 @@ export class Chaser implements Enemy {
     const yoke = new THREE.Mesh(new THREE.BoxGeometry(0.86, 0.14, 0.5), this.mat)
     yoke.position.y = 0.84
 
-    this.coreMat = new THREE.MeshBasicMaterial({ color: CORE })
+    // cores ignore the fog (the lights-out rule): in the dark they're what you read
+    this.coreMat = new THREE.MeshBasicMaterial({ color: CORE, fog: false })
     this.core = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.2, 0.12), this.coreMat)
     this.core.position.set(0, 0.5, 0.4)
     this.torso.add(chest, band, yoke, this.core)

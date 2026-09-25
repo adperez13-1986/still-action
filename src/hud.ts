@@ -78,7 +78,8 @@ export interface Hud {
   /** A new run: these parts on their buttons, every other slot empty. */
   resetLoadout: (parts: readonly AbilityDef[]) => void
   /** The boss's health across the top. Null hides it. */
-  bossBar: (b: { name: string; frac: number; overloaded: boolean; stunned: boolean } | null) => void
+  /** `open`: its ×1.5 window, named on the bar by `openWord` ('stunned'). */
+  bossBar: (b: { name: string; frac: number; phase2: boolean; open: boolean; openWord: string } | null) => void
   /** A generic prompt in the card's place (shrines, the Workshop's things). Null hides it; a null action hides its button. */
   prompt: (p: { title: string; line: string; action: string | null } | null) => void
   /**
@@ -483,10 +484,10 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
       const el = root.querySelector<HTMLElement>('#bossBar')!
       el.classList.toggle('show', !!b)
       if (!b) return
-      el.querySelector('b')!.textContent = b.stunned ? `${b.name} \u2014 stunned` : b.name
+      el.querySelector('b')!.textContent = b.open ? `${b.name} \u2014 ${b.openWord}` : b.name
       el.querySelector<HTMLElement>('i')!.style.width = `${Math.max(0, b.frac) * 100}%`
-      el.classList.toggle('overloaded', b.overloaded)
-      el.classList.toggle('stunned', b.stunned)
+      el.classList.toggle('phase2', b.phase2)
+      el.classList.toggle('open', b.open)
     },
 
     prompt(p) {

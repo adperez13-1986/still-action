@@ -133,7 +133,8 @@ export class Ranged implements Enemy {
 
     this.head = new THREE.Group()
     this.head.position.y = 1.45
-    this.coreMat = new THREE.MeshBasicMaterial({ color: CORE })
+    // the lens and its halo ignore the fog (the lights-out rule)
+    this.coreMat = new THREE.MeshBasicMaterial({ color: CORE, fog: false })
     this.orb = new THREE.Mesh(new THREE.OctahedronGeometry(0.24), this.coreMat)
     // a soft halo round the lens: the one thing that reads across a room
     const haloTex = (() => {
@@ -148,7 +149,7 @@ export class Ranged implements Enemy {
       g.fillRect(0, 0, 64, 64)
       return new THREE.CanvasTexture(c)
     })()
-    this.halo = new THREE.Sprite(new THREE.SpriteMaterial({ map: haloTex, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true }))
+    this.halo = new THREE.Sprite(new THREE.SpriteMaterial({ map: haloTex, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, fog: false }))
     this.halo.scale.setScalar(1.1)
     this.halo.position.z = 0.1
     const housing = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.22, 0.26, 8), this.jointMat)
@@ -171,7 +172,7 @@ export class Ranged implements Enemy {
     this.line = line
     this.bendLine = new THREE.Mesh(strip(0.62, RANGED.aimLength), this.lineMat)
     this.bendFill = new THREE.Mesh(strip(0.3, RANGED.aimLength), this.fillMat)
-    this.tick = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.12, 0.12), new THREE.MeshBasicMaterial({ color: 0xff7a55 }))
+    this.tick = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.12, 0.12), new THREE.MeshBasicMaterial({ color: 0xff7a55, fog: false }))
     this.bendLine.visible = this.bendFill.visible = this.tick.visible = false
     this.tellGroup.add(line, this.fill, this.bendLine, this.bendFill, this.tick)
   }

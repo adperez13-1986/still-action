@@ -8,7 +8,8 @@ import { Combat, eliteLine, type Archetype, type CastResult, type EliteMod, type
 import { STARTING, PARTS, byId, type AbilityDef, type AbilityShape, type BeatKey } from './abilities'
 import { SLOT_NAMES, type SlotName } from './still'
 import type { Enemy, EnemyEvent } from './enemy'
-import type { Assembler } from './boss'
+import { isBoss } from './boss'
+import type { HazardSpec } from './hazard'
 import { RANGED } from './ranged'
 import { Charger, CHARGER } from './charger'
 import { Mite, BROOD, type Brood } from './swarm'
@@ -28,7 +29,8 @@ import type { PartEvent } from './parts'
 import type { NotebookPage } from './pause'
 import {
   RUN_DEPTHS, BOSS_EVERY, LEAN_HOME, FIRST_RUN_IN_MAZE, DAY, DEPTH_DAY, exitsAfterBoss, hourAtEnd, bossFor, areaOf,
-  applyDay, dayNow, currentSat, currentGrace, fogAt, dayAt, AREAS, WALK_AREA, type HomeHour,
+  applyDay, dayNow, currentSat, currentGrace, fogAt, dayAt, AREAS, PLACES, WALK_PLACE, ASSEMBLER_DEF, lookAt,
+  type BossDef, type BossKind, type HomeHour, type PlaceDef,
 } from './areas'
 import { createWorkshop, MARKS_MAX, type ArrivalKind, type InteractId, type Workshop } from './workshop'
 import { createDrawings, HANDS, CARD_ASPECT, type Moment } from './crayon'
@@ -426,11 +428,11 @@ const combat = new Combat(world.scene, OPEN, {
   onWindup: (e, ms) => {
     // once Still is stopping, the world is slowing with him; a real-time tell would lie
     if (run.phase !== 'crawl') return
-    if (e.kind === 'boss') {
+    if (isBoss(e)) {
       // aimed moves whistle and click like the sentinel; heavy ones rise like the hulk
-      const b = e as Assembler
-      const aimed = b.move === 'barrage' || b.move === 'charge'
-      windups.set(e, sfx.asVoice(aimed ? sfx.aim(ms, 0.55, panOf(e.pos), windupGain()) : sfx.windup(ms, panOf(e.pos), windupGain())))
+      const cue = e.cue
+      if (cue.voice === 'aim') windups.set(e, sfx.asVoice(sfx.aim(ms, cue.lockAt, panOf(e.pos), windupGain())))
+      else if (cue.voice === 'windup') windups.set(e, sfx.asVoice(sfx.windup(ms, panOf(e.pos), windupGain())))
       return
     }
     if (e.kind === 'charger') {
@@ -448,6 +450,12 @@ const combat = new Combat(world.scene, OPEN, {
     } else if (e.kind === 'ranged') sfx.fire(panOf(e.pos))
     else sfx.strike(panOf(e.pos))
     strikeFx(e)
+  },
+  onHazard: (ev) => {
+    // the arm: the floor catches. Each place's own sounds arrive with the places that make hazards.
+    if (ev.kind !== 'arm') return
+    const s = ev.h.spec.shape
+    if (s.kind === 'circle') vfx.embers(at3(s, 0.1), Math.round(4 + s.r * 3), s.r * 0.8)
   },
   onShotBlocked: (at) => {
     sfx.blocked(panOf(at))
@@ -855,17 +863,7 @@ function strikeFx(e: Enemy) {
     vfx.flash(muzzle, EMBER, 0.7)
     vfx.sparks(muzzle, EMBER, 9, 7, dir, 0.4)
     vfx.smokePuff(muzzle, 2)
-  } else {
-    const b = e as Assembler
-    if (b.move === 'sweep') {
-      vfx.dust(b.pos, 22, 4.5, undefined, 6)
-      vfx.sparks(at3(b.pos, 0.8), EMBER, 18, 8)
-    } else if (b.move === 'wave' || b.move === 'magnet') {
-      vfx.dust(b.pos, 30, 3.5, undefined, 7)
-      vfx.chunks(at3(b.pos, 0.3), 14, STONE, 6, 0.18)
-      vfx.flash(at3(b.pos, 0.5), EMBER, 2.2)
-    }
-  }
+  } else if (isBoss(e)) e.strikeFx(vfx)
 }
 
 // --- the run: a descent through generated levels, and the two ways it ends ---
@@ -1075,7 +1073,7 @@ function metPack(pack: Pack) {
   const firsts: { id: string; e: Enemy }[] = []
   for (const e of pack.members) {
     let id: string | undefined
-    if (e.kind === 'boss') id = BOSS_PAGE
+    if (isBoss(e)) id = e.def.roster
     else if (pack.elite?.leader === e) {
       id = elitePage(pack.elite.mod, depth)
       if (meet(save.notebook, id, depth, run.met)) wrote = true
@@ -1103,7 +1101,8 @@ function metPack(pack: Pack) {
 function felled(kind: Archetype, pack: Pack, wasElite: boolean, summoned: boolean, weight: number) {
   if (run.dev || summoned) return
   let id: string | undefined
-  if (kind === 'boss') id = BOSS_PAGE
+  // the boss is still combat's on the tick it's felled: bossDown clears it after
+  if (kind === 'boss') id = combat.boss?.def.roster ?? BOSS_PAGE
   else if (wasElite && pack.elite) id = elitePage(pack.elite.mod, run.depth)
   // a Many's halves weigh nothing and weren't summoned
   else if (weight === 0) id = FRAGMENT_PAGE
@@ -1251,8 +1250,12 @@ document.addEventListener('visibilitychange', () => {
   }
 })
 
-let bossWasStunned = false
-const BOSS_HP = 900
+let bossWasOpen = false
+
+/** What the run says and plays as a boss changes (PLACEHOLDER words: Adrian's). */
+const BOSS_COPY: Record<BossKind, { phase2: string; open: (pan: number) => void }> = {
+  assembler: { phase2: 'the Assembler overloads', open: (pan) => sfx.clang(pan) },
+}
 
 /**
  * The Assembler falls: the beams open, and it leaves the best of what it was made from.
@@ -1363,7 +1366,8 @@ function enterLevel(depth: number, o: { seed?: number; bossFelled?: boolean; res
   run.seed = o.seed ?? Math.floor(Math.random() * 1e9)
   run.bossFelled = !!o.bossFelled
   run.bossLoot = []
-  level = generateLevel(depth, run.seed, { boss: bossFor(depth) })
+  const place = lookAt(depth)
+  level = generateLevel(depth, run.seed, { boss: bossFor(depth), place })
   world.scene.add(level.group)
   combat.terrain = level.terrain
   loot.terrain = level.terrain
@@ -1377,8 +1381,8 @@ function enterLevel(depth: number, o: { seed?: number; bossFelled?: boolean; res
   run.names = assignNames(depth, run.seed, save.notebook)
   run.met = new Set()
   namedLabels.length = 0
-  // the area's look and sound (both areas share one today; setSurfaces is a no-op until they don't)
-  setSurfaces(areaOf(depth).surfaces)
+  // the place's look (every place wears the ruin's today; setSurfaces is a no-op until they don't)
+  setSurfaces(place.surfaces)
   applyDay(world, DEPTH_DAY[Math.min(RUN_DEPTHS, depth)] ?? 'dusk')
   run.fought = false
   run.quietT = 0
@@ -2217,6 +2221,7 @@ function simulate(realDt: number) {
 
   // mid-vault he's over the wall, not in it
   if (!still.vaulting) combat.terrain.pushOut(still.pos, BODY_RADIUS)
+  pushOffBoss()
 
   const target = combat.nearestTarget(still.pos, 9.5)
   still.aim = target ? Math.atan2(target.x - still.pos.x, target.z - still.pos.z) : null
@@ -2255,24 +2260,24 @@ function simulate(realDt: number) {
     }
   }
 
-  // the boss: its bar, its overload, and the clang of a charge into a wall
+  // the boss: its bar, its second phase, and the sound of its window opening (a charge into a wall)
   const boss = combat.boss
   if (boss && !boss.dead) {
     const awakeBoss = combat.awake.includes(boss)
-    const def = combat.bossDef
-    hud.bossBar(awakeBoss ? { name: def?.name ?? 'The Assembler', frac: boss.hp / (def?.hp ?? BOSS_HP), overloaded: boss.overloaded, stunned: boss.stunned } : null)
-    if (boss.justOverloaded) {
-      overlay.banner('the Assembler overloads')
+    const def = boss.def
+    hud.bossBar(awakeBoss ? { name: def.name, frac: boss.hp / boss.maxHp, phase2: boss.phase2, open: boss.open, openWord: def.openWord } : null)
+    if (boss.justPhase2) {
+      overlay.banner(BOSS_COPY[def.kind].phase2)
       sfx.roar()
       shake = Math.max(shake, 0.8)
       rig.punch(-0.06)
     }
-    if (boss.stunned && !bossWasStunned) {
-      sfx.clang(panOf(boss.pos))
+    if (boss.open && !bossWasOpen) {
+      BOSS_COPY[def.kind].open(panOf(boss.pos))
       shake = Math.max(shake, 0.6)
       hitstop = Math.max(hitstop, 0.12)
     }
-    bossWasStunned = boss.stunned
+    bossWasOpen = boss.open
   }
 
   // the exit is open once there's no boss standing, even with something on your heels
@@ -2329,7 +2334,8 @@ function enterWalkHome() {
   combat.reset()
   partFx.clear()
   stopAllWindups()
-  level = generateWalkHome(Math.floor(Math.random() * 1e9), AREAS.find((a) => a.id === WALK_AREA)!)
+  level = generateWalkHome(Math.floor(Math.random() * 1e9), PLACES[WALK_PLACE])
+  setSurfaces(PLACES[WALK_PLACE].surfaces)
   world.scene.add(level.group)
   combat.terrain = level.terrain
   loot.terrain = level.terrain
@@ -2372,6 +2378,32 @@ function walkStep(dt: number) {
 /** The house's door zone (§4.25). */
 const WALK_DOOR_R = 1.3
 
+/** The place he's in: the depth's look, or the quarter at night on the walk home. */
+function placeNow(): PlaceDef {
+  return level?.house ? PLACES[WALK_PLACE] : lookAt(run.depth)
+}
+
+/** The room tone for where he is: the place's, a boss level's own. */
+function moodNow() {
+  const place = placeNow()
+  return level?.boss ? place.ambience.boss : place.ambience.crawl
+}
+
+/** A boss that never walks has a footprint: he's kept out of it, as out of a wall. */
+function pushOffBoss() {
+  const b = combat.boss
+  if (!b || b.dead || b.anchored === null) return
+  const dx = still.pos.x - b.pos.x
+  const dz = still.pos.z - b.pos.z
+  const d = Math.hypot(dx, dz)
+  const min = b.anchored + BODY_RADIUS
+  if (d >= min) return
+  const ux = d > 1e-6 ? dx / d : 0
+  const uz = d > 1e-6 ? dz / d : 1
+  still.pos.x = b.pos.x + ux * min
+  still.pos.z = b.pos.z + uz * min
+}
+
 /** Footsteps: a step sounds each time a foot lands, quieter with distance. */
 const lastStep = new Map<object, number>()
 const STEP_HEAR = 16
@@ -2385,7 +2417,7 @@ function footsteps(now: number) {
   if (run.phase !== 'crawl' && run.phase !== 'homing' && run.phase !== 'walkHome' && !home) return
   const k = Math.floor(still.stride / Math.PI)
   // at home the boards start at the threshold; outside it is still stone
-  if (still.walking && k !== lastStep.get(still)) sfx.step('still', 0, 1, home ? (still.pos.z >= -6 ? 'wood' : 'stone') : areaOf(run.depth).footsteps)
+  if (still.walking && k !== lastStep.get(still)) sfx.step('still', 0, 1, home ? (still.pos.z >= -6 ? 'wood' : 'stone') : placeNow().footsteps)
   lastStep.set(still, k)
   if (run.phase !== 'crawl') return
   while (stepTimes.length && now - stepTimes[0]! > STEP_WINDOW) stepTimes.shift()
@@ -2403,24 +2435,14 @@ function footsteps(now: number) {
   }
 }
 
-/** Continuous effects: the boss smoking and sparking, hulks glowing as they wind up. */
+/** Continuous effects: the boss dressing itself (smoke, sparks), hulks glowing as they wind up. */
 let ambientT = 0
-const stackA = new THREE.Vector3()
-const stackB = new THREE.Vector3()
 function ambientFx(dt: number) {
   ambientT -= dt
   const tick = ambientT <= 0
   if (tick) ambientT = 0.09
   const b = combat.boss
-  if (b && !b.dead && tick) {
-    // the stacks smoke; overloaded, the core sheds embers; stunned, the open grill sparks
-    b.group.localToWorld(stackA.set(-0.45, 3.8, -0.55))
-    b.group.localToWorld(stackB.set(0.4, 3.5, -0.55))
-    vfx.smokePuff(Math.random() < 0.5 ? stackA : stackB, 1, b.overloaded ? new THREE.Color(0x3a2a24) : undefined)
-    if (b.overloaded) vfx.embers(at3(b.pos, 1.8), 2, 1.2)
-    if (b.stunned) vfx.sparks(b.group.localToWorld(new THREE.Vector3(0, 1.75, 1.1)), EMBER, 3, 4)
-    if (b.move === 'charge' && b.phase === 'strike') vfx.dust(b.pos, 3, 1.5, undefined, 2)
-  }
+  if (b && !b.dead && tick) b.dress(vfx)
   if (tick) {
     for (const e of combat.awake) {
       if (e.kind === 'chaser' && e.phase === 'windup') vfx.embers(at3(e.pos, 1.0 * e.size), 1, 0.3)
@@ -2490,7 +2512,7 @@ function frame(nowMs: number) {
   } else {
     camTarget.set(x, 0, z)
     // a locked or rushing lane's end is a threat too: an 11 u lane must never end off screen
-    rig.update(elapsed, camTarget, [...awake.map((e) => e.pos), ...combat.laneEnds()], !fighting)
+    rig.update(elapsed, camTarget, [...awake.map((e) => e.pos), ...combat.threatEnds()], !fighting)
   }
   world.camera.position.copy(camTarget).add(camOffset)
   if (shake > 0) {
@@ -2501,12 +2523,11 @@ function frame(nowMs: number) {
   }
   world.camera.lookAt(camTarget)
 
-  const area = areaOf(run.depth)
-  updateAmbience(home ? 'workshop' : level?.boss ? area.ambience.boss : area.ambience.crawl)
+  updateAmbience(home ? 'workshop' : moodNow())
   const bossAwake = !!combat.boss && !combat.boss.dead && awake.includes(combat.boss)
   updateMusic({
     boss: bossAwake,
-    overloaded: bossAwake && combat.boss!.overloaded,
+    phase2: bossAwake && combat.boss!.phase2,
     fighting,
     calm: !fighting,
     strain: run.strain / 20,
@@ -2566,8 +2587,8 @@ if (import.meta.env.DEV) {
     __enemyLog: enemyLog,
     /** The crowd's mix: live windup voices, the gain a new one would get, the hush. */
     __mix: { windups, windupGain, hush },
-    /** A pack from members, like addPack. awake = true wakes it at once. */
-    __pack: (members: { kind: Archetype; x: number; z: number }[], awake = true, elite?: EliteMod): Pack => {
+    /** A pack from members, like addPack (a member with `slag: true` carries a slag core). awake = true wakes it at once. */
+    __pack: (members: { kind: Archetype; x: number; z: number; slag?: true }[], awake = true, elite?: EliteMod): Pack => {
       const pack = combat.addPack(members, false, elite ? { mod: elite, name: 'Test' } : undefined)
       if (awake) combat.wake(pack)
       return pack
@@ -2591,10 +2612,11 @@ if (import.meta.env.DEV) {
       still.wear(def.slot, def)
     },
     __stick: (x: number, z: number) => hud.setStick(x, z),
-    /** One enemy as its own pack of 1. awake = true wakes it at once. */
-    __spawn: (kind: Archetype, x: number, z: number, awake = true, elite?: EliteMod): Enemy => {
+    /** One enemy as its own pack of 1. awake = true wakes it at once. A boss is the variant's (default the Assembler). */
+    __spawn: (kind: Archetype, x: number, z: number, awake = true, elite?: EliteMod, variant: BossKind = 'assembler'): Enemy => {
       if (kind === 'boss') {
-        const b = combat.addBoss(x, z, new THREE.Vector3(x, 0, z - 1))
+        const defs: Record<BossKind, BossDef> = { assembler: ASSEMBLER_DEF }
+        const b = combat.addBoss(x, z, new THREE.Vector3(x, 0, z - 1), defs[variant])
         if (awake) combat.wake(combat.packs[combat.packs.length - 1]!)
         return b
       }
@@ -2703,6 +2725,18 @@ if (import.meta.env.DEV) {
     __assignNames: (depth: number, seed: number) => assignNames(depth, seed, save.notebook),
     __openNotebook: () => openNotebook(),
     __adds: () => combat.adds(),
+    /** A floor hazard now, as a boss or a slag core would make one. */
+    __hazard: (spec: HazardSpec) => combat.addHazard(spec),
+    /** Every hazard on the floor: its clocks, and who it hit ('still', or an index into __combat.enemies). */
+    __hazards: () => combat.hazards.map((h) => ({
+      source: h.spec.source, shape: { ...h.spec.shape }, armIn: h.armIn, liveLeft: h.liveLeft, damage: h.spec.damage, done: h.done,
+      hit: [...h.hit].map((w) => (w === 'still' ? 'still' : combat.enemies.indexOf(w))),
+    })),
+    /** The place he's in, and what it sounds like. */
+    __look: () => {
+      const p = placeNow()
+      return { place: p.id, surfaces: { ...p.surfaces }, ambience: moodNow(), footsteps: p.footsteps, music: p.music }
+    },
     __summon: () => {
       combat.summonNow()
       return combat.adds()
@@ -2898,7 +2932,7 @@ if (import.meta.env.DEV) {
     __killBoss: () => {
       const b = combat.boss
       if (!b || b.dead) return false
-      b.hit(b.hp / (b.armor * (b.stunned ? 1.5 : 1)) + 1e-6)
+      b.hit(b.hp / (b.armor * (b.open ? 1.5 : 1)) + 1e-6)
       return true
     },
     __strain: (n: number) => addStrain(n, { x: window.innerWidth / 2, y: window.innerHeight / 2 }),

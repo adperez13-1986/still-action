@@ -1,9 +1,53 @@
 import * as THREE from 'three'
 import { DECAL_Y } from './world'
-import { tellMaterial, releaseTell, tellOrder, COLD, COLD_DEEP } from './vfx'
+import { tellMaterial, releaseTell, tellOrder, COLD, COLD_DEEP, EMBER, type Vfx } from './vfx'
 import { slide, statusTint, disposeBody, distToSegment, type Enemy, type EnemyAction, type EnemyCtx, type EnemyPhase } from './enemy'
 import { LaneTell, type LaneEnd } from './lane'
 import type { Terrain } from './terrain'
+import type { BossDef } from './areas'
+
+/** The current windup's sound shape: heavy moves rise like the hulk, aimed ones whistle and click like the sentinel. */
+export type BossCue =
+  | { voice: 'windup' }
+  | { voice: 'aim'; lockAt: number }
+  | { voice: 'none' }
+
+/**
+ * What the run and Combat know of a boss, whichever it is (design/content/SPEC.md §2.2).
+ * INV: every boss is 900 HP, never deals more than 22 in one hit, never winds up under 620 ms.
+ */
+export interface Boss extends Enemy {
+  readonly kind: 'boss'
+  readonly def: BossDef
+  /** = def.hp */
+  readonly maxHp: number
+  /** Below 55%. INV: once true, never false. */
+  readonly phase2: boolean
+  /** True for exactly the one update in which phase2 turned true. */
+  readonly justPhase2: boolean
+  /** Its ×1.5 window (the Assembler stunned, grill open). hit() applies the ×1.5 itself. */
+  readonly open: boolean
+  /** World-space telegraphs that don't follow the body (piles, lanes). Added to the scene with it. */
+  readonly worldGroup: THREE.Group
+  /** Footprint radius when it never walks: spacing never moves it, and Still is pushed out of it. null when it walks. */
+  readonly anchored: number | null
+  /** The current windup's sound shape. Read on the tick its phase becomes 'windup'. */
+  readonly cue: BossCue
+  /** Committed tell ends for the camera: the charge lane's end. */
+  threats(out: THREE.Vector3[]): void
+  /** Presentation only, about 11 times a second: smoke, sparks, steam. */
+  dress(vfx: Vfx): void
+  /** Presentation only, on the tick its phase becomes 'strike'. */
+  strikeFx(vfx: Vfx): void
+}
+export const isBoss = (e: Enemy): e is Boss => e.kind === 'boss'
+
+/** The one place a boss is built from its def. */
+export function makeBoss(def: BossDef, x: number, z: number): Boss {
+  switch (def.kind) {
+    case 'assembler': return new Assembler(def, x, z)
+  }
+}
 
 /**
  * The Assembler: a foundry machine that builds things out of scrap — Still's
@@ -39,6 +83,9 @@ export type BossMove = 'sweep' | 'wave' | 'barrage' | 'charge' | 'summon' | 'mag
 const BODY = 0x4a3a36
 const JOINT = 0x221c1e
 const CORE = 0xff5a3c
+const STONE = new THREE.Color(0x5a5550)
+const SOOT = new THREE.Color(0x3a2a24)
+const at3 = (p: { x: number; z: number }, y: number) => new THREE.Vector3(p.x, y, p.z)
 
 function cyl(r0: number, r1: number, len: number, mat: THREE.Material) {
   return new THREE.Mesh(new THREE.CylinderGeometry(r0, r1, len, 12), mat)
@@ -55,8 +102,9 @@ function strip(width: number, length: number) {
 }
 
 
-export class Assembler implements Enemy {
+export class Assembler implements Boss {
   readonly kind = 'boss'
+  readonly anchored = null
   readonly labelY = 2.3
   get radius() { return BOSS.radius * this.size }
   /** The current move's windup, so its sound runs exactly as long as its tell. */
@@ -137,11 +185,12 @@ export class Assembler implements Enemy {
   private readonly piles = new THREE.Group()
   private readonly tells: THREE.ShaderMaterial[] = []
 
-  constructor(x: number, z: number) {
+  constructor(readonly def: BossDef, x: number, z: number) {
     this.pos.set(x, 0, z)
     this.mat = new THREE.MeshStandardMaterial({ color: BODY, roughness: 0.7, metalness: 0.5 })
     this.jointMat = new THREE.MeshStandardMaterial({ color: JOINT, roughness: 0.6, metalness: 0.5 })
-    this.coreMat = new THREE.MeshBasicMaterial({ color: CORE })
+    // cores ignore the fog: at first dark the lights are what's left of a machine
+    this.coreMat = new THREE.MeshBasicMaterial({ color: CORE, fog: false })
 
     // four stubby legs
     for (const [lx, lz] of [[-0.95, 0.7], [0.95, 0.7], [-0.95, -0.7], [0.95, -0.7]] as const) {
@@ -246,6 +295,42 @@ export class Assembler implements Enemy {
   /** Where the summoned piles glow and the charge lane lies: world space, apart from the tell group. */
   get worldGroup() {
     return this.worldTells
+  }
+
+  // --- as a Boss: getters over its own fields, so nothing it does changes ---
+  get maxHp() { return this.def.hp }
+  get phase2() { return this.overloaded }
+  get justPhase2() { return this.justOverloaded }
+  get open() { return this.stunned }
+  get cue(): BossCue {
+    return this.move === 'barrage' || this.move === 'charge' ? { voice: 'aim', lockAt: BOSS.charge.lockAt } : { voice: 'windup' }
+  }
+
+  /** The charge's lane end, once it's committed: it runs the length of the arena. */
+  threats(out: THREE.Vector3[]) {
+    if (this.dead || this.move !== 'charge' || this.stunned) return
+    if ((this.phase === 'windup' && this.locked) || this.phase === 'strike') out.push(this.laneEnd(new THREE.Vector3()))
+  }
+
+  /** The stacks smoke; overloaded, the core sheds embers; stunned, the open grill sparks. */
+  dress(vfx: Vfx) {
+    const stack = Math.random() < 0.5 ? new THREE.Vector3(-0.45, 3.8, -0.55) : new THREE.Vector3(0.4, 3.5, -0.55)
+    vfx.smokePuff(this.group.localToWorld(stack), 1, this.overloaded ? SOOT : undefined)
+    if (this.overloaded) vfx.embers(at3(this.pos, 1.8), 2, 1.2)
+    if (this.stunned) vfx.sparks(this.group.localToWorld(new THREE.Vector3(0, 1.75, 1.1)), EMBER, 3, 4)
+    if (this.move === 'charge' && this.phase === 'strike') vfx.dust(this.pos, 3, 1.5, undefined, 2)
+  }
+
+  /** The hammer's sweep throws sparks; a slam or the magnet's pull lands in dust and rubble. */
+  strikeFx(vfx: Vfx) {
+    if (this.move === 'sweep') {
+      vfx.dust(this.pos, 22, 4.5, undefined, 6)
+      vfx.sparks(at3(this.pos, 0.8), EMBER, 18, 8)
+    } else if (this.move === 'wave' || this.move === 'magnet') {
+      vfx.dust(this.pos, 30, 3.5, undefined, 7)
+      vfx.chunks(at3(this.pos, 0.3), 14, STONE, 6, 0.18)
+      vfx.flash(at3(this.pos, 0.5), EMBER, 2.2)
+    }
   }
 
   /** Where the charge's lane ends now. */
@@ -425,7 +510,7 @@ export class Assembler implements Enemy {
         return this.inSweep(target) && this.inSight(target, terrain) ? { kind: 'melee', damage: BOSS.sweep.damage } : null
       case 'wave':
         this.timer = 300
-        return { kind: 'wave', center: this.pos.clone(), gaps: [...this.gaps], damage: BOSS.wave.damage }
+        return { kind: 'wave', center: this.pos.clone(), gaps: [...this.gaps], damage: BOSS.wave.damage, gapWidth: BOSS.wave.gapWidth, minGap: BOSS.wave.minGap }
       case 'barrage':
         this.volleysLeft = BOSS.barrage.volleys
         this.volleyTimer = 0
@@ -441,7 +526,7 @@ export class Assembler implements Enemy {
       }
       case 'summon':
         this.timer = 400
-        return { kind: 'summon', points: this.summonPoints.map((p) => p.clone()) }
+        return { kind: 'summon', points: this.summonPoints.map((p) => p.clone()), maxAdds: BOSS.summon.maxAdds }
       case 'magnet':
         this.timer = 260
         return target.distanceTo(this.pos) <= BOSS.magnet.radius + 0.4 && this.inSight(target, terrain)

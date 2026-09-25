@@ -30,9 +30,9 @@ const OSTINATO = [1, 0, 1, 0, 1, 1, 0, 1]
 const BELL_LINE = [69, 72, 74, 77, 76, 74, 81, 79, 77, 74]
 
 export interface MusicState {
-  /** The boss is awake: tempo up, drums, drive. `overloaded` adds the arpeggio. */
+  /** The boss is awake: tempo up, drums, drive. Its second phase adds the arpeggio. */
   boss: boolean
-  overloaded: boolean
+  phase2: boolean
   fighting: boolean
   /** Breather or ending screen: room for the bell. */
   calm: boolean
@@ -57,9 +57,9 @@ interface Engine {
 }
 
 let engine: Engine | null = null
-let last = { fighting: false, calm: false, strain: -1, boss: false, overloaded: false, home: false }
+let last = { fighting: false, calm: false, strain: -1, boss: false, phase2: false, home: false }
 let boss = false
-let overloaded = false
+let phase2 = false
 const beatLen = () => 60 / (boss ? BOSS_BPM : BPM)
 let noiseBuf: AudioBuffer | null = null
 
@@ -208,8 +208,8 @@ function scheduleBoss(e: Engine, i: number, t: number, chord: (typeof CHORDS)[nu
   }
   // a heavy stab at the top of each bar
   if (beatInBar === 0) for (const n of chord.pad) note(e, e.drive, 'sawtooth', midi(n + 12), t, 0.005, 0.08, 0.3, 0.035, 2200)
-  // overloaded: a fast rising arpeggio over the top
-  if (overloaded) {
+  // the boss's second phase: a fast rising arpeggio over the top
+  if (phase2) {
     const up = [...chord.pad, chord.pad[0]! + 12]
     for (let k = 0; k < 4; k++) note(e, e.arp, 'square', midi(up[(i * 4 + k) % up.length]! + 12), t + (k * B) / 4, 0.003, 0.02, 0.1, 0.03, 3000)
   }
@@ -283,11 +283,11 @@ export function updateMusic(state: MusicState) {
   const strain = Math.round(state.strain * 20) / 20
   if (
     state.fighting === last.fighting && state.calm === last.calm && strain === last.strain &&
-    state.boss === last.boss && state.overloaded === last.overloaded && !!state.home === last.home
+    state.boss === last.boss && state.phase2 === last.phase2 && !!state.home === last.home
   ) return
-  last = { fighting: state.fighting, calm: state.calm, strain, boss: state.boss, overloaded: state.overloaded, home: !!state.home }
+  last = { fighting: state.fighting, calm: state.calm, strain, boss: state.boss, phase2: state.phase2, home: !!state.home }
   boss = state.boss
-  overloaded = state.overloaded
+  phase2 = state.phase2
 
   const t = engine.ctx.currentTime
   if (state.home) {
@@ -301,7 +301,7 @@ export function updateMusic(state: MusicState) {
   engine.pulse.gain.setTargetAtTime(state.fighting && !state.boss ? 1 : 0, t, state.fighting ? 1.2 : 0.8)
   engine.drums.gain.setTargetAtTime(state.boss ? 1 : 0, t, state.boss ? 0.4 : 1.2)
   engine.drive.gain.setTargetAtTime(state.boss ? 1 : 0, t, state.boss ? 0.6 : 1.2)
-  engine.arp.gain.setTargetAtTime(state.boss && state.overloaded ? 1 : 0, t, 0.8)
+  engine.arp.gain.setTargetAtTime(state.boss && state.phase2 ? 1 : 0, t, 0.8)
   engine.bell.gain.setTargetAtTime(state.calm ? 1 : 0.28, t, 1.5)
   // silent until strain passes 0.7 (14 of 20), then up to full at 20
   const rub = Math.max(0, (strain - 0.7) / 0.3)

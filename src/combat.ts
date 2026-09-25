@@ -6,8 +6,9 @@ import { Ranged } from './ranged'
 import { Charger, CHARGER } from './charger'
 import { Mite, Brood, MiteBatch, MITE } from './swarm'
 import { KILL_WEIGHT } from './loot'
-import { Assembler, BOSS } from './boss'
+import { BOSS, isBoss, makeBoss, type Boss } from './boss'
 import type { BossDef } from './areas'
+import { LiveHazard, SLAG, inShape, slagArm, threatPoint, type Hazard, type HazardSpec } from './hazard'
 
 /** §4.24: the second Assembler's adds. Live add HP never passes today's four hulks' worth (4 x 18). */
 const ADDS_HP_CAP = 72
@@ -18,6 +19,9 @@ import type { Breakable } from './dungeon'
 import type { AbilityDef, BeatKey } from './abilities'
 import type { SlotName } from './still'
 import { PART, History, bankShot, type EnemyStatus, type Flip, type Held, type PartEvent, type PartRuntime, type StillMove, type Zone } from './parts'
+
+/** A boss that never walks: spacing leaves it where it stands. */
+const anchored = (e: Enemy) => isBoss(e) && e.anchored !== null
 
 const AUTO_RANGE = 7.6
 const AUTO_INTERVAL = 0.62
@@ -60,7 +64,7 @@ export interface CastResult {
 }
 
 /** Who hurt Still: Anvil catches melee only, and the sound can tell them apart. */
-export type HurtSource = 'melee' | 'shot' | 'wave'
+export type HurtSource = 'melee' | 'shot' | 'wave' | 'hazard'
 
 interface Bolt {
   mesh: THREE.Mesh
@@ -211,6 +215,9 @@ interface Wave {
   /** Per segment: how far out the ring gets before cover stops it. */
   reach: number[]
   gaps: number[]
+  /** A gap's angle, and the narrowest it gets in units, from the action that made it. */
+  gapWidth: number
+  minGap: number
   damage: number
   hit: boolean
   segs: THREE.Mesh[]
@@ -249,6 +256,8 @@ export interface CombatEvents {
   onShotBlocked: (at: THREE.Vector3) => void
   /** A part did something this instant. Lasting things are polled instead (parts.ts). */
   onPart: (ev: PartEvent) => void
+  /** A floor hazard's instants: made, armed, done, and each body it hit. */
+  onHazard: (ev: { kind: 'spawn' | 'arm' | 'end'; h: Hazard } | { kind: 'hit'; h: Hazard; who: Enemy | 'still'; at: THREE.Vector3 }) => void
 }
 
 export class Combat {
@@ -257,13 +266,21 @@ export class Combat {
   readonly packs: Pack[] = []
   /** This level's crates and barrels. Anything that hits one breaks it, whoever fired. */
   breakables: Breakable[] = []
-  /** The boss, while one is alive. */
-  boss: Assembler | null = null
-  /** What it is: its name and HP for the bar, and which adds it summons. */
-  bossDef: BossDef | null = null
+  /** The boss, while one is alive. Its def says what it is, and which adds it summons. */
+  boss: Boss | null = null
+  /** Floor hazards: slag, shells, lances, scald. Ticked after the parts (H8). */
+  private readonly live: LiveHazard[] = []
+  get hazards(): readonly Hazard[] {
+    return this.live
+  }
+  /** Enemies a hazard killed: they never spill slag, so hazards never chain. */
+  private readonly hazardKilled = new WeakSet<Enemy>()
+  /** Bodies carrying a slag core: they leave a burning puddle where they die. */
+  private readonly slagged = new WeakSet<Enemy>()
   private waves: Wave[] = []
   private readonly waveGeo = new THREE.BoxGeometry(0.5, 0.35, 0.28)
-  private readonly waveMat = new THREE.MeshBasicMaterial({ color: 0xff8a50, transparent: true, opacity: 0.85, depthWrite: false, blending: THREE.AdditiveBlending })
+  // enemy light ignores the fog, like their cores (the lights-out rule)
+  private readonly waveMat = new THREE.MeshBasicMaterial({ color: 0xff8a50, transparent: true, opacity: 0.85, depthWrite: false, blending: THREE.AdditiveBlending, fog: false })
   /** Sparks, trails and embers. Set by the run once the scene exists. */
   vfx: Vfx | null = null
   private pull: { center: THREE.Vector3; strength: number; t: number } | null = null
@@ -336,7 +353,7 @@ export class Combat {
   private readonly boltMat = new THREE.MeshBasicMaterial({ color: 0x8fb8e8, blending: THREE.AdditiveBlending, transparent: true })
   private readonly abilityBoltMat = new THREE.MeshBasicMaterial({ color: 0xeef6ff, blending: THREE.AdditiveBlending, transparent: true })
   private readonly shotGeo = new THREE.SphereGeometry(SHOT_RADIUS, 10, 8)
-  private readonly shotMat = new THREE.MeshBasicMaterial({ color: 0xff8a50, blending: THREE.AdditiveBlending, transparent: true })
+  private readonly shotMat = new THREE.MeshBasicMaterial({ color: 0xff8a50, blending: THREE.AdditiveBlending, transparent: true, fog: false })
 
   constructor(
     private readonly scene: THREE.Scene,
@@ -426,13 +443,15 @@ export class Combat {
         for (const d of action.dirs) this.fireShot(action.from, d, action.damage, e)
         this.events.onVolley(action.from)
       }
-      if (action?.kind === 'wave') this.startWave(action.center, action.gaps, action.damage)
-      if (action?.kind === 'summon' && pack) this.summon(pack, action.points)
+      if (action?.kind === 'wave') this.startWave(action.center, action.gaps, action.damage, action.gapWidth, action.minGap)
+      if (action?.kind === 'summon' && pack) this.summon(pack, action.points, action.maxAdds)
+      if (action?.kind === 'hazard') this.addHazard(action.spec)
       if (action?.kind === 'pull') this.pull = { center: action.center, strength: action.strength, t: action.seconds }
       if (e instanceof Charger && e.sweep) this.trample(e)
       if (e.dead) this.bury(i)
     }
     this.tickParts(dt)
+    this.tickHazards(dt, player)
 
     // --- auto attack: nearest enemy in range, no aiming required ---
     this.autoTimer -= dt
@@ -490,7 +509,7 @@ export class Combat {
         let d = a - g
         while (d > Math.PI) d -= Math.PI * 2
         while (d < -Math.PI) d += Math.PI * 2
-        return Math.abs(d) < Math.max(BOSS.wave.gapWidth / 2, BOSS.wave.minGap / 2 / Math.max(0.5, r))
+        return Math.abs(d) < Math.max(w.gapWidth / 2, w.minGap / 2 / Math.max(0.5, r))
       })
       w.segs.forEach((m, k) => {
         const a = (k / WAVE_SEGS) * Math.PI * 2
@@ -716,6 +735,11 @@ export class Combat {
     this.waves.length = 0
     this.pull = null
     this.boss = null
+    for (const h of this.live) {
+      this.scene.remove(h.tell.group)
+      h.tell.dispose()
+    }
+    this.live.length = 0
     for (const s of this.shots) this.scene.remove(s.mesh)
     this.shots.length = 0
     this.later.length = 0
@@ -1042,6 +1066,10 @@ export class Combat {
     e.dispose(this.scene)
     this.enemies.splice(i, 1)
     this.book.unbook(e)
+    // H7: its unarmed lance goes with it; shells in flight, slag and scald still resolve
+    for (const h of this.live) if (h.spec.owner === e && h.spec.cancelOnDeath && !h.armed && !h.done) this.endHazard(h)
+    // H6: a slag core spills, unless a hazard killed it (no chains)
+    if (this.slagged.has(e) && !this.hazardKilled.has(e)) this.spillSlag(e.pos)
     if (pack) {
       pack.members.splice(pack.members.indexOf(e), 1)
       this.packOf.delete(e)
@@ -1719,17 +1747,126 @@ export class Combat {
     }
   }
 
-  /** Where each committed lane ends, for the camera: an 11 u lane (or the boss's 25) must never end off screen. */
-  laneEnds(): THREE.Vector3[] {
+  /**
+   * Where each committed tell ends, for the camera: an 11 u lane (or the boss's 25) must
+   * never end off screen, and nor must a hazard that's coming.
+   */
+  threatEnds(): THREE.Vector3[] {
     const out: THREE.Vector3[] = []
     for (const e of this.enemies) {
       if (!(e instanceof Charger) || this.packOf.get(e)?.state !== 'awake') continue
       if ((e.phase === 'windup' && e.locked) || e.rushing) out.push(e.laneEnd(new THREE.Vector3()))
     }
-    // the Assembler's charge too: its lane runs the length of the arena
-    const b = this.boss
-    if (b && !b.dead && b.move === 'charge' && !b.stunned && ((b.phase === 'windup' && b.locked) || b.phase === 'strike')) out.push(b.laneEnd(new THREE.Vector3()))
+    this.boss?.threats(out)
+    for (const h of this.live) if (!h.armed && !h.done && !h.spec.quiet) out.push(threatPoint(h.spec.shape, new THREE.Vector3()))
     return out
+  }
+
+  // --- floor hazards (design/content/SPEC.md §3.2) ---
+
+  /** A floor hazard, now: it telegraphs from this tick. Public for the Arbiter, slag, and dev checks. */
+  addHazard(spec: HazardSpec): Hazard {
+    const h = new LiveHazard(spec)
+    this.scene.add(h.tell.group)
+    this.live.push(h)
+    h.tell.update(0, h)
+    this.events.onHazard({ kind: 'spawn', h })
+    return h
+  }
+
+  /** A slag core's puddle, where its body fell. If he's standing on it, the arm waits on a visible clock (§5.3). */
+  private spillSlag(at: THREE.Vector3) {
+    const d = Math.hypot(this.lastPlayer.x - at.x, this.lastPlayer.z - at.z)
+    this.addHazard({
+      source: 'slag', shape: { kind: 'circle', x: at.x, z: at.z, r: SLAG.r },
+      armMs: slagArm(d), liveMs: SLAG.liveMs, damage: SLAG.damage, cover: 'none', hurt: 'hazard',
+    })
+  }
+
+  /** Arm, test, hurt, fade (H8): right after the parts, so a hazard sees this tick's windows. */
+  private tickHazards(dt: number, player: THREE.Vector3) {
+    const ms = dt * 1000
+    for (let i = this.live.length - 1; i >= 0; i--) {
+      const h = this.live[i]!
+      if (h.done) {
+        h.fadeLeft -= ms
+        h.sinceArm += ms
+        h.tell.update(dt, h)
+        if (h.fadeLeft <= 0) {
+          this.scene.remove(h.tell.group)
+          h.tell.dispose()
+          this.live.splice(i, 1)
+        }
+        continue
+      }
+      if (!h.armed) {
+        h.armIn -= ms
+        // a hair of slack: 30 ticks of 1/60 s must arm a 500 ms hazard on the 30th
+        if (h.armIn <= 1e-6) {
+          h.armed = true
+          this.events.onHazard({ kind: 'arm', h })
+        }
+      } else {
+        h.liveLeft -= ms
+        h.sinceArm += ms
+      }
+      if (h.armed) {
+        this.hazardTest(h, player)
+        if (h.liveLeft <= 1e-6) this.endHazard(h)
+      }
+      h.tell.update(dt, h)
+    }
+  }
+
+  /** Live time over, or cancelled unarmed: it fades and is gone. */
+  private endHazard(h: LiveHazard) {
+    if (h.done) return
+    h.done = true
+    this.events.onHazard({ kind: 'end', h })
+  }
+
+  /** H2-H4: who's inside, once each. Still by his centre; an enemy by its centre grown by its radius past his. */
+  private hazardTest(h: LiveHazard, player: THREE.Vector3) {
+    const s = h.spec
+    const sh = s.shape
+    const covered = (x: number, z: number) => s.cover === 'fromCentre' && sh.kind === 'circle' && !this.terrain.lineClear(sh.x, sh.z, x, z, 0.1)
+    if (!h.hit.has('still') && inShape(sh, player.x, player.z) && !covered(player.x, player.z)) {
+      h.hit.add('still')
+      if (!this.guardTakes(s, player)) this.hurtPlayer(s.damage, s.hurt, s.owner)
+      this.events.onHazard({ kind: 'hit', h, who: 'still', at: player.clone() })
+    }
+    for (const e of this.enemies) {
+      if (e.dead || h.hit.has(e) || this.held.has(e)) continue
+      if (!inShape(sh, e.pos.x, e.pos.z, e.radius - PLAYER_RADIUS) || covered(e.pos.x, e.pos.z)) continue
+      h.hit.add(e)
+      // not a part: it never uses a mark. A sleeper hit this way wakes its pack (hpSeen).
+      if (e.hit(s.damage)) this.hazardKilled.add(e)
+      this.events.onHit(e.pos, e)
+      this.events.onHazard({ kind: 'hit', h, who: e, at: e.pos.clone() })
+    }
+  }
+
+  /**
+   * H4: a warded hazard (the lance) meets Ward and Mirror Ward as a shot does. It
+   * reaches him, so a live shell is around him by definition. True when it was taken.
+   */
+  private guardTakes(s: HazardSpec, player: THREE.Vector3): boolean {
+    const g = this.parts.guard
+    if (!s.warded || !g || g.kind === 'brace') return false
+    if (g.kind === 'ward') {
+      g.used = true
+      this.events.onPart({ kind: 'shield', at: player.clone(), reflected: false })
+      return true
+    }
+    if (g.reflectsLeft <= 0) return false
+    g.reflectsLeft--
+    g.used = true
+    const o = s.owner && !s.owner.dead ? s.owner.pos : null
+    const aim = o ? Math.atan2(o.x - player.x, o.z - player.z) : 0
+    // back down the line at whoever fired it, its own weight (the lance's 18); walls stop it
+    this.spawnBolt(player, aim, s.damage, 0.3, 20)
+    this.events.onPart({ kind: 'shield', at: player.clone(), reflected: true })
+    return true
   }
 
   /** A floor ring that grows from `from` to `to` over `life`: blasts, landings, impacts. */
@@ -1775,7 +1912,8 @@ export class Combat {
   }
 
   /** `face`: where a member looks while it sleeps; without one the pack faces a random way together. */
-  addPack(members: { kind: Archetype; x: number; z: number; face?: { x: number; z: number } }[], side: boolean, elite?: { mod: EliteMod; name: string }): Pack {
+  /** `slag`: the member carries a slag core (area II) and spills a puddle where it dies. */
+  addPack(members: { kind: Archetype; x: number; z: number; face?: { x: number; z: number }; slag?: true }[], side: boolean, elite?: { mod: EliteMod; name: string }): Pack {
     const pack: Pack = {
       members: [], state: 'asleep', side, dropped: false, size: members.length, homes: new Map(), gaze: new Map(), hpSeen: 0,
       weight: members.reduce((a, m) => a + KILL_WEIGHT[m.kind], 0), token: null,
@@ -1783,6 +1921,7 @@ export class Combat {
     const look = Math.random() * Math.PI * 2
     for (const m of members) {
       const e = this.make(m.kind, m.x, m.z)
+      if (m.slag) this.slagged.add(e)
       this.scene.add(e.group, e.tellGroup)
       this.enemies.push(e)
       e.setAsleep(true)
@@ -1806,11 +1945,9 @@ export class Combat {
     return pack
   }
 
-  /** The area's boss: its own pack, woken by walking into the arena, never leashed. */
-  /** `def`: which boss and its adds (rams and mites for the second Assembler arrive with the last step). */
-  addBoss(x: number, z: number, face: THREE.Vector3, def?: BossDef): Assembler {
-    const b = new Assembler(x, z)
-    this.bossDef = def ?? null
+  /** The area's boss, as its def says: its own pack, woken by walking into the arena, never leashed. */
+  addBoss(x: number, z: number, face: THREE.Vector3, def: BossDef): Boss {
+    const b = makeBoss(def, x, z)
     this.scene.add(b.group, b.tellGroup, b.worldGroup)
     this.enemies.push(b)
     b.setAsleep(true)
@@ -1827,7 +1964,7 @@ export class Combat {
     return b
   }
 
-  private startWave(center: THREE.Vector3, gaps: number[], damage: number) {
+  private startWave(center: THREE.Vector3, gaps: number[], damage: number, gapWidth: number, minGap: number) {
     const segs = Array.from({ length: WAVE_SEGS }, () => {
       const m = new THREE.Mesh(this.waveGeo, this.waveMat)
       this.scene.add(m)
@@ -1841,17 +1978,17 @@ export class Combat {
       }
       return WAVE_MAX
     })
-    this.waves.push({ center: center.clone(), r: 1.4, reach, gaps, damage, hit: false, segs })
+    this.waves.push({ center: center.clone(), r: 1.4, reach, gaps, gapWidth, minGap, damage, hit: false, segs })
   }
 
-  /** "Assemble": scrap piles become small awake hulks, up to a cap. The second Assembler builds rams and mites. */
-  private summon(pack: Pack, points: THREE.Vector3[]) {
-    if (this.bossDef?.adds === 'rams-mites') {
+  /** "Assemble": scrap piles become small awake hulks, up to `maxAdds`. The second Assembler builds rams and mites. */
+  private summon(pack: Pack, points: THREE.Vector3[], maxAdds: number) {
+    if (this.boss?.def.adds === 'rams-mites') {
       this.summonRamsMites(pack, points)
       return
     }
     const adds = pack.members.filter((e) => e.kind === 'chaser').length
-    for (const p of points.slice(0, Math.max(0, BOSS.summon.maxAdds - adds))) {
+    for (const p of points.slice(0, Math.max(0, maxAdds - adds))) {
       const c = new Chaser(p.x, p.z)
       c.size = 0.78
       c.hp = 18
@@ -1916,7 +2053,8 @@ export class Combat {
     if (!b) return
     const pack = this.packOf.get(b)!
     const pts = [0, 1, 2].map((i) => new THREE.Vector3(b.pos.x + Math.sin(i * 2.1) * 4, 0, b.pos.z + Math.cos(i * 2.1) * 4))
-    this.summon(pack, pts)
+    // the Assembler's own cap: this stands in for its summon
+    this.summon(pack, pts, BOSS.summon.maxAdds)
   }
 
   /** Dev: the live adds. */
@@ -2023,11 +2161,16 @@ export class Combat {
         const d = Math.hypot(dx, dz)
         const min = moving[a]!.radius + moving[b]!.radius
         if (d > 0.001 && d < min) {
-          const push = (min - d) / 2
-          p.x -= (dx / d) * push
-          p.z -= (dz / d) * push
-          q.x += (dx / d) * push
-          q.z += (dz / d) * push
+          // a boss that never walks is never moved: the other body takes the whole overlap
+          const pa = anchored(moving[a]!)
+          const pb = anchored(moving[b]!)
+          if (pa && pb) continue
+          const pushP = pa ? 0 : pb ? min - d : (min - d) / 2
+          const pushQ = pb ? 0 : pa ? min - d : (min - d) / 2
+          p.x -= (dx / d) * pushP
+          p.z -= (dz / d) * pushP
+          q.x += (dx / d) * pushQ
+          q.z += (dz / d) * pushQ
         }
       }
     }
@@ -2088,7 +2231,7 @@ export class Combat {
       if (this.packOf.get(e)?.state !== 'awake') continue
       if (e instanceof Charger) n += (e.phase === 'windup' && e.locked) || e.rushing ? 1 : 0
       else if (e instanceof Ranged) n += e.phase === 'windup' && e.locked ? 1 : 0
-      else if (e instanceof Chaser || e instanceof Assembler) n += e.phase === 'windup' ? 1 : 0
+      else if (e instanceof Chaser || isBoss(e)) n += e.phase === 'windup' ? 1 : 0
     }
     for (const b of this.broods) n += b.state === 'windup' ? 1 : 0
     TELL_CROWD.locked = n
