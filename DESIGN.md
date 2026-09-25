@@ -88,7 +88,8 @@ back. The exit is always open, even while chased.
 **Depth.** Level 1: packs of 2–3 chasers, one ranged among them. Deeper: bigger
 packs, more ranged, later archetypes by depth. Never more enemy HP or damage.
 
-**Loot.** 22% per kill; side-room packs always drop. Parts stay on the floor until
+**Loot.** 0.66 ÷ pack size per kill (weighted: a mite counts 0.25), so a pack pays
+about the same at every depth; side-room packs always drop. Parts stay on the floor until
 you leave the level. The "next fight" button goes away.
 
 **Camera** frames only awake enemies. **Ending** shows depth reached.
@@ -108,7 +109,7 @@ triplanar, plus grime and contact darkening. Only the pieces used are vendored.
 - **Still starts incomplete**: one random plain part, three empty buttons, unfound
   parts drawn bare. While a slot is empty, 60% of drops fill one.
 - **Elites** (D2 champions): a named leader, bigger, double HP, blue aura, one of
-  Quick / Plated / Many / Warden. Always drops, 60% blue, 25% gold.
+  Quick / Plated / Many / Warden. Always drops, 75% blue, 10% gold.
 - **Crates and barrels** break to any hit, either side's; 10% hold a part, 30%
   repair scrap (+20 HP). This replaces "no extra healing".
 - **The Assembler** closes every third depth: a 28x28 arena, six moves in two
@@ -151,7 +152,8 @@ button again. Second criterion, equally binding: is building it still fun.
 - **Ranged archetype built** (`src/ranged.ts`). Holds 6–10 units, just past auto
   reach; aim line tracks for 60% of a 760ms windup, then freezes and clicks. Walls
   block projectiles from both sides, and the auto attack only takes clear shots.
-  Charger and swarm are out of spike scope; both slot into the `Enemy` interface.
+  Charger (the ram) and swarm (swarf mites) are built since 26 Sep; see
+  `design/CATALOG.md`.
 - **Audio is first-pass.** All synthesised in `src/audio.ts` (Web Audio, no files).
   "OK for now" on the phone. Levels tune live in the grade panel and save to
   `mix.json`. The windup tone is panned and cuts at the strike — it is meant to be
@@ -171,6 +173,15 @@ button again. Second criterion, equally binding: is building it still fun.
   Still's body showing what he's wearing.
 - **Grade defaults are guesses.** Tune live in-app, hit save, values land in
   `grade.json`.
+
+## Part pool and new enemies (built 25-26 Sep 2026)
+
+30 parts and the ram + swarm, designed by the three design agents and built the
+same night. **`design/CATALOG.md`** is the one-page read (keep / cut / rename);
+`design/parts/` and `design/enemies/` hold the full passes and the specs they
+were built from. Settled alongside: a quiet needs a kill; Still's melee and
+blasts need a clear line; no part lowers strain; a bigger hit inside the hurt
+window deals the difference.
 
 ## Numbers most worth arguing with
 
