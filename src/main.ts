@@ -1020,6 +1020,17 @@ let breakLanded = 0
 const DESCEND_OUT = 0.45
 const DESCEND_IN = 0.5
 const EXIT_RADIUS = 1.4
+/**
+ * A beam that opens under him doesn't take him: the boss can fall with Still standing where
+ * a beam lights. It waits until he's stepped this far out, so walking in is always a choice.
+ */
+const BEAM_REARM = EXIT_RADIUS + 0.4
+const beamArmed = { exit: true, home: true }
+function armBeams() {
+  if (!level) return
+  beamArmed.exit = Math.hypot(still.pos.x - level.exit.x, still.pos.z - level.exit.z) >= EXIT_RADIUS
+  beamArmed.home = !level.home || Math.hypot(still.pos.x - level.home.x, still.pos.z - level.home.z) >= EXIT_RADIUS
+}
 /** The walk into the warm beam, before the words. The world holds while he takes it. */
 const HOMING_SECONDS = 0.6
 
@@ -1487,6 +1498,7 @@ function bossDown(at: THREE.Vector3) {
     if (kind === 'cold') level?.openExit()
     else level?.openHome()
   }
+  armBeams()
   sfx.bossDown()
   shake = 1.2
   hitstop = 0.25
@@ -1580,6 +1592,8 @@ function resumeRun(snap: RunSnapshot) {
 
 /** Build a level and put Still at its entrance. HP is whole again; strain carries. `seed` repeats a layout (resume, checks). */
 function enterLevel(depth: number, o: { seed?: number; bossFelled?: boolean; resume?: boolean } = {}) {
+  beamArmed.exit = true
+  beamArmed.home = true
   level?.dispose()
   hud.bossBar(null)
   loot.clear()
@@ -2591,12 +2605,16 @@ function simulate(realDt: number) {
   }
 
   // the exit is open once there's no boss standing, even with something on your heels
-  if (run.phase === 'crawl' && level && level.exitOpen && Math.hypot(still.pos.x - level.exit.x, still.pos.z - level.exit.z) < EXIT_RADIUS) {
+  const toExit = level ? Math.hypot(still.pos.x - level.exit.x, still.pos.z - level.exit.z) : Infinity
+  if (toExit > BEAM_REARM) beamArmed.exit = true
+  if (run.phase === 'crawl' && level && level.exitOpen && beamArmed.exit && toExit < EXIT_RADIUS) {
     descend()
     return
   }
   // and so is home, the same way
-  if (run.phase === 'crawl' && level?.home && level.homeOpen && Math.hypot(still.pos.x - level.home.x, still.pos.z - level.home.z) < EXIT_RADIUS) {
+  const toHome = level?.home ? Math.hypot(still.pos.x - level.home.x, still.pos.z - level.home.z) : Infinity
+  if (toHome > BEAM_REARM) beamArmed.home = true
+  if (run.phase === 'crawl' && level?.home && level.homeOpen && beamArmed.home && toHome < EXIT_RADIUS) {
     beginHoming(level.home)
     return
   }
