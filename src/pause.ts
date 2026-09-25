@@ -60,14 +60,19 @@ function stats(d: AbilityDef, other?: AbilityDef) {
   ].join('')
 }
 
+/** What a part is called now, and its past (parts remember): set by main from the save. */
+let describe: (d: AbilityDef) => { name: string; history: string | null } = (d) => ({ name: d.name, history: null })
+
 function card(d: AbilityDef, tag: string, other?: AbilityDef, conflict?: string | null, fresh = false) {
+  const past = describe(d)
   // the price on every cast, the same pips the button carries, so the card and the button agree
   const pips = d.pips ? ` <span class="ppips">${(d.pips.hollow ? '\u25cb' : '\u25cf').repeat(d.pips.n)}</span>` : ''
   return `
     <div class="pcard tier-${d.tier}">
       <div class="tag">${tag}${fresh ? ' <span class="new">new</span>' : ''}</div>
-      <div class="pname">${d.name}${pips}</div>
+      <div class="pname">${past.name}${pips}</div>
       <p class="pline">${d.line}</p>
+      ${past.history ? `<p class="pline phist">${past.history}</p>` : ''}
       <div class="stats">${stats(d, other)}</div>
       ${conflict ? `<p class="pconflict">${conflict}</p>` : ''}
     </div>`
@@ -95,8 +100,15 @@ export interface PauseScreen {
    * page through them and close. `render` draws card i (0 is the newest).
    */
   lookBack: (count: number, render: (i: number) => Promise<HTMLCanvasElement>, onClose: () => void) => void
+  /** The notebook: its pages, one at a time, and close. */
+  notebook: (pages: NotebookPage[], onClose: () => void) => void
+  /** How part cards name a part and tell its past. */
+  setDescribe: (fn: (d: AbilityDef) => { name: string; history: string | null }) => void
   hide: () => void
 }
+
+/** A notebook page, laid out (main builds these from the save and the roster). */
+export interface NotebookPage { name: string; what: string; line: string | null; facts: string; leaders: string | null }
 
 export function createPauseScreen(root: HTMLElement): PauseScreen {
   const el = document.createElement('div')
@@ -164,6 +176,48 @@ export function createPauseScreen(root: HTMLElement): PauseScreen {
         void paint()
       })
       void paint()
+    },
+
+    setDescribe(fn) {
+      describe = fn
+    },
+
+    notebook(pages, onClose) {
+      let i = 0
+      show(
+        `<h2>The notebook</h2>
+         <div class="look">
+           <button type="button" class="prev" aria-label="back">&larr;</button>
+           <div class="npage"></div>
+           <button type="button" class="next" aria-label="on">&rarr;</button>
+         </div>
+         <p class="lcount"></p>`,
+        [['close', 'close', onClose]],
+      )
+      const slot = el.querySelector<HTMLElement>('.npage')!
+      const label = el.querySelector<HTMLElement>('.lcount')!
+      // one more page after the last: the book isn't full, and says so (PLACEHOLDER words)
+      const n = pages.length + 1
+      const paint = () => {
+        label.textContent = `${i + 1} of ${n}`
+        const p = pages[i]
+        slot.innerHTML = p
+          ? `<b class="nname">${p.name}</b>
+             <p class="nwhat">${p.what}</p>
+             ${p.line ? `<p class="nline">${p.line}</p>` : '<p class="nline blank"></p>'}
+             <p class="nfacts">${p.facts}</p>
+             ${p.leaders ? `<p class="nfacts">${p.leaders}</p>` : ''}`
+          : '<p class="nend">Some pages are still blank.</p>'
+      }
+      el.querySelector('.prev')!.addEventListener('click', () => {
+        if (i > 0) i--
+        paint()
+      })
+      el.querySelector('.next')!.addEventListener('click', () => {
+        if (i < n - 1) i++
+        paint()
+      })
+      paint()
     },
 
     hide() {

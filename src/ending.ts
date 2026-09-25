@@ -36,6 +36,8 @@ export interface Overlay {
   banner: (text: string) => void
   /** The Workshop: any banner showing goes at once, and none are shown until it's off again. */
   quiet: (on: boolean) => void
+  /** A banner that shows even in the room (the one thing the Workshop has to say). */
+  notice: (text: string) => void
   /** The words, and the button that goes on from them (home). */
   show: (kind: EndingKind, depth: number, onContinue: () => void) => void
   hide: () => void
@@ -83,6 +85,13 @@ export function createOverlay(root: HTMLElement): Overlay {
       banner.classList.add('show')
       clearTimeout(bannerTimer)
       bannerTimer = window.setTimeout(() => banner.classList.remove('show'), 1800)
+    },
+
+    notice(text) {
+      banner.textContent = text
+      banner.classList.add('show')
+      clearTimeout(bannerTimer)
+      bannerTimer = window.setTimeout(() => banner.classList.remove('show'), 3200)
     },
 
     quiet(on) {

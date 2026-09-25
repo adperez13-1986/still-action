@@ -4,10 +4,15 @@ import { tellMaterial, releaseTell, TELL_CROWD, COLD, EMBER, type Vfx } from './
 import { Chaser, shoveVelocity, distToSegment, PLAYER_RADIUS, type Enemy, type EnemyCtx, type EnemyEvent } from './enemy'
 import { Ranged } from './ranged'
 import { Charger, CHARGER } from './charger'
-import { Mite, Brood, MiteBatch } from './swarm'
+import { Mite, Brood, MiteBatch, MITE } from './swarm'
 import { KILL_WEIGHT } from './loot'
 import { Assembler, BOSS } from './boss'
 import type { BossDef } from './areas'
+
+/** §4.24: the second Assembler's adds. Live add HP never passes today's four hulks' worth (4 x 18). */
+const ADDS_HP_CAP = 72
+const SUMMON_RAM = { hp: 22, size: 0.85 }
+const SUMMON_MITES = 6
 import type { Terrain } from './terrain'
 import type { Breakable } from './dungeon'
 import type { AbilityDef, BeatKey } from './abilities'
@@ -232,7 +237,8 @@ export interface CombatEvents {
   onKill: (at: THREE.Vector3, kind: Archetype, pack: Pack, wasElite: boolean, summoned: boolean, weight: number) => void
   /** An enemy's instant (a lock, a rush ending, a trample). Lasting state is polled instead. */
   onEnemy: (ev: EnemyEvent) => void
-  onWake: (at: THREE.Vector3) => void
+  /** A pack woke: where, and the pack (the notebook meets its names). */
+  onWake: (at: THREE.Vector3, pack: Pack) => void
   onSmash: (b: Breakable) => void
   /** A boss volley leaving the cannon. */
   onVolley: (at: THREE.Vector3) => void
@@ -1838,8 +1844,12 @@ export class Combat {
     this.waves.push({ center: center.clone(), r: 1.4, reach, gaps, damage, hit: false, segs })
   }
 
-  /** "Assemble": scrap piles become small awake hulks, up to a cap. */
+  /** "Assemble": scrap piles become small awake hulks, up to a cap. The second Assembler builds rams and mites. */
   private summon(pack: Pack, points: THREE.Vector3[]) {
+    if (this.bossDef?.adds === 'rams-mites') {
+      this.summonRamsMites(pack, points)
+      return
+    }
     const adds = pack.members.filter((e) => e.kind === 'chaser').length
     for (const p of points.slice(0, Math.max(0, BOSS.summon.maxAdds - adds))) {
       const c = new Chaser(p.x, p.z)
@@ -1855,6 +1865,63 @@ export class Combat {
       this.packOf.set(c, pack)
       this.ring(p, 0.3, 1.8, 0.4, 0xff7a55)
     }
+  }
+
+  /** HP of every live add: the rams-and-mites summon never builds past today's four hulks' worth. */
+  private addsHp() {
+    return this.enemies.filter((e) => this.summoned.has(e) && !e.dead).reduce((a, e) => a + e.hp, 0)
+  }
+
+  /**
+   * §4.24. One ram at the first pile (if none of its rams is standing), and at the other
+   * two a brood of mites, awake, that never gives up, all of it no drops, and never
+   * more than ADDS_HP_CAP of live adds.
+   */
+  private summonRamsMites(pack: Pack, points: THREE.Vector3[]) {
+    let room = ADDS_HP_CAP - this.addsHp()
+    const [p0, p1, p2] = points
+    if (p0 && room >= SUMMON_RAM.hp && !this.enemies.some((e) => this.summoned.has(e) && e.kind === 'charger' && !e.dead)) {
+      const c = this.make('charger', p0.x, p0.z)
+      c.size = SUMMON_RAM.size
+      c.hp = SUMMON_RAM.hp
+      this.scene.add(c.group, c.tellGroup)
+      this.enemies.push(c)
+      c.setAsleep(false)
+      this.summoned.add(c)
+      pack.members.push(c)
+      pack.homes.set(c, p0.clone())
+      pack.gaze.set(c, p0.clone())
+      this.packOf.set(c, pack)
+      this.ring(p0, 0.3, 1.8, 0.4, 0xff7a55)
+      room -= SUMMON_RAM.hp
+    }
+    const n = Math.min(SUMMON_MITES, Math.floor(room / MITE.hp))
+    const at = [p1, p2].filter((p): p is THREE.Vector3 => !!p)
+    if (n <= 0 || !at.length) return
+    const members = Array.from({ length: n }, (_, i) => {
+      const p = at[i % at.length]!
+      const a = (i / n) * Math.PI * 2
+      return { kind: 'swarm' as const, x: p.x + Math.sin(a) * 0.5, z: p.z + Math.cos(a) * 0.5 }
+    })
+    const brood = this.addPack(members, false)
+    brood.leash = Infinity
+    for (const m of brood.members) this.summoned.add(m)
+    for (const p of at) this.ring(p, 0.3, 1.8, 0.4, 0xff7a55)
+    this.wake(brood)
+  }
+
+  /** Dev: the boss's summon, resolved now at three piles round it. */
+  summonNow() {
+    const b = this.boss
+    if (!b) return
+    const pack = this.packOf.get(b)!
+    const pts = [0, 1, 2].map((i) => new THREE.Vector3(b.pos.x + Math.sin(i * 2.1) * 4, 0, b.pos.z + Math.cos(i * 2.1) * 4))
+    this.summon(pack, pts)
+  }
+
+  /** Dev: the live adds. */
+  adds() {
+    return this.enemies.filter((e) => this.summoned.has(e) && !e.dead).map((e) => ({ kind: e.kind, hp: e.hp }))
   }
 
   private crown(pack: Pack, leader: Enemy, mod: EliteMod, name: string) {
@@ -1906,7 +1973,7 @@ export class Combat {
     const wasAsleep = pack.state === 'asleep'
     pack.state = 'awake'
     for (const e of pack.members) e.setAsleep(false)
-    if (wasAsleep && pack.members[0]) this.events.onWake(pack.members[0].pos)
+    if (wasAsleep && pack.members[0]) this.events.onWake(pack.members[0].pos, pack)
   }
 
   private updatePacks(player: THREE.Vector3) {

@@ -25,6 +25,7 @@ import type { Terrain } from './terrain'
 import { Vfx, syncTells, COLD, COLD_DEEP, EMBER } from './vfx'
 import { PartFx } from './partfx'
 import type { PartEvent } from './parts'
+import type { NotebookPage } from './pause'
 import {
   RUN_DEPTHS, BOSS_EVERY, LEAN_HOME, FIRST_RUN_IN_MAZE, DAY, DEPTH_DAY, exitsAfterBoss, hourAtEnd, bossFor, areaOf,
   applyDay, dayNow, currentSat, currentGrace, fogAt, dayAt, AREAS, WALK_AREA, type HomeHour,
@@ -32,8 +33,9 @@ import {
 import { createWorkshop, MARKS_MAX, type ArrivalKind, type InteractId, type Workshop } from './workshop'
 import { createDrawings, HANDS, CARD_ASPECT, type Moment } from './crayon'
 import { composeCard } from './cards'
-import { openSave, freshTally, localDate, drawerFor, trimCards, CARD_KEEP, CARD_LINES, LEADERS_MAX, type EndingKind, type RunTally, type SaveV1 } from './save'
-import { poolView, markFound, hookCandidates, facingOutWhites, toggleTurn, hang, applyHookDefault, startPart, type PoolView } from './pool'
+import { openSave, freshTally, localDate, drawerFor, trimCards, CARD_KEEP, CARD_LINES, LEADERS_MAX, type EndingKind, type RunSnapshot, type RunTally, type SaveV1 } from './save'
+import { poolView, markFound, hookCandidates, facingOutWhites, toggleTurn, hang, applyHookDefault, startPart, partName, historyLine, type PoolView } from './pool'
+import { assignNames, elitePage, meet, addLeader, ROSTER, ROSTER_BY_ID, WHAT, BOSS_PAGE, FRAGMENT_PAGE, namesFor } from './notebook'
 import type { DropSource } from './loot'
 
 const canvas = document.querySelector<HTMLCanvasElement>('#view')!
@@ -198,6 +200,7 @@ const combat = new Combat(world.scene, OPEN, {
   },
   onKill: (at, kind, pack, wasElite, summoned, weight) => {
     run.killed = true
+    felled(kind, pack, wasElite, summoned, weight)
     if (kind === 'boss') {
       bossDown(at)
       return
@@ -414,7 +417,8 @@ const combat = new Combat(world.scene, OPEN, {
     vfx.sparks(muzzle, EMBER, 14, 7)
     vfx.smokePuff(muzzle, 3)
   },
-  onWake: (at) => {
+  onWake: (at, pack) => {
+    metPack(pack)
     vfx.embers(at3(at, 0.8), 14, 1.2)
     sfx.alert(panOf(at))
     rig.punch(-0.02)
@@ -903,6 +907,16 @@ const run = {
   tally: freshTally() as RunTally,
   depth: 1, strain: 0, t: 0, swapped: false, fought: false, quietT: 0, killed: false, ramStunSeen: false,
   stats: [] as DepthStats[],
+  /** ISO: when this run began (its snapshot carries it). */
+  startedAt: '',
+  /** This level's seed: a resume builds the same layout. */
+  seed: 0,
+  /** This depth's boss is down (a resume opens the beams, no boss), and what it dropped. */
+  bossFelled: false,
+  bossLoot: [] as string[],
+  /** This level's names (§7.2), and the ones already counted as met here. */
+  names: {} as Partial<Record<Archetype, string>>,
+  met: new Set<string>(),
 }
 
 /** Nothing awake for this long counts as a fight cleared. */
@@ -969,9 +983,13 @@ function updateShrinePrompt() {
 }
 
 hud.onPrompt(() => {
-  // in the room, the board's card opens the look-back screen
+  // in the room, the board's card opens the look-back screen, and the notebook's opens the book
   if (run.phase === 'workshop' && workshop.near === 'board') {
     void lookBack()
+    return
+  }
+  if (run.phase === 'workshop' && workshop.near === 'notebook') {
+    openNotebook()
     return
   }
   const sh = atShrine
@@ -1020,8 +1038,105 @@ function drawEliteLabels() {
     const y = (-labelTmp.y * 0.5 + 0.5) * window.innerHeight
     html.push(`<div class="elite" style="left:${x}px;top:${y}px"><b>${el.name}</b><span>${eliteLine(el.leader.kind, el.mod)}</span></div>`)
   }
+  // a name met for the first time: over the one he met, a moment, like an elite's but muted
+  const nowT = performance.now()
+  for (let i = namedLabels.length - 1; i >= 0; i--) {
+    const n = namedLabels[i]!
+    if (nowT > n.until || n.e.dead || run.phase !== 'crawl') {
+      namedLabels.splice(i, 1)
+      continue
+    }
+    labelTmp.set(n.e.pos.x, n.e.labelY * n.e.size, n.e.pos.z).project(world.camera)
+    const x = (labelTmp.x * 0.5 + 0.5) * window.innerWidth
+    const y = (-labelTmp.y * 0.5 + 0.5) * window.innerHeight
+    html.push(`<div class="elite named" style="left:${x}px;top:${y}px"><b>${n.text}</b></div>`)
+  }
   eliteLabels.innerHTML = html.join('')
+  labelsNow = [...eliteLabels.querySelectorAll('b')].map((b) => b.textContent ?? '')
 }
+
+// --- the notebook: names met in the maze (§7.2) ---
+
+/** First-meet labels on screen: the name, over whom, until when (ms). */
+const namedLabels: { text: string; e: Enemy; until: number }[] = []
+/** The label texts drawn last frame (elite names and first meetings), for checks. */
+let labelsNow: string[] = []
+const NAMED_MS = 2200
+
+/**
+ * A pack woke: every name in it is met this level. The first time ever, the page is
+ * written at once and the name floats over the member nearest him. Elites meet
+ * their modifier's page, with the leader's own name added to it.
+ */
+function metPack(pack: Pack) {
+  if (run.dev) return
+  const depth = run.depth
+  let wrote = false
+  const firsts: { id: string; e: Enemy }[] = []
+  for (const e of pack.members) {
+    let id: string | undefined
+    if (e.kind === 'boss') id = BOSS_PAGE
+    else if (pack.elite?.leader === e) {
+      id = elitePage(pack.elite.mod, depth)
+      if (meet(save.notebook, id, depth, run.met)) wrote = true
+      addLeader(save.notebook[id]!, pack.elite.name)
+      continue
+    } else id = run.names[e.kind]
+    if (!id) continue
+    if (meet(save.notebook, id, depth, run.met)) {
+      wrote = true
+      firsts.push({ id, e })
+    }
+  }
+  // one label per name, over the member of it nearest him
+  const seen = new Set<string>()
+  for (const f of firsts.sort((a, b) => a.e.pos.distanceTo(still.pos) - b.e.pos.distanceTo(still.pos))) {
+    if (seen.has(f.id)) continue
+    seen.add(f.id)
+    namedLabels.push({ text: ROSTER_BY_ID.get(f.id)!.name, e: f.e, until: performance.now() + NAMED_MS })
+    sfx.pencil(panOf(f.e.pos))
+  }
+  if (wrote || pack.elite) store.write()
+}
+
+/** Felled: counted on its page, written with the next event write. Adds count for nothing. */
+function felled(kind: Archetype, pack: Pack, wasElite: boolean, summoned: boolean, weight: number) {
+  if (run.dev || summoned) return
+  let id: string | undefined
+  if (kind === 'boss') id = BOSS_PAGE
+  else if (wasElite && pack.elite) id = elitePage(pack.elite.mod, run.depth)
+  // a Many's halves weigh nothing and weren't summoned
+  else if (weight === 0) id = FRAGMENT_PAGE
+  else id = run.names[kind]
+  if (wasElite && pack.elite?.mod === 'splitting') meet(save.notebook, FRAGMENT_PAGE, run.depth, run.met)
+  const e = id ? save.notebook[id] : undefined
+  if (e) e.k += 1
+  else if (id) {
+    meet(save.notebook, id, run.depth, run.met)
+    save.notebook[id]!.k += 1
+  }
+}
+
+/** The notebook's pages, in the order they were first met (PLACEHOLDER words in the facts). */
+function notebookPages(): NotebookPage[] {
+  const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+  const day = (f: string) => { const [, m, d] = f.split('-').map(Number); return `${d} ${MONTHS[(m ?? 1) - 1]}` }
+  return Object.entries(save.notebook)
+    .filter(([id]) => ROSTER_BY_ID.has(id))
+    .sort((a, b) => a[1].f.localeCompare(b[1].f))
+    .map(([id, e]) => {
+      const r = ROSTER_BY_ID.get(id)!
+      return {
+        name: r.name, what: WHAT[r.role], line: r.line,
+        facts: `met ${e.m} time${e.m === 1 ? '' : 's'} \u00b7 felled ${e.k} \u00b7 first met ${day(e.f)} \u00b7 deepest depth ${e.d}`,
+        leaders: e.l?.length ? `led by ${e.l.join(', ')}` : null,
+      }
+    })
+}
+
+/** How a part card names a part and tells its past, from the save. */
+const describePart = (d: AbilityDef) => ({ name: partName(save, d.id, d.name), history: historyLine(save, d.id) })
+pause.setDescribe(describePart)
 
 /** It went quiet: half of what's missing comes back, and a little strain lets go. */
 function quiet() {
@@ -1048,7 +1163,7 @@ function updateOffer() {
   const next = under && !offerHeld ? under : null
   if (next !== offered) {
     offered = next
-    hud.offer(next?.def ?? null, !!next && !save.found.includes(next.def.id))
+    hud.offer(next?.def ?? null, !!next && !save.found.includes(next.def.id), next ? describePart(next.def) : undefined)
     loot.offer(next)
   }
 }
@@ -1079,6 +1194,7 @@ function takePart(g: GroundPart) {
   // found the moment it's taken, and saved in the same call: closing the tab can't lose it
   if (markFound(save, g.def.id)) store.write()
   carry(g.def.id)
+  saw(g.def.id)
   const old = swapIn(g.def)
   loot.remove(g)
   // an empty slot filled: nothing falls out
@@ -1162,23 +1278,105 @@ function bossDown(at: THREE.Vector3) {
   loot.dropScrap(new THREE.Vector3(at.x + 1.2, 0, at.z))
   loot.dropScrap(new THREE.Vector3(at.x - 1.2, 0, at.z))
   overlay.banner(`area ${run.depth / BOSS_EVERY} cleared`)
+  // parts remember: each one worn through it saw the Assembler
+  for (const sl of hud.slots) if (sl.def) run.tally.assemblers[sl.def.id] = (run.tally.assemblers[sl.def.id] ?? 0) + 1
+  // a beam save: a reload here comes back to the beams open and no boss, with its drops
+  run.bossFelled = true
+  run.bossLoot = [blue, gold].filter((d): d is AbilityDef => !!d).map((d) => d.id)
+  writeSnapshot()
+}
+
+/** Parts remember the deepest depth they were worn at. */
+function saw(id: string) {
+  run.tally.deepest[id] = Math.max(run.tally.deepest[id] ?? 0, run.depth)
+}
+
+/**
+ * A beam save (§4.15): the run at the start of this depth, to come back to. Never for a
+ * dev run; cleared at the ending. Loot left on the floor is lost at a beam, as ever.
+ */
+function writeSnapshot() {
+  if (run.dev || run.committed) return
+  const snap: RunSnapshot = {
+    s: 1, build: __BUILD__, id: run.id, startedAt: run.startedAt, depth: run.depth, seed: run.seed,
+    bossFelled: run.bossFelled, bossLoot: [...run.bossLoot], strain: run.strain,
+    loadout: hud.slots.map((sl) => sl.def?.id ?? null), tally: structuredClone(run.tally),
+  }
+  save.run = snap
+  store.write()
+}
+
+/**
+ * §4.16. A run picked up where its last beam left it, repaired rather than thrown
+ * away: a part this build doesn't know (or that moved slot) leaves its slot empty,
+ * the depth and strain come back inside the rules, and the tally drops what it
+ * can't name. Every button comes back ready.
+ */
+function resumeRun(snap: RunSnapshot) {
+  leaveRoom()
+  still.reassemble()
+  const known = new Set(PARTS.map((p) => p.id))
+  const loadout = SLOT_NAMES.map((slot, i) => {
+    const id = snap.loadout[i]
+    const def = id && known.has(id) ? byId(id) : null
+    return def && def.slot === slot ? def : null
+  })
+  const tally = { ...freshTally(), ...snap.tally }
+  tally.carried = (tally.carried ?? []).filter((id) => known.has(id))
+  for (const k of ['deepest', 'assemblers'] as const) tally[k] = Object.fromEntries(Object.entries(tally[k] ?? {}).filter(([id]) => known.has(id)))
+  const depth = Math.min(RUN_DEPTHS, Math.max(1, Math.floor(snap.depth) || 1))
+  Object.assign(run, {
+    phase: 'crawl', t: 0, swapped: false, ramStunSeen: false, dev: false, committed: false, ending: null, stats: [],
+    id: snap.id, startedAt: snap.startedAt, strain: Math.min(19, Math.max(0, Math.round(snap.strain) || 0)), tally,
+  })
+  loot.clear()
+  combat.reset()
+  const worn = loadout.filter((d): d is AbilityDef => !!d)
+  hud.resetLoadout(worn)
+  SLOT_NAMES.forEach((slot, i) => still.wear(slot, loadout[i] ?? null))
+  enterLevel(depth, { seed: snap.seed, bossFelled: !!snap.bossFelled && !!bossFor(depth), resume: true })
+  if (run.bossFelled && level) {
+    // what it left, lying where it fell, unless he's wearing it
+    const on = new Set(worn.map((d) => d.id))
+    for (const id of snap.bossLoot ?? []) {
+      if (!known.has(id) || on.has(id) || save.turned.includes(id)) continue
+      loot.drop(byId(id), level.exit.clone(), still.pos)
+    }
+    run.bossLoot = [...(snap.bossLoot ?? [])]
+  }
+  hud.bossBar(null)
+  rig.reset()
+  hud.mode('run')
+  hud.enabled = true
+  overlay.hide()
+  sfx.restore()
+  writeSnapshot()
 }
 
 /** Build a level and put Still at its entrance. HP is whole again; strain carries. `seed` repeats a layout (resume, checks). */
-function enterLevel(depth: number, o: { seed?: number } = {}) {
+function enterLevel(depth: number, o: { seed?: number; bossFelled?: boolean; resume?: boolean } = {}) {
   level?.dispose()
   hud.bossBar(null)
   loot.clear()
   combat.reset()
   partFx.clear()
-  level = generateLevel(depth, o.seed, { boss: bossFor(depth) })
+  run.seed = o.seed ?? Math.floor(Math.random() * 1e9)
+  run.bossFelled = !!o.bossFelled
+  run.bossLoot = []
+  level = generateLevel(depth, run.seed, { boss: bossFor(depth) })
   world.scene.add(level.group)
   combat.terrain = level.terrain
   loot.terrain = level.terrain
   for (const p of level.packs) combat.addPack(p.members, p.room.kind === 'side', p.elite)
   combat.breakables = level.breakables
   const boss = bossFor(depth)
-  if (level.boss && boss) combat.addBoss(level.boss.x, level.boss.z, level.boss.face, boss)
+  if (level.boss && boss && !run.bossFelled) combat.addBoss(level.boss.x, level.boss.z, level.boss.face, boss)
+  // a felled boss is never fought again: its beams are open, as they were when it fell
+  if (run.bossFelled) for (const kind of exitsAfterBoss(depth)) kind === 'cold' ? level.openExit() : level.openHome()
+  // this level's names (§7.2), from their own stream; nothing met here yet
+  run.names = assignNames(depth, run.seed, save.notebook)
+  run.met = new Set()
+  namedLabels.length = 0
   // the area's look and sound (both areas share one today; setSurfaces is a no-op until they don't)
   setSurfaces(areaOf(depth).surfaces)
   applyDay(world, DEPTH_DAY[Math.min(RUN_DEPTHS, depth)] ?? 'dusk')
@@ -1191,9 +1389,11 @@ function enterLevel(depth: number, o: { seed?: number } = {}) {
   run.depth = depth
   closeStats()
   run.stats.push({ depth, pushes: 0, quiets: 0, strainIn: run.strain, strainOut: null })
-  // the card's line gets a tick where this depth began
-  run.tally.marks.push(run.tally.line.length)
-  overlay.banner(level.boss ? `Depth ${depth} \u00b7 something is waiting` : `Depth ${depth}`)
+  // the card's line gets a tick where this depth began (a resumed depth already has its tick)
+  if (!o.resume) run.tally.marks.push(run.tally.line.length)
+  // parts remember how deep they went
+  for (const sl of hud.slots) if (sl.def) saw(sl.def.id)
+  overlay.banner(level.boss && !run.bossFelled ? `Depth ${depth} \u00b7 something is waiting` : `Depth ${depth}`)
 }
 
 function startRun() {
@@ -1202,6 +1402,7 @@ function startRun() {
   Object.assign(run, {
     phase: 'crawl', strain: 0, t: 0, swapped: false, ramStunSeen: false,
     id: newRunId(), dev: DEPTH_PARAM !== null, committed: false, ending: null, stats: [], tally: freshTally(),
+    startedAt: new Date().toISOString(),
   })
   if (!run.dev) {
     // the first night: the doorframe's marks grow from here, in calendar time
@@ -1226,6 +1427,7 @@ function startRun() {
   hud.enabled = true
   overlay.hide()
   sfx.restore()
+  writeSnapshot()
 }
 
 /** Not crypto.randomUUID: that needs a secure context, and the phone plays over plain http on the LAN. */
@@ -1341,9 +1543,16 @@ function commit(kind: EndingKind) {
   drawings.putCard(card)
   // what he came home wearing is found, whatever happened to the rest
   for (const id of worn) if (id) markFound(save, id)
+  // parts remember (§7.1): every part carried this run, how deep it went, the Assemblers
+  // it saw fall, and how the run ended if he came home wearing it
+  const wornIds = new Set(worn.filter((id): id is string => !!id))
+  const endAt = { broken: 3, stopped: 4, home: 5 } as const
   for (const id of run.tally.carried) {
     const h = save.history[id] ?? [0, 0, 0, 0, 0, 0]
     h[0] += 1
+    h[1] = Math.max(h[1], run.tally.deepest[id] ?? run.depth)
+    h[2] += run.tally.assemblers[id] ?? 0
+    if (wornIds.has(id)) h[endAt[kind]] += 1
     save.history[id] = h
   }
   save.pendingHook = { candidates: hookCandidates(save, worn) }
@@ -1568,6 +1777,19 @@ async function lookBack() {
     const bmp = blob ? await createImageBitmap(blob).catch(() => null) : null
     return composeCard(card, bmp, 512, 384)
   }, () => {
+    pause.hide()
+    hud.enabled = true
+    if (workshop.near) showCard(workshop.near)
+  })
+}
+
+/** The notebook screen: the pages met so far, and the blank one after them. */
+function openNotebook() {
+  const pages = notebookPages()
+  if (!pages.length) return
+  hud.enabled = false
+  hud.prompt(null)
+  pause.notebook(pages, () => {
     pause.hide()
     hud.enabled = true
     if (workshop.near) showCard(workshop.near)
@@ -1953,6 +2175,8 @@ function simulate(realDt: number) {
     if (!run.swapped && run.t >= DESCEND_OUT) {
       run.swapped = true
       enterLevel(run.depth + 1)
+      // a beam save: a reload comes back to the start of this depth
+      writeSnapshot()
     }
     const out = Math.min(1, run.t / DESCEND_OUT)
     const back = run.swapped ? Math.min(1, (run.t - DESCEND_OUT) / DESCEND_IN) : 0
@@ -2385,6 +2609,7 @@ if (import.meta.env.DEV) {
     __arena: (o: { boxes?: Box[]; circles?: Circle[]; auto?: boolean } = {}) => {
       leaveRoom()
       fadeInT = 0
+      namedLabels.length = 0
       const floor = new Set<string>()
       for (let i = -3; i <= 3; i++) for (let j = -3; j <= 3; j++) floor.add(key(i, j))
       const terrain = makeTerrain(floor, o.boxes ?? [], o.circles ?? [])
@@ -2470,6 +2695,24 @@ if (import.meta.env.DEV) {
       enterRoom(o.arrival ?? 'idle', o.hour ?? 'afternoon', hud.slots.map((sl) => sl.def?.id ?? null))
     },
     __near: () => workshop.near,
+    __notebook: () => JSON.parse(JSON.stringify(save.notebook)) as SaveV1['notebook'],
+    __names: () => ({ ...run.names }),
+    __labels: () => [...labelsNow],
+    __roster: () => ROSTER.map((r) => ({ ...r })),
+    __namesFor: (kind: Exclude<Archetype, 'boss'>, depth: number) => namesFor(kind, depth).map((r) => r.id),
+    __assignNames: (depth: number, seed: number) => assignNames(depth, seed, save.notebook),
+    __openNotebook: () => openNotebook(),
+    __adds: () => combat.adds(),
+    __summon: () => {
+      combat.summonNow()
+      return combat.adds()
+    },
+    __descend: () => {
+      if (run.phase !== 'crawl' || !level?.exitOpen) return false
+      descend()
+      return true
+    },
+    __snapshot: () => (save.run ? JSON.parse(JSON.stringify(save.run)) : null),
     __hold: (on: boolean) => { held = on },
     __drawings: () => ({ available: drawings.available, pending: drawings.pending }),
     __idbKeys: () => drawings.keys(),
@@ -2595,7 +2838,7 @@ if (import.meta.env.DEV) {
       return !!g
     },
     /** What the pickup card is offering. history arrives with "parts remember". */
-    __offer: () => (offered ? { id: offered.def.id, name: offered.def.name, tag: save.found.includes(offered.def.id) ? null : 'new', history: null } : null),
+    __offer: () => (offered ? { id: offered.def.id, ...describePart(offered.def), tag: save.found.includes(offered.def.id) ? null : 'new', shown: document.querySelector('#offer .name')?.textContent } : null),
     /**
      * The largest save the rules allow: every part found, all 43 of still's roster
      * met (its real ids), six leaders of the longest name the generator can make on
@@ -2695,8 +2938,19 @@ if (import.meta.env.DEV) {
 void loadKit().then(() => {
   workshop = createWorkshop(world, still, vfx, drawings)
   const last = save.lastEnding
-  if (DEPTH_PARAM !== null || (save.runs === 0 && FIRST_RUN_IN_MAZE)) startRun()
+  let discarded = false
+  if (save.run && save.run.s !== 1) {
+    // a run this build can't read at all: it goes, and the room says so once
+    save.run = null
+    store.write()
+    discarded = true
+  }
+  if (DEPTH_PARAM !== null) startRun()
+  else if (save.run) resumeRun(save.run)
+  else if (save.runs === 0 && FIRST_RUN_IN_MAZE && !discarded) startRun()
   else if (last && !last.arrived) enterRoom(last.kind, last.hour, last.worn)
   else enterRoom('idle', last?.hour ?? 'afternoon', last?.worn ?? [null, null, null, null])
+  // PLACEHOLDER words
+  if (discarded) overlay.notice("the last run couldn't be picked up")
   requestAnimationFrame(frame)
 })

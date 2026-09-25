@@ -1,7 +1,7 @@
 import { PARTS, STARTING, type Tier } from './abilities'
 import type { DropSource } from './loot'
 import type { SlotName } from './still'
-import type { PartId, SaveV1 } from './save'
+import type { PartHistory, PartId, SaveV1 } from './save'
 
 /**
  * The findable pool, across runs. It starts at twelve: the eight plain parts and
@@ -132,4 +132,29 @@ export function keepWhites(s: SaveV1): void {
     const white = PARTS.find((p) => p.slot === slot && p.tier === 'white' && s.turned.includes(p.id))
     if (white) s.turned = s.turned.filter((t) => t !== white.id)
   }
+}
+
+// --- parts remember (§7.1) ------------------------------------------------------------
+
+/**
+ * What a part is called once it has a past: the first rule that matches, never a
+ * stat. The content step adds the Arbiter above these.
+ */
+export const NAMED: { test: (h: PartHistory) => boolean; suffix: string }[] = [
+  { test: (h) => h[2] >= 2, suffix: ', that saw the Assembler twice' },
+  { test: (h) => h[2] >= 1, suffix: ', that saw the Assembler' },
+]
+
+/** "Scrap Cleaver, that saw the Assembler": the name on every card and drop from then on. */
+export function partName(s: SaveV1, id: PartId, name: string): string {
+  const h = s.history[id]
+  const rule = h && NAMED.find((n) => n.test(h))
+  return rule ? name + rule.suffix : name
+}
+
+/** "carried 4 runs, saw depth 6"; null before it has been carried through a whole run. */
+export function historyLine(s: SaveV1, id: PartId): string | null {
+  const h = s.history[id]
+  if (!h || h[0] <= 0) return null
+  return `carried ${h[0]} run${h[0] === 1 ? '' : 's'}, saw depth ${h[1]}`
 }

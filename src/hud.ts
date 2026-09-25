@@ -94,7 +94,7 @@ export interface Hud {
   onChooserAction: (cb: () => void) => void
   onPrompt: (cb: () => void) => void
   /** The pickup card. Null hides it. `fresh`: never found before, and the card says so. */
-  offer: (incoming: AbilityDef | null, fresh?: boolean) => void
+  offer: (incoming: AbilityDef | null, fresh?: boolean, past?: { name: string; history: string | null }) => void
   onTake: (cb: () => void) => void
   onCompare: (cb: () => void) => void
   onPause: (cb: () => void) => void
@@ -148,6 +148,7 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
       <div class="info">
         <div class="head"><span class="slot"></span><b class="name"></b><span class="new">new</span></div>
         <p class="line"></p>
+        <p class="hist"></p>
         <p class="replaces"></p>
       </div>
       <div class="choices">
@@ -186,6 +187,7 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
   const offerLine = offerEl.querySelector<HTMLElement>('.line')!
   const offerReplaces = offerEl.querySelector<HTMLElement>('.replaces')!
   const offerNew = offerEl.querySelector<HTMLElement>('.new')!
+  const offerHist = offerEl.querySelector<HTMLElement>('.hist')!
   const chooserEl = root.querySelector<HTMLElement>('#chooser')!
   const chooseListeners: ((id: string) => void)[] = []
   const chooserActListeners: (() => void)[] = []
@@ -519,7 +521,7 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
     onChooserAction(cb) { chooserActListeners.push(cb) },
     onPrompt(cb) { promptListeners.push(cb) },
 
-    offer(incoming, fresh = false) {
+    offer(incoming, fresh = false, past) {
       offered = incoming
       offerNew.style.display = incoming && fresh ? '' : 'none'
       // the button that would change pulses, so "which slot" needs no reading
@@ -530,7 +532,9 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
       }
       const current = buttons.find((b) => b.slot === incoming.slot)!.def
       offerSlot.textContent = SLOT_LABEL[incoming.slot]
-      offerName.textContent = incoming.name
+      offerName.textContent = past?.name ?? incoming.name
+      offerHist.textContent = past?.history ?? ''
+      offerHist.style.display = past?.history ? '' : 'none'
       offerName.style.color = TIER_CSS[incoming.tier]
       offerLine.textContent = incoming.line
       offerReplaces.textContent = current ? `replaces ${current.name}` : `fills the empty ${SLOT_LABEL[incoming.slot]} slot`

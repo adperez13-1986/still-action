@@ -6,13 +6,14 @@ import type { Terrain } from './terrain'
 import { SLOT_NAMES, type SlotName, type Still } from './still'
 import { PARTS, type AbilityDef, type Tier } from './abilities'
 import { partModel, centred, WALL_SCALE, DISPLAY_EYE, EYE_OFF } from './partmodels'
-import { canTurn, hookOffers } from './pool'
+import { canTurn, hookOffers, partName, historyLine } from './pool'
 import { presetOf, applyDay, WINDOW, GRACE_REACH, BASE_HEMI, BASE_KEY, type HomeHour } from './areas'
 import type { EndingKind, PartId, RunCard, SaveV1 } from './save'
 import { COLD, type Vfx } from './vfx'
 import * as sfx from './audio'
 import { setRain } from './ambience'
 import { composeCard, caption } from './cards'
+import { ROSTER_BY_ID } from './notebook'
 import { seedOf, type Drawings } from './crayon'
 
 /**
@@ -1133,7 +1134,7 @@ export function createWorkshop(world: World, still: Still, vfx: Vfx, drawings: D
     cardFor(id, sv, selected) {
       const detailOf = (def: AbilityDef, st: PlaqueState | 'disabled') => st === 'bare'
         ? { name: 'Not found yet', line: hintFor(def), history: null, tier: null }
-        : { name: def.name, line: def.line, history: null, tier: def.tier }
+        : { name: partName(sv, def.id, def.name), line: def.line, history: historyLine(sv, def.id), tier: def.tier }
       if (id === 'hook') {
         const offers = hookOffers(sv)
         const items = offers.map((pid) => {
@@ -1181,8 +1182,10 @@ export function createWorkshop(world: World, still: Still, vfx: Vfx, drawings: D
         return { title: `The corkboard · ${s.runs} runs`, line: last ? caption(last) : 'Nothing pinned up yet.', action: s.cards.length ? 'look' : null }
       }
       if (id === 'notebook') {
-        const n = Object.keys(s.notebook).length
-        return { title: `The notebook · ${n} pages`, line: n ? 'Some pages are still blank.' : 'Every page is still blank.', action: null }
+        const met = Object.entries(s.notebook).sort((a, b) => a[1].f.localeCompare(b[1].f))
+        const newest = met[met.length - 1]
+        const name = newest ? ROSTER_BY_ID.get(newest[0])?.name : null
+        return { title: `The notebook · ${met.length} pages`, line: name ?? 'Every page is still blank.', action: met.length ? 'read' : null }
       }
       const since = s.firstRunAt ? new Date(s.firstRunAt) : null
       return { title: 'Yanah · Yuri', line: since ? `marked since ${since.getDate()} ${MONTHS[since.getMonth()]}` : 'not marked yet', action: null }
