@@ -631,6 +631,10 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
         cap.className = 'heatCaption'
         cap.textContent = HEAT_CAPTION
         b.el.appendChild(cap)
+        // keep it on screen whichever edge the button sits against
+        const r = cap.getBoundingClientRect()
+        const shift = Math.min(0, window.innerWidth - 8 - r.right) + Math.max(0, 8 - r.left)
+        if (shift) cap.style.transform = `translateX(${shift}px)`
         setTimeout(() => cap.remove(), HEAT_CAPTION_MS)
       }
     },
