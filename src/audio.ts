@@ -1611,6 +1611,38 @@ export function shatter() {
 }
 
 /**
+ * Under Broken's slow motion: the crash's own ring, stretched. A low sine sinking and a
+ * dark band of noise, both over `seconds`, past the duck like the crash. It stops dead
+ * when time comes back, so the landing is heard in the clear.
+ */
+export function slowRing(seconds: number) {
+  const c = live()
+  if (!c) return
+  const t = c.currentTime
+  const g = c.createGain()
+  g.gain.value = mix.hits
+  g.connect(master)
+  tone(c, g, 'sine', t, 62, 38, seconds, 0.5, 0.05)
+  tone(c, g, 'triangle', t, 311, 262, seconds, 0.035, 0.08)
+  hiss(c, g, t, seconds, 0.22, 'bandpass', 900, 220, 2.5, 0.08)
+}
+
+/** Broken: one part of him hitting the stone, at full speed again. `i` is the order they land in: the first is the heavy one. */
+export function partLand(i: number, pan: number) {
+  const c = live()
+  if (!c) return
+  const g = c.createGain()
+  g.gain.value = mix.hits
+  g.connect(master)
+  const p = c.createStereoPanner()
+  p.pan.value = clampPan(pan)
+  p.connect(g)
+  const heavy = i === 0
+  sample(c, heavy ? 'plateHeavy' : 'metalMedium', p, heavy ? 0.9 : 0.7, heavy ? 0.9 : 1.1 + 0.08 * i)
+  sample(c, 'tin', p, 0.25, 1.3 + 0.15 * i, 0.03)
+}
+
+/**
  * Strain ending. Still running down: a motor losing pitch over the whole stop,
  * so the sound and the slowdown finish together.
  */

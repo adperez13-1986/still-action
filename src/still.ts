@@ -24,7 +24,7 @@ const GHOST_LIFE = 0.26
 
 interface Ghost { obj: THREE.Object3D; mat: THREE.MeshBasicMaterial; life: number }
 
-interface Debris { part: THREE.Object3D; vel: THREE.Vector3; spin: THREE.Vector3; floor: number }
+interface Debris { part: THREE.Object3D; vel: THREE.Vector3; spin: THREE.Vector3; floor: number; landed: boolean }
 
 /** One cast's body: which beat, and the few numbers some beats scale by. */
 export interface AttackSpec {
@@ -261,11 +261,25 @@ export class Still {
         vel: new THREE.Vector3(Math.sin(a - this.facing) * v, 3 + Math.random() * 3.5, Math.cos(a - this.facing) * v),
         spin: new THREE.Vector3(Math.random() * 12 - 6, Math.random() * 12 - 6, Math.random() * 12 - 6),
         floor,
+        landed: false,
       }
     })
   }
 
-  updateBroken(dt: number) {
+  /** Where each broken part is now, in the world: the sparks trail from these. */
+  debrisPoints(): THREE.Vector3[] {
+    return this.debris.map((d) => d.part.getWorldPosition(new THREE.Vector3()))
+  }
+
+  /** Broken: the eye goes out while he's in the air, 0 lit to 1 dark. The homecoming lights it again. */
+  eyeOut(k: number) {
+    this.eyeLit = 1 - k
+    EYE.color.copy(EYE_ON).lerp(EYE_OFF, k)
+  }
+
+  /** Steps the tumble; returns where each part first hit the floor this step, for the clatter. */
+  updateBroken(dt: number): THREE.Vector3[] {
+    const landed: THREE.Vector3[] = []
     // idle motion freezes where it is; only the fan coasts down
     this.ctx.broken = true
     for (const m of Object.values(this.models)) m.tick?.(dt, this.ctx)
@@ -274,6 +288,10 @@ export class Still {
       d.part.position.addScaledVector(d.vel, dt)
       if (d.part.position.y < d.floor) {
         d.part.position.y = d.floor
+        if (!d.landed) {
+          d.landed = true
+          landed.push(d.part.getWorldPosition(new THREE.Vector3()))
+        }
         d.vel.multiplyScalar(0.35)
         d.vel.y = Math.abs(d.vel.y) * 0.3
         d.spin.multiplyScalar(0.5)
@@ -282,6 +300,7 @@ export class Still {
       d.part.rotation.y += d.spin.y * dt
       d.part.rotation.z += d.spin.z * dt
     }
+    return landed
   }
 
   /** Every piece back at its rest pose: the four roots, and everything a pose or an idle had moved inside them. */

@@ -989,8 +989,18 @@ const STRAIN_MAX = 20
 const STRAIN_PER_PUSH = 2
 /** How long Still takes to stop. The sound, the zoom and the colour all run on this. */
 const STOP_SECONDS = 3.4
-/** How long the broken parts tumble before the cut. Short on purpose. */
-const BREAK_SECONDS = 0.85
+/**
+ * Broken: sudden, then slow. The blow freezes the frame, the parts fly apart at a quarter
+ * of speed with the eye going out, then time snaps back and they hit the stone for real.
+ * Stopping owns the slow wind-down; this is one instant, stretched and dropped.
+ */
+const BREAK = { freeze: 0.22, slow: 1.3, scale: 0.26, ramp: 0.2, after: 0.75, zoom: 0.45 }
+const BREAK_SECONDS = BREAK.slow + BREAK.ramp + BREAK.after
+/** Seconds between the cold sparks each flying part sheds while time is slow. */
+const BREAK_TRAIL = 0.05
+let breakTrailT = 0
+/** How many broken parts have hit the floor: the first lands heavy. */
+let breakLanded = 0
 /** The fade down to the next depth: out, swap the level, back in. */
 const DESCEND_OUT = 0.45
 const DESCEND_IN = 0.5
@@ -1825,10 +1835,26 @@ function breakApart() {
   const from = combat.nearestTarget(still.pos, 99) ?? new THREE.Vector3(still.pos.x, 0, still.pos.z - 1)
   still.breakApart(from.x, from.z)
   sfx.shatter()
+  sfx.slowRing(BREAK.slow + BREAK.ramp)
   navigator.vibrate?.(120)
-  hitstop = 0.16
+  const at = at3(still.pos, 0.9)
+  vfx.flash(at, COLD, 0.7)
+  vfx.sparks(at, COLD, 34, 9)
+  vfx.chunks(at, 10, COLD_GRIT, 6, 0.1)
+  breakTrailT = 0
+  breakLanded = 0
+  hitstop = BREAK.freeze
   shake = 1.1
-  rig.punch(0.1)
+  rig.punch(0.12)
+}
+
+/** How fast Broken's world runs: all but stopped in the freeze, a quarter in the air, then full. */
+function breakScale() {
+  if (run.phase !== 'broken') return 1
+  if (hitstop > 0) return 0.03
+  if (run.t < BREAK.slow) return BREAK.scale
+  const k = Math.min(1, (run.t - BREAK.slow) / BREAK.ramp)
+  return BREAK.scale + (1 - BREAK.scale) * k * k
 }
 
 function beginStopping() {
@@ -2437,7 +2463,23 @@ function simulate(realDt: number) {
 
   if (run.phase === 'broken') {
     run.t += realDt
-    still.updateBroken(realDt)
+    const k = breakScale()
+    for (const p of still.updateBroken(realDt * k)) {
+      sfx.partLand(breakLanded++, panOf(p))
+      vfx.chunks(p, 4, COLD_GRIT, 2.5, 0.06)
+      vfx.sparks(p, COLD, 5, 3)
+    }
+    const air = Math.min(1, run.t / BREAK.slow)
+    still.eyeOut(air)
+    // the view leans in while he's in the air, and stays there under the words
+    rig.hold = 1 + BREAK.zoom * air * air * (3 - 2 * air)
+    if (run.t < BREAK.slow) {
+      breakTrailT -= realDt
+      if (breakTrailT <= 0) {
+        breakTrailT = BREAK_TRAIL
+        for (const p of still.debrisPoints()) vfx.trail(p, COLD, 0.1, 0.35)
+      }
+    }
     if (run.t >= BREAK_SECONDS) end('broken')
     return
   }
@@ -2912,7 +2954,7 @@ function frame(nowMs: number) {
   partFaces(elapsed)
   hud.update(clock)
   if (!paused) {
-    vfx.update(elapsed, world.camera, world.renderer.domElement.height)
+    vfx.update(elapsed * breakScale(), world.camera, world.renderer.domElement.height)
     ambientFx(elapsed)
     footsteps(now)
     ramFx(elapsed)
