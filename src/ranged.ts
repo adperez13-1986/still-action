@@ -3,7 +3,7 @@ import type { Terrain } from './terrain'
 import { DECAL_Y } from './world'
 import { tellMaterial, releaseTell } from './vfx'
 import { PART, type Flip } from './parts'
-import { slide, statusTint, type Enemy, type EnemyAction, type EnemyPhase } from './enemy'
+import { slide, statusTint, disposeBody, type Enemy, type EnemyAction, type EnemyPhase } from './enemy'
 
 /**
  * Pale steel, lighter than anything else in the room so the silhouette reads on
@@ -422,6 +422,7 @@ export class Ranged implements Enemy {
   dispose(scene: THREE.Scene) {
     scene.remove(this.group)
     scene.remove(this.tellGroup)
+    disposeBody(this.group, this.tellGroup)
     this.coreMat.dispose()
     this.jointMat.dispose()
     this.halo.material.map?.dispose()

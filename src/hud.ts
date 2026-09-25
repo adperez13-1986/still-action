@@ -41,6 +41,8 @@ interface ButtonState {
   pointerId: number | null
   downAt: number
   pushed: boolean
+  /** Ready last frame: a part that just started recharging may owe its one-time push hint. */
+  wasReady: boolean
 }
 
 export interface Hud {
@@ -96,6 +98,15 @@ export interface Hud {
   iconState: (slot: SlotName, s: IconState | null) => void
   /** Whether a slot's button is ready to fire (not cooling). An empty slot is never ready. */
   isReady: (slot: SlotName) => boolean
+  /**
+   * N8: `n` strain points fly as ember pips from a screen point to the meter (at
+   * most 4 drawn; the last carries the rest). The meter shows strain minus what's
+   * still in the air, so the fill steps as each lands. The logic value is already
+   * final: a stop starts on time.
+   */
+  strainPips: (n: number, from: { x: number; y: number }) => void
+  /** A button's centre on screen, for pips that leave from it. */
+  buttonPoint: (slot: SlotName) => { x: number; y: number }
   /** 0..1 into the button's `.charge` fill (Patient Lens). */
   charge: (slot: SlotName, c: number) => void
   /** A short pulse on one button: something about it just changed. */
@@ -193,12 +204,66 @@ export function createHud(root: HTMLElement): Hud {
     el.style.right = `calc(env(safe-area-inset-right, 0px) + ${PAD + ARC_R * Math.cos(th) - BTN / 2}px)`
     el.style.bottom = `calc(env(safe-area-inset-bottom, 0px) + ${PAD + ARC_R * Math.sin(th) - BTN / 2}px)`
     root.appendChild(el)
-    const b: ButtonState = { el, cdEl: el.querySelector<HTMLElement>('.cd')!, slot, def: null, icon: null, readyAt: 0, pointerId: null, downAt: 0, pushed: false }
+    const b: ButtonState = { el, cdEl: el.querySelector<HTMLElement>('.cd')!, slot, def: null, icon: null, readyAt: 0, pointerId: null, downAt: 0, pushed: false, wasReady: true }
     paint(b)
     return b
   })
 
   const listeners: ((def: AbilityDef, pushed: boolean) => FireResult)[] = []
+
+  /** Strain points still in the air as pips. The meter shows strain minus these. */
+  let pending = 0
+  const PIP_MS = 350
+  const PIP_GAP_MS = 60
+  const PIPS_SHOWN = 4
+
+  /** One ember pip from a screen point to the meter's fill. When it lands, `worth` points step in. */
+  function flyPip(from: { x: number; y: number }, worth: number) {
+    const el = document.createElement('div')
+    el.className = 'pip'
+    el.style.left = `${from.x}px`
+    el.style.top = `${from.y}px`
+    root.appendChild(el)
+    const r = strainMeter.getBoundingClientRect()
+    const shown = Math.max(0, state.strain - pending)
+    const tx = r.left + r.width * Math.min(1, (shown + worth) / 20)
+    const ty = r.top + r.height / 2
+    const land = () => {
+      el.remove()
+      pending = Math.max(0, pending - worth)
+      // the meter takes it: a 1 px bump as the fill steps
+      strainMeter.classList.remove('bump')
+      void strainMeter.offsetWidth
+      strainMeter.classList.add('bump')
+    }
+    if (!el.animate) return land()
+    const a = el.animate(
+      [{ transform: 'translate(-50%, -50%)' }, { transform: `translate(calc(${tx - from.x}px - 50%), calc(${ty - from.y}px - 50%))` }],
+      { duration: PIP_MS, easing: 'ease-in', fill: 'forwards' },
+    )
+    a.onfinish = land
+    a.oncancel = land
+  }
+
+  /** Once per save, a push-shaped part's pushed half pulses the first time it starts recharging. */
+  const hintKey = (id: string) => `still.pushHint.${id}`
+  const hintedNow = new Set<string>()
+  const hinted = (id: string) => {
+    if (hintedNow.has(id)) return true
+    try {
+      return localStorage.getItem(hintKey(id)) === '1'
+    } catch {
+      return false
+    }
+  }
+  const markHinted = (id: string) => {
+    hintedNow.add(id)
+    try {
+      localStorage.setItem(hintKey(id), '1')
+    } catch {
+      // no storage (a private window): it just won't be remembered past this session
+    }
+  }
 
   /**
    * N8b: ticks on the strain meter where a part changes with strain (Frayed
@@ -324,12 +389,26 @@ export function createHud(root: HTMLElement): Hud {
 
     update(now: number) {
       state.clock = now
+      let brink = false
       for (const b of buttons) {
         if (!b.def) continue
         const left = b.readyAt - now
         const ready = left <= 0
         b.el.classList.toggle('ready', ready)
         b.cdEl.style.setProperty('--sweep', ready ? '0deg' : `${Math.min(360, (left / b.def.cooldownMs) * 360)}deg`)
+        const pushShaped = b.def.mod?.kind === 'overrun' || b.def.mod?.kind === 'charge'
+        if (b.wasReady && !ready && pushShaped && !hinted(b.def.id)) {
+          // the button telling you, once, that holding it now does something different
+          markHinted(b.def.id)
+          b.el.classList.add('hint')
+          setTimeout(() => b.el.classList.remove('hint'), 900)
+        }
+        b.wasReady = ready
+        // the last push is honest: it still fires, but the rim goes dim and slow instead of bright
+        const cost = (ready ? 0 : 2) + (b.def.strain ?? 0)
+        const last = cost > 0 && state.strain + cost >= 20
+        b.el.classList.toggle('last', last)
+        if (last) brink = true
 
         const holding = b.pointerId !== null && now - b.downAt >= PUSH_HOLD_MS
         b.el.classList.toggle('pushable', !ready && holding)
@@ -338,8 +417,12 @@ export function createHud(root: HTMLElement): Hud {
           fire(b, true)
         }
       }
-      strainFill.style.width = `${Math.min(100, (state.strain / 20) * 100)}%`
-      strainMeter.classList.toggle('high', state.strain >= 14)
+      const shown = Math.max(0, state.strain - pending)
+      strainFill.style.width = `${Math.min(100, (shown / 20) * 100)}%`
+      strainMeter.classList.toggle('high', shown >= 14)
+      // the stretch a last push would fill, outlined: a warning, never a block
+      strainMeter.classList.toggle('brink', brink)
+      strainMeter.style.setProperty('--brink', `${Math.max(0, 20 - state.strain) * 5}%`)
       hpFill.style.width = `${Math.max(0, state.integrity * 100)}%`
       hpGhost.style.left = `${Math.max(0, state.integrity * 100)}%`
       hpGhost.style.width = `${Math.max(0, Math.min(1 - state.integrity, recent)) * 100}%`
@@ -442,6 +525,19 @@ export function createHud(root: HTMLElement): Hud {
     },
     recentDamage(frac) {
       recent = frac
+    },
+    strainPips(n, from) {
+      if (n <= 0) return
+      pending += n
+      const shown = Math.min(n, PIPS_SHOWN)
+      for (let i = 0; i < shown; i++) {
+        const worth = i === shown - 1 ? n - (shown - 1) : 1
+        setTimeout(() => flyPip(from, worth), i * PIP_GAP_MS)
+      }
+    },
+    buttonPoint(slot) {
+      const r = buttons.find((x) => x.slot === slot)!.el.getBoundingClientRect()
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 }
     },
     isReady(slot) {
       const b = buttons.find((x) => x.slot === slot)!

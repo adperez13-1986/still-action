@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import { DECAL_Y } from './world'
 import { tellMaterial, releaseTell, COLD, COLD_DEEP } from './vfx'
-import { slide, statusTint, type Enemy, type EnemyAction, type EnemyPhase } from './enemy'
+import { slide, statusTint, disposeBody, type Enemy, type EnemyAction, type EnemyPhase } from './enemy'
 import type { Terrain } from './terrain'
 
 /**
@@ -638,6 +638,7 @@ export class Assembler implements Enemy {
 
   dispose(scene: THREE.Scene) {
     scene.remove(this.group, this.tellGroup, this.piles)
+    disposeBody(this.group, this.tellGroup, this.piles)
     for (const m of [this.mat, this.jointMat, this.coreMat]) m.dispose()
     for (const m of this.tells) releaseTell(m)
   }

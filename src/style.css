@@ -76,6 +76,12 @@ html, body {
 .btn.swapped { animation: swapped .45s ease-out; }
 @keyframes swapped { 0% { transform: scale(1.25); box-shadow: 0 0 24px rgba(223, 230, 238, .7); } }
 .btn.pushable { border-color: var(--strain); color: #ffd0c4; box-shadow: 0 0 18px rgba(200, 69, 47, .5); }
+/* the push that would stop him: the bright rim becomes a dim, slow pulse, like a tired heartbeat (0.6 Hz). It still fires. */
+.btn.pushable.last { border-color: rgba(200, 69, 47, .45); color: #c9a9a0; box-shadow: none; animation: last-pulse 1.667s ease-in-out infinite; }
+@keyframes last-pulse { 50% { border-color: rgba(200, 69, 47, .15); } }
+/* once per save: the pushed half of a push-shaped part pulses the first time it starts recharging */
+.btn.hint .push, .btn.hint .charge { animation: hint-pulse .9s ease-out; }
+@keyframes hint-pulse { 0% { opacity: 1; stroke-width: 3.2; } 100% { stroke-width: 2; } }
 .btn.refused { animation: refused .3s ease-out; }
 .btn.pulse { animation: swapped .4s ease-out; }
 /* LIVE: a lit ring draining clockwise while something of his is out; the dark cooldown sweep waits under it */
@@ -117,6 +123,18 @@ html, body {
 #strain { left: 50%; top: calc(env(safe-area-inset-top, 0px) + 12px); width: 210px; margin-left: -105px; }
 #strain i { background: linear-gradient(90deg, #8a6a2f, var(--strain)); }
 #strain.high { border-color: var(--strain); animation: strain-pulse 1.1s ease-in-out infinite; }
+/* N8: strain you can watch move. An ember dot flies from its source to the meter. */
+.pip {
+  position: absolute; z-index: 6; width: 7px; height: 7px; border-radius: 50%; pointer-events: none;
+  background: var(--strain); box-shadow: 0 0 6px rgba(255, 120, 70, .8); transform: translate(-50%, -50%);
+}
+#strain.bump { animation: meter-bump .12s ease-out; }
+@keyframes meter-bump { 50% { transform: translateY(-1px); } }
+/* the stretch a last push would fill: outlined, quietly. Nothing flashes red. */
+#strain.brink::after {
+  content: ''; position: absolute; top: 0; bottom: 0; right: 0; width: var(--brink, 0%);
+  box-shadow: inset 0 0 0 1px rgba(203, 215, 230, .45); border-radius: 0 4px 4px 0; pointer-events: none;
+}
 #strain .notch { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: rgba(203, 215, 230, .55); text-decoration: none; }
 @keyframes strain-pulse { 50% { box-shadow: 0 0 12px rgba(200, 69, 47, .55); } }
 
@@ -170,7 +188,9 @@ html, body {
 #pause.show { display: flex; }
 #pause h2 { margin: 0; font: 700 14px/1 var(--display); letter-spacing: .22em; color: #8193a6; }
 #pause .row { display: flex; gap: 10px; align-items: stretch; max-width: 100%; }
-#pause .row.four .pcard { width: 180px; }
+#pause .row.four .pcard .ppips { color: var(--strain); font: 700 11px/1 var(--ui); letter-spacing: 2px; vertical-align: middle; }
+.pcard .pconflict { margin: 8px 0 0; font: 500 12px/1.35 var(--ui); color: rgba(203, 215, 230, .55); font-style: italic; }
+.pcard { width: 180px; }
 #pause .row.two .pcard { width: 240px; }
 #pause .arrow { align-self: center; color: #5f7388; font-size: 22px; }
 .pcard {

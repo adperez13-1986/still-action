@@ -100,6 +100,22 @@ export interface Enemy {
 
 const SLEEP_BODY = new THREE.Color(0.35, 0.35, 0.38)
 
+/**
+ * Free everything an enemy built for itself: every mesh's geometry and material
+ * under these objects. Each enemy makes its own, none are shared, so this is safe;
+ * without it, every level left its enemies' geometry on the GPU.
+ */
+export function disposeBody(...roots: THREE.Object3D[]) {
+  for (const r of roots) {
+    r.traverse((o) => {
+      if (!(o instanceof THREE.Mesh)) return
+      o.geometry.dispose()
+      const m = o.material as THREE.Material | THREE.Material[]
+      for (const x of Array.isArray(m) ? m : [m]) x.dispose()
+    })
+  }
+}
+
 /** What frost does to iron: pale and cold. Still's colour, on their bodies (G5: statuses live on the body). */
 export const RIME = new THREE.Color(0x9fb4c8)
 /**
@@ -418,6 +434,7 @@ export class Chaser implements Enemy {
   dispose(scene: THREE.Scene) {
     scene.remove(this.group)
     scene.remove(this.tellGroup)
+    disposeBody(this.group, this.tellGroup)
     this.mat.dispose()
     this.jointMat.dispose()
     this.coreMat.dispose()

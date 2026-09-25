@@ -165,7 +165,8 @@ const combat = new Combat(world.scene, OPEN, {
       }
       sfx.braceConvert()
       shake = Math.max(shake, 0.2)
-      addStrain(ev.amount)
+      // Brace: the pip leaves from Still, not a button: the hit is what spent it
+      addStrain(ev.amount, screenOf(ev.at))
     }
     if (ev.kind === 'catch') {
       // the biggest moment an arms part has: the blow lands on the clamp, and he hammers back
@@ -593,7 +594,7 @@ hud.onPrompt(() => {
     }
     overlay.banner('bargained \u00b7 strain +4')
     // a bargain can cost everything
-    addStrain(4)
+    addStrain(4, screenOf(at))
   }
 })
 
@@ -655,7 +656,7 @@ hud.onCompare(() => {
   if (!g || !canPause()) return
   const current = hud.loadout.find((p) => p.slot === g.def.slot) ?? null
   openPause()
-  pause.compare(current, g.def, () => {
+  pause.compare(current, g.def, hud.loadout, () => {
     resume()
     takePart(g)
   }, resume)
@@ -848,7 +849,7 @@ hud.onFire((def, pushed) => {
   // the part has already landed; now it's paid for. The push that crosses the line
   // still lands at full power, then he stops.
   const cost = r.strain + (pushed ? STRAIN_PER_PUSH : 0)
-  if (cost > 0) addStrain(cost)
+  if (cost > 0) addStrain(cost, hud.buttonPoint(def.slot))
   return r
 })
 
@@ -856,10 +857,19 @@ hud.onFire((def, pushed) => {
  * The only way strain goes up: pushes, parts that cost strain, bargains. It clamps
  * at the max and starts the stop the moment strain reaches it, so every path can end the run.
  */
-function addStrain(n: number) {
+function addStrain(n: number, from: { x: number; y: number }) {
   if (run.phase !== 'crawl' && run.phase !== 'stopping') return
+  const before = run.strain
   run.strain = Math.min(STRAIN_MAX, run.strain + n)
+  // one pip per point actually spent, flying from wherever it was spent
+  hud.strainPips(run.strain - before, from)
   if (run.strain >= STRAIN_MAX && run.phase === 'crawl') beginStopping()
+}
+
+/** A world point on screen, in the HUD's pixels: where a pip leaves from. */
+function screenOf(p: { x: number; z: number }, y = 1.2) {
+  const v = new THREE.Vector3(p.x, y, p.z).project(world.camera)
+  return { x: (v.x * 0.5 + 0.5) * window.innerWidth, y: (-v.y * 0.5 + 0.5) * window.innerHeight }
 }
 
 /** Parts that move Still. No freeze before them: a pause right before the move is what made the dash look like a teleport. */
@@ -1375,7 +1385,7 @@ function frame(nowMs: number) {
 if (import.meta.env.DEV) {
   Object.assign(window, {
     __combat: combat, __still: still, __hud: hud, __loot: loot, __level: () => level, __world: world,
-    __run: run, __parts: PARTS, __partLog: partLog,
+    __run: run, __parts: PARTS, __partLog: partLog, __pause: pause,
     /** Advance exactly `s` seconds of game time, and the HUD clock (and the button faces) with it. No rAF, no hitstop. */
     __step: (s: number) => {
       for (let i = 0; i < Math.round(s * 60); i++) {
