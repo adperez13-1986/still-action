@@ -1401,32 +1401,15 @@ const describePart = (d: AbilityDef) => ({ name: partName(save, d.id, d.name), h
 pause.setDescribe(describePart)
 
 /**
- * Strain step 1's switch (design/strain/PITCHES.md): a push breaks the windup it lands in.
- * Off by default and kept per device, so the measured step-0 runs stay step 0 until it's
- * flipped on the pause screen. A run it's flipped in says 'mixed' in its playtest entry.
+ * Strain step 1 (design/strain/PITCHES.md): a push breaks the windup it lands in. Permanent
+ * since 26 Sep (breaks went from 1 in 46 pushes to 8 in 20 once casts fired on the press).
+ * Only the dev hook turns it off, for checks.
  */
-const BREAK_RULE_KEY = 'still-action.breakRule'
-function readBreakRule(): boolean {
-  try {
-    return localStorage.getItem(BREAK_RULE_KEY) === '1'
-  } catch {
-    return false
-  }
-}
 function setBreakRule(on: boolean) {
-  // flipped before the run has fought or pushed, the whole run is played the new way
-  const untouched = run.stats.every((st) => st.fights === 0 && st.pushes === 0)
-  if (run.phase === 'crawl' && run.breakRule !== on) run.breakRule = untouched ? on : 'mixed'
   combat.breakRule = on
   hud.breakRule = on
-  try {
-    localStorage.setItem(BREAK_RULE_KEY, on ? '1' : '0')
-  } catch {
-    // no storage (a private window): it holds for this session only
-  }
 }
-combat.breakRule = hud.breakRule = readBreakRule()
-pause.setBreakRule(() => combat.breakRule, setBreakRule)
+setBreakRule(true)
 
 /**
  * C-T2: under the break rule the push is taught at its first reason, once per save: a
@@ -4014,7 +3997,7 @@ if (import.meta.env.DEV) {
     __taps: () => run.taps,
     /** The playtest POST now, as a depth's end would. */
     __savePlaytest: savePlaytest,
-    /** Strain step 1's switch, as the pause screen flips it (kept per device). No argument reads it. */
+    /** Dev only: the break rule off or on for a check. No argument reads it. */
     __breakRule: (on?: boolean) => {
       if (on !== undefined) setBreakRule(on)
       return combat.breakRule
