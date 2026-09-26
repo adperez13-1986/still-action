@@ -39,7 +39,7 @@ today.
 
 | | part | tier | card line | gives up | keep / cut / rename |
 |---|---|---|---|---|---|
-| H1 | Focusing Lens | white | A heavy bolt at the nearest enemy. | (the baseline) | |
+| H1 | Focusing Lens | white | A heavy bolt at your target. | (the baseline) | |
 | H2 | Flare | white | Lobs a burst over walls onto where the enemy was standing. | lands 0.8s late, 18 dmg (a hidden sentinel needs two) | |
 | H3 | Cracked Lens | blue | The bolt passes through every enemy it hits. Walls still stop it. | less damage per hit, for a whole line | |
 | H4 | **Ricochet Lens** | blue | A bolt that bounces off walls to reach enemies behind cover. | weaker. The sentinel you bank into **shoots back down the same path**: bank, then move | |

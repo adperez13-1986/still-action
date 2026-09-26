@@ -163,7 +163,7 @@ export const PARTS: AbilityDef[] = [
   // ---------------- HEAD: reaches far ----------------
   part({
     id: 'focusing-lens', slot: 'head', name: 'Focusing Lens', tier: 'white', beat: 'lens',
-    line: 'A heavy bolt at the nearest enemy.',
+    line: 'A heavy bolt at your target.',
     shape: 'bolt', cooldownMs: 4200, damage: 26, range: 13, radius: 0.85,
     icon: '<circle cx="7" cy="12" r="3.5"/><path d="M11.5 12H21"/><path d="M17 8.5 21 12l-4 3.5"/>',
   }),

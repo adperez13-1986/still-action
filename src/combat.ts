@@ -2089,10 +2089,13 @@ export class Combat {
     return this.eyePick(o, def.range, (e) => this.reaches(def, o, e) && (def.shape === 'lob' || !this.screened(o, e, def.radius)))
   }
 
-  /** A head cast's target: the eye's, when planted and it sees one, else `usual` (today's). Counts a choice that differs. */
+  /**
+   * A head cast's target: the eye's, when planted and it sees one, else `usual` (today's).
+   * Planted, a head cast never picks a sleeper: the stance is for fights already awake. Counts a choice that differs.
+   */
   private eyeCast(o: THREE.Vector3, def: AbilityDef, usual: Enemy | null): Enemy | null {
     const t = this.eyeHead(o, def)
-    if (!t) return usual
+    if (!t) return this.inStance && def.slot === 'head' && usual && !this.awakeNow(usual) ? null : usual
     if (t !== usual) this.events.onEye('cast')
     return t
   }
