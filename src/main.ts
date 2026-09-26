@@ -27,6 +27,7 @@ import { createCameraRig } from './camera'
 import { updateMusic, musicNow } from './music'
 import { updateAmbience } from './ambience'
 import { Loot, LOOT, dropChance, rollPart, type GroundPart } from './loot'
+import { fillEmpty as fillSlots } from './drops'
 import { createPauseScreen } from './pause'
 import { createOverlay } from './ending'
 import { loadKit, setSurfaces, pieceData, surfaceNow, buildInstanced, PIECES, type Piece } from './kit'
@@ -484,9 +485,10 @@ const combat = new Combat(world.scene, OPEN, {
     const roll = Math.random()
     if (roll < LOOT.crateParts) {
       const taken = [...hud.loadout, ...loot.ground.map((g) => g.def)]
-      const def = fillEmpty(taken) ?? rollPart('chaser', taken, 'crate', pool())
+      const fill = fillEmpty(taken)
+      const def = fill ?? rollPart('chaser', taken, 'crate', pool())
       if (def) {
-        loot.drop(def, at, still.pos)
+        logDrop(loot.drop(def, at, still.pos), fill ? 'fill' : 'crate')
         sfx.drop(def.tier, panOf(at))
       }
     } else if (roll < LOOT.crateParts + LOOT.crateScrap) {
@@ -1155,6 +1157,8 @@ const run = {
   tally: freshTally() as RunTally,
   depth: 1, strain: 0, t: 0, swapped: false, fought: false, quietT: 0, killed: false, ramStunSeen: false,
   stats: [] as DepthStats[],
+  /** Every part that landed on the floor this run, and what became of it (the drop log above). */
+  drops: [] as DropRec[],
   /** The break rule for this run's playtest entry: as it began, or 'mixed' once flipped mid-run. */
   breakRule: false as boolean | 'mixed',
   /** The close hand's switch for this run's playtest entry, the same way. */
@@ -1210,29 +1214,85 @@ function maybeDrop(at: THREE.Vector3, kind: Archetype, pack: Pack, wasElite: boo
   // a side room's pack always pays out (the last kill drops if nothing else did), elites always do
   if (Math.random() >= dropChance(pack, wasElite, summoned, weight)) return
   const taken = [...hud.loadout, ...loot.ground.map((g) => g.def)]
-  const def = wasElite ? rollPart(kind, taken, 'elite', pool()) : fillEmpty(taken) ?? rollPart(kind, taken, 'kill', pool())
+  const fill = wasElite ? null : fillEmpty(taken)
+  const def = wasElite ? rollPart(kind, taken, 'elite', pool()) : fill ?? rollPart(kind, taken, 'kill', pool())
   if (!def) return
   pack.dropped = true
   // an elite's drop is owed: the thief in that pack's barrel runs for it
-  loot.drop(def, at, still.pos, wasElite ? pack : undefined)
+  logDrop(loot.drop(def, at, still.pos, wasElite ? pack : undefined), wasElite ? 'elite' : fill ? 'fill' : 'kill')
   sfx.drop(def.tier, panOf(at))
 }
+
+// --- the drop log, for the playtest file: what was offered, taken and left (design/replay) ---
+
+/**
+ * Where a floor part came from. 'fill' is a kill's or a crate's plain part for an empty slot;
+ * 'swap' is the part he gave up, landing at his feet (logged, never counted as a drop);
+ * 'thief' a caught part whose drop wasn't logged; 'dev' a check's.
+ */
+type DropTag = 'kill' | 'fill' | 'crate' | 'elite' | 'plenty' | 'boss' | 'swap' | 'thief' | 'dev'
+/**
+ * One part on the floor, from its drop to its end. offered: its card showed. end: taken
+ * (worn), left (on the floor when the level ended), stolen (the thief got away with it), or
+ * null while it's still lying there.
+ */
+interface DropRec { depth: number; id: string; source: DropTag; offered: boolean; end: 'taken' | 'left' | 'stolen' | null }
+const dropRecs = new WeakMap<GroundPart, DropRec>()
+/** A lifted part's record, by part id, until its thief is caught (the same drop comes back down). */
+const caged = new Map<string, DropRec>()
+
+function logDrop(g: GroundPart, source: DropTag) {
+  const rec: DropRec = { depth: run.depth, id: g.def.id, source, offered: false, end: null }
+  run.drops.push(rec)
+  dropRecs.set(g, rec)
+}
+function endDrop(g: GroundPart, end: NonNullable<DropRec['end']>) {
+  const rec = dropRecs.get(g)
+  if (rec && !rec.end) rec.end = end
+}
+/** The floor is swept (a level's end, the room, a check): whatever still lies there was left. */
+function clearLoot() {
+  for (const g of loot.ground) endDrop(g, 'left')
+  caged.clear()
+  loot.clear()
+}
+/**
+ * Lying on the floor, swept or not: a run's end posts before the floor is swept, so its last
+ * depth's parts are still null then. Offered and lying there is left; never offered, missed.
+ */
+const lying = (r: DropRec) => r.end === 'left' || r.end === null
+/** A depth's drops (a swap's part isn't one): offered = taken + left. */
+function depthDrops(depth: number) {
+  const rs = run.drops.filter((r) => r.depth === depth && r.source !== 'swap')
+  return {
+    drops: rs.length, offered: rs.filter((r) => r.offered).length, taken: rs.filter((r) => r.end === 'taken').length,
+    left: rs.filter((r) => r.offered && lying(r)).length, missed: rs.filter((r) => !r.offered && lying(r)).length,
+  }
+}
+/** Per part this run: offered, taken, left (as depthDrops), and where each offer came from. */
+function partDrops() {
+  const out: Record<string, { offered: number; taken: number; left: number; from: Partial<Record<DropTag, number>> }> = {}
+  for (const r of run.drops) {
+    if (r.source === 'swap') continue
+    const c = (out[r.id] ??= { offered: 0, taken: 0, left: 0, from: {} })
+    if (r.offered) {
+      c.offered++
+      c.from[r.source] = (c.from[r.source] ?? 0) + 1
+    }
+    if (r.end === 'taken') c.taken++
+    if (r.offered && lying(r)) c.left++
+  }
+  return out
+}
+/** run.stats as the playtest file and __runStats read it: the open depth's strain now, and its drops. */
+const statsOut = () => run.stats.map((st) => ({ ...st, strainOut: st.strainOut ?? run.strain, ...depthDrops(st.depth) }))
 
 /** What the save has found and turned, at this depth: every drop reads it. */
 const pool = (): PoolView => poolView(save, run.depth)
 
-/**
- * Still starts incomplete. While a slot is empty, most drops are a plain part for
- * one of the empty slots, so the first level is spent putting yourself together.
- * Only found whites facing out: a part turned to the wall never fills a slot.
- */
-const FILL_EMPTY_CHANCE = 0.6
+/** drops.ts's fill for an empty slot (FILL_EMPTY_CHANCE), from the save's found whites facing out. */
 function fillEmpty(taken: readonly AbilityDef[], empty: readonly SlotName[] = hud.slots.filter((s) => !s.def).map((s) => s.slot)): AbilityDef | null {
-  if (empty.length === 0 || Math.random() > FILL_EMPTY_CHANCE) return null
-  const ids = new Set(taken.map((p) => p.id))
-  const out = new Set(facingOutWhites(save))
-  const options = PARTS.filter((p) => out.has(p.id) && empty.includes(p.slot) && !ids.has(p.id))
-  return options[Math.floor(Math.random() * options.length)] ?? null
+  return fillSlots(taken, empty, () => facingOutWhites(save))
 }
 
 // --- shrines: one bargain each ---
@@ -1285,7 +1345,7 @@ hud.onPrompt(() => {
     const taken = [...hud.loadout, ...loot.ground.map((g) => g.def)]
     const def = rollPart('chaser', taken, 'plenty', pool())
     if (def) {
-      loot.drop(def, at, still.pos)
+      logDrop(loot.drop(def, at, still.pos), 'plenty')
       sfx.drop(def.tier, 0)
     }
     overlay.banner('bargained \u00b7 strain +4')
@@ -1541,6 +1601,8 @@ function updateOffer() {
   const next = under && !offerHeld ? under : null
   if (next !== offered) {
     offered = next
+    const rec = next && dropRecs.get(next)
+    if (rec) rec.offered = true
     hud.offer(next?.def ?? null, !!next && !save.found.includes(next.def.id), next ? describePart(next.def) : undefined)
     loot.offer(next)
   }
@@ -1575,10 +1637,11 @@ function takePart(g: GroundPart) {
   carry(g.def.id)
   saw(g.def.id)
   const old = swapIn(g.def)
+  endDrop(g, 'taken')
   loot.remove(g)
   // an empty slot filled: nothing falls out
   // the part he gave up lands at his feet as itself
-  if (old) loot.drop(old, still.pos)
+  if (old) logDrop(loot.drop(old, still.pos), 'swap')
   still.wear(g.def.slot, g.def)
   offered = null
   offerHeld = true
@@ -1724,7 +1787,7 @@ function bossDown(at: THREE.Vector3) {
   const taken = [...hud.loadout, ...loot.ground.map((g) => g.def)]
   const blue = rollPart('boss', taken, 'boss-blue', pool())
   const gold = rollPart('boss', blue ? [...taken, blue] : taken, 'boss-gold', pool(), blue?.slot)
-  for (const def of [blue, gold]) if (def) loot.drop(def, at, still.pos)
+  for (const def of [blue, gold]) if (def) logDrop(loot.drop(def, at, still.pos), 'boss')
   loot.dropScrap(new THREE.Vector3(at.x + 1.2, 0, at.z))
   loot.dropScrap(new THREE.Vector3(at.x - 1.2, 0, at.z))
   overlay.banner(`area ${run.depth / BOSS_EVERY} cleared`)
@@ -1783,11 +1846,11 @@ function resumeRun(snap: RunSnapshot) {
     : snap.route === 'III' && flag('line') ? 'III' : snap.route === 'II' || depth >= 4 || snap.route === 'III' ? 'II' : null
   Object.assign(run, {
     phase: 'crawl', t: 0, swapped: false, ramStunSeen: false, dev: false, committed: false, ending: null, stats: [], taps: [],
-    breakRule: combat.breakRule, hand: combat.closeHand, eye: combat.eye, id: snap.id, startedAt: snap.startedAt, strain: Math.min(19, Math.max(0, Math.round(snap.strain) || 0)), tally, route,
+    breakRule: combat.breakRule, hand: combat.closeHand, eye: combat.eye, drops: [], id: snap.id, startedAt: snap.startedAt, strain: Math.min(19, Math.max(0, Math.round(snap.strain) || 0)), tally, route,
   })
   // a resume starts its stats over, so it's its own entry in the playtest file, not an overwrite
   playKey = `${run.id}.${Date.now().toString(36)}`
-  loot.clear()
+  clearLoot()
   combat.reset()
   const worn = loadout.filter((d): d is AbilityDef => !!d)
   hud.resetLoadout(worn)
@@ -1800,7 +1863,7 @@ function resumeRun(snap: RunSnapshot) {
     const on = new Set(worn.map((d) => d.id))
     for (const id of snap.bossLoot ?? []) {
       if (!known.has(id) || on.has(id) || save.turned.includes(id)) continue
-      loot.drop(byId(id), level.exit.clone(), still.pos)
+      logDrop(loot.drop(byId(id), level.exit.clone(), still.pos), 'boss')
     }
     run.bossLoot = [...(snap.bossLoot ?? [])]
   }
@@ -1899,7 +1962,7 @@ function enterLevel(depth: number, o: { seed?: number; bossFelled?: boolean; res
   roadSmokeAt = []
   level?.dispose()
   hud.bossBar(null)
-  loot.clear()
+  clearLoot()
   combat.reset()
   partFx.clear()
   run.seed = o.seed ?? Math.floor(Math.random() * 1e9)
@@ -1970,7 +2033,7 @@ function startRun() {
   still.reassemble()
   Object.assign(run, {
     phase: 'crawl', strain: 0, t: 0, swapped: false, ramStunSeen: false,
-    id: newRunId(), dev: DEPTH_PARAM !== null, committed: false, ending: null, stats: [], taps: [], tally: freshTally(),
+    id: newRunId(), dev: DEPTH_PARAM !== null, committed: false, ending: null, stats: [], drops: [], taps: [], tally: freshTally(),
     startedAt: new Date().toISOString(), breakRule: combat.breakRule, hand: combat.closeHand, eye: combat.eye, route: ROUTE_PARAM,
   })
   playKey = `${run.id}.${Date.now().toString(36)}`
@@ -1981,7 +2044,7 @@ function startRun() {
     applyHookDefault(save)
     store.write()
   }
-  loot.clear()
+  clearLoot()
   // Still begins with one part: the one on the hook, else a random plain one; the rest
   // he finds. Starting deeper (?depth=) skips the levels where he'd have found them, so
   // he gets all four.
@@ -2028,8 +2091,10 @@ function savePlaytest() {
   const body = {
     key: playKey, id: run.id, build: __BUILD__, startedAt: run.startedAt, savedAt: new Date().toISOString(),
     dev: run.dev, end: run.ending?.kind ?? null, depth: run.depth, breakRule: run.breakRule, hand: run.hand, eye: run.eye,
-    stats: run.stats.map((st) => ({ ...st, strainOut: st.strainOut ?? run.strain })),
+    stats: statsOut(),
     taps: run.taps,
+    parts: partDrops(),
+    drops: run.drops,
   }
   void fetch('/__save/playtest', { method: 'POST', body: JSON.stringify(body) }).catch(() => {})
 }
@@ -2101,7 +2166,7 @@ function enterCrossroads(seed = Math.floor(Math.random() * 1e9)) {
   clearYardDressing()
   level?.dispose()
   hud.bossBar(null)
-  loot.clear()
+  clearLoot()
   combat.reset()
   partFx.clear()
   run.seed = seed
@@ -2382,7 +2447,7 @@ function enterRoom(arrival: ArrivalKind, hour: HomeHour, worn: (string | null)[]
   stopAllWindups()
   level?.dispose()
   level = null
-  loot.clear()
+  clearLoot()
   combat.reset()
   partFx.clear()
   combat.terrain = workshop.terrain
@@ -3126,7 +3191,7 @@ function homing(dt: number) {
  */
 function enterWalkHome() {
   level?.dispose()
-  loot.clear()
+  clearLoot()
   combat.reset()
   partFx.clear()
   stopAllWindups()
@@ -3276,7 +3341,12 @@ function thiefWorld(): ThiefWorld {
   const inside = (r: Room, x: number, z: number) => Math.abs(Math.round(x / 4) - r.ci) <= r.rx && Math.abs(Math.round(z / 4) - r.cj) <= r.rz
   return {
     ground: () => loot.ground,
-    lift: (g) => loot.lift(g),
+    lift: (g) => {
+      endDrop(g, 'stolen')
+      const rec = dropRecs.get(g)
+      if (rec) caged.set(g.def.id, rec)
+      return loot.lift(g)
+    },
     still: still.pos,
     floor, rooms, beams,
     barrel: pieceData('barrel_large'),
@@ -3332,7 +3402,14 @@ function thiefEvent(ev: ThiefEvent) {
       if (ev.def) {
         vfx.flash(at3(at, 0.85), COLD, 0.8)
         vfx.sparks(at3(at, 0.85), COLD, 12, 4)
-        loot.drop(ev.def, at, still.pos)
+        const g = loot.drop(ev.def, at, still.pos)
+        // the same drop, back on the floor: its record goes on, not a new one
+        const rec = caged.get(ev.def.id)
+        if (rec) {
+          caged.delete(ev.def.id)
+          rec.end = null
+          dropRecs.set(g, rec)
+        } else logDrop(g, 'thief')
         sfx.drop(ev.def.tier, pan)
       } else vfx.sparks(at3(at, 0.5), EMBER, 6, 3)
       hitstop = Math.max(hitstop, 0.05)
@@ -3621,6 +3698,31 @@ if (import.meta.env.DEV) {
       l.dispose()
       return out
     },
+    /**
+     * tools/dropsim.ts's levels: per depth, n generated levels as what drops from them (each
+     * pack as "main|side[*=elite]: kinds", its crates and barrels, a Plenty shrine or not).
+     * Returns the file's text, one level a line: refresh with copy(__census()) into tools/levels.json.
+     */
+    __census: (n = 40, route: RouteId = 'II') => {
+      const depths: Record<number, { boss: boolean; levels: { packs: string[]; crates: number; plenty: boolean }[] }> = {}
+      for (let d = 1; d <= RUN_DEPTHS; d++) {
+        const levels = []
+        let boss = false
+        for (let i = 1; i <= n; i++) {
+          const l = genFor(d, i * 7919, route)
+          boss = !!l.boss
+          levels.push({
+            packs: l.packs.map((p) => `${p.room.kind === 'side' ? 'side' : 'main'}${p.elite ? '*' : ''}: ${p.members.map((m) => m.kind).join(' ')}`),
+            crates: l.breakables.length, plenty: l.shrines.some((sh) => sh.kind === 'plenty'),
+          })
+          l.dispose()
+        }
+        depths[d] = { boss, levels: boss ? [] : levels }
+      }
+      const body = Object.entries(depths).map(([d, v]) =>
+        `  "${d}": { "boss": ${v.boss}, "levels": [${v.levels.map((l) => '\n    ' + JSON.stringify(l)).join(',')}${v.levels.length ? '\n  ' : ''}] }`)
+      return `{\n "build": "${__BUILD__}", "route": "${route}", "n": ${n},\n "depths": {\n${body.join(',\n')}\n }\n}\n`
+    },
     /** The same path a tap (false) or push (true) takes after the gesture: HUD cooldown, cast, strain. */
     __fire: (slot: SlotName, pushed = false) => hud.fireSlot(slot, pushed),
     /** Put a part on its button without the ground. */
@@ -3668,7 +3770,7 @@ if (import.meta.env.DEV) {
       }
       const terrain = makeTerrain(floor, o.boxes ?? [], [...(o.circles ?? []), ...(devPosts?.posts.flatMap((p) => p.circles) ?? [])])
       combat.reset()
-      loot.clear()
+      clearLoot()
       partFx.clear()
       combat.terrain = terrain
       loot.terrain = terrain
@@ -4012,7 +4114,7 @@ if (import.meta.env.DEV) {
     },
     /** A part on the floor exactly at (x, z), flying in from just beside it. `owed`: as an elite's drop (a thief wants it). */
     __dropAt: (id: string, x: number, z: number, owed = false) => {
-      loot.drop(byId(id), new THREE.Vector3(x + 0.6, 0, z), undefined, owed ? {} : undefined)
+      logDrop(loot.drop(byId(id), new THREE.Vector3(x + 0.6, 0, z), undefined, owed ? {} : undefined), 'dev')
       loot.ground[loot.ground.length - 1]!.pos.set(x, 0, z)
     },
     /** The pickup card's take. */
@@ -4109,8 +4211,10 @@ if (import.meta.env.DEV) {
       return true
     },
     __continue: () => overlay.press(),
-    /** Per depth this run: fights, pushes, dead taps, quiets, and strain in and out. The open depth reads its strain now. */
-    __runStats: () => run.stats.map((st) => ({ ...st, strainOut: st.strainOut ?? run.strain })),
+    /** Per depth this run: fights, pushes, dead taps, quiets, strain in and out, and drops offered/taken/left. The open depth reads its strain now. */
+    __runStats: statsOut,
+    /** This run's drop log and its per-part counts, as the playtest entry has them. */
+    __drops: () => ({ parts: partDrops(), log: run.drops.map((r) => ({ ...r })) }),
     /** Every press this run, down to up: ms, ready at the press, and what it did. */
     __taps: () => run.taps,
     /** The playtest POST now, as a depth's end would. */

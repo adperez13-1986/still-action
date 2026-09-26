@@ -1,5 +1,5 @@
 import { PARTS, STARTING, type Tier } from './abilities'
-import type { DropSource } from './loot'
+import type { DropSource } from './drops'
 import type { SlotName } from './still'
 import type { PartHistory, PartId, Save } from './save'
 
