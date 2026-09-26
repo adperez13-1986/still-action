@@ -187,7 +187,7 @@ export const PARTS: AbilityDef[] = [
   }),
   part({
     id: 'patient-lens', slot: 'head', name: 'Patient Lens', tier: 'blue', beat: 'patient',
-    line: 'Hits harder the longer you wait. Held while it recharges, it fires full.',
+    line: 'Charges between shots. Push it for a full shot.',
     shape: 'bolt', mod: { kind: 'charge', minDamage: 6, minS: 1.5, fullS: 7.5 }, cooldownMs: 1500, damage: 32, range: 13, radius: 0.85,
     icon: '<circle cx="8.5" cy="12" r="5.5"/><circle cx="8.5" cy="12" r="2.2" fill="currentColor" stroke="none" class="charge"/><path d="M16 12h1M19.5 12h2.5"/>',
   }),
@@ -251,7 +251,7 @@ export const PARTS: AbilityDef[] = [
   }),
   part({
     id: 'lure', slot: 'torso', name: 'Lure', tier: 'gold', beat: 'lure', drops: 'rare',
-    line: 'Leaves a decoy of you that enemies go after, until it bursts.',
+    line: 'Leaves a decoy of you that enemies go after, until it bursts. Push it to burst it early and leave another.',
     shape: 'decoy', cooldownMs: 12000, damage: 18, range: 12, radius: 3.0, windowMs: 3000, shove: 1.6, offset: 1.5,
     icon: '<circle cx="12" cy="6" r="2.5"/><path d="M12 8.5V11"/><path d="M8.5 11h7l-1 8.5h-5z"/><path d="M4.5 9a8 8 0 0 0 0 7M19.5 9a8 8 0 0 1 0 7"/>',
   }),
@@ -326,7 +326,7 @@ export const PARTS: AbilityDef[] = [
   }),
   part({
     id: 'overrun', slot: 'legs', name: 'Overrun', tier: 'blue', beat: 'overrun-step',
-    line: 'A short step. Held while it recharges, a long charge that hits.',
+    line: 'A short step. Push it for a long charge that hits.',
     shape: 'dash', mod: { kind: 'overrun', range: 9, damage: 22, radius: 1.4, shove: 2.4, travelMs: 300 },
     cooldownMs: 7000, damage: 0, range: 4.0, radius: 0, travelMs: 220,
     icon: '<path d="M3 7l5 5-5 5"/><path class="push" d="M11 12h9M17 8l4 4-4 4"/>',
@@ -345,7 +345,7 @@ export const PARTS: AbilityDef[] = [
   }),
   part({
     id: 'plumb-line', slot: 'legs', name: 'Plumb Line', tier: 'gold', beat: 'plant', drops: 'rare',
-    line: 'Drop an anchor, then press again to snap back to it.',
+    line: 'Drop an anchor, then press again to snap back to it. Push it to drop a new one where you stand.',
     shape: 'anchor', cooldownMs: 9000, damage: 14, range: 10, radius: 1.0, shove: 1.2, windowMs: 5000, travelMs: 240,
     icon: '<path d="M12 2.5v8" stroke-dasharray="2 2.5"/><path d="M7.5 11.5h9L12 21z"/>',
     iconStates: { snap: '<path d="M21 12H10" stroke-dasharray="2 2.5"/><path d="M13 8.5 9.5 12l3.5 3.5"/><path d="M2.5 8h6L5.5 14z"/>' },
