@@ -63,8 +63,8 @@ function stats(d: AbilityDef, other?: AbilityDef) {
 
 /** What a part is called now, and its past (parts remember): set by main from the save. */
 let describe: (d: AbilityDef) => { name: string; history: string | null } = (d) => ({ name: d.name, history: null })
-/** A playtest switch beside resume, when main has handed one over: what it's called, and its state. */
-let playSwitch: { label: string; read: () => boolean; write: (on: boolean) => void } | null = null
+/** The playtest switches beside resume, as main hands them over: what each is called, and its state. */
+const playSwitches: { label: string; read: () => boolean; write: (on: boolean) => void }[] = []
 
 function card(d: AbilityDef, tag: string, other?: AbilityDef, conflict?: string | null, fresh = false) {
   const past = describe(d)
@@ -107,7 +107,7 @@ export interface PauseScreen {
   notebook: (pages: NotebookPage[], onClose: () => void) => void
   /** How part cards name a part and tell its past. */
   setDescribe: (fn: (d: AbilityDef) => { name: string; history: string | null }) => void
-  /** A playtest switch on the loadout screen (the close hand, today): main reads and writes it. */
+  /** A playtest switch on the loadout screen (the close hand, the eye), added or replaced by label: main reads and writes it. */
   setSwitch: (label: string, read: () => boolean, write: (on: boolean) => void) => void
   hide: () => void
 }
@@ -146,24 +146,25 @@ export function createPauseScreen(root: HTMLElement): PauseScreen {
         `<h2>Paused</h2><div class="row four">${slots.map((s) => (s.def ? card(s.def, SLOT_LABEL[s.slot]) : emptyCard(s.slot, SLOT_LABEL[s.slot]))).join('')}</div>`,
         [['resume', 'resume', onResume]],
       )
-      const rule = playSwitch
-      if (!rule) return
-      // a playtest switch, beside resume: one tap flips it, and it says which way it is
-      const btn = document.createElement('button')
-      btn.type = 'button'
-      btn.className = 'rule'
-      const paint = () => {
-        const on = rule.read()
-        btn.classList.toggle('on', on)
-        btn.setAttribute('aria-pressed', String(on))
-        btn.innerHTML = `${rule.label} <b>${on ? 'on' : 'off'}</b>`
-      }
-      btn.addEventListener('click', () => {
-        rule.write(!rule.read())
+      // the playtest switches, before resume in the order main gave them: one tap flips one, and it says which way it is
+      const resume = el.querySelector('.actions .resume')!
+      for (const rule of playSwitches) {
+        const btn = document.createElement('button')
+        btn.type = 'button'
+        btn.className = 'rule'
+        const paint = () => {
+          const on = rule.read()
+          btn.classList.toggle('on', on)
+          btn.setAttribute('aria-pressed', String(on))
+          btn.innerHTML = `${rule.label} <b>${on ? 'on' : 'off'}</b>`
+        }
+        btn.addEventListener('click', () => {
+          rule.write(!rule.read())
+          paint()
+        })
         paint()
-      })
-      paint()
-      el.querySelector('.actions')!.prepend(btn)
+        resume.before(btn)
+      }
     },
 
     compare(current, incoming, equipped, onTake, onLeave, fresh = false) {
@@ -216,7 +217,9 @@ export function createPauseScreen(root: HTMLElement): PauseScreen {
     },
 
     setSwitch(label, read, write) {
-      playSwitch = { label, read, write }
+      const i = playSwitches.findIndex((s) => s.label === label)
+      if (i >= 0) playSwitches[i] = { label, read, write }
+      else playSwitches.push({ label, read, write })
     },
 
     notebook(pages, onClose) {

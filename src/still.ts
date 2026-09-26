@@ -98,6 +98,8 @@ const POSES: Partial<Record<AttackSpec['beat'], { pose: Pose; dur: number; yaw?:
 
 /** A stance lets go over this long once its window is done. */
 const RELEASE_S = 0.1
+/** The eye's stance on his body: how much taller the stalk draws, and the lens's chin-up (rad). Enough to read on a phone. */
+const EYE_LIFT = { stretch: 0.8, tip: 0.12 }
 
 /** A move in progress: the path, how long it takes, and how high it arcs. */
 interface Move {
@@ -126,6 +128,10 @@ export class Still {
   speed = 5.5
   /** Where to look when the stick is idle. Null means hold the last heading. */
   aim: number | null = null
+  /** The eye's stance (main writes it): the lens stalk lifts while he's planted. */
+  planted = false
+  /** 0..1, the stalk's lift, eased. */
+  private eyeLift = 0
 
   private bob = 0
   private legL!: THREE.Group
@@ -631,6 +637,14 @@ export class Still {
       this.legR.rotation.x = 0.45
     }
 
+    // planted: the stalk draws up tall, the curious tilt straightens and the lens lifts its chin to
+    // look over the near ones; a step drops it quicker. The lens is counter-scaled so it stays round.
+    this.eyeLift += ((this.planted ? 1 : 0) - this.eyeLift) * Math.min(1, dt * (this.planted ? 7 : 12))
+    const tall = 1 + EYE_LIFT.stretch * this.eyeLift
+    head.scale.y = tall
+    this.lens.scale.y = (this.rest.get(this.lens)?.s.y ?? 1) / tall
+    this.lens.rotation.z = LENS_TILT * (1 - this.eyeLift)
+    if (this.slowdown <= 0 && this.lockT <= 0) head.rotation.x = -EYE_LIFT.tip * this.eyeLift
     this.eyeFlash = Math.max(0, this.eyeFlash - dt * 5)
     if (this.slowdown <= 0) EYE.color.copy(EYE_ON).lerp(new THREE.Color(0xffffff), this.eyeFlash).lerp(EYE_OFF, 1 - this.eyeLit)
 

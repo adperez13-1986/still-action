@@ -45,6 +45,12 @@ export const MELEE_PAD = 0.6
 export const HAND = { range: 2.9, damage: 10 }
 /** How far from Still's centre a body's edge may be for the hand to reach it: the ring's radius. */
 export const HAND_REACH = HAND.range + MELEE_PAD - 0.55
+/**
+ * The eye (design/variety/PITCHES.md 3): no stick for `settle` s and the auto reaches `range`,
+ * and it and the head parts aim at the back line: leaders, then shooters, then the nearest.
+ * Awake bodies only: at 11 u, past the 8 u wake radius, anything else would shoot a pack awake.
+ */
+export const EYE = { settle: 0.5, range: 11 }
 
 /** What a cast knows about the moment it was pressed. */
 export interface CastContext {
@@ -269,6 +275,11 @@ export interface CombatEvents {
   /** A boss volley leaving the cannon. */
   onVolley: (at: THREE.Vector3) => void
   onShot: () => void
+  /**
+   * The eye chose: an auto shot past AUTO_RANGE or at a priority body over the nearest
+   * ('shot'), or a head cast at a body its usual pick wasn't ('cast').
+   */
+  onEye: (what: 'shot' | 'cast') => void
   /** The hand struck `e` for HAND.damage (the auto's close form). */
   onHand: (e: Enemy) => void
   onWindup: (e: Enemy, ms: number) => void
@@ -365,6 +376,14 @@ export class Combat {
   autoAttack = true
   /** The hand's switch (pause screen, on by default): off, the auto is always the shot. */
   closeHand = true
+  /** The eye's switch (pause screen, on by default): off, standing still aims like walking. */
+  eye = true
+  /** Main writes it each tick: the stick is out of its dead zone. A cast never touches it. */
+  walking = false
+  /** How long the stick has rested, s. */
+  private stillT = 0
+  /** The eye's body this tick (the sightline's end), or null: not in the stance, or nothing awake to see. */
+  eyeTarget: Enemy | null = null
   /**
    * Strain step 1 (design/strain/PITCHES.md), behind a switch that is off by default: a pushed
    * hit that lands in a windup breaks it, and a pushed cast aims at the windup that lands soonest.
@@ -518,12 +537,18 @@ export class Combat {
     this.tickParts(dt)
     this.tickHazards(dt, player)
 
+    // --- the eye: a rested stick plants him; each tick it picks the body the sightline shows ---
+    this.stillT = this.walking ? 0 : this.stillT + dt
+    this.eyeTarget = this.inStance ? this.eyePick(player, EYE.range, (e) => this.clearShot(player, e.pos) && !this.screened(player, e)) : null
+
     // --- auto attack: nearest enemy in range, no aiming required ---
     this.autoTimer -= dt
     if (this.autoAttack && this.autoTimer <= 0) {
       const close = this.closeHand ? this.handTarget(player) : null
       // the auto never wastes itself on a wall: the hand's line is clear, and the shot takes the nearest it can hit
-      const target = close ? null : this.nearest(player, AUTO_RANGE, true)
+      // (planted, the eye's body first; with nothing awake in its reach, today's shot)
+      const usual = close ? null : this.nearest(player, AUTO_RANGE, true)
+      const target = close ? null : this.eyeTarget ?? usual
       if (close) {
         // no flight, no shove, no break: the same beat as the shot, twice the weight, one body
         this.autoTimer = AUTO_INTERVAL
@@ -534,8 +559,12 @@ export class Combat {
         this.events.onHand(close)
       } else if (target) {
         this.autoTimer = AUTO_INTERVAL
-        this.shoot(player, target.pos)
+        const d = Math.hypot(target.pos.x - player.x, target.pos.z - player.z)
+        const eye = target !== usual || d > AUTO_RANGE
+        // an eye shot flies to its body and a little past, never on into a sleeping room behind it
+        this.shoot(player, target.pos, target === this.eyeTarget ? Math.min(0.7, (d + 1.2) / PART.boltSpeed) : 0.7)
         this.events.onShot()
+        if (eye) this.events.onEye('shot')
       }
     }
 
@@ -811,6 +840,8 @@ export class Combat {
     this.waves.length = 0
     this.pull = null
     this.boss = null
+    this.stillT = 0
+    this.eyeTarget = null
     for (const h of this.live) {
       this.scene.remove(h.tell.group)
       h.tell.dispose()
@@ -1435,13 +1466,13 @@ export class Combat {
     return best
   }
 
-  private shoot(from: THREE.Vector3, to: THREE.Vector3) {
+  private shoot(from: THREE.Vector3, to: THREE.Vector3, life = 0.7) {
     const mesh = new THREE.Mesh(this.boltGeo, this.boltMat)
     mesh.position.set(from.x, 1.15, from.z)
     const dir = new THREE.Vector3(to.x - from.x, 0, to.z - from.z).normalize()
     mesh.rotation.y = Math.atan2(dir.x, dir.z)
     this.scene.add(mesh)
-    this.bolts.push({ mesh, part: false, dir, life: 0.7, damage: AUTO_DAMAGE, radius: 0.3, speed: PART.boltSpeed, bouncesLeft: 0, bounces: [] })
+    this.bolts.push({ mesh, part: false, dir, life, damage: AUTO_DAMAGE, radius: 0.3, speed: PART.boltSpeed, bouncesLeft: 0, bounces: [] })
   }
 
   /**
@@ -1464,7 +1495,7 @@ export class Combat {
           break
         }
         // no line needed to pick a target: walls stop the bolt, not the aim (a push aims at the threat)
-        const target = (ctx.pushed && this.threat(o, def)) || this.nearest(o, def.range)
+        const target = (ctx.pushed && this.threat(o, def)) || this.eyeCast(o, def, this.nearest(o, def.range))
         const aim = target ? Math.atan2(target.pos.x - o.x, target.pos.z - o.z) : ctx.facing
         let damage = def.damage
         let scale = 1
@@ -1492,7 +1523,7 @@ export class Combat {
 
       case 'lob': {
         // arcs over walls onto where the target stands now: it can't miss a sleeper, it can miss a mover
-        const target = (ctx.pushed && this.threat(o, def)) || this.pickTarget(o, def.range, true)
+        const target = (ctx.pushed && this.threat(o, def)) || this.eyeCast(o, def, this.pickTarget(o, def.range, true))
         const to = target ? new THREE.Vector3(target.pos.x, 0, target.pos.z) : this.ahead(o, ctx.facing, Math.min(def.range, PART.lobNoTarget))
         const pushed = ctx.pushed
         const ms = def.travelMs ?? 800
@@ -1847,7 +1878,7 @@ export class Combat {
    */
   private ricochet(def: AbilityDef, search: number, ctx: CastContext, r: CastResult) {
     const o = ctx.origin
-    const t = (ctx.pushed && this.threat(o, def)) || this.pickTarget(o, def.range, true)
+    const t = (ctx.pushed && this.threat(o, def)) || this.eyeCast(o, def, this.pickTarget(o, def.range, true))
     const bank = t && !this.clearShot(o, t.pos) ? bankShot(this.terrain, o, t.pos, search, def.range) : null
     const aim = bank ? Math.atan2(bank.at.x - o.x, bank.at.z - o.z) : t ? Math.atan2(t.pos.x - o.x, t.pos.z - o.z) : ctx.facing
     // the head cants toward the bank side, so it reads "at an angle"
@@ -1866,7 +1897,7 @@ export class Combat {
    */
   private throughLine(def: AbilityDef, breachMs: number, ctx: CastContext, r: CastResult) {
     const o = ctx.origin
-    const t = (ctx.pushed && this.threat(o, def)) || this.pickTarget(o, def.range, true)
+    const t = (ctx.pushed && this.threat(o, def)) || this.eyeCast(o, def, this.pickTarget(o, def.range, true))
     const aim = t ? Math.atan2(t.pos.x - o.x, t.pos.z - o.z) : ctx.facing
     // he faces down the line: the draw, the beam and the recoil all run along it
     r.aim = aim
@@ -1881,7 +1912,7 @@ export class Combat {
    */
   bankPreview(def: AbilityDef, o: THREE.Vector3): THREE.Vector3 | null {
     if (def.mod?.kind !== 'bounce') return null
-    const t = this.pickTarget(o, def.range, true)
+    const t = this.eyeHead(o, def) ?? this.pickTarget(o, def.range, true)
     if (!t || this.clearShot(o, t.pos)) return null
     return bankShot(this.terrain, o, t.pos, def.mod.bankSearch, def.range)?.at ?? null
   }
@@ -2007,6 +2038,63 @@ export class Combat {
       best = Math.min(best, Math.hypot(e.pos.x - o.x, e.pos.z - o.z) - e.radius)
     }
     return best
+  }
+
+  /** Planted: the stick has rested EYE.settle s with the eye's switch on. A cast doesn't lift it; a step does. */
+  get inStance(): boolean {
+    return this.eye && this.stillT >= EYE.settle
+  }
+
+  /** The eye's order: a pack's leader, then what shoots (a sentinel, a Lobber) or runs off with a part, then the rest. */
+  private eyeRank(e: Enemy): number {
+    if (this.packOf.get(e)?.elite?.leader === e) return 2
+    return e.kind === 'ranged' || e instanceof Thief ? 1 : 0
+  }
+
+  /** The eye's body within `range`: awake, passing `ok`, highest rank, then nearest. Null: none. */
+  private eyePick(o: THREE.Vector3, range: number, ok: (e: Enemy) => boolean): Enemy | null {
+    const seen: { e: Enemy; d: number; rank: number }[] = []
+    for (const e of this.enemies) {
+      if (e.dead || !targetable(e) || this.held.has(e) || !this.awakeNow(e)) continue
+      const d = Math.hypot(e.pos.x - o.x, e.pos.z - o.z)
+      if (d <= range) seen.push({ e, d, rank: this.eyeRank(e) })
+    }
+    // the line tests only as far down the order as they must
+    seen.sort((a, b) => b.rank - a.rank || a.d - b.d)
+    return seen.find((s) => ok(s.e))?.e ?? null
+  }
+
+  /**
+   * A body asleep (or walking home) across the line to `e`, which a bolt would strike first and
+   * wake. Nearer than 8 u its pack would wake anyway; this is the 8-11 u room the eye opens.
+   */
+  private screened(o: THREE.Vector3, e: Enemy, r = SHOT_RADIUS): boolean {
+    const dx = e.pos.x - o.x
+    const dz = e.pos.z - o.z
+    const len = Math.hypot(dx, dz) || 1
+    for (const f of this.enemies) {
+      if (f === e || f.dead || this.awakeNow(f)) continue
+      const along = ((f.pos.x - o.x) * dx + (f.pos.z - o.z) * dz) / len
+      if (along < 0 || along > len) continue
+      const across = Math.abs((f.pos.x - o.x) * dz - (f.pos.z - o.z) * dx) / len
+      if (across < f.radius + r) return true
+    }
+    return false
+  }
+
+  /** A head part's body in the stance: the eye's order among what the part itself reaches. Null: walking, or none. */
+  private eyeHead(o: THREE.Vector3, def: AbilityDef): Enemy | null {
+    if (!this.inStance || def.slot !== 'head') return null
+    // a lob comes down from above; a bolt, even a piercing one, would strike a sleeper on the way
+    return this.eyePick(o, def.range, (e) => this.reaches(def, o, e) && (def.shape === 'lob' || !this.screened(o, e, def.radius)))
+  }
+
+  /** A head cast's target: the eye's, when planted and it sees one, else `usual` (today's). Counts a choice that differs. */
+  private eyeCast(o: THREE.Vector3, def: AbilityDef, usual: Enemy | null): Enemy | null {
+    const t = this.eyeHead(o, def)
+    if (!t) return usual
+    if (t !== usual) this.events.onEye('cast')
+    return t
   }
 
   private inReach(o: THREE.Vector3, e: Enemy, range: number) {

@@ -22,6 +22,7 @@ import { HIDES, debrisColor } from './hide'
 import { Mite, BROOD, type Brood } from './swarm'
 import * as sfx from './audio'
 import { HandRing } from './handring'
+import { Sightline } from './sightline'
 import { createCameraRig } from './camera'
 import { updateMusic, musicNow } from './music'
 import { updateAmbience } from './ambience'
@@ -209,6 +210,9 @@ const HOP_H: Partial<Record<BeatKey, number>> = { skitter: 0.35, spring: 0.9 }
 /** The hand's reach on the floor round Still (design/variety/PITCHES.md 2). */
 const handRing = new HandRing(HAND_REACH)
 world.scene.add(handRing.mesh)
+/** The eye's sightline to the body it has chosen (design/variety/PITCHES.md 3). */
+const sightline = new Sightline()
+world.scene.add(sightline.mesh)
 
 const combat = new Combat(world.scene, OPEN, {
   onHit: (at, e) => {
@@ -444,6 +448,12 @@ const combat = new Combat(world.scene, OPEN, {
     vfx.flash(still.lensPoint(new THREE.Vector3()), COLD_DEEP, 0.25)
     const st = run.stats[run.stats.length - 1]
     if (st) st.shots++
+  },
+  onEye: (what) => {
+    const st = run.stats[run.stats.length - 1]
+    if (!st) return
+    if (what === 'shot') st.eye++
+    else st.eyeCasts++
   },
   onHand: (e) => {
     // melee, not a bolt: the clamp's clacks, a short knock, a few sparks off the near side, half the shot's hitstop
@@ -1126,6 +1136,8 @@ interface DepthStats {
   depth: number; fights: number; pushes: number; breaks: number; deadTaps: number; quiets: number; strainIn: number; strainOut: number | null
   /** The auto's two forms: close strikes and shots. */
   hand: number; shots: number
+  /** The eye's choices: auto shots past 7.6 u or at a priority body over the nearest, and head casts it re-aimed. */
+  eye: number; eyeCasts: number
 }
 /** One press on a filled button, for the playtest file: how long taps really last on the phone. */
 interface TapLog { depth: number; slot: SlotName; ms: number; ready: boolean; result: Press['result'] }
@@ -1147,6 +1159,8 @@ const run = {
   breakRule: false as boolean | 'mixed',
   /** The close hand's switch for this run's playtest entry, the same way. */
   hand: true as boolean | 'mixed',
+  /** The eye's switch, the same way. */
+  eye: true as boolean | 'mixed',
   /** Where this fight's strain began: the free push is drawn above it. */
   water: 0,
   taps: [] as TapLog[],
@@ -1467,6 +1481,29 @@ setHand(readHand(), false)
 run.hand = combat.closeHand
 pause.setSwitch('close hand', () => combat.closeHand, (on) => setHand(on))
 
+/** The eye's switch (design/variety/PITCHES.md 4), like the hand's: on by default, per device, 'mixed' once flipped mid-run. */
+const EYE_KEY = 'still-action.eye'
+function readEye(): boolean {
+  try {
+    return localStorage.getItem(EYE_KEY) !== '0'
+  } catch {
+    return true
+  }
+}
+function setEye(on: boolean, keep = true) {
+  combat.eye = on
+  if (run.eye !== 'mixed' && run.eye !== on && run.phase !== 'boot') run.eye = 'mixed'
+  if (!keep) return
+  try {
+    localStorage.setItem(EYE_KEY, on ? '1' : '0')
+  } catch {
+    // a private window: it holds for this session
+  }
+}
+setEye(readEye(), false)
+run.eye = combat.eye
+pause.setSwitch('the eye', () => combat.eye, (on) => setEye(on))
+
 /**
  * C-T2: under the break rule the push is taught at its first reason, once per save: a
  * windup starting that a cooling part on Still reaches and could break.
@@ -1746,7 +1783,7 @@ function resumeRun(snap: RunSnapshot) {
     : snap.route === 'III' && flag('line') ? 'III' : snap.route === 'II' || depth >= 4 || snap.route === 'III' ? 'II' : null
   Object.assign(run, {
     phase: 'crawl', t: 0, swapped: false, ramStunSeen: false, dev: false, committed: false, ending: null, stats: [], taps: [],
-    breakRule: combat.breakRule, hand: combat.closeHand, id: snap.id, startedAt: snap.startedAt, strain: Math.min(19, Math.max(0, Math.round(snap.strain) || 0)), tally, route,
+    breakRule: combat.breakRule, hand: combat.closeHand, eye: combat.eye, id: snap.id, startedAt: snap.startedAt, strain: Math.min(19, Math.max(0, Math.round(snap.strain) || 0)), tally, route,
   })
   // a resume starts its stats over, so it's its own entry in the playtest file, not an overwrite
   playKey = `${run.id}.${Date.now().toString(36)}`
@@ -1920,7 +1957,7 @@ function enterLevel(depth: number, o: { seed?: number; bossFelled?: boolean; res
   prev.copy(still.pos)
   run.depth = depth
   closeStats()
-  run.stats.push({ depth, fights: 0, pushes: 0, breaks: 0, deadTaps: 0, quiets: 0, strainIn: run.strain, strainOut: null, hand: 0, shots: 0 })
+  run.stats.push({ depth, fights: 0, pushes: 0, breaks: 0, deadTaps: 0, quiets: 0, strainIn: run.strain, strainOut: null, hand: 0, shots: 0, eye: 0, eyeCasts: 0 })
   // the card's line gets a tick where this depth began (a resumed depth already has its tick)
   if (!o.resume) run.tally.marks.push(run.tally.line.length)
   // parts remember how deep they went
@@ -1934,7 +1971,7 @@ function startRun() {
   Object.assign(run, {
     phase: 'crawl', strain: 0, t: 0, swapped: false, ramStunSeen: false,
     id: newRunId(), dev: DEPTH_PARAM !== null, committed: false, ending: null, stats: [], taps: [], tally: freshTally(),
-    startedAt: new Date().toISOString(), breakRule: combat.breakRule, hand: combat.closeHand, route: ROUTE_PARAM,
+    startedAt: new Date().toISOString(), breakRule: combat.breakRule, hand: combat.closeHand, eye: combat.eye, route: ROUTE_PARAM,
   })
   playKey = `${run.id}.${Date.now().toString(36)}`
   if (!run.dev) {
@@ -1990,7 +2027,7 @@ function savePlaytest() {
   if (!import.meta.env.DEV || !playKey || navigator.webdriver) return
   const body = {
     key: playKey, id: run.id, build: __BUILD__, startedAt: run.startedAt, savedAt: new Date().toISOString(),
-    dev: run.dev, end: run.ending?.kind ?? null, depth: run.depth, breakRule: run.breakRule, hand: run.hand,
+    dev: run.dev, end: run.ending?.kind ?? null, depth: run.depth, breakRule: run.breakRule, hand: run.hand, eye: run.eye,
     stats: run.stats.map((st) => ({ ...st, strainOut: st.strainOut ?? run.strain })),
     taps: run.taps,
   }
@@ -2949,10 +2986,15 @@ function simulate(realDt: number) {
   if (!still.vaulting) combat.terrain.pushOut(still.pos, BODY_RADIUS)
   pushOffBoss()
 
-  const target = combat.nearestTarget(still.pos, 9.5)
+  // planted, he faces the eye's body, unless the hand has one in reach (the hand comes first)
+  const eyeAim = combat.eyeTarget && !(combat.closeHand && combat.handGap(still.pos) <= HAND_REACH) ? combat.eyeTarget.pos : null
+  const target = eyeAim ?? combat.nearestTarget(still.pos, 9.5)
   still.aim = target ? Math.atan2(target.x - still.pos.x, target.z - still.pos.z) : null
 
+  // the stick, not his position: a dash or a shove doesn't unplant him, a step does
+  combat.walking = hud.moveX !== 0 || hud.moveZ !== 0
   combat.update(dt, still.pos)
+  still.planted = combat.inStance
   thiefFx(dt)
   trackDay(dt)
   partFx.update(dt)
@@ -3478,6 +3520,9 @@ function frame(nowMs: number) {
   }
   // the hand's ring: in a crawl with the switch on, waking as an awake body nears the reach
   handRing.update(paused ? 0 : elapsed, x, z, combat.handGap(still.pos), !home && run.phase === 'crawl' && combat.closeHand && !!level)
+  // the eye's sightline: planted in a crawl, to the body it has chosen, drawn where that body is drawn
+  const seen = !home && run.phase === 'crawl' && !!level ? combat.eyeTarget : null
+  sightline.update(paused ? 0 : elapsed, x, z, seen && { key: seen, x: seen.group.position.x, z: seen.group.position.z, r: seen.radius })
   syncTells()
   combat.miteBatch.sync(world.camera, now)
   world.render()
@@ -4078,6 +4123,17 @@ if (import.meta.env.DEV) {
       return {
         on: combat.closeHand, run: run.hand, stats: run.stats.map((st) => ({ depth: st.depth, hand: st.hand, shots: st.shots })),
         ring: { visible: ring.visible, opacity: (ring.material as THREE.MeshBasicMaterial).opacity, r: handRing.radius },
+      }
+    },
+    /** The eye's switch, as the pause screen flips it (kept per device); the stance, its body, the line, and the run's log. */
+    __eye: (on?: boolean) => {
+      if (on !== undefined) setEye(on)
+      const t = combat.eyeTarget
+      return {
+        on: combat.eye, run: run.eye, stance: combat.inStance, target: t ? combat.enemies.indexOf(t) : null,
+        line: { visible: sightline.mesh.visible, opacity: (sightline.mesh.material as THREE.MeshBasicMaterial).opacity, len: sightline.mesh.scale.z },
+        lift: still.planted, stalk: +still.parts.head.scale.y.toFixed(3),
+        stats: run.stats.map((st) => ({ depth: st.depth, eye: st.eye, eyeCasts: st.eyeCasts, shots: st.shots, hand: st.hand })),
       }
     },
     __breakRule: (on?: boolean) => {
