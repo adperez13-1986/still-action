@@ -135,6 +135,12 @@ sfx.unlockAudio()
 if (import.meta.env.PROD && 'serviceWorker' in navigator) {
   void navigator.serviceWorker.register(`${import.meta.env.BASE_URL}sw.js`)
 }
+// ask the browser to keep the save (the corkboard, the doorframe) rather than clear it under pressure
+try {
+  void navigator.storage?.persist?.().catch(() => {})
+} catch {
+  // no storage manager: the save is as durable as the browser makes it
+}
 
 /** Screen-space left/right of a world point relative to Still, for stereo panning. */
 function panOf(at: THREE.Vector3) {
@@ -1104,6 +1110,16 @@ const run = {
 /** Nothing awake for this long counts as a fight cleared. */
 const QUIET_SECONDS = 2.5
 const QUIET_STRAIN = 2
+/**
+ * Strain is the run's, not each boss's: a quiet never eases below this share of what he
+ * carried into the depth. Only a Rest shrine takes him under it.
+ */
+const QUIET_FLOOR = 0.5
+/** The lowest a quiet can ease strain to on this depth. */
+function quietFloor() {
+  const st = run.stats[run.stats.length - 1]
+  return st ? Math.floor(st.strainIn * QUIET_FLOOR) : 0
+}
 let level: Level | null = null
 
 const fade = document.createElement('div')
@@ -1378,13 +1394,14 @@ function quiet() {
   run.killed = false
   const before = combat.hp
   combat.hp += (100 - combat.hp) / 2
-  const eased = run.strain > 0
-  run.strain = Math.max(0, run.strain - QUIET_STRAIN)
+  const from = run.strain
+  run.strain = Math.max(Math.min(from, quietFloor()), from - QUIET_STRAIN)
+  const eased = from - run.strain
   const st = run.stats[run.stats.length - 1]
   if (st) st.quiets++
   hud.healing()
   sfx.cleared()
-  if (combat.hp > before + 0.5 || eased) overlay.banner(eased ? `quiet \u00b7 strain \u2212${QUIET_STRAIN}` : 'quiet')
+  if (combat.hp > before + 0.5 || eased > 0) overlay.banner(eased > 0 ? `quiet \u00b7 strain \u2212${eased}` : 'quiet')
 }
 
 function updateOffer() {
@@ -2651,7 +2668,8 @@ function simulate(realDt: number) {
     }
   }
   // the free push, drawn while the fight is on: the quiet at its end pays QUIET_STRAIN back
-  hud.freePush(run.fought && run.phase === 'crawl' ? { from: run.water, width: QUIET_STRAIN } : null)
+  // (under the depth's floor, after a Rest, the quiet pays back only down to the floor)
+  hud.freePush(run.fought && run.phase === 'crawl' ? { from: run.water, width: Math.max(0, Math.min(QUIET_STRAIN, run.water + QUIET_STRAIN - quietFloor())) } : null)
 
   // the boss: its bar, its second phase, and the sound of its window opening (a charge into a wall)
   const boss = combat.boss

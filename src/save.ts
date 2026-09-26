@@ -16,6 +16,8 @@ import type { HomeHour } from './areas'
  */
 export const SAVE_KEY = 'still-action.save'
 export const SAVE_BACKUP_KEY = 'still-action.save.corrupt'
+/** A save that a migration couldn't carry forward, kept as it was. */
+export const SAVE_MIGRATE_KEY = 'still-action.save.premigrate'
 export const PROBE_KEY = 'still-action.probe'
 export const LEGACY_HINT_PREFIX = 'still.pushHint.'
 /** v2 (area II): each part's history counts the Arbiters it saw fall. */
@@ -288,6 +290,16 @@ export function openSave(opts: { memory?: boolean } = {}): SaveStore {
           for (let v = s.v; v < SAVE_VERSION; v++) s = MIGRATIONS[v]!(s)
           data = repair(s)
         } catch {
+          // a migration that throws must never cost the save: keep a copy, leave the original
+          // untouched, and play this session in memory. A build with the migration fixed picks it up.
+          if (mode === 'local') {
+            try {
+              if (tryGet(SAVE_MIGRATE_KEY) === null) localStorage.setItem(SAVE_MIGRATE_KEY, raw)
+            } catch {
+              // nowhere to keep a copy; the original is still where it was
+            }
+          }
+          mode = 'memory'
           data = freshSave()
         }
       }
