@@ -5,7 +5,7 @@ import { Still } from './still'
 import { createHud, type Press } from './hud'
 import { createGradePanel, apply as applyGrade } from './grade'
 import { createPacer, createQuality, createReadout, FRAME_S, BEHIND_CARD_S, IDLE_ROOM_S } from './perf'
-import { Combat, eliteLine, type Archetype, type CastResult, type EliteMod, type Pack } from './combat'
+import { Combat, eliteLine, HAND_REACH, type Archetype, type CastResult, type EliteMod, type Pack } from './combat'
 import { STARTING, PARTS, byId, type AbilityDef, type AbilityShape, type BeatKey } from './abilities'
 import { SLOT_NAMES, type SlotName } from './still'
 import type { Enemy, EnemyEvent } from './enemy'
@@ -21,6 +21,7 @@ import { Charger, CHARGER, PLATE as RAM_PLATE } from './charger'
 import { HIDES, debrisColor } from './hide'
 import { Mite, BROOD, type Brood } from './swarm'
 import * as sfx from './audio'
+import { HandRing } from './handring'
 import { createCameraRig } from './camera'
 import { updateMusic, musicNow } from './music'
 import { updateAmbience } from './ambience'
@@ -204,6 +205,10 @@ let castHits = 0
 
 /** How high each hop arcs. Flat is a dash, an arc is a hop: height is how you tell them apart. */
 const HOP_H: Partial<Record<BeatKey, number>> = { skitter: 0.35, spring: 0.9 }
+
+/** The hand's reach on the floor round Still (design/variety/PITCHES.md 2). */
+const handRing = new HandRing(HAND_REACH)
+world.scene.add(handRing.mesh)
 
 const combat = new Combat(world.scene, OPEN, {
   onHit: (at, e) => {
@@ -437,6 +442,24 @@ const combat = new Combat(world.scene, OPEN, {
     sfx.shot(0)
     still.attack({ beat: 'shot', pushed: false })
     vfx.flash(still.lensPoint(new THREE.Vector3()), COLD_DEEP, 0.25)
+    const st = run.stats[run.stats.length - 1]
+    if (st) st.shots++
+  },
+  onHand: (e) => {
+    // melee, not a bolt: the clamp's clacks, a short knock, a few sparks off the near side, half the shot's hitstop
+    const at = e.pos
+    sfx.hand(panOf(at))
+    still.attack({ beat: 'hand', pushed: false })
+    handRing.strike()
+    const toward = new THREE.Vector3(still.pos.x - at.x, 0, still.pos.z - at.z)
+    const d = Math.max(1e-3, toward.length())
+    const face = at3(new THREE.Vector3(at.x + (toward.x / d) * e.radius, 0, at.z + (toward.z / d) * e.radius), 0.9)
+    vfx.sparks(face, COLD, 5, 4.5, toward.multiplyScalar(-1), 0.9)
+    vfx.flash(face, COLD_DEEP, 0.2)
+    hitstop = Math.max(hitstop, 0.022)
+    shake = Math.max(shake, 0.06)
+    const st = run.stats[run.stats.length - 1]
+    if (st) st.hand++
   },
   onSmash: (b, rolls = true) => {
     level?.smash(b)
@@ -1099,7 +1122,11 @@ type Phase = 'boot' | 'workshop' | 'leaving' | 'crawl' | 'descending' | 'broken'
  * the want is there and the screen hid it, or never comes up. breaks: windups a push broke under
  * the break rule (each biter of a surge counts).
  */
-interface DepthStats { depth: number; fights: number; pushes: number; breaks: number; deadTaps: number; quiets: number; strainIn: number; strainOut: number | null }
+interface DepthStats {
+  depth: number; fights: number; pushes: number; breaks: number; deadTaps: number; quiets: number; strainIn: number; strainOut: number | null
+  /** The auto's two forms: close strikes and shots. */
+  hand: number; shots: number
+}
 /** One press on a filled button, for the playtest file: how long taps really last on the phone. */
 interface TapLog { depth: number; slot: SlotName; ms: number; ready: boolean; result: Press['result'] }
 
@@ -1118,6 +1145,8 @@ const run = {
   stats: [] as DepthStats[],
   /** The break rule for this run's playtest entry: as it began, or 'mixed' once flipped mid-run. */
   breakRule: false as boolean | 'mixed',
+  /** The close hand's switch for this run's playtest entry, the same way. */
+  hand: true as boolean | 'mixed',
   /** Where this fight's strain began: the free push is drawn above it. */
   water: 0,
   taps: [] as TapLog[],
@@ -1413,6 +1442,32 @@ function setBreakRule(on: boolean) {
 setBreakRule(true)
 
 /**
+ * The close hand's switch (design/variety/PITCHES.md 4): on by default, flipped on the pause
+ * screen, kept per device. A run that sees it flipped logs 'mixed'.
+ */
+const HAND_KEY = 'still-action.closeHand'
+function readHand(): boolean {
+  try {
+    return localStorage.getItem(HAND_KEY) !== '0'
+  } catch {
+    return true
+  }
+}
+function setHand(on: boolean, keep = true) {
+  combat.closeHand = on
+  if (run.hand !== 'mixed' && run.hand !== on && run.phase !== 'boot') run.hand = 'mixed'
+  if (!keep) return
+  try {
+    localStorage.setItem(HAND_KEY, on ? '1' : '0')
+  } catch {
+    // a private window: it holds for this session
+  }
+}
+setHand(readHand(), false)
+run.hand = combat.closeHand
+pause.setSwitch('close hand', () => combat.closeHand, (on) => setHand(on))
+
+/**
  * C-T2: under the break rule the push is taught at its first reason, once per save: a
  * windup starting that a cooling part on Still reaches and could break.
  */
@@ -1691,7 +1746,7 @@ function resumeRun(snap: RunSnapshot) {
     : snap.route === 'III' && flag('line') ? 'III' : snap.route === 'II' || depth >= 4 || snap.route === 'III' ? 'II' : null
   Object.assign(run, {
     phase: 'crawl', t: 0, swapped: false, ramStunSeen: false, dev: false, committed: false, ending: null, stats: [], taps: [],
-    breakRule: combat.breakRule, id: snap.id, startedAt: snap.startedAt, strain: Math.min(19, Math.max(0, Math.round(snap.strain) || 0)), tally, route,
+    breakRule: combat.breakRule, hand: combat.closeHand, id: snap.id, startedAt: snap.startedAt, strain: Math.min(19, Math.max(0, Math.round(snap.strain) || 0)), tally, route,
   })
   // a resume starts its stats over, so it's its own entry in the playtest file, not an overwrite
   playKey = `${run.id}.${Date.now().toString(36)}`
@@ -1865,7 +1920,7 @@ function enterLevel(depth: number, o: { seed?: number; bossFelled?: boolean; res
   prev.copy(still.pos)
   run.depth = depth
   closeStats()
-  run.stats.push({ depth, fights: 0, pushes: 0, breaks: 0, deadTaps: 0, quiets: 0, strainIn: run.strain, strainOut: null })
+  run.stats.push({ depth, fights: 0, pushes: 0, breaks: 0, deadTaps: 0, quiets: 0, strainIn: run.strain, strainOut: null, hand: 0, shots: 0 })
   // the card's line gets a tick where this depth began (a resumed depth already has its tick)
   if (!o.resume) run.tally.marks.push(run.tally.line.length)
   // parts remember how deep they went
@@ -1879,7 +1934,7 @@ function startRun() {
   Object.assign(run, {
     phase: 'crawl', strain: 0, t: 0, swapped: false, ramStunSeen: false,
     id: newRunId(), dev: DEPTH_PARAM !== null, committed: false, ending: null, stats: [], taps: [], tally: freshTally(),
-    startedAt: new Date().toISOString(), breakRule: combat.breakRule, route: ROUTE_PARAM,
+    startedAt: new Date().toISOString(), breakRule: combat.breakRule, hand: combat.closeHand, route: ROUTE_PARAM,
   })
   playKey = `${run.id}.${Date.now().toString(36)}`
   if (!run.dev) {
@@ -1935,7 +1990,7 @@ function savePlaytest() {
   if (!import.meta.env.DEV || !playKey || navigator.webdriver) return
   const body = {
     key: playKey, id: run.id, build: __BUILD__, startedAt: run.startedAt, savedAt: new Date().toISOString(),
-    dev: run.dev, end: run.ending?.kind ?? null, depth: run.depth, breakRule: run.breakRule,
+    dev: run.dev, end: run.ending?.kind ?? null, depth: run.depth, breakRule: run.breakRule, hand: run.hand,
     stats: run.stats.map((st) => ({ ...st, strainOut: st.strainOut ?? run.strain })),
     taps: run.taps,
   }
@@ -3421,6 +3476,8 @@ function frame(nowMs: number) {
     skitter(elapsed)
     for (const [e, v] of loops) v.pan(panOf(e.pos))
   }
+  // the hand's ring: in a crawl with the switch on, waking as an awake body nears the reach
+  handRing.update(paused ? 0 : elapsed, x, z, combat.handGap(still.pos), !home && run.phase === 'crawl' && combat.closeHand && !!level)
   syncTells()
   combat.miteBatch.sync(world.camera, now)
   world.render()
@@ -4014,6 +4071,15 @@ if (import.meta.env.DEV) {
     /** The playtest POST now, as a depth's end would. */
     __savePlaytest: savePlaytest,
     /** Dev only: the break rule off or on for a check. No argument reads it. */
+    /** The close hand's switch, as the pause screen flips it (kept per device), and the run's log of it. */
+    __hand: (on?: boolean) => {
+      if (on !== undefined) setHand(on)
+      const ring = handRing.mesh
+      return {
+        on: combat.closeHand, run: run.hand, stats: run.stats.map((st) => ({ depth: st.depth, hand: st.hand, shots: st.shots })),
+        ring: { visible: ring.visible, opacity: (ring.material as THREE.MeshBasicMaterial).opacity, r: handRing.radius },
+      }
+    },
     __breakRule: (on?: boolean) => {
       if (on !== undefined) setBreakRule(on)
       return combat.breakRule

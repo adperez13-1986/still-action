@@ -393,6 +393,25 @@ export function shot(pan: number) {
   hiss(c, d, t, 0.025, 0.25, 'highpass', 5000, 5000, 0.7)
 }
 
+/**
+ * The hand: the clamp's two dry clacks (jaws out, jaws shut) and a short knock into the body.
+ * On the auto's bus, like the shot it replaces: it fires every 0.62 s in a close fight.
+ */
+export function hand(pan: number) {
+  const c = live()
+  if (!c) return
+  const t = c.currentTime
+  const d = out(c, 'auto', pan)
+  const r = vary(1, 0.06)
+  tone(c, d, 'square', t, 1900 * r, 1100 * r, 0.012, 0.16)
+  sample(c, 'metalLight', d, 0.2, 2.3)
+  tone(c, d, 'square', t + 0.05, 1500 * r, 800 * r, 0.014, 0.2)
+  sample(c, 'metalLight', d, 0.24, 1.9, 0.05)
+  // the knock: low and dry, no ring, so it's a hand and not a bolt
+  tone(c, d, 'sine', t + 0.05, 170 * r, 70 * r, 0.07, 0.5)
+  sample(c, 'metalMedium', d, 0.3, 1.2, 0.05)
+}
+
 /** `gain` scales the whole hit: a plate soaks some of it. */
 export function hit(pan: number, gain = 1) {
   const c = live()

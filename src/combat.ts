@@ -37,6 +37,14 @@ const SHOT_SPEED = 15
 const SHOT_RADIUS = 0.3
 /** A swing connects with anything whose body reaches the blade, not just its centre. */
 export const MELEE_PAD = 0.6
+/**
+ * The hand (design/variety/PITCHES.md 1): with the nearest awake enemy in arm's reach (the
+ * arcs' own test at `range`, about 3.5 u from a hulk's centre, outside its 2.4 slam) and a
+ * clear line, the auto is a close strike on that one body, on the auto's own beat.
+ */
+export const HAND = { range: 2.9, damage: 10 }
+/** How far from Still's centre a body's edge may be for the hand to reach it: the ring's radius. */
+export const HAND_REACH = HAND.range + MELEE_PAD - 0.55
 
 /** What a cast knows about the moment it was pressed. */
 export interface CastContext {
@@ -261,6 +269,8 @@ export interface CombatEvents {
   /** A boss volley leaving the cannon. */
   onVolley: (at: THREE.Vector3) => void
   onShot: () => void
+  /** The hand struck `e` for HAND.damage (the auto's close form). */
+  onHand: (e: Enemy) => void
   onWindup: (e: Enemy, ms: number) => void
   onStrike: (e: Enemy) => void
   onGone: (e: Enemy) => void
@@ -353,6 +363,8 @@ export class Combat {
   private hurtCaught = false
   /** Dev checks switch it off to test a part in isolation. */
   autoAttack = true
+  /** The hand's switch (pause screen, on by default): off, the auto is always the shot. */
+  closeHand = true
   /**
    * Strain step 1 (design/strain/PITCHES.md), behind a switch that is off by default: a pushed
    * hit that lands in a windup breaks it, and a pushed cast aims at the windup that lands soonest.
@@ -509,9 +521,18 @@ export class Combat {
     // --- auto attack: nearest enemy in range, no aiming required ---
     this.autoTimer -= dt
     if (this.autoAttack && this.autoTimer <= 0) {
-      // the auto attack doesn't waste itself on a wall: nearest enemy you can actually hit
-      const target = this.nearest(player, AUTO_RANGE, true)
-      if (target) {
+      const close = this.closeHand ? this.handTarget(player) : null
+      // the auto never wastes itself on a wall: the hand's line is clear, and the shot takes the nearest it can hit
+      const target = close ? null : this.nearest(player, AUTO_RANGE, true)
+      if (close) {
+        // no flight, no shove, no break: the same beat as the shot, twice the weight, one body
+        this.autoTimer = AUTO_INTERVAL
+        close.hit(HAND.damage)
+        // a narrow cold sweep to its body, the arcs' own floor mark: the form reads as reach, not a bolt
+        const aim = Math.atan2(close.pos.x - player.x, close.pos.z - player.z)
+        this.sweep(player, aim, Math.hypot(close.pos.x - player.x, close.pos.z - player.z), 0x8fb8e8, 0.4)
+        this.events.onHand(close)
+      } else if (target) {
         this.autoTimer = AUTO_INTERVAL
         this.shoot(player, target.pos)
         this.events.onShot()
@@ -1957,6 +1978,37 @@ export class Combat {
   }
 
   /** Arm reach: whatever body reaches the blade, not just its centre. */
+  /** Awake: its pack is after him (a sleeper is never struck awake), or it has no pack (a carrying thief). */
+  private awakeNow(e: Enemy) {
+    const p = this.packOf.get(e)
+    return p ? p.state === 'awake' : e instanceof Thief
+  }
+
+  /** The hand's body: the nearest awake target, if it's in arm's reach with a clear line. Else null (the shot). */
+  private handTarget(o: THREE.Vector3): Enemy | null {
+    let best: Enemy | null = null
+    let bestD = Infinity
+    for (const e of this.enemies) {
+      if (e.dead || !targetable(e) || this.held.has(e) || !this.awakeNow(e)) continue
+      const d = Math.hypot(e.pos.x - o.x, e.pos.z - o.z)
+      if (d < bestD) {
+        bestD = d
+        best = e
+      }
+    }
+    return best && this.inReach(o, best, HAND.range) && !this.shaded(o, best) ? best : null
+  }
+
+  /** How far the nearest awake body's edge is from Still's centre (Infinity with none): the ring reads it. */
+  handGap(o: THREE.Vector3): number {
+    let best = Infinity
+    for (const e of this.enemies) {
+      if (e.dead || !targetable(e) || !this.awakeNow(e)) continue
+      best = Math.min(best, Math.hypot(e.pos.x - o.x, e.pos.z - o.z) - e.radius)
+    }
+    return best
+  }
+
   private inReach(o: THREE.Vector3, e: Enemy, range: number) {
     return Math.hypot(e.pos.x - o.x, e.pos.z - o.z) <= range + MELEE_PAD + e.radius - 0.55
   }

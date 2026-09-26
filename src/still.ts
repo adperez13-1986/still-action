@@ -28,7 +28,7 @@ interface Debris { part: THREE.Object3D; vel: THREE.Vector3; spin: THREE.Vector3
 
 /** One cast's body: which beat, and the few numbers some beats scale by. */
 export interface AttackSpec {
-  beat: BeatKey | 'shot' | 'anvil-slam'
+  beat: BeatKey | 'shot' | 'hand' | 'anvil-slam'
   pushed: boolean
   /** Seconds to hold the pose at its peak (stances). */
   holdS?: number
@@ -40,7 +40,7 @@ export interface AttackSpec {
 
 /** The bodies built so far. Every beat plays one of them; a new part adds its own. */
 type Pose =
-  | 'shot' | 'bolt' | 'patient' | 'coil' | 'flare' | 'nova'
+  | 'shot' | 'jab' | 'bolt' | 'patient' | 'coil' | 'flare' | 'nova'
   | 'arc' | 'spin' | 'piston' | 'hook'
   | 'dash' | 'step' | 'ram' | 'hop' | 'spring'
   | 'ward' | 'brace' | 'mirror' | 'anvil' | 'anvil-slam'
@@ -55,6 +55,8 @@ type Pose =
  */
 const POSES: Partial<Record<AttackSpec['beat'], { pose: Pose; dur: number; yaw?: number }>> = {
   shot: { pose: 'shot', dur: 0.14 },
+  // the auto's close form: short, so the 0.62 s beat still reads between strikes
+  hand: { pose: 'jab', dur: 0.2 },
   lens: { pose: 'bolt', dur: 0.3 },
   cracked: { pose: 'bolt', dur: 0.3 },
   ricochet: { pose: 'ricochet', dur: 0.3 },
@@ -221,13 +223,13 @@ export class Still {
    * open, the dash leans in. Pushed casts play bigger.
    */
   attack(a: AttackSpec) {
-    const shot = a.beat === 'shot'
-    // the auto attack never interrupts a real attack
-    if (shot && this.anim && this.anim.pose !== 'shot') {
+    const shot = a.beat === 'shot' || a.beat === 'hand'
+    // the auto attack (shot or hand) never interrupts a real attack
+    if (shot && this.anim && this.anim.pose !== 'shot' && this.anim.pose !== 'jab') {
       this.eyeFlash = Math.max(this.eyeFlash, 0.5)
       return
     }
-    this.eyeFlash = shot ? 0.5 : 1
+    this.eyeFlash = a.beat === 'hand' ? 0.15 : shot ? 0.5 : 1
     const p = POSES[a.beat]
     const power = a.power ?? 0
     const dur = p?.pose === 'patient' ? p.dur + 0.14 * power : p?.dur ?? 0
@@ -913,6 +915,18 @@ export class Still {
       case 'shot':
         head.position.z = 0.1 - 0.05 * (1 - k)
         break
+      case 'jab': {
+        // the clamp punches out and bites once, the cage turning a little into it; the lens stays put
+        const out = Math.min(1, a.t / 0.05)
+        const back = k < 0.45 ? 1 : 1 - (k - 0.45) / 0.55
+        this.armL.rotation.x = (-0.3 - 1.25 * out) * back
+        torso.rotation.y = 0.22 * out * back
+        torso.rotation.x = 0.16 + 0.08 * out * back
+        const shut = JAW_OPEN * 0.9 * out * back
+        this.jawL.position.x = JAW_X - JAW_OPEN + shut
+        this.jawR.position.x = JAW_X + JAW_OPEN - shut
+        break
+      }
     }
     if (a.t >= a.dur + (a.hold > 0 ? a.hold + RELEASE_S : 0)) this.anim = null
   }
