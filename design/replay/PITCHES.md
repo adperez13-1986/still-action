@@ -77,8 +77,8 @@ A fourth area; the Engine; a 31st part before the gold shelf; a pick at every dr
 weighting; achievements, streaks, collection percentages; cutscenes and lore text; showing the kids
 as figures; new pitch rounds before these get played.
 
-## Your decisions
-1. The direction and the order above.
-2. The +4-strain second pick at the Assembler: in or out.
-3. Wishes, and whether the kids draw them.
-4. The hook-boss: on by default, or an opt-in rung.
+## Your decisions (answered 26 Sep)
+1. The direction and the order: **yes.**
+2. The +4-strain second pick at the Assembler: **in.**
+3. Wishes: **yes.** Real drawings by the kids come later; placeholder crayon wishes first.
+4. The hook-boss: **on by default** (not an opt-in rung).
