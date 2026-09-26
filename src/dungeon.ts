@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { DECAL_Y } from './world'
+import { DECAL_Y, PIXEL_RATIO } from './world'
 import { buildInstanced, pieceData, skin, type Piece, type Placement } from './kit'
 import type { Terrain, WallFace } from './terrain'
 import type { BreachHole } from './parts'
@@ -2052,11 +2052,11 @@ export function makeLightBeam(height: number, st: BeamStyle): Beam {
   // the positions are computed on the GPU: a fixed box keeps the motes from being culled
   moteGeo.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, height / 2, 0), height)
   const moteMat = new THREE.ShaderMaterial({
-    uniforms: { ...uniforms, uH: { value: height * 0.7 }, uPx: { value: st.moteSize * Math.min(window.devicePixelRatio, 1.5) }, uR: { value: st.moteR } },
+    uniforms: { ...uniforms, uH: { value: height * 0.7 }, uPx: { value: st.moteSize }, uDpr: PIXEL_RATIO, uR: { value: st.moteR } },
     transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
     vertexShader: /* glsl */ `
       attribute vec3 aSeed;
-      uniform float uTime, uH, uPx, uR;
+      uniform float uTime, uH, uPx, uDpr, uR;
       varying float vA;
       void main() {
         float k = fract(uTime * (0.07 + 0.08 * aSeed.x) + aSeed.y);
@@ -2065,7 +2065,7 @@ export function makeLightBeam(height: number, st: BeamStyle): Beam {
         vec3 p = vec3(sin(ang) * r, 0.15 + k * uH, cos(ang) * r);
         vA = smoothstep(0.0, 0.08, k) * (1.0 - smoothstep(0.45, 1.0, k));
         gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
-        gl_PointSize = uPx * (0.7 + 0.6 * aSeed.y);
+        gl_PointSize = uPx * uDpr * (0.7 + 0.6 * aSeed.y);
       }
     `,
     fragmentShader: /* glsl */ `

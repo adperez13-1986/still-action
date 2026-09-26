@@ -403,6 +403,8 @@ export interface Drawings {
   allCards(): Promise<RunCard[] | null>
   /** Drawings asked for and not yet stored. */
   readonly pending: number
+  /** A frame is wanted (or its pass is due): the next frames must be drawn, not skipped. */
+  readonly wanting: boolean
   /** Called with a card's id once its drawing is stored (the board redraws that card). */
   onStored(cb: (cardId: string) => void): void
   /** Dev: the keys in the drawings store. */
@@ -549,6 +551,7 @@ export function createDrawings(renderer: THREE.WebGLRenderer): Drawings {
   return {
     get available() { return available },
     get pending() { return pending },
+    get wanting() { return !!wanted || !!captured },
 
     request(cardId, by, moment) {
       if (!available) return

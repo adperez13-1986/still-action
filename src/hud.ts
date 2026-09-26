@@ -26,6 +26,8 @@ const SLOT_ICON: Record<SlotName, string> = {
   legs: svg('<path d="M9 3l3 8-4 9"/><path d="M8 20h3"/><path d="M15 3l-1 8 3 9"/><path d="M16 20h3"/>'),
 }
 const PUSH_HOLD_MS = 180
+/** A press this close to ready is a cast, not a push: it waits and fires the moment the button comes up. */
+const BUFFER_MS = 120
 /** A dead tap's arc pulls back this fast; a second one within DEAD_TWICE_MS reaches further and holds. */
 const DEAD_BACK_MS = 90
 const DEAD_TWICE_MS = 500
@@ -67,6 +69,10 @@ interface ButtonState {
   downWall: number
   readyAtDown: boolean
   pushed: boolean
+  /** What the press already did: cast on the way down, or waiting out the last BUFFER_MS to cast. */
+  pressed: 'cast' | 'refused' | 'buffered' | null
+  /** Let go inside the buffer: cast when it comes up. */
+  queued: boolean
   /** The last dead tap (game ms), and the arc it drew: from this angle, held, then pulled back. */
   deadAt: number
   arc: { from: number; at: number; hold: number } | null
@@ -321,7 +327,7 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
     el.style.right = `calc(env(safe-area-inset-right, 0px) + ${PAD + ARC_R * Math.cos(th) - BTN / 2}px)`
     el.style.bottom = `calc(env(safe-area-inset-bottom, 0px) + ${PAD + ARC_R * Math.sin(th) - BTN / 2}px)`
     root.appendChild(el)
-    const b: ButtonState = { el, cdEl: el.querySelector<HTMLElement>('.cd')!, slot, def: null, icon: null, readyAt: 0, hotUntil: 0, hotMs: 0, pointerId: null, downAt: 0, downWall: 0, readyAtDown: true, pushed: false, deadAt: -Infinity, arc: null, wasReady: true }
+    const b: ButtonState = { el, cdEl: el.querySelector<HTMLElement>('.cd')!, slot, def: null, icon: null, readyAt: 0, hotUntil: 0, hotMs: 0, pointerId: null, downAt: 0, downWall: 0, readyAtDown: true, pushed: false, pressed: null, queued: false, deadAt: -Infinity, arc: null, wasReady: true }
     paint(b)
     return b
   })
@@ -449,7 +455,7 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
     state.moveZ = worldZ
   }
 
-  // --- ability buttons: tap fires, holding a cooling one pushes it ---
+  // --- ability buttons: a ready one fires on the press, holding a cooling one pushes it ---
   for (const b of buttons) {
     b.el.addEventListener('pointerdown', (e) => {
       b.el.setPointerCapture(e.pointerId)
@@ -458,9 +464,13 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
       b.downWall = e.timeStamp
       b.readyAtDown = isReadyAt(b, state.clock)
       b.pushed = false
+      b.pressed = null
       // the hold ring takes over from any dead-tap arc still pulling back
       b.arc = null
       b.el.classList.add('press')
+      // on the press, not the release: a thumb rests on a button about half a second
+      if (b.readyAtDown) b.pressed = fire(b, false) ? 'cast' : 'refused'
+      else if (b.readyAt - state.clock <= BUFFER_MS && state.clock >= b.hotUntil) b.pressed = 'buffered'
     })
     for (const t of ['pointerup', 'pointercancel'] as const) {
       b.el.addEventListener(t, (e) => {
@@ -469,8 +479,12 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
         b.el.classList.remove('press')
         let result: Press['result']
         if (b.pushed) result = 'push'
-        else if (isReadyAt(b, state.clock)) result = fire(b, false) ? 'cast' : 'refused'
-        else {
+        else if (b.pressed === 'cast' || b.pressed === 'refused') result = b.pressed
+        else if (b.pressed === 'buffered' || isReadyAt(b, state.clock)) {
+          // let go inside the buffer: it still fires when the button comes up
+          result = isReadyAt(b, state.clock) ? (fire(b, false) ? 'cast' : 'refused') : 'cast'
+          if (!isReadyAt(b, state.clock)) b.queued = true
+        } else {
           // a tap thrown at a cooling button: never a push, but it answers
           result = 'dead'
           if (b.def && state.enabled) deadTap(b)
@@ -565,7 +579,14 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
         b.el.classList.toggle('last', last)
         if (last) brink = true
 
-        const holding = b.pointerId !== null && now - b.downAt >= PUSH_HOLD_MS
+        // a buffered press fires as a cast the moment the button comes up, held or let go
+        if (ready && (b.queued || (b.pointerId !== null && b.pressed === 'buffered'))) {
+          b.queued = false
+          b.pressed = fire(b, false) ? 'cast' : 'refused'
+        }
+        // only a press that began on a cooling button can push: one that cast on the way down never does
+        const pushing = b.pointerId !== null && !b.readyAtDown && b.pressed === null
+        const holding = pushing && now - b.downAt >= PUSH_HOLD_MS
         b.el.classList.toggle('pushable', !ready && holding)
         if (!ready && holding && !b.pushed) {
           b.pushed = true
@@ -575,7 +596,7 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
         // the hold's clock: a ring closing over PUSH_HOLD_MS, the push firing as it closes.
         // Let go early and the dead-tap arc pulls back from where it got to.
         let arm = 0
-        if (b.pointerId !== null && (b.pushed || !ready)) arm = b.pushed ? 360 : Math.min(360, ((now - b.downAt) / PUSH_HOLD_MS) * 360)
+        if (b.pointerId !== null && (b.pushed || (!ready && pushing))) arm = b.pushed ? 360 : Math.min(360, ((now - b.downAt) / PUSH_HOLD_MS) * 360)
         else if (b.arc) {
           const t = now - b.arc.at - b.arc.hold
           if (t < DEAD_BACK_MS) arm = b.arc.from * Math.min(1, 1 - t / DEAD_BACK_MS)

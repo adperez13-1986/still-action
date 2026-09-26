@@ -438,6 +438,14 @@ html, body {
 #ending.leaving { opacity: 0; transition: opacity .45s; }
 
 /* --- grade panel --- */
+/* dev: the perf readout, top left under the pause button */
+#perf {
+  position: absolute; display: none; pointer-events: none; z-index: 60; white-space: pre;
+  top: calc(env(safe-area-inset-top, 0px) + 50px); left: calc(env(safe-area-inset-left, 0px) + 10px);
+  padding: 3px 6px; border-radius: 4px; background: rgba(0, 0, 0, .55);
+  color: #b8f0c0; font: 500 10px/1.35 ui-monospace, Menlo, monospace;
+}
+#grade .perfToggle { width: 100%; margin-bottom: 8px; }
 #topRight {
   position: absolute; pointer-events: auto; display: flex; gap: 6px;
   top: calc(env(safe-area-inset-top, 0px) + 8px); right: calc(env(safe-area-inset-right, 0px) + 10px);

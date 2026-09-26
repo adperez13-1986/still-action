@@ -2,7 +2,6 @@ import * as THREE from 'three'
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js'
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js'
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js'
-import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js'
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js'
 
 /** Locked isometric pitch. Q2: the camera never rotates. */
@@ -13,6 +12,12 @@ const CAM_DIST = 40
 export const FOCUS_DEPTH = Math.hypot(CAM_DIST, Math.tan(PITCH) * CAM_DIST)
 
 export const ARENA_RADIUS = 13
+
+/**
+ * The drawing buffer's pixels per CSS pixel, as a uniform: anything sized in buffer pixels
+ * (gl_PointSize) multiplies by it, so a quality step down doesn't make it bigger on screen.
+ */
+export const PIXEL_RATIO: THREE.IUniform<number> = { value: 1 }
 
 /**
  * Height for anything drawn flat on the floor: telegraphs, rings, auras, pads.
@@ -51,52 +56,59 @@ export const grade = {
   viewHeight: 17,
 }
 
-const GradeShader = {
-  uniforms: {
-    tDiffuse: { value: null as THREE.Texture | null },
-    uVignette: { value: grade.vignette },
-    uSaturation: { value: grade.saturation },
-    /** Film grain, 0 = off. Breaks up the clean "clay" read of flat-coloured kits. */
-    uGrain: { value: 0 },
-    uTime: { value: 0 },
-  },
-  vertexShader: /* glsl */ `
-    varying vec2 vUv;
-    void main() {
-      vUv = uv;
-      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-    }
-  `,
-  fragmentShader: /* glsl */ `
-    uniform sampler2D tDiffuse;
-    uniform float uVignette;
-    uniform float uSaturation;
-    uniform float uGrain;
-    uniform float uTime;
-    varying vec2 vUv;
+/**
+ * The grade: desaturate, a cold tint in the shadows, the vignette, the grain. It runs inside the
+ * output pass, on the linear frame just before tone mapping, so the frame is read and written
+ * full-size once less than as a pass of its own.
+ */
+const GRADE_UNIFORMS = {
+  uVignette: { value: grade.vignette },
+  uSaturation: { value: grade.saturation },
+  /** Film grain, 0 = off. Breaks up the clean "clay" read of flat-coloured kits. */
+  uGrain: { value: 0 },
+  uTime: { value: 0 },
+}
 
-    float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
+const GRADE_PARS = /* glsl */ `
+  uniform float uVignette;
+  uniform float uSaturation;
+  uniform float uGrain;
+  uniform float uTime;
 
-    void main() {
-      vec4 c = texture2D(tDiffuse, vUv);
+  float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
+`
 
-      // desaturate hard, then tint the remaining shadow cold
-      float l = dot(c.rgb, vec3(0.2126, 0.7152, 0.0722));
-      c.rgb = mix(vec3(l), c.rgb, uSaturation);
-      c.rgb *= mix(vec3(0.86, 0.94, 1.12), vec3(1.0), smoothstep(0.0, 0.5, l));
+const GRADE_MAIN = /* glsl */ `
+  vec4 c = texture2D(tDiffuse, vUv);
 
-      // vignette
-      vec2 d = vUv - 0.5;
-      float v = 1.0 - dot(d, d) * uVignette * 2.2;
-      c.rgb *= clamp(v, 0.0, 1.0);
+  // desaturate hard, then tint the remaining shadow cold
+  float l = dot(c.rgb, vec3(0.2126, 0.7152, 0.0722));
+  c.rgb = mix(vec3(l), c.rgb, uSaturation);
+  c.rgb *= mix(vec3(0.86, 0.94, 1.12), vec3(1.0), smoothstep(0.0, 0.5, l));
 
-      // grain: strongest in the mids, where flat colour reads most like clay
-      float n = hash(gl_FragCoord.xy + fract(uTime) * 91.7) - 0.5;
-      c.rgb += n * uGrain * (0.35 + 0.65 * smoothstep(0.0, 0.35, l) * (1.0 - smoothstep(0.55, 1.0, l)));
+  // vignette
+  vec2 d = vUv - 0.5;
+  float v = 1.0 - dot(d, d) * uVignette * 2.2;
+  c.rgb *= clamp(v, 0.0, 1.0);
 
-      gl_FragColor = c;
-    }
-  `,
+  // grain: strongest in the mids, where flat colour reads most like clay
+  float n = hash(gl_FragCoord.xy + fract(uTime) * 91.7) - 0.5;
+  c.rgb += n * uGrain * (0.35 + 0.65 * smoothstep(0.0, 0.35, l) * (1.0 - smoothstep(0.55, 1.0, l)));
+
+  gl_FragColor = c;
+`
+
+/** three's output pass (tone mapping, sRGB) with the grade run first, in the same draw. */
+function gradedOutput(): { pass: OutputPass; uniforms: Record<string, THREE.IUniform> } {
+  const pass = new OutputPass()
+  const uniforms = pass.uniforms as Record<string, THREE.IUniform>
+  Object.assign(uniforms, THREE.UniformsUtils.clone(GRADE_UNIFORMS))
+  const src = pass.material.fragmentShader
+  const read = 'gl_FragColor = texture2D( tDiffuse, vUv );'
+  // a three upgrade that changes the output shader must fail loudly, not drop the grade
+  if (!src.includes(read) || !src.includes('varying vec2 vUv;')) throw new Error('OutputShader changed: the grade has nowhere to go')
+  pass.material.fragmentShader = src.replace('varying vec2 vUv;', `varying vec2 vUv;\n${GRADE_PARS}`).replace(read, GRADE_MAIN)
+  return { pass, uniforms }
 }
 
 export interface World {
@@ -110,17 +122,26 @@ export interface World {
   key: THREE.DirectionalLight
   fog: THREE.Fog
   bloom: UnrealBloomPass
-  gradePass: ShaderPass
+  /** The grade's uniforms (it runs inside the output pass). */
+  gradePass: { uniforms: Record<string, THREE.IUniform> }
   colliders: Collider[]
   resize: () => void
   render: () => void
+  /** The drawing buffer's pixels per CSS pixel: the most it may be, and what it is now. */
+  readonly maxPixelRatio: number
+  readonly pixelRatio: number
+  setPixelRatio: (pr: number) => void
 }
 
 /** `arena: false` gives the lit, graded, empty world: for the dungeon look test, and later the crawl. */
 export function createWorld(canvas: HTMLCanvasElement, opts: { arena?: boolean } = {}): World {
   const withArena = opts.arena ?? true
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' })
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5))
+  const maxPixelRatio = Math.min(window.devicePixelRatio, 1.5)
+  renderer.setPixelRatio(maxPixelRatio)
+  PIXEL_RATIO.value = maxPixelRatio
+  // draw calls and triangles counted over the whole frame (every pass), not the last pass alone
+  renderer.info.autoReset = false
   renderer.toneMapping = THREE.ACESFilmicToneMapping
   renderer.toneMappingExposure = grade.exposure
   renderer.shadowMap.enabled = false
@@ -174,9 +195,9 @@ export function createWorld(canvas: HTMLCanvasElement, opts: { arena?: boolean }
   const bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), grade.bloomStrength, grade.bloomRadius, grade.bloomThreshold)
   composer.addPass(bloom)
 
-  const gradePass = new ShaderPass(GradeShader)
-  composer.addPass(gradePass)
-  composer.addPass(new OutputPass())
+  const output = gradedOutput()
+  composer.addPass(output.pass)
+  const gradePass = { uniforms: output.uniforms }
 
   function resize() {
     const w = window.innerWidth
@@ -214,7 +235,20 @@ export function createWorld(canvas: HTMLCanvasElement, opts: { arena?: boolean }
     scene, camera, renderer, composer, graceLight, hemi, key, fog, bloom, gradePass,
     colliders,
     resize,
-    render: () => composer.render(),
+    render: () => {
+      renderer.info.reset()
+      composer.render()
+    },
+    maxPixelRatio,
+    get pixelRatio() { return renderer.getPixelRatio() },
+    setPixelRatio: (pr: number) => {
+      const next = Math.min(maxPixelRatio, pr)
+      if (next === renderer.getPixelRatio()) return
+      renderer.setPixelRatio(next)
+      composer.setPixelRatio(next)
+      PIXEL_RATIO.value = next
+      resize()
+    },
   }
 }
 

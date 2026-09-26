@@ -37,7 +37,9 @@ ability with a cooldown — loot rewires your buttons. Ported from the deckbuild
 
 **Strain.** Hold a *cooling* button to push it: fires now at full power, +2 strain.
 Persists across fights, decays 2 per fight cleared (the quiet), forfeits the run at 20. HP is
-the fight; strain is the run. You can win every fight and still stop.
+the fight; strain is the run. You can win every fight and still stop. A quiet never eases
+below half the strain carried into the depth; only a Rest shrine goes under it (26 Sep:
+without this floor, strain reset to 0 on almost every crawl level).
 
 **Endings.** Two, deliberately different. HP death is sudden. Strain forfeit is
 Still slowing down, and stopping.
@@ -142,13 +144,14 @@ button again. Second criterion, equally binding: is building it still fun.
 
 ## Open
 
-- **Hold means two things.** Hold-to-aim and hold-to-push are the same gesture.
-  Currently resolved by state — hold on a *ready* button would aim, hold on a
-  *cooling* button pushes. Only the cooling half is built. Unsettled.
+- **Hold means one thing (settled 26 Sep).** A ready button fires on the press, not the
+  release (the playtest's median press was ~0.5 s, so every cast landed late). Holding a
+  cooling button pushes. A press within 120 ms of ready is a cast, never a push. Hold-to-aim
+  is dropped.
 - **Endings copy is draft.** Both endings work; the words in `src/ending.ts` are
   placeholders to be rewritten by hand.
 - **No win condition.** Fights escalate (3 + n chasers) until one of the two endings.
-  Strain decay (−2/fight) makes one push per fight free forever. See `design/strain/PITCHES.md`.
+  Strain decay (−2/fight) makes one push per fight free, down to the depth's floor. See `design/strain/PITCHES.md`.
 - **Ranged archetype built** (`src/ranged.ts`). Holds 6–10 units, just past auto
   reach; aim line tracks for 60% of a 760ms windup, then freezes and clicks. Walls
   block projectiles from both sides, and the auto attack only takes clear shots.

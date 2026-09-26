@@ -43,7 +43,7 @@ today.
 | H2 | Flare | white | Lobs a burst over walls onto where the enemy was standing. | lands 0.8s late, 18 dmg (a hidden sentinel needs two) | |
 | H3 | Cracked Lens | blue | The bolt passes through every enemy it hits. Walls still stop it. | less damage per hit, for a whole line | |
 | H4 | **Ricochet Lens** | blue | A bolt that bounces off walls to reach enemies behind cover. | weaker. The sentinel you bank into **shoots back down the same path**: bank, then move | |
-| H5 | Patient Lens | blue | Hits harder the longer you wait. Held while it recharges, it fires full. | 6 to 32 by wait; lower damage per second | |
+| H5 | Patient Lens | blue | Charges between shots. Push it for a full shot. | 6 to 32 by wait; lower damage per second | |
 | H6 | Signal Flare | blue | Marks enemies where it lands. Your next part hits a marked one twice. | does almost nothing on its own | |
 | H7 | **Through-Line** | gold, boss only | A bolt through enemies and walls. The holes it leaves let shots through both ways. | every solid it crosses opens for 4s **for both sides**. Shoot through your own cover and the sentinel behind it can see you | |
 | H8 | Overclocked Coil | gold | Three bolts at once, ready fast, but every shot adds strain. | +1 strain per cast, pushed or not | |
@@ -64,7 +64,7 @@ puts it back: the hole works both ways.
 | T4 | Chill Vent | blue | A cold blast that makes enemies walk slowly for a while. | no shove; never slows an attack, only the walk | |
 | T5 | Brace | blue | For a moment, hits cost you strain instead of integrity. | spends the run. A hit that would reach 20 **Stops** Still instead of Breaking him | |
 | T6 | Mirror Ward | blue | A brief shield that sends enemy shots back at whoever fired them. | shorter window; at most 6 shots back | |
-| T7 | Lure | gold | Leaves a decoy of you that enemies go after, until it bursts. | nothing immediate; the boss ignores it | |
+| T7 | Lure | gold | Leaves a decoy of you that enemies go after, until it bursts. Push it to burst it early and leave another. | nothing immediate; the boss ignores it | |
 
 ### Arms: close
 
@@ -85,10 +85,10 @@ puts it back: the hole works both ways.
 | L1 | Kickstart | white | Dash, running over anything in the way. | (the baseline) | |
 | L2 | Skitter | white | A quick little hop the way you're steering. | no damage; ready every 3.2s | |
 | L3 | Skid Plates | blue | The dash ends in a blast that shoves enemies away. | shorter dash (reworked: the blast now shoves) | |
-| L4 | Overrun | blue | A short step. Held while it recharges, a long charge that hits. | all its damage costs strain | |
+| L4 | Overrun | blue | A short step. Push it for a long charge that hits. | all its damage costs strain | |
 | L5 | Frost Trail | blue | A dash that leaves a cold track that slows enemies on it. | no damage; a ram that rushes across it trips | |
 | L6 | Spring Heels | blue | A hop that clears a low wall, landing heavy on the far side. | a short landing lock after a vault | |
-| L7 | Plumb Line | gold | Drop an anchor, then press again to snap back to it. | first press does nothing on its own; won't snap from over 10u | |
+| L7 | Plumb Line | gold | Drop an anchor, then press again to snap back to it. Push it to drop a new one where you stand. | first press does nothing on its own; won't snap from over 10u | |
 | L8 | Borrowed Time | gold, boss only | Rewinds you a moment and undoes the hits you took. Adds strain. | +2 strain every cast (+4 held) | |
 
 **What was cut:** a vent that traded integrity for strain relief. Quiets refill

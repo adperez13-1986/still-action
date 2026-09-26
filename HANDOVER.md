@@ -1,107 +1,140 @@
-# Handover — 26 Sep 2026
+# Handover — 25 Sep 2026 (evening)
 
-For the next session. Read this, then `DESIGN.md` (the settled decisions). Don't
-re-derive either.
+For the next session. Read this, then `DESIGN.md` (the settled decisions), then
+the design folder for whatever you're touching. Don't re-derive any of them.
 
 ## Where it stands
 
-A playable D2-style crawl on the phone. Live at
+A complete run, playable on the phone. Live at
 **https://adperez13-1986.github.io/still-action/** (every push to `main`
-deploys via `.github/workflows/deploy.yml`; a service worker makes it work
-offline after one load; installable as a fullscreen landscape PWA via
-`public/manifest.webmanifest`). Repo is public: `adperez13-1986/still-action`.
+deploys via `.github/workflows/deploy.yml`; the service worker precaches
+everything, so it works offline after one load; installable as a fullscreen
+landscape PWA). Repo is public: `adperez13-1986/still-action`.
 
-**In the game now**
-- Generated levels: a main path of 5x5 rooms and halls, 2–3 small side rooms,
-  KayKit barriers (waist-high), photo-textured stone, ruins beyond the edge.
-- Packs asleep in rooms; wake at 8u, leash at 16u, path around walls. Quiet
-  (2.5s, nothing awake) = half missing HP back, strain −2.
-- Hulk (slam), tripod sentinel (aim line, shots), ram (lane rush, from depth 2),
-  swarf mites (a brood that bites as one, from depth 4), elites (Quick / Plated /
-  Many / Warden), crates + repair scrap, shrines (Rest / Plenty).
-- The Assembler boss every 3rd depth: 6 moves, 2 phases, stun on charge into
-  a wall; all its attacks respect cover. Boss music at 124 BPM.
-- Still = the "Lantern" design, starts with ONE random plain part, drops fill
-  empty slots. Loot: walk over → take / compare (pauses). Icon buttons.
-- Effects: particles + animated textured telegraphs (Still cold steel-blue,
-  enemies ember). Recorded CC0 impacts/footsteps layered under synthesis,
-  synthesized ambience, generative music.
-- Two endings (sudden break / strain stop), "reached depth N".
+**The run** (`design/meta/DESIGN.md`): one day, 6 depths, about 26 minutes.
+- Area I: depths 1-2 (the ruin), the Assembler at 3. After it: the cold beam on,
+  or the warm beam home.
+- Area II: depth 4 the Works, depth 5 the workers' quarter, the Arbiter at 6.
+  Then the walk home to the lit house at night.
+- Three endings: Broken (HP), Stopped (strain 20), Home (the warm beam). Every
+  ending keeps everything. After each, the Workshop (`src/workshop.ts`): the
+  bench, the hook by the door, the wall of parts, the corkboard of the kids'
+  drawings, the notebook, the doorframe.
 
-## Resolved — phone crash on rotation (25 Sep)
+**Enemies:** hulk, sentinel, ram, swarf mites (+ the brood, the slag heap), the
+Lobber (sentinel variant, area II), the thief (depth 2 only, steals a floor
+part), elites. Bodies each have their own metal (`src/hide.ts`); **ember is only
+for threats** (cores, eyes, seams, tells). Keep new enemies on that rule.
 
-Chrome showed "Aw, Snap" on the Poco when turned sideways. After deploying the
-180ms resize debounce and the reload-on-`webglcontextlost` guard it works; the
-exact cause was never confirmed (not reproducible on desktop). If it ever comes
-back, `adb` is at `~/Library/Android/sdk/platform-tools/adb`: USB debugging on,
-then `adb logcat | grep -iE "chromium|gpu|crash"` while it crashes.
+## What happened on 25 Sep (a long day)
 
-## Done 25-26 Sep — the part pool and the new enemies
+- Area II step 7, the thief (ceb3b07). Heat caption clamp.
+- **Strain:** his diagnosis was "the thought [of pushing] never comes up". A
+  4-voice pitch round (`design/strain/PITCHES.md`) agreed the problem is demand,
+  not cost. Built:
+  - **Step 0** (420cc8f): a cooling button shows its price, the hold draws a
+    ring, a dead tap answers, the strain bar draws the free push. Starter pool
+    swapped (Patient Lens and Overrun in).
+  - **Step 1** (b941782), **behind a switch, OFF by default** (pause screen:
+    "push breaks wind-ups"): a pushed hit breaks the wind-up it's aimed at;
+    pushed casts aim at the soonest wind-up.
+  - **He owes three measured runs** with the switch OFF, on the dev server (the
+    numbers only save there): `playtest.json` in the repo (git-ignored), written
+    by `savePlaytest` in `main.ts`. Headless browsers never write it. Read
+    pushes, dead taps, breaks and tap ms per fight before building step 2
+    (the Assembler's grill locks, the Lobber's heat). Then he flips the switch.
+- Broken is now "sudden, then slow" (eeba3b1). All endings close in on him
+  (a83ce28), and the Workshop arrival opens as a 3x close-up (00af940).
+- Enemy body materials (531185e). A beam that opens under him no longer takes
+  him (4253a7a).
+- **The Arbiter was trivially easy** (circling dodged every lance). Now the lance
+  leads a moving target from how he dodged his last three, and phase-2 shells
+  chip posts (8af9f4f). Tuning knobs: `lance.lockMs`, `guess.s` in `arbiter.ts`.
+- Lobber melt disc and shells, boss hydraulics/servos, UI clicks (4a1471f).
+- **Area III, "the Line"** (a rail yard with timetabled trains), designed while
+  he was away: `design/area3/PITCHES.md` (read this) and `SPEC.md`. Decided for
+  him and flagged: a crossroads room after the Assembler picks the road; the
+  Engine boss; Signalman, Handcar, Sleepers. Building behind `LINE_ENABLED`.
+  STATUS: see the bottom of this file.
 
-Built overnight at his request ("go ahead and implement, write the catalog and
-I will read tomorrow"). **He hasn't played it or reviewed it yet.**
-`design/CATALOG.md` is his one read, with keep/cut/rename columns and a list
-of what to try on the phone. His answers there come before anything else.
+## Open, his to decide or write
 
-- 30 parts (8 white / 16 blue / 6 gold) across 12 shapes, all dropping.
-  `src/abilities.ts` holds them as data; runtime state lives in `src/parts.ts`,
-  lasting visuals in `src/partfx.ts`. All strain goes through `addStrain` in
-  `main.ts`.
-- The ram (`src/charger.ts`, lane tell in `src/lane.ts`) from depth 2, and
-  swarf mites plus the brood (`src/swarm.ts`, instanced) from depth 4. Packs
-  are budgeted in body-equivalents in `dungeon.ts`.
-- Design passes and specs: `design/parts/1-balancer.md`, `2-translator.md`,
-  `3-spec.md`, and the same for `design/enemies/`. `design/CONTEXT.md` is the
-  brief the agents got.
-- Open for him: shot trails (`combat.vfx` is never assigned, so Combat's
-  trails don't draw; one line, left for him to see first) and knockback
-  running about 8% past its number.
-- Headless suites (session scratchpad, not in the repo, so rebuild them if
-  needed): parts 122 checks, enemies 77, plus soaks. The DEV hooks they use
-  are in `main.ts`: `__arena`, `__spawn`, `__step`, `__fire`, `__equip`,
-  `__stick`, `__pack`, `__until`, `__gen`, `__mix` and others. Run every check
-  inside one synchronous `page.evaluate`.
-
-## Other open items (his to pick, none started)
-
-Node map between areas · meta layer (found parts
-join the pool across runs; the Workshop where Yanah and Yuri are) · Still
-visibly wearing his parts · boss hydraulics/servo sounds, UI clicks · the
-ending words (still a draft — his to write) · gold drops vs Grace's warm light.
+- Area III: crossroads vs alternating roads; the Handcar; the names.
+- Words: the ending copy (`src/ending.ts`), the Home ending's words, the
+  Wandering Drone's notebook line, the captions "hold to push" / "hold · break
+  it" (placeholders).
+- Phone tuning: the Arbiter's new lead, Broken's slow-mo length, the close-up
+  zooms (`END_ZOOM`, `ARRIVE_ZOOM`), the new sound gains (`MACHINE`, `UI` in
+  `audio.ts`).
+- Parked design: the old town under the clock (`design/area3/1-translator.md`)
+  as a fourth area; elites that read your buttons; the runaway thief.
+- Old: shot trails never wired (`combat.vfx`), knockback ~8% over.
 
 ## How to work on it
 
 - **Dev server:** `npx vite --host` in the repo, then give him the LAN
   address (`ipconfig getifaddr en0`, port 5173). Start it as soon as work
   resumes; stop it when the session ends. He tests every change on his Poco.
-- **Shortcuts:** `?depth=3` starts at the boss with all four plain parts.
-  `look.html` and `lineup.html` are disposable dev pages (art look test, Still
-  designs).
-- **Tuning:** the in-game grade panel has sliders for grade, sound mix and
-  zoom; "save values" writes `grade.json` / `mix.json` / `zoom.json` / `kit.json`
-  (gitignored) via a dev-server endpoint — copy values into code by hand.
+- **Design:** the three design agents (balancer, translator, verifier) plus
+  Claude as a fourth voice, two rounds, a synthesis `PITCHES.md` he reads, then
+  the verifier writes `SPEC.md`. Then one fresh general-purpose engineer per
+  step with a written brief, stepped with SendMessage; the lead reviews
+  screenshots between steps (they catch flat looks the checks miss).
+- **Tuning:** the in-game grade panel (grade, mix, zoom) saves `grade.json` /
+  `mix.json` / `zoom.json` / `kit.json` (gitignored) via the dev-server endpoint.
 - **Headless checks:** `npm i playwright-core` into the session scratchpad,
   launch with `executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'`.
-  In dev, `window.__combat`, `__still`, `__level()`, `__loot`, `__hud`,
-  `__world` expose state. Screenshot to a *new* filename each time (the image
-  reader caches by path).
-- **Commits:** he says "commit" when a round feels right; don't commit
-  unasked. Pushing redeploys the live site.
+  DEV hooks on `window` (see the big `Object.assign(window, …)` in `main.ts`):
+  `__enter(d)`, `__arena`, `__spawn`, `__step`, `__fire`, `__equip`, `__end(kind)`,
+  `__continue`, `__killBoss`, `__gen`, `__runStats`, `__breakRule`, and more.
+  Run each check inside one synchronous `page.evaluate`. Screenshot to a new
+  filename each time (the image reader caches by path).
+- **Commits:** normally he says "commit" when a round feels right. On days he
+  asks for work while away, commit each reviewed step; push only what's
+  finished or behind a flag. Pushing redeploys the live site.
 
 ## Code map
 
 | File | What |
 |---|---|
-| `main.ts` | the run: phases, levels, loot flow, pause, quiet, boss hooks, effects wiring |
-| `dungeon.ts` | level generator, terrain (walls, pathing BFS), packs, elites, crates, shrines, boss arena |
-| `kit.ts` | KayKit loading, triplanar photo skin, instanced drawing |
-| `terrain.ts` | the one "what's solid" interface |
-| `combat.ts` | enemies/packs, bolts/shots, abilities + mods, waves, pull, breakables |
-| `enemy.ts` / `ranged.ts` / `boss.ts` | hulk, tripod sentinel, the Assembler (`BOSS` numbers) |
-| `charger.ts` / `lane.ts` / `swarm.ts` | the ram and its lane tell, swarf mites + the brood |
-| `parts.ts` / `partfx.ts` | part runtime state and constants, lasting part visuals |
-| `still.ts` | the Lantern model, walk, attack animations, dash ghosts, break-apart |
-| `abilities.ts` / `loot.ts` / `pause.ts` | parts + mods, drops/treasure classes, compare/loadout screens |
-| `vfx.ts` | particles, debris, telegraph shader (`tellMaterial`), `DECAL_Y` in `world.ts` |
-| `audio.ts` / `music.ts` / `ambience.ts` | synth voices + recorded layers, score, room tone |
-| `hud.ts` / `style.css` / `ending.ts` / `camera.ts` / `grade.ts` | UI, type, endings, dynamic zoom, tuning panel |
+| `main.ts` | the run: phases, levels, loot, strain, quiet, endings, boss hooks, effects wiring, DEV hooks, playtest save |
+| `areas.ts` / `day.ts` / `look.ts` / `grade.ts` / `world.ts` | places and their looks, the day moving with you, the colour grade, fog, lights |
+| `dungeon.ts` / `terrain.ts` / `kit.ts` | level generator, packs, arenas, the walk home; what's solid; KayKit + photo textures |
+| `combat.ts` / `hazard.ts` | enemies, packs, shots, abilities, breaks; the shared floor hazard |
+| `enemy.ts` / `ranged.ts` / `charger.ts` / `lane.ts` / `swarm.ts` / `lobber.ts` / `thief.ts` | hulk, sentinel, ram, mites, Lobber, thief |
+| `boss.ts` / `arbiter.ts` | the `Boss` interface and the Assembler; the Arbiter |
+| `hide.ts` | enemy body materials (the palette table) |
+| `abilities.ts` / `parts.ts` / `partfx.ts` / `partmodels.ts` / `pool.ts` / `loot.ts` | the 30 parts, their runtime, visuals and models, the pool, drops |
+| `still.ts` | the Lantern: walk, attacks, break-apart, reassembly |
+| `workshop.ts` / `save.ts` / `notebook.ts` / `crayon.ts` / `ending.ts` | the Workshop, the save, the notebook, the kids' drawings, ending words |
+| `hud.ts` / `pause.ts` / `style.css` / `camera.ts` | UI, pause/compare, type, dynamic zoom |
+| `vfx.ts` / `audio.ts` / `music.ts` / `ambience.ts` | particles and tell/melt shaders; synth + samples; score; room tone |
+
+## Area III build status
+
+**Stage A done, on the branch `the-line`, not merged into `main`** (14a9ee7 A1,
+e86479d A2, d056120 A3, c06fcae A4). It's dark behind `LINE_ENABLED`, but A1
+moves the save to v3, which isn't behind a flag, so `main` (what deploys) stays
+without it until stage B passes and he's seen it. Merging to `main` and pushing
+would migrate his phone save. Work on stage B with `git checkout the-line`.
+- A1: `RouteId`, the flags (`?line=1`, `?route=III`, `?crossroads=1`,
+  `__flags`), save v3 (`roads`, `lastRoad`, history length 8).
+- A2: the crossroads room after the Assembler (`src/crossroads.ts`), two
+  labelled road beams, resume there; the alternate fallback via `ROAD_CHOICE`.
+- A3: the sidings (4) and the station (5): rails, sleepers, lane lamps, wall
+  gaps, gantries, sidings with buffers and dead wagons (`src/line.ts`). Line
+  levels have corridors of at least 4 cells so rails can run out (a spec
+  deviation, accepted). Gravel023 texture added (+262 KB, 5.27 MB total).
+- A4: trains: seeded timetable, lit-rail tell with ember lamps, segment
+  hazards, shove, crates smashed, the harmless lesson train, step-off, the
+  brood rule, synth hum/horn/clacks.
+- Checks: `scratchpad/line/a1..a4-checks.mjs` (13, 18, 10, 14, all passing);
+  flags-off `__gen` byte-identical to before. The session scratchpad is
+  temporary, so the spec's §12 is the source if the scripts are gone.
+- The soak (25 Sep) found no regressions on either branch. Two notes for B:
+  station trains can take 25-36 s to start (they wait for the room to wake);
+  the Workshop's geometry count grows by 2-3 after some station visits
+  (something small isn't disposed).
+- **Next: stage B** (B1 Signalman, B2 Handcar, B3 Sleepers, B4 the Line's
+  ambience/music), the safe stop, then turn `LINE_ENABLED` on, push, and let
+  him play it. Stage C is the Engine. Use a fresh engineer per step.
