@@ -37,7 +37,7 @@ const SLIDERS: Slider[] = [
 ]
 
 /** Live grade tuning. The look gets decided on the phone, in motion — not in a mock. */
-export function createGradePanel(root: HTMLElement, world: World) {
+export function createGradePanel(root: HTMLElement, world: World): HTMLElement {
   const bar = document.createElement('div')
   bar.id = 'topRight'
 
@@ -118,6 +118,7 @@ export function createGradePanel(root: HTMLElement, world: World) {
 
   root.append(bar, panel)
   apply(world)
+  return panel
 }
 
 export function apply(world: World) {

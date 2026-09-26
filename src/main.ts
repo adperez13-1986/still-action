@@ -4,6 +4,7 @@ import { createWorld, grade } from './world'
 import { Still } from './still'
 import { createHud, type Press } from './hud'
 import { createGradePanel, apply as applyGrade } from './grade'
+import { createPacer, createQuality, createReadout, FRAME_S, BEHIND_CARD_S, IDLE_ROOM_S } from './perf'
 import { Combat, eliteLine, type Archetype, type CastResult, type EliteMod, type Pack } from './combat'
 import { STARTING, PARTS, byId, type AbilityDef, type AbilityShape, type BeatKey } from './abilities'
 import { SLOT_NAMES, type SlotName } from './still'
@@ -81,13 +82,17 @@ const hud = createHud(hudRoot, {
     store.write()
   },
 })
-createGradePanel(hudRoot, world)
+const gradePanel = createGradePanel(hudRoot, world)
 const overlay = createOverlay(hudRoot)
 const rig = createCameraRig(world)
 const loot = new Loot(world.scene)
 loot.isFound = (id) => save.found.includes(id)
 const pause = createPauseScreen(hudRoot)
 const vfx = new Vfx(world.scene)
+/** At most 60 drawn frames a second, fewer behind a card; a coarser buffer when frames run long. */
+const pacer = createPacer()
+const quality = createQuality(world)
+const readout = import.meta.env.DEV ? createReadout(hudRoot, gradePanel, world, quality) : null
 /** Dev only: every onPart event, for headless checks to read back. */
 const partLog: PartEvent[] = []
 /** Dev only: every enemy instant, stamped with Combat's game time. */
@@ -2992,8 +2997,36 @@ function ambientFx(dt: number) {
   }
 }
 
+/**
+ * How long between drawn frames right now. The world behind the pause card (or the broken ending's
+ * black) can't be seen moving, and the room at rest has nothing quick in it.
+ */
+function drawEvery(): number {
+  // a drawing is taken off the canvas: that frame, and the next, are drawn
+  if (drawings.wanting) return FRAME_S
+  if (paused || pause.open) return BEHIND_CARD_S
+  if (run.phase === 'ending' && run.ending?.kind === 'broken') return BEHIND_CARD_S
+  if (run.phase === 'workshop' && hud.moveX === 0 && hud.moveZ === 0 && clock / 1000 - roomMovedAt > ROOM_REST_S) return IDLE_ROOM_S
+  return FRAME_S
+}
+
+/** The room counts as at rest this long after the last thing that moved in it (Still, the camera, the stick). */
+const ROOM_REST_S = 1
+let roomMovedAt = 0
+const lastDrawnAt = new THREE.Vector3()
+const lastDrawnCam = new THREE.Vector3()
+let lastDrawn = 0
+let lastEvery = 0
+
 function frame(nowMs: number) {
   const now = nowMs / 1000
+  const every = drawEvery()
+  // a faster screen's extra frames: nothing stepped, nothing drawn, the time carried to the next
+  if (!pacer.due(now, every)) {
+    requestAnimationFrame(frame)
+    return
+  }
+  const t0 = performance.now()
   const elapsed = Math.min(MAX_FRAME, now - last)
   last = now
 
@@ -3099,6 +3132,20 @@ function frame(nowMs: number) {
   world.render()
   // straight after the render, while the drawing buffer is still there
   drawings.afterRender(world.renderer.domElement)
+
+  // the room is at rest once nothing in it has moved for a moment
+  if (run.phase !== 'workshop' || hud.moveX !== 0 || hud.moveZ !== 0 ||
+    lastDrawnAt.distanceToSquared(still.group.position) > 1e-8 || lastDrawnCam.distanceToSquared(world.camera.position) > 1e-8) {
+    roomMovedAt = clock / 1000
+  }
+  lastDrawnAt.copy(still.group.position)
+  lastDrawnCam.copy(world.camera.position)
+  // resolution follows how long frames take, measured only while drawing at the full rate
+  if (every === FRAME_S && lastEvery === FRAME_S) quality.frame(now - lastDrawn, now, !fighting)
+  else quality.reset()
+  lastDrawn = now
+  lastEvery = every
+  readout?.frame(now, performance.now() - t0)
   requestAnimationFrame(frame)
 }
 
