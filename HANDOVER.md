@@ -17,6 +17,18 @@ log; and every button press (`taps`: slot, ms, ready, result). Headless browsers
 Then **close the switches** (keep what he'd miss, remove the switch), and start **replay step 2**
 (below).
 
+**Run 1 of 3 is in (26 Sep):** "close hand" on all run, "the eye" switched off partway ('mixed').
+Broken at depth 3 (the Assembler); his earlier runs all reached Home. Close strikes vs shots: d1
+32/16, d2 24/24, d3 18/47, so he really brawled in the crawl. No breaks, strain peaked at 3.
+
+**His question from it:** "there always is an auto attack?" Yes: the hand is a rule for everyone,
+not a part, and beyond arm's reach the old shot (5 dmg, 7.6 u) still fires, on purpose so kiting
+stays possible. If that undercuts the point, three options to put to him after runs 2 and 3:
+1. keep it as is (the close strike is simply the better auto up close);
+2. weaken the far shot while the hand is on (e.g. 3 dmg instead of 5);
+3. the hand replaces the far auto entirely (range damage only from parts).
+Don't change anything before his other two runs (eye only, both).
+
 ## Where it stands
 
 Live at **https://adperez13-1986.github.io/still-action/** (every push to `main` deploys; the
