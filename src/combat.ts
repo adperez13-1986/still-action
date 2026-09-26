@@ -4,7 +4,7 @@ import { tellMaterial, releaseTell, TELL_CROWD, COLD, EMBER, type Vfx } from './
 import { Chaser, shoveVelocity, distToSegment, PLAYER_RADIUS, KNOCK_DECAY, type Enemy, type EnemyCtx, type EnemyEvent } from './enemy'
 import { Ranged } from './ranged'
 import { Lobber } from './lobber'
-import { Thief, type ThiefEvent } from './thief'
+import { Thief, THIEF, type ThiefEvent } from './thief'
 import { Charger, CHARGER } from './charger'
 import { Mite, Brood, MiteBatch, MITE } from './swarm'
 import { KILL_WEIGHT } from './loot'
@@ -280,6 +280,8 @@ const targetable = (e: Enemy) => !(e instanceof Thief) || e.carrying !== null
 export class Combat {
   hp = PLAYER_MAX_HP
   readonly enemies: Enemy[] = []
+  /** A thief still in its barrel: a prop, not an enemy. Nothing aims at it or hits it; it joins `enemies` when it bursts out. */
+  readonly nests: Thief[] = []
   readonly packs: Pack[] = []
   /** This level's crates and barrels. Anything that hits one breaks it, whoever fired. */
   breakables: Breakable[] = []
@@ -428,6 +430,7 @@ export class Combat {
     this.book.prune()
     this.countTells()
     this.tickBroods(dt)
+    this.tickNests(dt, player)
 
     // --- enemies ---
     // a lit lane: where each stood before its own move, for the step-off
@@ -771,6 +774,8 @@ export class Combat {
       this.events.onGone(e)
     }
     this.enemies.length = 0
+    for (const t of this.nests) t.dispose(this.scene)
+    this.nests.length = 0
     for (const p of this.packs) {
       if (!p.elite) continue
       this.scene.remove(p.elite.aura)
@@ -2253,8 +2258,32 @@ export class Combat {
    */
   addThief(t: Thief): Thief {
     this.scene.add(t.group, t.tellGroup)
-    this.enemies.push(t)
+    if (t.hidden) this.nests.push(t)
+    else this.enemies.push(t)
     return t
+  }
+
+  /** Barrels: each thinks (it watches for its elite's drop) and is solid to Still; out of it, it's an enemy like any. */
+  private tickNests(dt: number, player: THREE.Vector3) {
+    for (let i = this.nests.length - 1; i >= 0; i--) {
+      const t = this.nests[i]!
+      t.update(dt, player, this.terrain, this.ctx)
+      for (const ev of t.drain()) this.events.onThief(ev)
+      if (t.hidden) {
+        const dx = player.x - t.pos.x
+        const dz = player.z - t.pos.z
+        const d = Math.hypot(dx, dz)
+        const min = THIEF.barrelR + PLAYER_RADIUS
+        if (d < min && d > 1e-4) {
+          const out = this.terrain.clampMove(player.x, player.z, t.pos.x + (dx / d) * min, t.pos.z + (dz / d) * min, PLAYER_RADIUS)
+          player.x = out.x
+          player.z = out.z
+        }
+        continue
+      }
+      this.nests.splice(i, 1)
+      this.enemies.push(t)
+    }
   }
 
   /** The area's boss, as its def says: its own pack, woken by walking into the arena, never leashed. */

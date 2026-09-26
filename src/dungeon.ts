@@ -151,8 +151,8 @@ export interface Level {
   progressOf: (room: Room) => number
   /** The spine room containing (x, z), or null (corridors, side rooms, outside). */
   spineAt: (x: number, z: number) => Room | null
-  /** G8: the thief's nest when this level rolled one (a side room's, clear of its pack). */
-  thief?: { nest: THREE.Vector3; room: Room }
+  /** G8: the thief's barrel when this level rolled one: in an elite's room, clear of its pack. `pack` is that elite's. */
+  thief?: { nest: THREE.Vector3; room: Room; pack: PackSpec }
   made: LevelMade
   packs: PackSpec[]
   breakables: Breakable[]
@@ -948,7 +948,7 @@ export const pickFloor = (table: [Piece, number][], roll: number): Piece => (tab
  * INV: the ruin builds exactly what this built before places existed, rand() for rand().
  */
 export function generateLevel(
-  depth: number, seed = Math.floor(Math.random() * 1e9), opts: { boss?: BossDef | null; place?: PlaceDef; bossFelled?: boolean } = {},
+  depth: number, seed = Math.floor(Math.random() * 1e9), opts: { boss?: BossDef | null; place?: PlaceDef; bossFelled?: boolean; thiefFirst?: boolean } = {},
 ): Level {
   const place = opts.place ?? lookAt(depth)
   const kit = place.kit
@@ -1353,29 +1353,44 @@ export function generateLevel(
   }
 
   // --- G8 the thief: its own stream, so the level around it is exactly what it was ---
+  // It hides in a barrel in an elite's room and runs for that elite's drop (design/variety/PITCHES.md 6).
   let thief: Level['thief']
-  const sideRooms = layout.rooms.filter((r) => r.kind === 'side')
-  if (THIEF.depths.includes(depth) && !opts.boss && sideRooms.length && stream(seed, SALT.thief)() < THIEF.chance) {
-    // the side room furthest along the level (ties to the first)
-    let room = sideRooms[0]!
-    for (const r of sideRooms) if (progress.of(r) > progress.of(room)) room = r
-    const sleepers = packs.filter((p) => p.room === room).flatMap((p) => p.members)
-    const clear = (x: number, z: number) => !makeTerrainNow.blocked(x, z, THIEF.bodyRadius + 0.15) && sleepers.every((m) => Math.hypot(m.x - x, m.z - z) >= 1.2)
-    // a corner of the middle, stepped outward until it's clear of the room's props and its pack
-    let nest = new THREE.Vector3(room.center.x + 0.9, 0, room.center.z + 0.9)
-    search: for (let rr = 0; rr <= 3; rr += 0.5) {
-      const n = rr === 0 ? 1 : Math.round(rr * 8)
-      for (let k = 0; k < n; k++) {
-        const a = Math.PI / 4 + (k / n) * Math.PI * 2
-        const x = room.center.x + 0.9 + Math.sin(a) * rr
-        const z = room.center.z + 0.9 + Math.cos(a) * rr
-        if (clear(x, z)) {
-          nest = new THREE.Vector3(x, 0, z)
-          break search
+  const lairs = packs.filter((p) => p.elite)
+  const ts = stream(seed, SALT.thief)
+  const roll = ts()
+  // certain the first time (its notebook page unmet) from depth 2; the roll is drawn either way, so the stream never shifts
+  if (THIEF.depths.includes(depth) && !opts.boss && lairs.length && ((opts.thiefFirst && depth >= 2) || roll < THIEF.chance)) {
+    // the first meeting takes the elite nearest the entrance, the one he's surest to fight; otherwise any
+    const pack = opts.thiefFirst
+      ? lairs.reduce((a, b) => (progress.of(b.room) < progress.of(a.room) ? b : a))
+      : lairs[Math.floor(ts() * lairs.length)]!
+    const room = pack.room
+    const r = THIEF.barrelR
+    const clear = (x: number, z: number) => !makeTerrainNow.blocked(x, z, r + 0.35)
+      && pack.members.every((m) => Math.hypot(m.x - x, m.z - z) >= THIEF.lairGap)
+      && offLine(x, z, LINE.halfW + 1.0, 1.8)
+      && floor.has(key(Math.round(x / CELL), Math.round(z / CELL)))
+    // where cover stands (off the doorway lanes, inside the walls' margin), turned from a seeded corner
+    const maxX = room.rx * CELL + CELL / 2 - 1.4
+    const maxZ = room.rz * CELL + CELL / 2 - 1.4
+    const turn0 = Math.floor(ts() * 4)
+    let nest: THREE.Vector3 | null = null
+    search: for (const k of [0.8, 0.6, 1, 0.45]) {
+      for (let q = 0; q < 4; q++) {
+        const c = (turn0 + q) % 4
+        const sx = c === 0 || c === 3 ? 1 : -1
+        const sz = c < 2 ? 1 : -1
+        for (const [fx, fz] of [[1, 1], [1, 0.7], [0.7, 1]] as const) {
+          const x = room.center.x + sx * Math.max(2.6, maxX * k * fx)
+          const z = room.center.z + sz * Math.max(2.6, maxZ * k * fz)
+          if (clear(x, z)) {
+            nest = new THREE.Vector3(x, 0, z)
+            break search
+          }
         }
       }
     }
-    thief = { nest, room }
+    if (nest) thief = { nest, room, pack }
   }
 
   // --- a shrine, most levels: one bargain, in a main room ---

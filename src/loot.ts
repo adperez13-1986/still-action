@@ -161,6 +161,10 @@ export interface GroundPart {
   lit: number
   /** Never found: drawn bare and unpowered, its glass stays dark. The tier shows in the beam only. */
   bare: boolean
+  /** An elite's owed drop: the pack whose leader it fell from (the thief in that pack's barrel comes for it). */
+  owed?: object
+  /** Its card has shown: he's looked at it. Left lying after that, it was turned down, and the thief wants none of it. */
+  seen: boolean
 }
 
 const FLY = 0.42
@@ -192,7 +196,7 @@ export class Loot {
    * part itself (shared geometry and steel, cold, no emissive): tier colour lives
    * only in the beam and the disc.
    */
-  drop(def: AbilityDef, at: THREE.Vector3, toward?: THREE.Vector3) {
+  drop(def: AbilityDef, at: THREE.Vector3, toward?: THREE.Vector3, owed?: object) {
     const color = TIER_COLOR[def.tier]
     const group = new THREE.Group()
 
@@ -238,7 +242,7 @@ export class Loot {
     this.scene.add(group)
     this.ground.push({
       def, pos, group, fly: FLY, from: at.clone(), bob: Math.random() * 10,
-      spinner, eye, half, yaw: Math.random() * Math.PI * 2, settle: 0, lit: 0, bare,
+      spinner, eye, half, yaw: Math.random() * Math.PI * 2, settle: 0, lit: 0, bare, owed, seen: false,
       tumble: new THREE.Vector3(Math.random() * 16 - 8, Math.random() * 10 - 5, Math.random() * 16 - 8),
     })
   }
@@ -246,6 +250,7 @@ export class Loot {
   /** The pickup card is showing this one (or none). */
   offer(g: GroundPart | null) {
     this.offered = g
+    if (g) g.seen = true
   }
 
   dropScrap(at: THREE.Vector3) {

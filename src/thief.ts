@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import { HIDES, hideMaterials } from './hide'
+import { YAW as CAM_YAW } from './world'
 import type { Terrain } from './terrain'
 import type { AbilityDef } from './abilities'
 import type { GroundPart } from './loot'
@@ -12,12 +13,17 @@ import {
 } from './enemy'
 
 /**
- * The thief (design/content/SPEC.md §6.1): a small machine that never attacks. It sits
- * in a side room's nest until a part lies on the floor unguarded, runs for it, and
- * carries it off in the birdcage on its back, lit cold: the only cold light on any
- * enemy. Catch it (walk into it, or 12 HP of anything) and the part drops again.
+ * The thief (design/content/SPEC.md §6.1, design/variety/PITCHES.md 6): a small machine
+ * that never attacks. It hides in a barrel in an elite's room; when the elite falls it
+ * bursts out, runs for the drop the elite owed, and carries it off in the birdcage on
+ * its back, lit cold: the only cold light on any enemy. Catch it (walk into it, or 12 HP
+ * of anything) and the part drops again. It only wakes for what he hasn't looked at yet:
+ * an elite's drop or a part never found. A part whose card has shown before it noticed
+ * was turned down; one it's already after, it keeps after.
  *
- *   dormant   in its nest, or walking back to it; not a target
+ *   hidden    in the barrel, cage glinting through the gap; not an enemy yet (Combat holds it apart)
+ *   burst     out of the barrel, a hop, before it runs
+ *   dormant   at its nest, or walking back to it; not a target
  *   fetch     running its own BFS to the nearest unguarded part
  *   wait      the part is guarded: hovering 5-7 u off, watching it
  *   carry     running for the refuge, the allowed room farthest (BFS) from Still
@@ -30,15 +36,14 @@ import {
  * level's floor minus the cells of rooms it may not enter (an asleep pack's, the exit).
  */
 export const THIEF = {
-  /** The owner's call (open question 2): depth 2 only. Never a boss level, never the walk. */
-  depths: [2] as readonly number[],
+  /** Area I and II's plain levels. Never a boss level, never the walk. Certain the first time from depth 2 (G8). */
+  depths: [1, 2, 4, 5] as readonly number[],
   chance: 0.35,
   hp: 12, bodyRadius: 0.35, height: 1.1, labelY: 1.4,
   speed: 6.0,                                  // empty and carrying
   runMs: 2500, listenMs: 800,                  // carrying: a listen pause every 2.5 s of running → average 4.55 u/s
   catchR: 1.1,                                 // centre distance for a tackle while it carries
   guardR: 1.5,                                 // it can't take a part while Still's centre is this close to it
-  noticeMs: 600,                               // after a part lands, before it goes for it
   fleeR: 7,                                    // settled with a part: Still this close makes it run again
   waitRing: [5, 7] as const,                   // where it hovers while a part is guarded
   cageScale: 0.35,
@@ -48,11 +53,17 @@ export const THIEF = {
   reachPart: 0.6, reachRefuge: 0.8, reachHome: 0.3,
   /** INV: never within EXIT_RADIUS + 1 of a beam. */
   beamClear: 2.4,
+  /** The barrel: barrel_large at cover's own scale, so it's one of the room's barrels. Still can't walk through it. */
+  barrelScale: 0.7, barrelR: 0.62,
+  /** The barrel stands at least this far from any of its elite's pack as they sleep. */
+  lairGap: 2.2,
+  /** Out of the barrel: the hop before it runs. */
+  burstMs: 380,
 }
 
-export type ThiefState = 'dormant' | 'fetch' | 'wait' | 'carry' | 'listen' | 'settled' | 'caught'
+export type ThiefState = 'hidden' | 'burst' | 'dormant' | 'fetch' | 'wait' | 'carry' | 'listen' | 'settled' | 'caught'
 export type ThiefEvent =
-  | { kind: 'wake'; e: Thief } | { kind: 'take'; e: Thief; def: AbilityDef } | { kind: 'listen'; e: Thief }
+  | { kind: 'wake'; e: Thief } | { kind: 'burst'; e: Thief } | { kind: 'take'; e: Thief; def: AbilityDef } | { kind: 'listen'; e: Thief }
   | { kind: 'caught'; e: Thief; def: AbilityDef | null; at: THREE.Vector3; how: 'tackle' | 'hp' }
 
 export interface ThiefWorld {
@@ -66,7 +77,12 @@ export interface ThiefWorld {
   rooms: readonly Room[]
   /** The beams' centres (cold, and warm where there is one): it never stands within beamClear of one. */
   beams: readonly THREE.Vector3[]
+  /** The barrel's look (the level's own barrel piece), or null for a thief without one (__spawn). */
+  barrel?: { geometry: THREE.BufferGeometry; material: THREE.Material } | null
 }
+
+/** What it wants: not yet looked at, and either an elite's owed drop or a part never found. */
+export const wanted = (g: GroundPart) => !g.seen && (!!g.owed || g.bare)
 
 /** A rusted shell, the one small rusty thing among them: it lives in the corners. */
 const BODY = HIDES.thief.body
@@ -102,6 +118,8 @@ const DIRS: [number, number][] = [[1, 0], [0, 1], [-1, 0], [0, -1]]
 const STEPS: [number, number][] = [...DIRS, [1, 1], [1, -1], [-1, 1], [-1, -1]]
 const cellOf = (v: number) => Math.round(v / CELL)
 const inRoom = (r: Room, i: number, j: number) => Math.abs(i - r.ci) <= r.rx && Math.abs(j - r.cj) <= r.rz
+/** No room: a thief without one (spawned outside every room) has nowhere of its own. */
+const NOWHERE: Room = { kind: 'side', ci: 1e6, cj: 1e6, rx: 0, rz: 0, center: new THREE.Vector3() }
 
 export class Thief implements Enemy {
   readonly kind = 'thief'
@@ -125,7 +143,7 @@ export class Thief implements Enemy {
   readonly height = THIEF.height
   rime = 0
   air = 0
-  state: ThiefState = 'dormant'
+  state: ThiefState
   /** INV: only ever a def that was on loot.ground this level. */
   carrying: AbilityDef | null = null
   get walking() { return this.stepping > 0.3 }
@@ -143,8 +161,8 @@ export class Thief implements Enemy {
   private hoverT = 0
   /** The part it's after. */
   private goal: GroundPart | null = null
-  /** How long each part has lain landed, ms, as it has seen them. */
-  private readonly landed = new Map<GroundPart, number>()
+  /** The elite's pack it hides beside: that pack's owed drop brings it out. */
+  private readonly lair: object | null
   private woke = false
   private readonly pending: ThiefEvent[] = []
   private facing = 0
@@ -175,11 +193,21 @@ export class Thief implements Enemy {
   private readonly coldMat = new THREE.MeshBasicMaterial({ color: CAGED, fog: false })
   private readonly halo: THREE.Sprite
   private caged: THREE.Object3D | null = null
+  /** The barrel (in tellGroup: its geometry and material are the level's, never disposed) and the cold glint in its gap. */
+  private readonly barrel = new THREE.Group()
+  private readonly glint: THREE.Sprite | null = null
+  /** The lid's own disc (its geometry is ours; the wood is the level's). */
+  private readonly lid: THREE.Mesh | null = null
+  /** Burst: 0..1 through the hop. */
+  private hop = 0
 
-  constructor(x: number, z: number, nest: THREE.Vector3, private readonly world: ThiefWorld) {
+  /** `lair`: the elite's pack it hides beside, in a barrel. Without one (or without a barrel look) it sits in the open. */
+  constructor(x: number, z: number, nest: THREE.Vector3, private readonly world: ThiefWorld, lair: object | null = null) {
     this.pos.set(x, 0, z)
     this.nest = nest.clone()
     this.home = world.rooms.find((r) => inRoom(r, cellOf(nest.x), cellOf(nest.z))) ?? null
+    this.lair = lair
+    this.state = lair && world.barrel ? 'hidden' : 'dormant'
     const hide = hideMaterials('thief')
     this.mat = hide.mat
     this.jointMat = hide.jointMat
@@ -228,8 +256,44 @@ export class Thief implements Enemy {
     this.cage.add(base, cap, hook, this.holder, this.halo)
     this.body.add(this.cage)
     this.group.add(this.body)
+
+    // the barrel: one of the room's own, its lid pushed up off one side, and the empty cage glinting cold in the gap
+    if (this.state === 'hidden' && world.barrel) {
+      const g = world.barrel.geometry
+      if (!g.boundingBox) g.computeBoundingBox()
+      const bb = g.boundingBox!
+      const k = THIEF.barrelScale
+      const top = bb.max.y * k
+      const rTop = Math.min(bb.max.x - bb.min.x, bb.max.z - bb.min.z) * 0.5 * k * 0.86
+      const b = new THREE.Mesh(g, world.barrel.material)
+      b.scale.setScalar(k)
+      // the lid: a disc of the same wood, hinged on the far rim and lifted on the near one
+      const hinge = new THREE.Group()
+      hinge.position.set(0, top + 0.01, -rTop)
+      hinge.rotation.x = 0.3
+      const lid = new THREE.Mesh(new THREE.CylinderGeometry(rTop, rTop, 0.07, 18), world.barrel.material)
+      lid.position.set(0, 0.035, rTop)
+      hinge.add(lid)
+      this.lid = lid
+      this.barrel.add(b, hinge)
+      this.glint = new THREE.Sprite(new THREE.SpriteMaterial({
+        map: coldHaloTexture(), color: CAGED, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, fog: false,
+      }))
+      // a sliver of cold light along the lifted edge, the width of the gap
+      this.glint.scale.set(rTop * 1.9, 0.16, 1)
+      this.glint.position.set(0, top + 0.06, rTop * 0.92)
+      this.barrel.add(this.glint)
+      this.barrel.position.set(x, 0, z)
+      // the gap turns to the camera, so the glint is seen, never lidded
+      this.barrel.rotation.y = CAM_YAW
+      if (this.home) this.facing = Math.atan2(this.home.center.x - x, this.home.center.z - z)
+      this.tellGroup.add(this.barrel)
+    }
     this.present(0)
   }
+
+  /** In its barrel: not an enemy yet. */
+  get hidden() { return this.state === 'hidden' }
 
   /** Any damage counts. At 0 it's caught, and a carried part drops (Combat's event). */
   hit(damage: number): boolean {
@@ -268,11 +332,7 @@ export class Thief implements Enemy {
     const still = this.world.still
     const dStill = Math.hypot(still.x - this.pos.x, still.z - this.pos.z)
     const staggered = slide(this.pos, this.knock, dt)
-
-    // what's on the floor, and how long it's lain there
     const ground = this.world.ground()
-    for (const g of [...this.landed.keys()]) if (!ground.includes(g)) this.landed.delete(g)
-    for (const g of ground) if (g.fly <= 0) this.landed.set(g, (this.landed.get(g) ?? 0) + ms)
 
     // a tackle: while it carries, Still walking into it catches it
     if (this.carrying && dStill <= THIEF.catchR) {
@@ -282,13 +342,37 @@ export class Thief implements Enemy {
 
     const speed = THIEF.speed * this.speedMul
     switch (this.state) {
+      case 'hidden': {
+        // only its own elite's drop (or a never-found part falling in its room) brings it out
+        const g = this.notice((p) => p.owed === this.lair || (p.bare && inRoom(this.home ?? NOWHERE, cellOf(p.from.x), cellOf(p.from.z))))
+        if (!g) break
+        this.goal = g
+        this.state = 'burst'
+        this.timer = THIEF.burstMs
+        this.hop = 0
+        this.pending.push({ kind: 'burst', e: this })
+        this.wake()
+        break
+      }
+      case 'burst': {
+        this.hop = Math.min(1, 1 - this.timer / THIEF.burstMs)
+        const g = this.goal
+        if (g) this.faceTo(g.pos.x, g.pos.z, dt * 2)
+        if (this.timer > 0) break
+        this.hop = 1
+        if (!g || !ground.includes(g)) {
+          this.goal = null
+          this.state = 'dormant'
+          break
+        }
+        this.state = this.guarded(g) ? 'wait' : 'fetch'
+        this.hover = null
+        break
+      }
       case 'dormant': {
         const g = this.notice()
         if (g) {
-          if (!this.woke) {
-            this.woke = true
-            this.pending.push({ kind: 'wake', e: this })
-          }
+          this.wake()
           this.goal = g
           this.state = this.guarded(g) ? 'wait' : 'fetch'
           this.hover = null
@@ -301,6 +385,7 @@ export class Thief implements Enemy {
       }
       case 'fetch': {
         const g = this.goal
+        // once it's after a part it keeps after it, looked at or not: he takes it or loses it
         if (!g || !ground.includes(g)) {
           this.goal = null
           this.state = 'dormant'
@@ -311,7 +396,8 @@ export class Thief implements Enemy {
           this.hover = null
           break
         }
-        if (Math.hypot(g.pos.x - this.pos.x, g.pos.z - this.pos.z) <= THIEF.reachPart) {
+        // it runs for where the part will land, and takes it once it's down
+        if (g.fly <= 0 && Math.hypot(g.pos.x - this.pos.x, g.pos.z - this.pos.z) <= THIEF.reachPart) {
           this.take(g)
           this.startCarry(terrain)
           break
@@ -375,6 +461,13 @@ export class Thief implements Enemy {
     return null
   }
 
+  /** First out: its notebook meet. */
+  private wake() {
+    if (this.woke) return
+    this.woke = true
+    this.pending.push({ kind: 'wake', e: this })
+  }
+
   /** Presentation only, no thinking (in the clamp's throw). */
   idle(dt: number, face: THREE.Vector3) {
     this.bob += dt * 3
@@ -388,6 +481,9 @@ export class Thief implements Enemy {
 
   dispose(scene: THREE.Scene) {
     scene.remove(this.group, this.tellGroup)
+    // the barrel's mesh is the level's piece: only the glint and the lid's disc are ours
+    this.glint?.material.dispose()
+    this.lid?.geometry.dispose()
     // the caged model's geometry is shared with every other copy of the part: only ours goes
     this.uncage()
     this.cage.remove(this.halo)
@@ -398,13 +494,16 @@ export class Thief implements Enemy {
 
   // --- what it does ---
 
-  /** The nearest part it could go for: landed ≥ noticeMs, and reachable by its BFS. Unguarded ones first. */
-  private notice(): GroundPart | null {
+  /**
+   * The nearest part it wants (the moment it falls: an owed drop is the one thing worth
+   * running for mid-fight) that its BFS reaches, by where it lands. Unguarded ones first.
+   */
+  private notice(only?: (g: GroundPart) => boolean): GroundPart | null {
     let best: GroundPart | null = null
     let bestD = Infinity
     let bestFree = false
-    for (const [g, t] of this.landed) {
-      if (t < THIEF.noticeMs) continue
+    for (const g of this.world.ground()) {
+      if (!wanted(g) || (only && !only(g))) continue
       const d = this.pathLength(g.pos.x, g.pos.z)
       if (d === null) continue
       const free = !this.guarded(g)
@@ -423,7 +522,6 @@ export class Thief implements Enemy {
 
   private take(g: GroundPart) {
     const def = this.world.lift(g)
-    this.landed.delete(g)
     this.goal = null
     this.carrying = def
     this.cagePart(def)
@@ -740,12 +838,21 @@ export class Thief implements Enemy {
     this.ear += ((listening ? 1 : 0) - this.ear) * Math.min(1, dt * 12)
     const lit = this.carrying ? 1 : 0
     this.lit += (lit - this.lit) * Math.min(1, dt * 8)
-    const run = this.stepping
-    // a scuttle: diagonal pairs of legs, a fast shallow bob; head up while it listens
+    const hid = this.state === 'hidden'
+    const bursting = this.state === 'burst'
+    this.barrel.visible = hid
+    this.body.visible = !hid
+    if (this.glint) {
+      // the empty cage catches the light in the gap: a low breath, and now and then a brighter glint
+      const catchLight = Math.pow(Math.max(0, Math.sin(this.bob * 0.7)), 12)
+      this.glint.material.opacity = 0.7 + 0.1 * Math.sin(this.bob * 2.1) + 0.2 * catchLight
+    }
+    // out of the barrel: legs going, one hop up and over the staves
+    const run = bursting ? 1 : this.stepping
     this.legs.forEach((l, i) => {
-      l.rotation.x = Math.sin(this.bob * 5.2 + (i === 0 || i === 3 ? 0 : Math.PI)) * 0.55 * run
+      l.rotation.x = Math.sin(this.bob * (bursting ? 9 : 5.2) + (i === 0 || i === 3 ? 0 : Math.PI)) * 0.55 * run
     })
-    this.body.position.y = Math.abs(Math.sin(this.bob * 5.2)) * 0.03 * run
+    this.body.position.y = Math.abs(Math.sin(this.bob * 5.2)) * 0.03 * run + (bursting ? Math.sin(this.hop * Math.PI) * 0.8 : 0)
     this.body.rotation.x = -0.3 * this.ear
     this.cage.rotation.x = 0.15 * this.ear
     // the cage's light breathes a little, like a held lamp

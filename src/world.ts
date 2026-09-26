@@ -6,7 +6,7 @@ import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js'
 
 /** Locked isometric pitch. Q2: the camera never rotates. */
 const PITCH = 38 * (Math.PI / 180)
-const YAW = 45 * (Math.PI / 180)
+export const YAW = 45 * (Math.PI / 180)
 const CAM_DIST = 40
 /** How far the camera is from what it looks at, along its view: where Still stands, in fog terms. */
 export const FOCUS_DEPTH = Math.hypot(CAM_DIST, Math.tan(PITCH) * CAM_DIST)

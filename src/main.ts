@@ -29,7 +29,7 @@ import { createPauseScreen } from './pause'
 import { createOverlay } from './ending'
 import { loadKit, setSurfaces, pieceData, surfaceNow, buildInstanced, PIECES, type Piece } from './kit'
 import { generateCrossroads, dressRoad, labelAlpha, RoadSmoke, ROAD_LABEL, CROSSROADS, type Dressing } from './crossroads'
-import { generateLevel, generateWalkHome, makeTerrain, key, squarePosts, type Box, type Breakable, type Circle, type Level, type Post, type Room, type Shrine } from './dungeon'
+import { generateLevel, generateWalkHome, makeTerrain, key, squarePosts, type Box, type Breakable, type Circle, type Level, type PackSpec, type Post, type Room, type Shrine } from './dungeon'
 import type { Terrain } from './terrain'
 import { Vfx, syncTells, COLD, COLD_DEEP, EMBER, SLAG_DROP } from './vfx'
 import { PartFx } from './partfx'
@@ -1170,7 +1170,8 @@ function maybeDrop(at: THREE.Vector3, kind: Archetype, pack: Pack, wasElite: boo
   const def = wasElite ? rollPart(kind, taken, 'elite', pool()) : fillEmpty(taken) ?? rollPart(kind, taken, 'kill', pool())
   if (!def) return
   pack.dropped = true
-  loot.drop(def, at, still.pos)
+  // an elite's drop is owed: the thief in that pack's barrel runs for it
+  loot.drop(def, at, still.pos, wasElite ? pack : undefined)
   sfx.drop(def.tier, panOf(at))
 }
 
@@ -1813,14 +1814,16 @@ function enterLevel(depth: number, o: { seed?: number; bossFelled?: boolean; res
   run.bossFelled = !!o.bossFelled
   run.bossLoot = []
   const place = lookAt(depth, routeNow(), flag('engine'))
-  level = generateLevel(depth, run.seed, { boss: bossHere(depth), place })
+  // the thief's first meeting is certain (G8): its page unmet
+  level = generateLevel(depth, run.seed, { boss: bossHere(depth), place, thiefFirst: !save.notebook[THIEF_PAGE] })
   world.scene.add(level.group)
   combat.terrain = level.terrain
   loot.terrain = level.terrain
   // the Line's own bodies and looks arrive in stage B: until then a Sleepers' brood sleeps as any brood does
+  const packOfSpec = new Map<PackSpec, Pack>()
   for (const p of level.packs) {
     const members = p.members.map((m) => ({ ...m, variant: m.variant === 'lobber' ? ('lobber' as const) : undefined }))
-    combat.addPack(members, p.room.kind === 'side', p.elite, p.look === 'heap' ? 'heap' : undefined)
+    packOfSpec.set(p, combat.addPack(members, p.room.kind === 'side', p.elite, p.look === 'heap' ? 'heap' : undefined))
   }
   combat.breakables = level.breakables
   // the Line's trains (design/area3/SPEC.md §5): their clock starts with the level
@@ -1830,9 +1833,10 @@ function enterLevel(depth: number, o: { seed?: number; bossFelled?: boolean; res
   }
   const boss = bossHere(depth)
   if (level.boss && boss && !run.bossFelled) combat.addBoss(level.boss.x, level.boss.z, level.boss.face, boss, level.posts)
-  // G8: a thief in its nest, with no pack (it never spawns carrying)
+  // G8: a thief in a barrel in its elite's room, with no pack (it never spawns carrying)
   arenaFloor = null
-  lastThief = level.thief ? combat.addThief(new Thief(level.thief.nest.x, level.thief.nest.z, level.thief.nest, thiefWorld())) : null
+  const lt = level.thief
+  lastThief = lt ? combat.addThief(new Thief(lt.nest.x, lt.nest.z, lt.nest, thiefWorld(), packOfSpec.get(lt.pack) ?? null)) : null
   thiefChimeT = 0
   // a felled boss is never fought again: its beams are open, as they were when it fell, and a tower stands as its husk
   if (run.bossFelled) {
@@ -3178,6 +3182,7 @@ function thiefWorld(): ThiefWorld {
     lift: (g) => loot.lift(g),
     still: still.pos,
     floor, rooms, beams,
+    barrel: pieceData('barrel_large'),
     // no asleep pack in it (by where its members sleep), and never the exit room
     allowedRooms: () => rooms.filter((r) => r.kind !== 'exit' && !combat.packs.some((p) =>
       p.state === 'asleep' && p.members.some((m) => { const h = p.homes.get(m); return !!h && inside(r, h.x, h.z) }))),
@@ -3209,6 +3214,17 @@ function thiefEvent(ev: ThiefEvent) {
       vfx.flash(at3(at, 0.85), COLD_DEEP, 0.4)
       thiefChimeT = 0.25
       break
+    case 'burst': {
+      // the barrel comes apart like any barrel, and the little body is up and over the staves, cage glinting
+      combat.burst(at, 0xb89a7a)
+      sfx.smash(pan)
+      vfx.chunks(at3(at, 0.6), 14, WOOD, 4.5, 0.16)
+      vfx.dust(at, 10, 0.7, new THREE.Color(0x6a5a48))
+      vfx.sparks(at3(at, 0.9), COLD, 6, 2.5)
+      sfx.thiefChime(pan)
+      shake = Math.max(shake, 0.12)
+      break
+    }
     case 'listen':
       break
     case 'caught': {
@@ -3441,8 +3457,8 @@ function devTick() {
 }
 
 /** DEV: a level on a road, generated for a check and thrown away (the Arbiter's switch as shipped, the Engine's as flagged). */
-function genFor(depth: number, seed: number, route: RouteId) {
-  return generateLevel(depth, seed, { boss: bossFor(depth, ARBITER_AT_6, route, flag('engine')), place: lookAt(depth, route, flag('engine')) })
+function genFor(depth: number, seed: number, route: RouteId, thiefFirst = false) {
+  return generateLevel(depth, seed, { boss: bossFor(depth, ARBITER_AT_6, route, flag('engine')), place: lookAt(depth, route, flag('engine')), thiefFirst })
 }
 
 if (import.meta.env.DEV) {
@@ -3486,8 +3502,8 @@ if (import.meta.env.DEV) {
      * p = the room's progress), the tall beyond (hides: its shadow falls on floor), the floor
      * pieces, and the packs as __gen has them with their slag cores and look.
      */
-    __genLook: (depth: number, seed: number, route: RouteId = 'II') => {
-      const l = genFor(depth, seed, route)
+    __genLook: (depth: number, seed: number, route: RouteId = 'II', thiefFirst = false) => {
+      const l = genFor(depth, seed, route, thiefFirst)
       const out = {
         place: l.place, props: l.made.props, tall: l.made.tall, floors: l.made.floors,
         rooms: l.rooms.map((r) => ({ kind: r.kind, rx: r.rx, rz: r.rz, p: l.progressOf(r) })),
@@ -3498,7 +3514,7 @@ if (import.meta.env.DEV) {
         })),
         edge: l.made.edge,
         far: l.made.far,
-        thief: l.thief ? { x: l.thief.nest.x, z: l.thief.nest.z } : null,
+        thief: l.thief ? { x: l.thief.nest.x, z: l.thief.nest.z, room: l.rooms.indexOf(l.thief.room), pack: l.packs.indexOf(l.thief.pack) } : null,
       }
       l.dispose()
       return out
@@ -3642,7 +3658,7 @@ if (import.meta.env.DEV) {
     /** The Arbiter's state for checks (null for any other boss). */
     /** The thief, while there is one: its state, where it is, what it carries, its nest. */
     __thief: () => {
-      const t = lastThief && (combat.enemies.includes(lastThief) || lastThief.state === 'caught') ? lastThief : null
+      const t = lastThief && (combat.enemies.includes(lastThief) || combat.nests.includes(lastThief) || lastThief.state === 'caught') ? lastThief : null
       return t ? { state: t.state, x: t.pos.x, z: t.pos.z, carrying: t.carrying?.id ?? null, nest: { x: t.nest.x, z: t.nest.z } } : null
     },
     __boss: () => {
@@ -3892,9 +3908,9 @@ if (import.meta.env.DEV) {
       }
       return { ids, unfound, got }
     },
-    /** A part on the floor exactly at (x, z), flying in from just beside it. */
-    __dropAt: (id: string, x: number, z: number) => {
-      loot.drop(byId(id), new THREE.Vector3(x + 0.6, 0, z))
+    /** A part on the floor exactly at (x, z), flying in from just beside it. `owed`: as an elite's drop (a thief wants it). */
+    __dropAt: (id: string, x: number, z: number, owed = false) => {
+      loot.drop(byId(id), new THREE.Vector3(x + 0.6, 0, z), undefined, owed ? {} : undefined)
       loot.ground[loot.ground.length - 1]!.pos.set(x, 0, z)
     },
     /** The pickup card's take. */
