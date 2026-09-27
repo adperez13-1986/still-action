@@ -22,6 +22,7 @@ import { HIDES, debrisColor } from './hide'
 import { Mite, BROOD, type Brood } from './swarm'
 import * as sfx from './audio'
 import * as playlog from './playlog'
+import { createFieldMap } from './fieldmap'
 import { HandRing } from './handring'
 import { Sightline } from './sightline'
 import { createCameraRig } from './camera'
@@ -75,6 +76,23 @@ const devParam = (k: string): string | null => (import.meta.env.DEV ? params.get
 const ROUTE_PARAM: RouteId | null = devParam('route') === 'III' ? 'III' : devParam('route') === 'II' ? 'II' : null
 /** `?crossroads=1` (DEV): the crossroads after the Assembler, whatever the switch and the save say. */
 const CROSSROADS_PARAM = devParam('crossroads') === '1'
+/**
+ * The open field prototype (27 Sep): `?open` once turns it on for this device, `?open=0` off, like
+ * `?owner`, so the installed app keeps it. On, depth 1 is an open field instead of rooms.
+ */
+const OPEN_KEY = 'still-action.open'
+const OPEN_FIELD = (() => {
+  try {
+    if (params.has('open')) {
+      if (params.get('open') === '0') localStorage.removeItem(OPEN_KEY)
+      else localStorage.setItem(OPEN_KEY, '1')
+    }
+    return localStorage.getItem(OPEN_KEY) === '1'
+  } catch {
+    return false
+  }
+})()
+const OPEN_DEPTHS: readonly number[] = [1]
 
 /**
  * The save. A dev run (?depth=) reads it and never writes, so tuning at the boss
@@ -1963,7 +1981,7 @@ function enterLevel(depth: number, o: { seed?: number; bossFelled?: boolean; res
   run.bossLoot = []
   const place = lookAt(depth, routeNow(), flag('engine'))
   // the thief's first meeting is certain (G8): its page unmet
-  level = generateLevel(depth, run.seed, { boss: bossHere(depth), place, thiefFirst: !save.notebook[THIEF_PAGE] })
+  level = generateLevel(depth, run.seed, { boss: bossHere(depth), place, thiefFirst: !save.notebook[THIEF_PAGE], open: OPEN_FIELD && OPEN_DEPTHS.includes(depth) })
   world.scene.add(level.group)
   combat.terrain = level.terrain
   loot.terrain = level.terrain
@@ -2093,6 +2111,50 @@ function savePlaytest() {
   }
   if (owner) playlog.keep(body)
   if (import.meta.env.DEV) void fetch('/__save/playtest', { method: 'POST', body: JSON.stringify(body) }).catch(() => {})
+}
+
+/** The open field's map: filled in as he walks, drawn on the pause screen. */
+const fieldMap = createFieldMap()
+function openMap() {
+  if (!level) return
+  const w = Math.min(window.innerWidth - 48, 760)
+  const h = Math.min(window.innerHeight - 150, 420)
+  pause.map(fieldMap.draw(level, still.pos, w, h), () => pause.loadout(hud.slots, resume))
+}
+pause.setAction(() => 'map', openMap, () => !!level?.open)
+
+/**
+ * The open field's exit, when it's off screen: a faint cold chevron circling Still, pointing to it
+ * (on the screen's edge it sat under the buttons). On screen the beam speaks for itself and it goes.
+ */
+const exitMark = document.createElement('div')
+exitMark.className = 'exitmark'
+hudRoot.appendChild(exitMark)
+const markAt = new THREE.Vector3()
+function updateExitMark() {
+  const on = !!level?.open && level.exitOpen && run.phase === 'crawl' && !paused
+  if (!on) {
+    exitMark.classList.remove('show')
+    return
+  }
+  markAt.set(level!.exit.x, 1, level!.exit.z).project(world.camera)
+  let x = markAt.x
+  let y = markAt.y
+  // behind the camera the projection flips: point the other way
+  if (markAt.z > 1) { x = -x; y = -y }
+  if (Math.abs(x) <= 0.95 && Math.abs(y) <= 0.92 && markAt.z <= 1) {
+    exitMark.classList.remove('show')
+    return
+  }
+  // the direction on screen from Still to the exit, and the chevron that far out from him
+  const w = window.innerWidth, h = window.innerHeight
+  markAt.set(still.pos.x, 1, still.pos.z).project(world.camera)
+  const sx = ((markAt.x + 1) / 2) * w, sy = ((1 - markAt.y) / 2) * h
+  const ex = ((x + 1) / 2) * w, ey = ((1 - y) / 2) * h
+  const a = Math.atan2(ey - sy, ex - sx)
+  const r = Math.min(w, h) * 0.2
+  exitMark.style.transform = `translate(${sx + Math.cos(a) * r}px, ${sy + Math.sin(a) * r}px) rotate(${a}rad)`
+  exitMark.classList.add('show')
 }
 
 /** This device keeps its own playtest log (playlog.ts): set by `?owner`, kept per device. */
@@ -2973,6 +3035,7 @@ function simulate(realDt: number) {
   if (run.phase === 'crawl') {
     const st = run.stats[run.stats.length - 1]
     if (st) st.playS = (st.playS ?? 0) + realDt
+    if (level?.open) fieldMap.reveal(level, still.pos)
   } else if (run.phase === 'homing' || run.phase === 'toWalk' || run.phase === 'walkHome') run.walkS += realDt
 
   if (run.phase === 'homing') {
@@ -3569,6 +3632,7 @@ function frame(nowMs: number) {
     world.camera.position.y += (Math.random() - 0.5) * k
   }
   world.camera.lookAt(camTarget)
+  updateExitMark()
 
   updateAmbience(home ? 'workshop' : moodNow())
   const bossAwake = !!combat.boss && !combat.boss.dead && awake.includes(combat.boss)

@@ -186,6 +186,10 @@ export interface Level {
   roads?: { route: RouteId; at: THREE.Vector3; label: string }[]
   /** The crossroads: no lean, no banner, no packs. */
   crossroads?: true
+  /** The open field (prototype, `?open`): the map and the exit's edge marker are for it. */
+  open?: true
+  /** The open field's path cells, the way through (the map draws them lighter). */
+  path?: ReadonlySet<string>
   /** The Line (design/area3/SPEC.md §2.7): its live lanes and its dead sidings, when the place has them. */
   lanes?: LaneDef[]
   sidings?: SidingDef[]
@@ -243,8 +247,8 @@ function nearEdge(floor: ReadonlySet<string>, x: number, z: number) {
  * G1: how far along the level each room is. Spine rooms by their index; a side room
  * takes the spine room whose centre is nearest (ties to the lower index). No rand().
  */
-function progressMap(rooms: Room[], boss: boolean) {
-  const spine = boss ? rooms.slice(0, 2) : rooms.slice(0, MAIN_ROOMS)
+function progressMap(rooms: Room[], spineCount: number) {
+  const spine = rooms.slice(0, spineCount)
   const of = new Map<Room, number>()
   spine.forEach((r, i) => of.set(r, i / Math.max(1, spine.length - 1)))
   for (const r of rooms) {
@@ -290,6 +294,10 @@ interface Layout {
   floor: Set<string>
   rooms: Room[]
   corridors: Set<string>
+  /** How many rooms, from the first, make the spine (entrance to exit). Absent: MAIN_ROOMS. */
+  spine?: number
+  /** The open field only: its path's cells, the way through (kept clear of field cover). */
+  path?: Set<string>
 }
 
 function roomCells(ci: number, cj: number, rx: number, rz: number): [number, number][] {
@@ -401,6 +409,184 @@ function generateLayout(rand: () => number, sideRooms: number, hallShare = 0.25,
     return layout
   }
   throw new Error('dungeon layout failed')
+}
+
+/**
+ * The open field (prototype, `?open`; his ask, 27 Sep: "something like D2 where it is a really big
+ * area"). A wide ragged band along a wandering path, not rooms and corridors: the path is the
+ * way through (drawn in the corridor floor), clearings along it hold the packs, and pockets off
+ * its sides are the side rooms. Rooms here are logical, never walled: the floor is one piece.
+ */
+export const OPEN = {
+  /** Legs of the path, and each leg's length in cells. */
+  legs: 7,
+  legLen: [5, 7] as [number, number],
+  /** How far the path may drift sideways per leg, and in all, in cells. */
+  wander: 2.5,
+  drift: 6,
+  /** The band's half-width round the path, in cells, per waypoint (the edge is roughened on top). */
+  halfW: [3.5, 6.5] as [number, number],
+  rough: 1.8,
+  /** Pack clearings along the path (5x5 cells), and pockets off its sides (3x3). */
+  clearings: 9,
+  pockets: 5,
+}
+
+function generateOpenLayout(rand: () => number): Layout {
+  const h = Math.floor(rand() * 4)
+  const [fx, fz] = DIRS[h]!
+  const [lx, lz] = DIRS[(h + 1) % 4]!
+  // the waypoints, in cells: onward along the heading, drifting sideways
+  const way: [number, number][] = [[0, 0]]
+  const halfW: number[] = [OPEN.halfW[0]]
+  let along = 0
+  let lat = 0
+  for (let k = 1; k <= OPEN.legs; k++) {
+    along += OPEN.legLen[0] + rand() * (OPEN.legLen[1] - OPEN.legLen[0])
+    lat = Math.max(-OPEN.drift, Math.min(OPEN.drift, lat + (rand() * 2 - 1) * OPEN.wander * 2))
+    way.push([fx * along + lx * lat, fz * along + lz * lat])
+    // the ends stay narrower: you arrive and leave through them
+    halfW.push(k === OPEN.legs ? OPEN.halfW[0] : OPEN.halfW[0] + rand() * (OPEN.halfW[1] - OPEN.halfW[0]))
+  }
+  const segLen = way.slice(1).map((w, k) => Math.hypot(w[0] - way[k]![0], w[1] - way[k]![1]))
+  const total = segLen.reduce((a, b) => a + b, 0)
+  /** The path's point at t (0..1 along its length), its half-width there, and its sideways normal. */
+  const at = (t: number) => {
+    let d = t * total
+    for (let k = 0; k < segLen.length; k++) {
+      if (d <= segLen[k]! || k === segLen.length - 1) {
+        const u = Math.min(1, d / segLen[k]!)
+        const a = way[k]!, b = way[k + 1]!
+        const len = segLen[k]!
+        return {
+          x: a[0] + (b[0] - a[0]) * u, z: a[1] + (b[1] - a[1]) * u,
+          w: halfW[k]! + (halfW[k + 1]! - halfW[k]!) * u,
+          nx: -(b[1] - a[1]) / len, nz: (b[0] - a[0]) / len,
+        }
+      }
+      d -= segLen[k]!
+    }
+    return { x: 0, z: 0, w: OPEN.halfW[0], nx: lx, nz: lz }
+  }
+  // the path itself, 4-connected, sampled finely
+  const path = new Set<string>()
+  let last: [number, number] | null = null
+  for (let s = 0; s <= total * 4; s++) {
+    const p = at(s / (total * 4))
+    const c: [number, number] = [Math.round(p.x), Math.round(p.z)]
+    if (last && (c[0] !== last[0] || c[1] !== last[1])) {
+      // a diagonal step gets its corner, so the path never cuts between two cells
+      if (c[0] !== last[0] && c[1] !== last[1]) {
+        const k = key(c[0], last[1])
+        path.add(k)
+      }
+    }
+    path.add(key(c[0], c[1]))
+    last = c
+  }
+  // value noise every 3 cells roughens the band's edge
+  const lattice = new Map<string, number>()
+  const node = (i: number, j: number) => {
+    const k = key(i, j)
+    let v = lattice.get(k)
+    if (v === undefined) { v = rand() * 2 - 1; lattice.set(k, v) }
+    return v
+  }
+  const noise = (i: number, j: number) => {
+    const gi = Math.floor(i / 3), gj = Math.floor(j / 3)
+    const u = i / 3 - gi, v = j / 3 - gj
+    const a = node(gi, gj) + (node(gi + 1, gj) - node(gi, gj)) * u
+    const b = node(gi, gj + 1) + (node(gi + 1, gj + 1) - node(gi, gj + 1)) * u
+    return a + (b - a) * v
+  }
+  /** Distance (cells) from (i, j) to the path, and the half-width at its nearest point. */
+  const near = (i: number, j: number) => {
+    let best = Infinity
+    let w = OPEN.halfW[0]
+    for (let k = 0; k < segLen.length; k++) {
+      const a = way[k]!, b = way[k + 1]!
+      const len = segLen[k]!
+      const u = Math.max(0, Math.min(1, ((i - a[0]) * (b[0] - a[0]) + (j - a[1]) * (b[1] - a[1])) / (len * len)))
+      const d = Math.hypot(i - (a[0] + (b[0] - a[0]) * u), j - (a[1] + (b[1] - a[1]) * u))
+      if (d < best) {
+        best = d
+        w = halfW[k]! + (halfW[k + 1]! - halfW[k]!) * u
+      }
+    }
+    return { d: best, w }
+  }
+  let minI = Infinity, maxI = -Infinity, minJ = Infinity, maxJ = -Infinity
+  for (const [i, j] of way) {
+    minI = Math.min(minI, i); maxI = Math.max(maxI, i); minJ = Math.min(minJ, j); maxJ = Math.max(maxJ, j)
+  }
+  const pad = Math.ceil(OPEN.halfW[1] + OPEN.rough + 5)
+  let floor = new Set<string>()
+  for (let i = Math.floor(minI) - pad; i <= Math.ceil(maxI) + pad; i++) {
+    for (let j = Math.floor(minJ) - pad; j <= Math.ceil(maxJ) + pad; j++) {
+      const n = near(i, j)
+      if (n.d <= n.w + noise(i, j) * OPEN.rough) floor.add(key(i, j))
+    }
+  }
+
+  const rooms: Room[] = []
+  const room = (kind: RoomKind, ci: number, cj: number, r: number): Room => {
+    const rm: Room = { kind, ci, cj, rx: r, rz: r, center: new THREE.Vector3(ci * CELL, 0, cj * CELL) }
+    rooms.push(rm)
+    return rm
+  }
+  // the spine: the entrance, clearings along the path (a cell or two off it, alternating sides), the exit
+  room('entrance', 0, 0, 1)
+  let side = rand() < 0.5 ? 1 : -1
+  for (let n = 1; n <= OPEN.clearings; n++) {
+    const p = at(n / (OPEN.clearings + 1))
+    const off = 1 + rand() * 1.2
+    room('main', Math.round(p.x + p.nx * off * side), Math.round(p.z + p.nz * off * side), 2)
+    if (rand() < 0.7) side = -side
+  }
+  const end = way[way.length - 1]!
+  room('exit', Math.round(end[0]), Math.round(end[1]), 1)
+  // pockets: off the band's sides, a short way out, joined by a neck
+  const necks: [number, number][] = []
+  for (let n = 0; n < OPEN.pockets; n++) {
+    const p = at(0.15 + (n + rand() * 0.8) * (0.7 / OPEN.pockets))
+    const sd = rand() < 0.5 ? 1 : -1
+    const out = p.w + 2.5
+    const ci = Math.round(p.x + p.nx * out * sd)
+    const cj = Math.round(p.z + p.nz * out * sd)
+    room('side', ci, cj, 1)
+    for (let s = 0; s <= out; s += 0.5) necks.push([Math.round(p.x + p.nx * s * sd), Math.round(p.z + p.nz * s * sd)])
+  }
+  const kept = new Set<string>([...path])
+  for (const rm of rooms) for (const [i, j] of roomCells(rm.ci, rm.cj, rm.rx, rm.rz)) kept.add(key(i, j))
+  for (const [i, j] of necks) { kept.add(key(i, j)); kept.add(key(i + 1, j)); kept.add(key(i, j + 1)) }
+  for (const k of kept) floor.add(k)
+
+  // two passes of smoothing: spurs go, notches fill (the path, rooms and necks stay)
+  for (let pass = 0; pass < 2; pass++) {
+    const next = new Set(floor)
+    for (let i = Math.floor(minI) - pad - 3; i <= Math.ceil(maxI) + pad + 3; i++) {
+      for (let j = Math.floor(minJ) - pad - 3; j <= Math.ceil(maxJ) + pad + 3; j++) {
+        const k = key(i, j)
+        let n8 = 0
+        for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) if ((a || b) && floor.has(key(i + a, j + b))) n8++
+        if (floor.has(k) && n8 <= 2 && !kept.has(k)) next.delete(k)
+        else if (!floor.has(k) && n8 >= 6) next.add(k)
+      }
+    }
+    floor = next
+  }
+  // one piece: whatever the entrance can't reach goes
+  const reach = new Set<string>([key(0, 0)])
+  const queue: [number, number][] = [[0, 0]]
+  while (queue.length) {
+    const [i, j] = queue.pop()!
+    for (const [dx, dz] of DIRS) {
+      const k = key(i + dx, j + dz)
+      if (floor.has(k) && !reach.has(k)) { reach.add(k); queue.push([i + dx, j + dz]) }
+    }
+  }
+  // the spine first (entrance, clearings, exit), then the pockets, as progressMap reads them
+  return { floor: reach, rooms, corridors: new Set([...path].filter((k) => reach.has(k))), spine: OPEN.clearings + 2, path }
 }
 
 // --- terrain ----------------------------------------------------------------
@@ -948,15 +1134,18 @@ export const pickFloor = (table: [Piece, number][], roll: number): Piece => (tab
  * INV: the ruin builds exactly what this built before places existed, rand() for rand().
  */
 export function generateLevel(
-  depth: number, seed = Math.floor(Math.random() * 1e9), opts: { boss?: BossDef | null; place?: PlaceDef; bossFelled?: boolean; thiefFirst?: boolean } = {},
+  depth: number, seed = Math.floor(Math.random() * 1e9),
+  opts: { boss?: BossDef | null; place?: PlaceDef; bossFelled?: boolean; thiefFirst?: boolean; open?: boolean } = {},
 ): Level {
   const place = opts.place ?? lookAt(depth)
   const kit = place.kit
   const gen = place.gen
   const rand = rng(seed)
-  const layout = opts.boss ? generateBossLayout(rand) : generateLayout(rand, 2 + Math.floor(rand() * 2), gen.hallShare, gen.line ? RAIL_CELLS : 1)
+  // the open field is a crawl depth's alternative, never a boss's, never the Line's
+  const open = !!opts.open && !opts.boss && !gen.line
+  const layout = opts.boss ? generateBossLayout(rand) : open ? generateOpenLayout(rand) : generateLayout(rand, 2 + Math.floor(rand() * 2), gen.hallShare, gen.line ? RAIL_CELLS : 1)
   const { floor } = layout
-  const progress = progressMap(layout.rooms, !!opts.boss)
+  const progress = progressMap(layout.rooms, opts.boss ? 2 : layout.spine ?? MAIN_ROOMS)
   const made: LevelMade = { props: [], tall: [], floors: [], edge: [], far: [] }
   // G-L2..G-L5: the Line's rails, from their own stream (a boss level has none: the roundhouse is stage C)
   const line = gen.line && !opts.boss ? layLine(layout, progress.of, gen.line, depth, seed) : null
@@ -979,6 +1168,11 @@ export function generateLevel(
     for (let b = bands.length - 1; b >= 0; b--) if (bands[b]!.from <= p) return bands[b]!.room
     return bands[0]!.room
   }
+  // the open field: the path is a road in the corridor's first floor (the ruin's dirt), and the field
+  // round it never uses that floor, so the way through reads at a glance
+  const roadPiece = kit.floorCorridor[0]![0]
+  const road: [Piece, number][] = [[roadPiece, 1]]
+  const fieldFloor = kit.floorRoom.filter(([pc]) => pc !== roadPiece)
   const square = opts.boss?.arena === 'square' ? layout.rooms.find((r) => r.kind === 'exit')! : null
   const inSquare = (i: number, j: number) => !!square && Math.abs(i - square.ci) <= square.rx && Math.abs(j - square.cj) <= square.rz
   for (const [i, j] of cells) {
@@ -986,7 +1180,9 @@ export function generateLevel(
     const roll = rand()
     const p = progress.cell(i, j)
     // the square is paved: flags, some broken
-    const piece = pickFloor(corridor ? kit.floorCorridor : inSquare(i, j) ? SQUARE.floor : roomTable(p), roll)
+    const piece = open
+      ? pickFloor(corridor ? road : fieldFloor.length ? fieldFloor : kit.floorRoom, roll)
+      : pickFloor(corridor ? kit.floorCorridor : inSquare(i, j) ? SQUARE.floor : roomTable(p), roll)
     placements.push({ piece, x: i * CELL, z: j * CELL, rotY: quarter() })
     made.floors.push({ piece, p, corridor })
   }
@@ -1037,6 +1233,75 @@ export function generateLevel(
         placements.push({ piece, x, z, rotY, scale })
       }
       made.props.push({ piece, x, z, top: pieceData(piece).height * scale, p, breakable: BREAKABLE.has(piece), intact, room: layout.rooms.indexOf(room) })
+    }
+  }
+
+  // --- the open field: ruined wall stubs to fight round, and props scattered off the path ---
+  if (open && layout.path) {
+    const path = layout.path
+    const inRoom = (i: number, j: number) => layout.rooms.some((r) => Math.abs(i - r.ci) <= r.rx && Math.abs(j - r.cj) <= r.rz)
+    const offPath = (i: number, j: number, cellsAway: number) => {
+      for (let a = -cellsAway; a <= cellsAway; a++) for (let b = -cellsAway; b <= cellsAway; b++) if (path.has(key(i + a, j + b))) return false
+      return true
+    }
+    const open4 = (i: number, j: number) => DIRS.every(([dx, dz]) => floor.has(key(i + dx, j + dz)))
+    // stubs: a run of one or two barrier lengths on a cell edge, a column at each end; never in a
+    // clearing, never within a cell of the path, and only with floor round both sides
+    const field = cells.filter(([i, j]) => !inRoom(i, j) && offPath(i, j, 1) && open4(i, j))
+    const stubs = Math.round(field.length / 28)
+    const hh = CELL / 2
+    for (let n = 0; n < stubs && field.length; n++) {
+      const [i, j] = field[Math.floor(rand() * field.length)]!
+      const alongX = rand() < 0.5
+      const len = 1 + (rand() < 0.45 ? 1 : 0)
+      const run: [number, number][] = []
+      for (let k = 0; k < len; k++) run.push(alongX ? [i + k, j] : [i, j + k])
+      if (!run.every(([a, b]) => floor.has(key(a, b)) && floor.has(alongX ? key(a, b + 1) : key(a + 1, b)) && !inRoom(a, b) && offPath(a, b, 1))) continue
+      for (const [a, b] of run) {
+        if (alongX) {
+          const x = a * CELL, z = b * CELL + hh
+          placements.push({ piece: kit.wall, x, z })
+          boxes.push({ minX: x - hh, maxX: x + hh, minZ: z - WALL_HALF, maxZ: z + WALL_HALF })
+        } else {
+          const x = a * CELL + hh, z = b * CELL
+          placements.push({ piece: kit.wall, x, z, rotY: Math.PI / 2 })
+          boxes.push({ minX: x - WALL_HALF, maxX: x + WALL_HALF, minZ: z - hh, maxZ: z + hh })
+        }
+      }
+      const [a0, b0] = run[0]!
+      const ends: [number, number][] = alongX
+        ? [[a0 * CELL - hh, b0 * CELL + hh], [(a0 + len) * CELL - hh, b0 * CELL + hh]]
+        : [[a0 * CELL + hh, b0 * CELL - hh], [a0 * CELL + hh, (b0 + len) * CELL - hh]]
+      for (const [x, z] of ends) {
+        placements.push({ piece: kit.column, x, z })
+        circles.push({ x, z, r: COLUMN_R })
+      }
+    }
+    // props: about one in eight field cells, off the path and clear of the edges
+    const used: [number, number][] = []
+    for (const [i, j] of cells) {
+      if (inRoom(i, j) || !offPath(i, j, 0) || rand() >= 0.12) continue
+      const x = i * CELL + (rand() * 2 - 1) * 1.2
+      const z = j * CELL + (rand() * 2 - 1) * 1.2
+      if (nearEdge(floor, x, z) || used.some(([ux, uz]) => Math.hypot(ux - x, uz - z) < gen.coverGap)) continue
+      if (boxes.some((b) => x > b.minX - 1.2 && x < b.maxX + 1.2 && z > b.minZ - 1.2 && z < b.maxZ + 1.2)) continue
+      used.push([x, z])
+      const [piece, want] = pick(PROPS)
+      const scale = Math.min(want, gen.coverMaxH / pieceData(piece).height)
+      const rotY = rand() * Math.PI * 2
+      const circle: Circle = { x, z, r: pieceData(piece).radius * scale * 0.8 }
+      circles.push(circle)
+      if (BREAKABLE.has(piece)) {
+        const { geometry, material } = pieceData(piece)
+        const mesh = new THREE.Mesh(geometry, material)
+        mesh.position.set(x, 0, z)
+        mesh.rotation.y = rotY
+        mesh.scale.setScalar(scale)
+        breakables.push({ mesh, x, z, r: circle.r, circle, broken: false })
+      } else {
+        placements.push({ piece, x, z, rotY, scale })
+      }
+      made.props.push({ piece, x, z, top: pieceData(piece).height * scale, p: progress.cell(i, j), breakable: BREAKABLE.has(piece), intact: false, room: -1 })
     }
   }
 
@@ -1478,6 +1743,8 @@ export function generateLevel(
   return {
     depth,
     place: place.id,
+    open: open || undefined,
+    path: open ? layout.path : undefined,
     floor,
     progressOf: progress.of,
     spineAt: progress.spineAt,

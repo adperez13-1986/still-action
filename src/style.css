@@ -479,3 +479,14 @@ html, body {
   background: #070a0e; color: #7f93a8; font: italic 500 20px/1.4 var(--tender); text-align: center; padding: 30px;
 }
 #rotate.show { display: grid; }
+
+/* the open field's exit off screen: a faint cold chevron on the edge, pointing to it (main places it) */
+.exitmark { position: absolute; left: 0; top: 0; width: 0; height: 0; pointer-events: none; opacity: 0; transition: opacity .4s; z-index: 2; }
+.exitmark.show { opacity: 1; }
+.exitmark::before { content: ''; position: absolute; left: -11px; top: -13px; width: 0; height: 0;
+  border-top: 13px solid transparent; border-bottom: 13px solid transparent; border-left: 22px solid rgba(207, 224, 255, .9);
+  filter: drop-shadow(0 0 8px rgba(143, 184, 232, 1)); animation: exitmark 2.2s ease-in-out infinite; }
+@keyframes exitmark { 0%, 100% { opacity: .7; } 50% { opacity: 1; } }
+/* the open field's map on the pause screen */
+#pause .fieldmap { display: flex; justify-content: center; margin: 4px 0 10px; }
+#pause .fieldmap canvas { border: 1px solid #243140; border-radius: 6px; background: #0a0e14; }

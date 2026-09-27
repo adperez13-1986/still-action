@@ -66,7 +66,7 @@ let describe: (d: AbilityDef) => { name: string; history: string | null } = (d) 
 /** The playtest switches beside resume, as main hands them over: what each is called, and its state. */
 const playSwitches: { label: string; read: () => boolean; write: (on: boolean) => void }[] = []
 /** One-press buttons after the switches (the owner's log export), in the order main gave them. */
-const playActions: { label: () => string; run: () => void }[] = []
+const playActions: { label: () => string; run: () => void; show?: () => boolean }[] = []
 
 function card(d: AbilityDef, tag: string, other?: AbilityDef, conflict?: string | null, fresh = false) {
   const past = describe(d)
@@ -111,8 +111,10 @@ export interface PauseScreen {
   setDescribe: (fn: (d: AbilityDef) => { name: string; history: string | null }) => void
   /** A playtest switch on the loadout screen (the close hand, the eye), added or replaced by label: main reads and writes it. */
   setSwitch: (label: string, read: () => boolean, write: (on: boolean) => void) => void
-  /** A one-press button on the loadout screen after the switches (the owner's log export); `label` is read each time it's shown. */
-  setAction: (label: () => string, run: () => void) => void
+  /** A one-press button on the loadout screen after the switches (the owner's log export, the map); `label` is read each time it's shown, `show` says whether it is. */
+  setAction: (label: () => string, run: () => void, show?: () => boolean) => void
+  /** The open field's map, drawn by main, and back to the loadout. */
+  map: (canvas: HTMLCanvasElement, onBack: () => void) => void
   hide: () => void
 }
 
@@ -170,6 +172,7 @@ export function createPauseScreen(root: HTMLElement): PauseScreen {
         resume.before(btn)
       }
       for (const act of playActions) {
+        if (act.show && !act.show()) continue
         const btn = document.createElement('button')
         btn.type = 'button'
         btn.className = 'rule act'
@@ -228,8 +231,13 @@ export function createPauseScreen(root: HTMLElement): PauseScreen {
       describe = fn
     },
 
-    setAction(label, run) {
-      playActions.push({ label, run })
+    setAction(label, run, show) {
+      playActions.push({ label, run, show })
+    },
+
+    map(canvas, onBack) {
+      show(`<h2>Map</h2><div class="fieldmap"></div>`, [['close', 'back', onBack]])
+      el.querySelector('.fieldmap')!.appendChild(canvas)
     },
 
     setSwitch(label, read, write) {

@@ -43,6 +43,26 @@ take ~8-12 min, not the ~26 min in the design docs; playS will say where the min
 Next: he plays a few runs with each; ask what he felt before reading the numbers. Then close the
 switches and start **replay step 2** (below).
 
+## Open field prototype (27 Sep)
+
+**Why:** his fresh full runs take ~8-12 min; he wants **20-25 min with the same 2 areas / 6 depths** (he
+chose 2 areas when I'd estimated 26 min for them; that estimate was wrong). Direction he set: D2 outdoor-style
+**open fields at depths 1 and 4**, boss depths 3 and 6 enclosed, 2 and 5 rooms (later: longer spines).
+Don't re-offer a third act.
+
+**Built (behind `?open`, kept per device like `?owner`; `?open=0` off; depth 1 only, `OPEN_DEPTHS` in main):**
+`generateOpenLayout` in `dungeon.ts` (knobs in `OPEN`): a wide ragged band along a wandering 7-leg path,
+the path drawn as a dirt road (the corridor's first floor; the field never uses it), 9 clearings along it
+(logical rooms, the packs) and 5 pockets off the sides (side rooms), ruined wall stubs and props scattered
+off the path. ~3.5x the floor, 14 packs vs 6, exit ~2x as far. Wayfinding, his worry ("easy to get lost"):
+the road; a cold chevron circling Still pointing at the exit when it's off screen (`updateExitMark`; on the
+screen edge it sat under the buttons); a pause-screen map that fills in as he walks (`src/fieldmap.ts`,
+drawn turned to the camera). Normal levels are identical (same seeds, same numbers).
+
+**Watch:** ~300k triangles vs ~116k (instanced meshes aren't culled per instance): check frame rate on
+the F5 with the grade panel's perf readout; chunking is the fix if it drops. Then his feel: exploring or
+empty field? Then depth 4, longer spines at 2 and 5, and retune strain/HP for a 20-25 min run.
+
 ## Where it stands
 
 Live at **https://adperez13-1986.github.io/still-action/** (every push to `main` deploys; the
