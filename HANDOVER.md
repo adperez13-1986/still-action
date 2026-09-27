@@ -72,6 +72,45 @@ lights at the Assembler (or at a Plenty he pays for). The empty-slot fill is gon
 - Watch on the phone: depth 1 is one button plus the hand, and with a young save its floor
   drops dry up fast (only the worn slot's other found parts can fall).
 
+## The two leanings (replay step 3, 28 Sep, branch `leanings` on `pedestals`)
+
+Spec: `design/leanings/PITCHES.md` (four voices, two rounds, the lead's calls); the frame is
+`design/builds/LESSONS.md`. **Built:**
+- **Tags:** every part is close, marksman or none (`lean` on `AbilityDef`; 13 / 16 / Borrowed Time).
+  They switch nothing on; no set bonuses. **Flare** retuned close (range 6, travel 450 ms, new card),
+  **Piston** marksman (20 damage, shove 4.0, "knocks one enemy far back"). Glyphs from the stance marks
+  (close: an arc of the hand's ring; marksman: a dashed line and a dot, `LEAN_GLYPH`) on the pause card,
+  the compare and the wall's chooser, **never the HUD** (the pickup card gets the rider's words only).
+- **The eye:** its planted shot does 8 (`EYE.damage`, was 5), aims at a breakable windup first
+  (`eyeRank`, head parts in the stance follow the same order), and one landing in a windup the hand
+  could break breaks it (`eyeHit`): the **eye break**. Walking at range is still nothing; the hand unchanged.
+- **Triggers** (`combat.ts` `trigger`, event `onTrigger(by, e, how)`): a hand break, an eye break, or on a
+  boss the **first hand or eye hit in each opening** (the Assembler stunned, the Arbiter venting;
+  `openingSpent`, cleared when `boss.open` goes false), which interrupts nothing. A part's break
+  (Parry's snap, Clamp Toss, a push) is never a trigger.
+- **Riders** (`rider` on the def; `ride()` in `main.ts`, `hud.ready`): Parry Clamp and Backdraft Vent on
+  a hand break, Patient Lens (also fully charged) and Clamp Toss on an eye break. Each readies its own
+  button fully, once per 4 s per part (`RIDER_ICD` in `abilities.ts`: the first dial if too strong, then
+  partial cuts), never clears heat or refunds a push; a ready button (and full lens) spends no cap. The
+  button flashes ember (hand) or cold (eye). Cards: "Hand break: ready again." / "Eye break: ready, and
+  fully charged." (placeholder words, his to change).
+- **Shatter:** hand breaks shatter ember, eye breaks cold with a frost ring (`breakFx`); a part's break as before.
+- **The match, built and off:** `LEAN_MATCH = false` in `drops.ts`. On, one pedestal in three is drawn
+  from his lean (`leanOf`: most worn, a tie to his last tagged pick `run.lastLean`, not kept by a resume);
+  nothing tagged worn gives one close, one marksman, one free. **Turn it on after he has played 3
+  plain-pedestal runs** (pedestals are the economy change on trial, eye break + riders the combat one).
+- **Checks:** `npx tsx tools/leancheck.ts` (tags, slot x lean coverage, riders); `npx tsx tools/dropsim.ts
+  --lean all [--match on]` (formed = 3+ own tags and 1+ own rider at the Arbiter: committed 98% each,
+  random 22%; match on 100% / 26%; no part over 2x its slot median; every slot x lean offered 3.4+ a run).
+  Headless: one sentinel at 9 u, planted, no parts: 1 shot landed before (it died at 2.5 s), 0 after
+  (dead at 1.9 s); hardened, 6-7 of 7 landed before, 0 of 10-11 windups after (the planted beat, 620 ms,
+  always lands inside its 760 ms windup: a lone sentinel is shut down; crowds are the real test).
+- **Log:** per depth `eyeBreaks`, `openings`, `plantedS`, `autoDmg { hand, eye }` (nominal: 10 a strike,
+  8 a body the planted shot hits), `riders { partId: fires }`; `handBreaks` as before.
+- Next: he plays; ask his feel first, then the PITCHES pass lines L1-L5 (rider fires, eye vs hand breaks,
+  planted share, take rates, Broke at the Assembler). A failed rider gets a new trigger, not a bigger number.
+  Open for him: the notebook doesn't name "the hand" or "the eye" yet.
+
 ## Open field prototype (27 Sep)
 
 **Why:** his fresh full runs take ~8-12 min; he wants **20-25 min with the same 2 areas / 6 depths** (he
@@ -142,8 +181,8 @@ first, the kids' real drawings later); the hook-boss **on by default**.
 Order:
 1. ~~Counters and a drop simulator~~ (done).
 2. ~~**Picks on pedestals**~~ (built 28 Sep, above): he plays it before step 3.
-3. Leaning tags (close, marksman, caster, keeper) on cards and the wall; one pedestal in three matches
-   a leaning you wear.
+3. ~~Leaning tags~~: two leanings first (close, marksman), built 28 Sep (above), the match off until
+   3 plain-pedestal runs; caster and keeper later.
 4. Wishes on the corkboard, with save v4 (part history by name).
 5. Enemy families, then the Mirrored champion (`design/variety/PITCHES.md` items 7-8).
 6. A 6-rung rule ladder, with seeds.
@@ -197,4 +236,5 @@ welcome and slower wall-fill are next on it), `design/strain/PITCHES.md`, `desig
 | `workshop.ts` / `save.ts` / `notebook.ts` / `crayon.ts` / `ending.ts` | the Workshop, the save, the notebook, the kids' drawings, ending words |
 | `hud.ts` / `pause.ts` / `style.css` / `camera.ts` | UI, pause (with switches) and compare, type, zoom |
 | `vfx.ts` / `audio.ts` / `music.ts` / `ambience.ts` | particles and shaders; synth and samples; score; room tone |
-| `tools/dropsim.ts` | the drop simulator (`npx tsx tools/dropsim.ts`) |
+| `tools/dropsim.ts` | the drop simulator (`npx tsx tools/dropsim.ts`; `--lean all` for the leanings) |
+| `tools/leancheck.ts` | the leanings' static checks (`npx tsx tools/leancheck.ts`) |

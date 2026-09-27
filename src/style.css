@@ -92,6 +92,11 @@ html, body {
 @keyframes hint-pulse { 0% { opacity: 1; stroke-width: 3.2; } 100% { stroke-width: 2; } }
 .btn.refused { animation: refused .3s ease-out; }
 .btn.pulse { animation: swapped .4s ease-out; }
+/* a rider readied it: the button snaps full with a flash, ember for a hand break, cold for an eye break */
+.btn.ride-ember { animation: ride-ember .5s ease-out; }
+.btn.ride-cold { animation: ride-cold .5s ease-out; }
+@keyframes ride-ember { 0% { transform: scale(1.2); border-color: #ff8a50; box-shadow: 0 0 0 3px rgba(255, 138, 80, .75), 0 0 26px rgba(255, 106, 58, .6); } }
+@keyframes ride-cold { 0% { transform: scale(1.2); border-color: #cfe4ff; box-shadow: 0 0 0 3px rgba(207, 228, 255, .8), 0 0 26px rgba(143, 184, 232, .6); } }
 /* LIVE: a lit ring draining clockwise while something of his is out; the dark cooldown sweep waits under it */
 .btn .live {
   position: absolute; inset: -5px; border-radius: 50%; opacity: 0; pointer-events: none;
@@ -361,6 +366,7 @@ html, body {
 /* the lean: the stance's floor mark, small and muted beside the name (card, compare, wall; never the HUD) */
 .plean { display: inline-block; vertical-align: -2px; margin-left: 4px; color: #7f93a8; }
 .plean svg { width: 15px; height: 15px; display: block; }
+.pcard .tag .plean { float: right; margin: -3px 0 0; }
 .pcard .stats { display: flex; flex-direction: column; gap: 3px; border-top: 1px solid #1c2838; padding-top: 8px; }
 .pcard .stat { display: flex; justify-content: space-between; font-size: 12px; color: #6f8196; }
 .pcard .stat b { font-weight: 600; color: #9fb2c6; font-variant-numeric: tabular-nums; }

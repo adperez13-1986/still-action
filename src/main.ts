@@ -5,8 +5,8 @@ import { Still } from './still'
 import { createHud, type Press } from './hud'
 import { createGradePanel, apply as applyGrade } from './grade'
 import { createPacer, createQuality, createReadout, FRAME_S, BEHIND_CARD_S, IDLE_ROOM_S } from './perf'
-import { Combat, eliteLine, HAND_REACH, type Archetype, type CastResult, type EliteMod, type Pack } from './combat'
-import { STARTING, PARTS, byId, type AbilityDef, type AbilityShape, type BeatKey } from './abilities'
+import { Combat, eliteLine, HAND, HAND_REACH, EYE, type Archetype, type AutoForm, type CastResult, type EliteMod, type Pack } from './combat'
+import { STARTING, PARTS, byId, type AbilityDef, type AbilityShape, type BeatKey, type Lean } from './abilities'
 import { SLOT_NAMES, type SlotName } from './still'
 import type { Enemy, EnemyEvent } from './enemy'
 import { isBoss, Assembler } from './boss'
@@ -28,7 +28,7 @@ import { Sightline } from './sightline'
 import { createCameraRig } from './camera'
 import { updateMusic, musicNow } from './music'
 import { updateAmbience } from './ambience'
-import { Loot, LOOT, dropChance, rollPart, rollPicks, emptySlots, PEDESTALS, type GroundPart, type PickKind, type PickSet } from './loot'
+import { Loot, LOOT, dropChance, rollPart, rollPicks, emptySlots, leanOf, PEDESTALS, type GroundPart, type PickKind, type PickSet } from './loot'
 import { createPauseScreen } from './pause'
 import { createOverlay } from './ending'
 import { loadKit, setSurfaces, pieceData, surfaceNow, buildInstanced, PIECES, type Piece } from './kit'
@@ -430,7 +430,6 @@ const combat = new Combat(world.scene, OPEN, {
       // its heat broken by his cold: the tell shatters, the tone cuts dead, and the moment holds
       windups.get(ev.enemy)?.stop(true)
       windups.delete(ev.enemy)
-      tellBreak(ev.enemy)
       if (ev.push) {
         const st = run.stats[run.stats.length - 1]
         if (st) st.breaks++
@@ -438,12 +437,7 @@ const combat = new Combat(world.scene, OPEN, {
         const c = ev.enemy
         if (c instanceof Charger && c.stunned && run.phase === 'crawl') loops.set(c, sfx.dazed(CHARGER.reelMs, panOf(c.pos)))
       }
-      sfx.parryBreak(panOf(ev.enemy.pos))
-      vfx.flash(at3(ev.enemy.pos, 1.0), COLD, 1.0)
-      vfx.sparks(at3(ev.enemy.pos, 1.0), COLD, 16, 7)
-      vfx.dust(ev.enemy.pos, 8, 0.6)
-      hitstop = Math.max(hitstop, 0.09)
-      rig.punch(0.05)
+      breakFx(ev.enemy, ev.by)
     }
     if (ev.kind === 'mark' && ev.state === 'consumed') {
       sfx.markConsumed(panOf(ev.enemy.pos))
@@ -488,6 +482,21 @@ const combat = new Combat(world.scene, OPEN, {
     if (what === 'shot') st.eye++
     else st.eyeCasts++
   },
+  onLance: (_e, broke) => {
+    const st = run.stats[run.stats.length - 1]
+    if (!st) return
+    st.autoDmg = { hand: st.autoDmg?.hand ?? 0, eye: (st.autoDmg?.eye ?? 0) + EYE.damage }
+    if (broke) st.eyeBreaks = (st.eyeBreaks ?? 0) + 1
+  },
+  onTrigger: (by, e, how) => {
+    // a boss can't be broken: its opening's first hit plays the break it would have been
+    if (how === 'opening') {
+      breakFx(e, by)
+      const st = run.stats[run.stats.length - 1]
+      if (st) st.openings = (st.openings ?? 0) + 1
+    }
+    ride(by)
+  },
   onHand: (e, broke) => {
     // melee, not a bolt: the clamp's clacks, a short knock, a few sparks off the near side, half the shot's hitstop
     const at = e.pos
@@ -505,6 +514,7 @@ const combat = new Combat(world.scene, OPEN, {
     const st = run.stats[run.stats.length - 1]
     if (st) {
       st.hand++
+      st.autoDmg = { hand: (st.autoDmg?.hand ?? 0) + HAND.damage, eye: st.autoDmg?.eye ?? 0 }
       if (broke) st.handBreaks = (st.handBreaks ?? 0) + 1
     }
   },
@@ -980,8 +990,50 @@ function landFx(at: THREE.Vector3, what: 'flare' | 'signal' | 'throw' | 'wall', 
   }
 }
 
-/** N9: an enemy's live tell shatters into cold shards along its own outline. */
-function tellBreak(e: Enemy) {
+/**
+ * A windup broken, or a boss's opening taken as one: the tell shatters, the break's tone, and the
+ * moment holds. The hand's break shatters ember, the eye's cold with a frost ring; a part's as always.
+ */
+function breakFx(e: Enemy, by?: AutoForm) {
+  const color = by === 'hand' ? EMBER : COLD
+  const at = at3(e.pos, 1.0)
+  tellBreak(e, color)
+  sfx.parryBreak(panOf(e.pos))
+  vfx.flash(at, color, 1.0)
+  vfx.sparks(at, color, 16, 7)
+  if (by === 'eye') {
+    vfx.frost(at3(e.pos, 0.4), 10, e.radius + 0.4)
+    vfx.chunks(at, 5, new THREE.Color(0x9fc0ff), 4, 0.08)
+  }
+  vfx.dust(e.pos, 8, 0.6)
+  hitstop = Math.max(hitstop, 0.09)
+  rig.punch(0.05)
+}
+
+/** When each rider may fire next (game ms), by part id. */
+const riderNext = new Map<string, number>()
+/**
+ * The riders (design/leanings/PITCHES.md): a hand or eye trigger readies the button of each worn
+ * part riding it (Patient Lens fully charged too), once per its cap, and the button flashes ember
+ * (hand) or cold (eye). A button with nothing to give (ready, and a full lens) spends no cap.
+ * Heat and a push's strain stay: the rider only ends the cooldown.
+ */
+function ride(by: AutoForm) {
+  for (const def of hud.loadout) {
+    const r = def.rider
+    if (!r || r.on !== by || clock < (riderNext.get(def.id) ?? -Infinity)) continue
+    const full = r.act === 'charge' && def.mod?.kind === 'charge' ? def.mod.fullS : 0
+    if (hud.readyIn(def.slot) <= 0 && combat.parts.patientSince >= full) continue
+    riderNext.set(def.id, clock + r.icdMs)
+    if (full) combat.parts.patientSince = Math.max(combat.parts.patientSince, full)
+    hud.ready(def.slot, by === 'hand' ? 'ember' : 'cold')
+    const st = run.stats[run.stats.length - 1]
+    if (st) st.riders = { ...st.riders, [def.id]: (st.riders?.[def.id] ?? 0) + 1 }
+  }
+}
+
+/** N9: an enemy's live tell shatters into cold shards along its own outline (ember when the hand broke it). */
+function tellBreak(e: Enemy, color = COLD) {
   // a mite's piece of the ring shatters through its brood (biterLost), not round its own body
   if (e instanceof Mite) return
   if (e instanceof Charger) {
@@ -991,14 +1043,14 @@ function tellBreak(e: Enemy) {
     for (let i = 0; i < 16; i++) {
       const d = Math.random() * e.lane.len
       const side = i % 2 ? e.hitHalf : -e.hitHalf
-      vfx.sparks(new THREE.Vector3(e.lane.x + fx * d + fz * side, 0.2, e.lane.z + fz * d - fx * side), COLD, 1, 2)
+      vfx.sparks(new THREE.Vector3(e.lane.x + fx * d + fz * side, 0.2, e.lane.z + fz * d - fx * side), color, 1, 2)
     }
   } else if (e.kind === 'ranged') {
     // along the aim line it was drawing
     const a = e.group.rotation.y
     for (let i = 0; i < 14; i++) {
       const d = (i / 13) * 6
-      vfx.sparks(new THREE.Vector3(e.pos.x + Math.sin(a) * d, 0.2, e.pos.z + Math.cos(a) * d), COLD, 1, 3)
+      vfx.sparks(new THREE.Vector3(e.pos.x + Math.sin(a) * d, 0.2, e.pos.z + Math.cos(a) * d), color, 1, 3)
     }
   } else {
     // round the ring it was filling
@@ -1006,7 +1058,7 @@ function tellBreak(e: Enemy) {
     for (let i = 0; i < 14; i++) {
       const a = (i / 14) * Math.PI * 2
       const dir = new THREE.Vector3(Math.sin(a), 0, Math.cos(a))
-      vfx.sparks(new THREE.Vector3(e.pos.x + dir.x * r, 0.2, e.pos.z + dir.z * r), COLD, 1, 3, dir, 0.3)
+      vfx.sparks(new THREE.Vector3(e.pos.x + dir.x * r, 0.2, e.pos.z + dir.z * r), color, 1, 3, dir, 0.3)
     }
   }
 }
@@ -1177,6 +1229,14 @@ interface DepthStats {
   eye: number; eyeCasts: number
   /** Windups the hand broke, and blows taken planted (halved by the eye's brace). */
   handBreaks?: number; braced?: number
+  /**
+   * The leanings (design/leanings/PITCHES.md): windups the eye broke; boss openings whose first hand
+   * or eye hit fired a trigger; seconds planted (game time, crawl); the autos' damage by form
+   * (nominal: HAND.damage a strike, EYE.damage a body the planted shot hits); rider fires by part id.
+   */
+  eyeBreaks?: number; openings?: number; plantedS?: number
+  autoDmg?: { hand: number; eye: number }
+  riders?: Record<string, number>
   /** Seconds actually played on this depth's crawl: game time, so pauses, loot screens and the app in the background don't count. */
   playS?: number
 }
@@ -1220,6 +1280,8 @@ const run = {
   picks: [] as string[],
   /** Strain the Assembler's second pick added: no quiet eases below it, for the rest of the run. */
   kept: 0,
+  /** His last tagged pick's lean: the match's tie-break (LEAN_MATCH). Not kept by a resume. */
+  lastLean: null as Lean | null,
   /**
    * The road through depths 4-6 (design/area3/SPEC.md §3). null until it's chosen: at the
    * Assembler's descend, or in the crossroads. Depths 1-3 ignore it; null reads as 'II'.
@@ -1337,7 +1399,7 @@ function partDrops() {
   return out
 }
 /** run.stats as the playtest file and __runStats read it: the open depth's strain now, and its drops. */
-const statsOut = () => run.stats.map((st) => ({ ...st, strainOut: st.strainOut ?? run.strain, playS: Math.round(st.playS ?? 0), ...depthDrops(st.depth) }))
+const statsOut = () => run.stats.map((st) => ({ ...st, strainOut: st.strainOut ?? run.strain, playS: Math.round(st.playS ?? 0), plantedS: Math.round(st.plantedS ?? 0), ...depthDrops(st.depth) }))
 
 /** What the save has found and turned, at this depth: every drop reads it. */
 const pool = (): PoolView => poolView(save, run.depth)
@@ -1440,7 +1502,7 @@ function raisePicks(kind: PickKind, at: THREE.Vector3, from: THREE.Vector3, ids?
   const known = new Set(PARTS.map((p) => p.id))
   const defs = ids
     ? ids.filter((id) => known.has(id) && !on.has(id) && !save.turned.includes(id)).map((id) => byId(id))
-    : rollPicks(kind, hud.loadout, [...hud.loadout, ...loot.ground.map((g) => g.def)], pool())
+    : rollPicks(kind, hud.loadout, [...hud.loadout, ...loot.ground.map((g) => g.def)], pool(), leanOf(hud.loadout, run.lastLean))
   const spots = pickSpots(at, from, PICK_RING[kind], defs.length)
   const set: PickSet = { kind, took: 0 }
   const rose = defs.slice(0, spots.length)
@@ -1755,6 +1817,7 @@ function takePart(g: GroundPart) {
   carry(g.def.id)
   saw(g.def.id)
   const old = swapIn(g.def)
+  if (g.def.lean) run.lastLean = g.def.lean
   endDrop(g, 'taken')
   loot.remove(g)
   // an empty slot filled: nothing falls out
@@ -1971,7 +2034,7 @@ function resumeRun(snap: RunSnapshot) {
   const route: RouteId | null = snap.crossroads ? null
     : snap.route === 'III' && flag('line') ? 'III' : snap.route === 'II' || depth >= 4 || snap.route === 'III' ? 'II' : null
   Object.assign(run, {
-    phase: 'crawl', t: 0, swapped: false, ramStunSeen: false, dev: false, committed: false, ending: null, stats: [], taps: [], walkS: 0,
+    phase: 'crawl', t: 0, swapped: false, ramStunSeen: false, dev: false, committed: false, ending: null, stats: [], taps: [], walkS: 0, lastLean: null,
     breakRule: combat.breakRule, hand: combat.closeHand, eye: combat.eye, drops: [], id: snap.id, startedAt: snap.startedAt, strain: Math.min(19, Math.max(0, Math.round(snap.strain) || 0)), tally, route,
   })
   run.kept = Math.min(run.strain, Math.max(0, Math.round(snap.kept ?? 0) || 0))
@@ -2153,7 +2216,7 @@ function enterLevel(depth: number, o: { seed?: number; bossFelled?: boolean; res
   prev.copy(still.pos)
   run.depth = depth
   closeStats()
-  run.stats.push({ depth, fights: 0, pushes: 0, breaks: 0, deadTaps: 0, quiets: 0, strainIn: run.strain, strainOut: null, hand: 0, shots: 0, eye: 0, eyeCasts: 0, handBreaks: 0, braced: 0, playS: 0 })
+  run.stats.push({ depth, fights: 0, pushes: 0, breaks: 0, deadTaps: 0, quiets: 0, strainIn: run.strain, strainOut: null, hand: 0, shots: 0, eye: 0, eyeCasts: 0, handBreaks: 0, braced: 0, playS: 0, eyeBreaks: 0, openings: 0, plantedS: 0, autoDmg: { hand: 0, eye: 0 }, riders: {} })
   // the card's line gets a tick where this depth began (a resumed depth already has its tick)
   if (!o.resume) run.tally.marks.push(run.tally.line.length)
   // parts remember how deep they went
@@ -2165,7 +2228,7 @@ function startRun() {
   leaveRoom()
   still.reassemble()
   Object.assign(run, {
-    phase: 'crawl', strain: 0, kept: 0, t: 0, swapped: false, ramStunSeen: false,
+    phase: 'crawl', strain: 0, kept: 0, lastLean: null, t: 0, swapped: false, ramStunSeen: false,
     id: newRunId(), dev: DEPTH_PARAM !== null, committed: false, ending: null, stats: [], drops: [], taps: [], walkS: 0, tally: freshTally(),
     startedAt: new Date().toISOString(), breakRule: combat.breakRule, hand: combat.closeHand, eye: combat.eye, route: ROUTE_PARAM,
   })
@@ -3157,7 +3220,10 @@ function simulate(realDt: number) {
   // the playtest clock: only stepped time counts, so a pause or a hidden app never runs it
   if (run.phase === 'crawl') {
     const st = run.stats[run.stats.length - 1]
-    if (st) st.playS = (st.playS ?? 0) + realDt
+    if (st) {
+      st.playS = (st.playS ?? 0) + realDt
+      if (combat.inStance) st.plantedS = (st.plantedS ?? 0) + realDt
+    }
     if (level?.open) fieldMap.reveal(level, still.pos)
   } else if (run.phase === 'homing' || run.phase === 'toWalk' || run.phase === 'walkHome') run.walkS += realDt
 

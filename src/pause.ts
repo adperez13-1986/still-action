@@ -75,12 +75,12 @@ function card(d: AbilityDef, tag: string, other?: AbilityDef, conflict?: string 
   // the price on every cast, the same pips the button carries, so the card and the button agree
   const pips = d.pips ? ` <span class="ppips">${(d.pips.hollow ? '\u25cb' : '\u25cf').repeat(d.pips.n)}</span>` : ''
   // its lean, as the stance's floor mark; its rider, under its line
-  const lean = d.lean ? ` <span class="plean ${d.lean}" aria-label="${d.lean}">${glyph(LEAN_GLYPH[d.lean])}</span>` : ''
+  const lean = d.lean ? `<span class="plean ${d.lean}" aria-label="${d.lean}">${glyph(LEAN_GLYPH[d.lean])}</span>` : ''
   const rider = d.rider ? `<span class="prider">${riderLine(d.rider)}</span>` : ''
   return `
     <div class="pcard tier-${d.tier}">
-      <div class="tag">${tag}${fresh ? ' <span class="new">new</span>' : ''}</div>
-      <div class="pname">${past.name}${pips}${lean}</div>
+      <div class="tag">${tag}${fresh ? ' <span class="new">new</span>' : ''}${lean}</div>
+      <div class="pname">${past.name}${pips}</div>
       <p class="pline">${d.line}${rider}</p>
       ${past.history ? `<p class="pline phist">${past.history}</p>` : ''}
       <div class="stats">${stats(d, other)}</div>

@@ -57,8 +57,14 @@ export const HAND_REACH = HAND.range + MELEE_PAD - 0.55
  * Pass 2 (27 Sep, "standing still feels like absorbing blows"): planted, every hit is ×`brace`,
  * and the auto is the lance: it pierces and shoves each body `shove` u. It looks and sounds like
  * the old shot ("the lances look strong but in reality it is weak").
+ * The leanings (design/leanings/PITCHES.md): the planted shot does `damage` (was the shot's 5),
+ * flat, and one landing in a windup the hand could break breaks it the same way (the eye break);
+ * it aims at such a windup first.
  */
-export const EYE = { settle: 0.3, range: 11, brace: 0.5, shove: 0.6 }
+export const EYE = { settle: 0.3, range: 11, brace: 0.5, shove: 0.6, damage: 8 }
+
+/** Who broke a windup, or hit a boss in its opening: the hand's strike or the eye's planted shot. */
+export type AutoForm = 'hand' | 'eye'
 
 /** What a cast knows about the moment it was pressed. */
 export interface CastContext {
@@ -112,6 +118,8 @@ interface Bolt {
   pushed?: boolean
   /** The eye's lance: each body it hits slides this far along its flight (never a boss). */
   shove?: number
+  /** The eye's lance: it breaks a windup it lands in, as the hand does (the eye break). */
+  eye?: boolean
   speed: number
   /** Through-Line: ignores terrain, smashing crates it passes. */
   ghost?: boolean
@@ -292,6 +300,13 @@ export interface CombatEvents {
   onEye: (what: 'shot' | 'cast') => void
   /** The hand struck `e` for HAND.damage (the auto's close form); `broke`: it broke a windup. */
   onHand: (e: Enemy, broke: boolean) => void
+  /** The eye's planted shot struck `e` for EYE.damage (each body on its line); `broke`: it broke a windup. */
+  onLance: (e: Enemy, broke: boolean) => void
+  /**
+   * A trigger the enemy caused, for the riders: the hand or the eye broke a windup ('break'), or
+   * struck a boss first in one of its openings ('opening', nothing interrupted). Never a part's break.
+   */
+  onTrigger: (by: AutoForm, e: Enemy, how: 'break' | 'opening') => void
   onWindup: (e: Enemy, ms: number) => void
   onStrike: (e: Enemy) => void
   onGone: (e: Enemy) => void
@@ -394,6 +409,8 @@ export class Combat {
   private stillT = 0
   /** The eye's body this tick (the sightline's end), or null: not in the stance, or nothing awake to see. */
   eyeTarget: Enemy | null = null
+  /** The boss's opening this is has had its first hand or eye hit (its trigger); false again once it closes. */
+  private openingSpent = false
   /**
    * Strain step 1 (design/strain/PITCHES.md), behind a switch that is off by default: a pushed
    * hit that lands in a windup breaks it, and a pushed cast aims at the windup that lands soonest.
@@ -549,6 +566,7 @@ export class Combat {
 
     // --- the eye: a rested stick plants him; each tick it picks the body the sightline shows ---
     this.stillT = this.walking ? 0 : this.stillT + dt
+    if (!this.boss?.open) this.openingSpent = false
     this.eyeTarget = this.inStance ? this.eyePick(player, EYE.range, (e) => this.clearShot(player, e.pos) && !this.screened(player, e)) : null
 
     // --- auto attack: nearest enemy in range, no aiming required ---
@@ -566,13 +584,14 @@ export class Combat {
         // A windup it can break goes back to closing in, and the body slides off half a step
         this.autoTimer = AUTO_INTERVAL
         const broke = this.breakable(close) && close.interrupt(false)
-        if (broke) this.interrupted(close)
+        if (broke) this.interrupted(close, false, 'hand')
         close.hit(HAND.damage)
         if (!isBoss(close)) this.shoveFrom(close, player.x, player.z, HAND.shove)
         // a narrow cold sweep to its body, the arcs' own floor mark: the form reads as reach, not a bolt
         const aim = Math.atan2(close.pos.x - player.x, close.pos.z - player.z)
         this.sweep(player, aim, Math.hypot(close.pos.x - player.x, close.pos.z - player.z), 0x8fb8e8, 0.4)
         this.events.onHand(close, broke)
+        this.trigger('hand', close, broke)
       } else if (target) {
         this.autoTimer = AUTO_INTERVAL
         const d = Math.hypot(target.pos.x - player.x, target.pos.z - player.z)
@@ -737,6 +756,7 @@ export class Combat {
       if (b.pierced?.has(e) || b.once?.has(e)) continue
       if (Math.hypot(p.x - e.pos.x, p.z - e.pos.z) >= b.radius + e.radius) continue
       if (b.part) this.hitPart(e, b.damage, b.pushed)
+      else if (b.eye) this.eyeHit(e, b.damage)
       else {
         e.hit(b.damage)
         this.events.onHit(e.pos, e)
@@ -860,6 +880,7 @@ export class Combat {
     this.boss = null
     this.stillT = 0
     this.eyeTarget = null
+    this.openingSpent = false
     for (const h of this.live) {
       this.scene.remove(h.tell.group)
       h.tell.dispose()
@@ -1496,14 +1517,36 @@ export class Combat {
     this.bolts.push({ mesh, part: false, dir, life, damage: AUTO_DAMAGE, radius: 0.3, speed: PART.boltSpeed, bouncesLeft: 0, bounces: [] })
   }
 
-  /** The eye's lance: the shot's look and damage, through every body on its line, shoving each. */
+  /** The eye's lance: the shot's look, EYE.damage, through every body on its line, shoving each. */
   private lance(from: THREE.Vector3, to: THREE.Vector3, life: number) {
     const mesh = new THREE.Mesh(this.boltGeo, this.boltMat)
     mesh.position.set(from.x, 1.15, from.z)
     const dir = new THREE.Vector3(to.x - from.x, 0, to.z - from.z).normalize()
     mesh.rotation.y = Math.atan2(dir.x, dir.z)
     this.scene.add(mesh)
-    this.bolts.push({ mesh, part: false, dir, life, damage: AUTO_DAMAGE, radius: 0.3, speed: PART.boltSpeed, pierced: new Set(), shove: EYE.shove, bouncesLeft: 0, bounces: [] })
+    this.bolts.push({ mesh, part: false, dir, life, damage: EYE.damage, radius: 0.3, speed: PART.boltSpeed, pierced: new Set(), shove: EYE.shove, eye: true, bouncesLeft: 0, bounces: [] })
+  }
+
+  /** The eye break: a planted shot landing in a windup the hand could break breaks it the same way. */
+  private eyeHit(e: Enemy, damage: number) {
+    const broke = this.breakable(e) && e.interrupt(false)
+    if (broke) this.interrupted(e, false, 'eye')
+    e.hit(damage)
+    this.events.onHit(e.pos, e)
+    this.events.onLance(e, broke)
+    this.trigger('eye', e, broke)
+  }
+
+  /**
+   * The hand's or the eye's trigger: a break, or, a boss being unbreakable, the first hand or eye
+   * hit in each of its openings (the Assembler stunned, the Arbiter venting), which interrupts nothing.
+   */
+  private trigger(by: AutoForm, e: Enemy, broke: boolean) {
+    if (broke) this.events.onTrigger(by, e, 'break')
+    else if (isBoss(e) && e.open && !this.openingSpent) {
+      this.openingSpent = true
+      this.events.onTrigger(by, e, 'opening')
+    }
   }
 
   /**
@@ -2087,8 +2130,12 @@ export class Combat {
     return this.eye && this.stillT >= EYE.settle
   }
 
-  /** The eye's order: a pack's leader, then what shoots (a sentinel, a Lobber) or runs off with a part, then the rest. */
+  /**
+   * The eye's order: a windup it can break, a pack's leader, then what shoots (a sentinel, a Lobber)
+   * or runs off with a part, then the rest.
+   */
   private eyeRank(e: Enemy): number {
+    if (this.breakable(e)) return 3
     if (this.packOf.get(e)?.elite?.leader === e) return 2
     return e.kind === 'ranged' || e instanceof Thief ? 1 : 0
   }
@@ -2173,10 +2220,13 @@ export class Combat {
     this.events.onPart({ kind: 'move', move, beat })
   }
 
-  /** A broken windup: its booked lock goes with it, and the run hears of it (`push`: the break rule's). */
-  private interrupted(e: Enemy, push = false) {
+  /**
+   * A broken windup: its booked lock goes with it, and the run hears of it (`push`: the break rule's;
+   * `by`: the hand or the eye broke it, not a part).
+   */
+  private interrupted(e: Enemy, push = false, by?: AutoForm) {
     this.book.unbook(e)
-    this.events.onPart(push ? { kind: 'interrupt', enemy: e, push } : { kind: 'interrupt', enemy: e })
+    this.events.onPart(push ? { kind: 'interrupt', enemy: e, push } : by ? { kind: 'interrupt', enemy: e, by } : { kind: 'interrupt', enemy: e })
   }
 
   /** Every enemy instant passes here: Combat does its own part first (a rush into a crate breaks it), then the run's. */

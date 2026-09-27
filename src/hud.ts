@@ -167,6 +167,11 @@ export interface Hud {
   /** ms of heat left (0 when cool). */
   heatLeft: (slot: SlotName) => number
   /**
+   * A rider (design/leanings/PITCHES.md): the slot's cooldown ends now and the button flashes
+   * ember (a hand break) or cold (an eye break). INV: never clears heat, never refunds a push's strain.
+   */
+  ready: (slot: SlotName, tone: 'ember' | 'cold') => void
+  /**
    * N8: `n` strain points fly as ember pips from a screen point to the meter (at
    * most 4 drawn; the last carries the rest). The meter shows strain minus what's
    * still in the air, so the fill steps as each lands. The logic value is already
@@ -825,6 +830,15 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
     heatLeft(slot) {
       const b = buttons.find((x) => x.slot === slot)!
       return Math.max(0, b.hotUntil - state.clock)
+    },
+    ready(slot, tone) {
+      const b = buttons.find((x) => x.slot === slot)!
+      if (!b.def) return
+      b.readyAt = Math.min(b.readyAt, state.clock)
+      b.el.classList.remove('ride-ember', 'ride-cold')
+      void b.el.offsetWidth
+      b.el.classList.add(`ride-${tone}`)
+      setTimeout(() => b.el.classList.remove(`ride-${tone}`), 500)
     },
     charge(slot, c) {
       buttons.find((x) => x.slot === slot)!.el.style.setProperty('--charge', c.toFixed(3))

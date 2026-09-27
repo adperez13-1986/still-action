@@ -15,6 +15,7 @@
  *           build (only for a part of the build) | never
  * --lean    close | marksman (a committed chooser of that lean) | random (a random picker) | all (the
  *           three, --runs each, and the leanings' pass lines); replaces --build (design/leanings/PITCHES.md)
+ * --match   on | off (default, as the game ships: LEAN_MATCH): one pedestal in three from his lean
  *
  * A run is depths 1-6 of road II. A crawl depth is one of the real levels in tools/levels.json
  * (refresh it with the dev hook __census when the level generator changes); every pack is killed,
@@ -38,7 +39,7 @@
  * Formed: 3+ parts of his lean and 1+ of its riders worn at the Arbiter (either lean, for random).
  */
 import { PARTS, byId, type AbilityDef, type Lean } from '../src/abilities'
-import { dropChance, emptySlots, KILL_WEIGHT, LOOT, rollPart, rollPicks, type DropSource, type PickKind } from '../src/drops'
+import { dropChance, emptySlots, KILL_WEIGHT, LEAN_MATCH, leanOf, LOOT, rollPart, rollPicks, type DropSource, type PickKind } from '../src/drops'
 import { markFound, startPart, STARTER_POOL, type PoolView } from '../src/pool'
 import type { Archetype } from '../src/combat'
 import type { Save } from '../src/save'
@@ -71,6 +72,7 @@ const target = (): Set<string> =>
   new Set(BUILD === 'random' ? Object.values(BUILDS)[Math.floor(Math.random() * 4)]!
     : BUILDS[BUILD] ?? BUILD.split(',').map((id) => byId(id).id))
 const LEAN = arg('lean', '') as '' | Lean | 'random' | 'all'
+const MATCH = arg('match', LEAN_MATCH ? 'on' : 'off') === 'on'
 /** Who picks: the build's chooser, a committed chooser of one lean, or the random picker. */
 type Chooser = 'build' | Lean | 'random'
 
@@ -119,6 +121,8 @@ interface RunOut {
   offers: { id: string; tag: Tag; unfound: boolean; filled: boolean; taken: boolean }[]
   /** --lean: his lean formed at the Arbiter (3+ of its parts, 1+ of its riders). */
   formed: boolean
+  /** Pedestal sets, and those with a part of the lean he wears most (his match, when on). */
+  sets: number; matched: number
 }
 
 const career: string[] = [...STARTER_POOL]
@@ -130,7 +134,8 @@ function run(who: Chooser): RunOut {
   const worn: Partial<Record<SlotName, AbilityDef>> = {}
   const first = byId(startPart(save))
   worn[first.slot] = first
-  const out: RunOut = { fullAt: null, atAssembler: 0, atArbiter: 0, atEnd: 0, wornIn: 0, second: false, offers: [], formed: false }
+  const out: RunOut = { fullAt: null, atAssembler: 0, atArbiter: 0, atEnd: 0, wornIn: 0, second: false, offers: [], formed: false, sets: 0, matched: 0 }
+  let last: Lean | null = null
   /** A committed chooser's worth of a part: 2 his lean with a rider, 1 his lean, 0 off it. */
   const value = (def: AbilityDef) => (who !== 'build' && who !== 'random' && def.lean === who ? (def.rider ? 2 : 1) : 0)
   const formedAs = (lean: Lean) => {
@@ -147,6 +152,7 @@ function run(who: Chooser): RunOut {
   const empty = () => emptySlots(wornNow())
 
   const wear = (def: AbilityDef) => {
+    if (def.lean) last = def.lean
     markFound(save, def.id)
     // the part he gave up lands at his feet, and lies there with the rest
     const cur = worn[def.slot]
@@ -174,7 +180,10 @@ function run(who: Chooser): RunOut {
   }
   /** A set of pedestals: he takes the one he wants most (up to `picks`, each while it's still wanted enough); the rest go back to the wall. */
   const pedestals = (kind: PickKind, picks = 1) => {
-    const set = rollPicks(kind, wornNow(), taken(), view())
+    const lean = leanOf(wornNow(), last)
+    const set = rollPicks(kind, wornNow(), taken(), view(), lean, MATCH)
+    out.sets++
+    if (lean && set.some((d) => d.lean === lean)) out.matched++
     const recs = set.map((def) => ({ id: def.id, tag: kind as Tag, unfound: !save.found.includes(def.id), filled: !!worn[def.slot], taken: false }))
     out.offers.push(...recs)
     let took = 0
@@ -247,7 +256,7 @@ if (LEAN) {
   const whos: Chooser[] = LEAN === 'all' ? ['close', 'marksman', 'random'] : [LEAN]
   const by = new Map(whos.map((w) => [w, Array.from({ length: RUNS }, () => run(w))]))
   const pct = (n: number, of: number) => `${((100 * n) / of).toFixed(0)}%`
-  console.log(`dropsim --lean ${LEAN}: ${RUNS} runs each, seed ${SEED}, pool ${POOL}, crates ${CRATES}, plenty ${PLENTY}, second ${SECOND}\n`)
+  console.log(`dropsim --lean ${LEAN}: ${RUNS} runs each, seed ${SEED}, pool ${POOL}, crates ${CRATES}, plenty ${PLENTY}, second ${SECOND}, match ${MATCH ? 'on' : 'off'}\n`)
   const formed = new Map([...by].map(([w, rs]) => [w, rs.filter((r) => r.formed).length / RUNS]))
   for (const [w, f] of formed) console.log(`formed at the Arbiter (3+ own tags, 1+ own rider), ${w}: ${pct(f, 1)}`)
   const pass = (ok: boolean) => (ok ? 'pass' : 'FAIL')
@@ -257,6 +266,10 @@ if (LEAN) {
     console.log(`  committed >= 60% each: ${pass(c >= 0.6 && m >= 0.6)}   within 10 points: ${pass(Math.abs(c - m) <= 0.1)} (${(100 * Math.abs(c - m)).toFixed(0)})`)
   }
   if (formed.has('random')) console.log(`  random <= 30%: ${pass(formed.get('random')! <= 0.3)}`)
+  for (const [w, rs] of by) {
+    const sets = rs.reduce((a, r) => a + r.sets, 0)
+    console.log(`pedestal sets with a part of his lean, ${w}: ${pct(rs.reduce((a, r) => a + r.matched, 0), sets)}`)
+  }
 
   // what gets picked and offered, over every chooser run
   const all = [...by.values()].flat()

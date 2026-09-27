@@ -164,8 +164,11 @@ export interface BreachHole {
 export type PartEvent =
   | { kind: 'move'; move: StillMove; beat: BeatKey }
   | { kind: 'strain'; amount: number; at: THREE.Vector3 }             // a Brace conversion
-  /** A windup broken (Parry, a grab, a push). `push`: a pushed hit broke it under the break rule, and it reels. */
-  | { kind: 'interrupt'; enemy: Enemy; push?: boolean }
+  /**
+   * A windup broken (Parry, a grab, a push, the hand, the eye). `push`: a pushed hit broke it under the
+   * break rule, and it reels. `by`: the hand's strike or the eye's planted shot broke it (a trigger).
+   */
+  | { kind: 'interrupt'; enemy: Enemy; push?: boolean; by?: 'hand' | 'eye' }
   | { kind: 'mark'; enemy: Enemy; state: 'on' | 'consumed' | 'expired' }
   | { kind: 'slow'; enemy: Enemy; state: 'on' | 'off' }
   | { kind: 'lob'; from: THREE.Vector3; to: THREE.Vector3; ms: number; radius: number; signal: boolean }
