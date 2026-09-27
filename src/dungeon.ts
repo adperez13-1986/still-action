@@ -827,6 +827,11 @@ export function makeTerrain(floor: Set<string>, boxes: Box[], circles: Circle[])
       return out
     },
 
+    add(c) {
+      bucket(circleIndex, c, c.x - c.r, c.x + c.r, c.z - c.r, c.z + c.r)
+      ids.set(c, nextId++)
+    },
+
     clampMove(ax, az, bx, bz, radius) {
       const len = Math.hypot(bx - ax, bz - az)
       const steps = Math.max(1, Math.ceil(len / 0.2))

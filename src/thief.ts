@@ -81,8 +81,8 @@ export interface ThiefWorld {
   barrel?: { geometry: THREE.BufferGeometry; material: THREE.Material } | null
 }
 
-/** What it wants: not yet looked at, and either an elite's owed drop or a part never found. */
-export const wanted = (g: GroundPart) => !g.seen && (!!g.owed || g.bare)
+/** What it wants: not yet looked at, and either an elite's owed drop or a part never found. Never a pedestal's. */
+export const wanted = (g: GroundPart) => !g.seen && !g.set && (!!g.owed || g.bare)
 
 /** A rusted shell, the one small rusty thing among them: it lives in the corners. */
 const BODY = HIDES.thief.body

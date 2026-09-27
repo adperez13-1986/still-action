@@ -86,7 +86,8 @@ export function dropChance(
 
 /**
  * Null when nothing is left to find at any tier. `taken` is everything on Still
- * or on the floor; `excludeSlot` keeps a boss's second drop off the first one's slot.
+ * or on the floor; `exclude` keeps it off some slots (a boss's second drop off the first
+ * one's, a floor drop off the empty ones). `fresh` false: only found parts.
  *
  * `pool` is what the save knows (§4.9). A part turned to the wall never comes.
  * A moment (an elite, a bargain, the Assembler) past the first depth sometimes
@@ -95,12 +96,12 @@ export function dropChance(
  * as before.
  */
 export function rollPart(
-  from: Archetype, taken: readonly AbilityDef[], source: DropSource, pool: PoolView, excludeSlot?: SlotName,
+  from: Archetype, taken: readonly AbilityDef[], source: DropSource, pool: PoolView, exclude: readonly SlotName[] = [], fresh = true,
 ): AbilityDef | null {
   const on = new Set(taken.map((p) => p.id))
   const gates = GATES[source]
-  const base = PARTS.filter((p) => !on.has(p.id) && !pool.turned.has(p.id) && gates.includes(p.drops) && p.slot !== excludeSlot)
-  const wantUnfound = pool.depth >= POOL_RULES.minDepth && Math.random() < POOL_RULES.unfound[source]
+  const base = PARTS.filter((p) => !on.has(p.id) && !pool.turned.has(p.id) && gates.includes(p.drops) && !exclude.includes(p.slot))
+  const wantUnfound = fresh && pool.depth >= POOL_RULES.minDepth && Math.random() < POOL_RULES.unfound[source]
   if (wantUnfound) {
     const tiers = POOL_RULES.unfoundTiers[source]
     const unfound = base.filter((p) => !pool.found.has(p.id) && tiers.includes(p.tier))
@@ -127,19 +128,50 @@ function pickPart(from: Archetype, pool: readonly AbilityDef[], source: DropSour
   return null
 }
 
+const SLOTS: readonly SlotName[] = ['head', 'torso', 'arms', 'legs']
+
 /**
- * Still starts incomplete. While a slot is empty, most drops (a kill's or a crate's) are a
- * plain part for one of the empty slots, so the first level is spent putting yourself together.
- * `facingOut` is the found whites facing out (pool.facingOutWhites): a part turned to the wall
- * never fills a slot.
+ * Still starts incomplete, and empty slots fill only from pedestals: a floor part (a kill's,
+ * a crate's, an elite's, the Arbiter's) is only ever for a slot he wears.
  */
-export const FILL_EMPTY_CHANCE = 0.6
-export function fillEmpty(
-  taken: readonly AbilityDef[], empty: readonly SlotName[], facingOut: () => readonly string[],
-): AbilityDef | null {
-  if (empty.length === 0 || Math.random() > FILL_EMPTY_CHANCE) return null
-  const ids = new Set(taken.map((p) => p.id))
-  const out = new Set(facingOut())
-  const options = PARTS.filter((p) => out.has(p.id) && empty.includes(p.slot) && !ids.has(p.id))
-  return options[Math.floor(Math.random() * options.length)] ?? null
+export const emptySlots = (worn: readonly AbilityDef[]): SlotName[] => SLOTS.filter((sl) => !worn.some((p) => p.slot === sl))
+
+/**
+ * Picks on pedestals (design/replay/PITCHES.md 2): three parts rise together and he takes one;
+ * the others go back to the wall. Beside every non-boss crawl depth's exit beam, after a boss
+ * with more of the day to come (the Assembler), and at a Plenty shrine.
+ */
+export type PickKind = 'exit' | 'plenty' | 'gift'
+export const PEDESTALS = {
+  /** What each pedestal of a set rolls as: that source's own pool and rarity rules, nothing weighted. */
+  sources: {
+    exit: ['kill', 'kill', 'kill'],
+    plenty: ['plenty', 'plenty', 'plenty'],
+    gift: ['boss-gold', 'boss-blue', 'boss-blue'],
+  } as Record<PickKind, DropSource[]>,
+  /** Plenty's price, paid on the take. */
+  plentyStrain: 4,
+  /** The gift's second pick: its price, which no quiet takes back. */
+  secondStrain: 4,
+}
+
+/**
+ * One set: each pedestal on its own slot, every empty slot first (so a run goes from sparse to
+ * whole: the fourth button lights at the Assembler), and at most one part never found among them
+ * (so the wall fills no faster). Slots are drawn even, as a boss's are. A leaning match
+ * (the next step) would choose a pedestal's slot here, before its roll.
+ */
+export function rollPicks(kind: PickKind, worn: readonly AbilityDef[], taken: readonly AbilityDef[], pool: PoolView): AbilityDef[] {
+  const out: AbilityDef[] = []
+  const empty = emptySlots(worn)
+  for (const source of PEDESTALS.sources[kind]) {
+    const used = out.map((p) => p.slot)
+    const open = empty.filter((sl) => !used.includes(sl))
+    const fresh = out.every((p) => pool.found.has(p.id))
+    const all = [...taken, ...out]
+    const def = (open.length ? rollPart('boss', all, source, pool, SLOTS.filter((sl) => !open.includes(sl)), fresh) : null)
+      ?? rollPart('boss', all, source, pool, used, fresh)
+    if (def) out.push(def)
+  }
+  return out
 }

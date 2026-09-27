@@ -5,7 +5,7 @@ import * as sfx from './audio'
 /**
  * The pause screen. Two modes, one layout language:
  *   loadout  — the four parts on Still right now, and what each one does
- *   compare  — the part on the floor next to the one it would replace
+ *   compare  — the part on the floor (or a pedestal) next to the one it would replace
  *
  * Differences are marked, never judged: a tier is "different", not "better",
  * so there is no green-good / red-bad here.
@@ -68,7 +68,7 @@ const playSwitches: { label: string; read: () => boolean; write: (on: boolean) =
 /** One-press buttons after the switches (the owner's log export), in the order main gave them. */
 const playActions: { label: () => string; run: () => void; show?: () => boolean }[] = []
 
-function card(d: AbilityDef, tag: string, other?: AbilityDef, conflict?: string | null, fresh = false) {
+function card(d: AbilityDef, tag: string, other?: AbilityDef, conflict?: string | null, fresh = false, cost?: string, note?: string) {
   const past = describe(d)
   // the price on every cast, the same pips the button carries, so the card and the button agree
   const pips = d.pips ? ` <span class="ppips">${(d.pips.hollow ? '\u25cb' : '\u25cf').repeat(d.pips.n)}</span>` : ''
@@ -80,6 +80,8 @@ function card(d: AbilityDef, tag: string, other?: AbilityDef, conflict?: string 
       ${past.history ? `<p class="pline phist">${past.history}</p>` : ''}
       <div class="stats">${stats(d, other)}</div>
       ${conflict ? `<p class="pconflict">${conflict}</p>` : ''}
+      ${cost ? `<p class="pcost">${cost}</p>` : ''}
+      ${note ? `<p class="pconflict">${note}</p>` : ''}
     </div>`
 }
 
@@ -97,8 +99,13 @@ export interface PauseScreen {
   loadout: (slots: readonly { slot: SlotName; def: AbilityDef | null }[], onResume: () => void) => void
   /** `equipped` is everything on Still, for the conflict line under the incoming card. */
   /** `fresh`: the incoming part has never been found, and its card says so. */
+  /**
+   * `o.tag` says where it is ("on the floor" if not given); `o.cost`, its price in strain, on the card
+   * and the take button; `o.stays`, no quiet takes it back; `o.note`, what taking it does to the rest.
+   */
   compare: (
     current: AbilityDef | null, incoming: AbilityDef, equipped: readonly AbilityDef[], onTake: () => void, onLeave: () => void, fresh?: boolean,
+    o?: { tag?: string; cost?: number; stays?: boolean; note?: string },
   ) => void
   /**
    * The look-back screen: every run's card, large, newest first, with the arrows to
@@ -182,15 +189,16 @@ export function createPauseScreen(root: HTMLElement): PauseScreen {
       }
     },
 
-    compare(current, incoming, equipped, onTake, onLeave, fresh = false) {
+    compare(current, incoming, equipped, onTake, onLeave, fresh = false, o = {}) {
+      const price = o.cost ? `strain +${o.cost}` : ''
       show(
         `<h2>${SLOT_LABEL[incoming.slot]} slot</h2>
          <div class="row two">
            ${current ? card(current, 'on Still now', incoming) : emptyCard(incoming.slot, 'on Still now')}
            <div class="arrow">&rarr;</div>
-           ${card(incoming, 'on the floor', current ?? undefined, conflictLine(incoming, equipped), fresh)}
+           ${card(incoming, o.tag ?? 'on the floor', current ?? undefined, conflictLine(incoming, equipped), fresh, price && (o.stays ? `${price}, and it stays` : price), o.note)}
          </div>`,
-        [['leave', 'leave it', onLeave], ['take', 'take it', onTake]],
+        [['leave', 'leave it', onLeave], ['take', price ? `take it \u00b7 ${price}` : 'take it', onTake]],
       )
     },
 

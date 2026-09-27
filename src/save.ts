@@ -137,6 +137,10 @@ export interface RunSnapshot {
   route?: RouteId | null
   /** Resume in the crossroads room (depth 3, its boss down). */
   crossroads?: true
+  /** This crawl depth's pedestals by its exit, as they rose: raised again on resume. Absent (an older snapshot): rolled afresh. */
+  picks?: PartId[]
+  /** Strain the Assembler's second pick keeps: no quiet eases below it. Absent: 0. */
+  kept?: number
 }
 
 export interface Save {

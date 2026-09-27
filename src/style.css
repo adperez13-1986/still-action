@@ -338,6 +338,8 @@ html, body {
 #pause .row { display: flex; gap: 10px; align-items: stretch; max-width: 100%; }
 #pause .row.four .pcard .ppips { color: var(--strain); font: 700 11px/1 var(--ui); letter-spacing: 2px; vertical-align: middle; }
 .pcard .pconflict { margin: 8px 0 0; font: 500 12px/1.35 var(--ui); color: rgba(203, 215, 230, .55); font-style: italic; }
+/* a pick's price: plain, the strain bar's own words, never a warning colour */
+.pcard .pcost { margin: 8px 0 0; font: 600 13px/1.35 var(--ui); color: #cbd7e6; letter-spacing: .02em; }
 .pcard { width: 180px; }
 #pause .row.two .pcard { width: 240px; }
 #pause .arrow { align-self: center; color: #5f7388; font-size: 22px; }

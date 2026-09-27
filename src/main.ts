@@ -28,8 +28,7 @@ import { Sightline } from './sightline'
 import { createCameraRig } from './camera'
 import { updateMusic, musicNow } from './music'
 import { updateAmbience } from './ambience'
-import { Loot, LOOT, dropChance, rollPart, type GroundPart } from './loot'
-import { fillEmpty as fillSlots } from './drops'
+import { Loot, LOOT, dropChance, rollPart, rollPicks, emptySlots, PEDESTALS, type GroundPart, type PickKind, type PickSet } from './loot'
 import { createPauseScreen } from './pause'
 import { createOverlay } from './ending'
 import { loadKit, setSurfaces, pieceData, surfaceNow, buildInstanced, PIECES, type Piece } from './kit'
@@ -50,7 +49,7 @@ import { createWorkshop, MARKS_MAX, type ArrivalKind, type InteractId, type Work
 import { createDrawings, HANDS, CARD_ASPECT, type Moment } from './crayon'
 import { composeCard } from './cards'
 import { openSave, freshTally, localDate, drawerFor, trimCards, CARD_KEEP, CARD_LINES, LEADERS_MAX, type EndingKind, type RunSnapshot, type RunTally, type Save } from './save'
-import { poolView, markFound, hookCandidates, facingOutWhites, toggleTurn, hang, applyHookDefault, startPart, partName, historyLine, type PoolView } from './pool'
+import { poolView, markFound, hookCandidates, toggleTurn, hang, applyHookDefault, startPart, partName, historyLine, type PoolView } from './pool'
 import { assignNames, elitePage, meet, addLeader, ROSTER, ROSTER_BY_ID, WHAT, BOSS_PAGE, FRAGMENT_PAGE, LOBBER_PAGE, HEAP_PAGE, THIEF_PAGE, namesFor } from './notebook'
 import type { DropSource } from './loot'
 
@@ -214,6 +213,7 @@ const OPEN: Terrain = {
   breach: () => [],
   tickBreaches: () => [],
   faces: () => [],
+  add: () => {},
 }
 const STEP = 1 / 60
 const MAX_FRAME = 0.25
@@ -521,10 +521,9 @@ const combat = new Combat(world.scene, OPEN, {
     const roll = Math.random()
     if (roll < LOOT.crateParts) {
       const taken = [...hud.loadout, ...loot.ground.map((g) => g.def)]
-      const fill = fillEmpty(taken)
-      const def = fill ?? rollPart('chaser', taken, 'crate', pool())
+      const def = rollPart('chaser', taken, 'crate', pool(), emptySlots(hud.loadout))
       if (def) {
-        logDrop(loot.drop(def, at, still.pos), fill ? 'fill' : 'crate')
+        logDrop(loot.drop(def, at, still.pos), 'crate')
         sfx.drop(def.tier, panOf(at))
       }
     } else if (roll < LOOT.crateParts + LOOT.crateScrap) {
@@ -1217,6 +1216,10 @@ const run = {
   /** This depth's boss is down (a resume opens the beams, no boss), and what it dropped. */
   bossFelled: false,
   bossLoot: [] as string[],
+  /** This crawl depth's pedestals by its exit, as they rose: a resume raises the same three. */
+  picks: [] as string[],
+  /** Strain the Assembler's second pick added: no quiet eases below it, for the rest of the run. */
+  kept: 0,
   /**
    * The road through depths 4-6 (design/area3/SPEC.md §3). null until it's chosen: at the
    * Assembler's descend, or in the crossroads. Depths 1-3 ignore it; null reads as 'II'.
@@ -1235,10 +1238,10 @@ const QUIET_STRAIN = 2
  * carried into the depth. Only a Rest shrine takes him under it.
  */
 const QUIET_FLOOR = 0.5
-/** The lowest a quiet can ease strain to on this depth. */
+/** The lowest a quiet can ease strain to on this depth, and never under what a second pick kept. */
 function quietFloor() {
   const st = run.stats[run.stats.length - 1]
-  return st ? Math.floor(st.strainIn * QUIET_FLOOR) : 0
+  return Math.max(st ? Math.floor(st.strainIn * QUIET_FLOOR) : 0, run.kept)
 }
 let level: Level | null = null
 
@@ -1256,29 +1259,30 @@ function maybeDrop(at: THREE.Vector3, kind: Archetype, pack: Pack, wasElite: boo
   // a side room's pack always pays out (the last kill drops if nothing else did), elites always do
   if (Math.random() >= dropChance(pack, wasElite, summoned, weight)) return
   const taken = [...hud.loadout, ...loot.ground.map((g) => g.def)]
-  const fill = wasElite ? null : fillEmpty(taken)
-  const def = wasElite ? rollPart(kind, taken, 'elite', pool()) : fill ?? rollPart(kind, taken, 'kill', pool())
+  // empty slots fill only from pedestals: a floor part is for a slot he wears
+  const def = rollPart(kind, taken, wasElite ? 'elite' : 'kill', pool(), emptySlots(hud.loadout))
   if (!def) return
   pack.dropped = true
   // an elite's drop is owed: the thief in that pack's barrel runs for it
-  logDrop(loot.drop(def, at, still.pos, wasElite ? pack : undefined), wasElite ? 'elite' : fill ? 'fill' : 'kill')
+  logDrop(loot.drop(def, at, still.pos, wasElite ? pack : undefined), wasElite ? 'elite' : 'kill')
   sfx.drop(def.tier, panOf(at))
 }
 
 // --- the drop log, for the playtest file: what was offered, taken and left (design/replay) ---
 
 /**
- * Where a floor part came from. 'fill' is a kill's or a crate's plain part for an empty slot;
- * 'swap' is the part he gave up, landing at his feet (logged, never counted as a drop);
- * 'thief' a caught part whose drop wasn't logged; 'dev' a check's.
+ * Where a floor part came from. 'swap' is the part he gave up, landing at his feet (logged,
+ * never counted as a drop); 'thief' a caught part whose drop wasn't logged; 'dev' a check's.
+ * A pick kind (exit, plenty, gift) is a part risen on a pedestal.
  */
-type DropTag = 'kill' | 'fill' | 'crate' | 'elite' | 'plenty' | 'boss' | 'swap' | 'thief' | 'dev'
+type DropTag = 'kill' | 'crate' | 'elite' | 'boss' | 'swap' | 'thief' | 'dev' | PickKind
 /**
  * One part on the floor, from its drop to its end. offered: its card showed. end: taken
- * (worn), left (on the floor when the level ended), stolen (the thief got away with it), or
- * null while it's still lying there.
+ * (worn), left (on the floor when the level ended), stolen (the thief got away with it), wall
+ * (a pedestal's, gone back when another of its set was taken), or null while it's still lying there.
  */
-interface DropRec { depth: number; id: string; source: DropTag; offered: boolean; end: 'taken' | 'left' | 'stolen' | null }
+interface DropRec { depth: number; id: string; source: DropTag; offered: boolean; end: 'taken' | 'left' | 'stolen' | 'wall' | null }
+const PICK_TAGS: ReadonlySet<DropTag> = new Set<DropTag>(['exit', 'plenty', 'gift'])
 const dropRecs = new WeakMap<GroundPart, DropRec>()
 /** A lifted part's record, by part id, until its thief is caught (the same drop comes back down). */
 const caged = new Map<string, DropRec>()
@@ -1303,12 +1307,18 @@ function clearLoot() {
  * depth's parts are still null then. Offered and lying there is left; never offered, missed.
  */
 const lying = (r: DropRec) => r.end === 'left' || r.end === null
-/** A depth's drops (a swap's part isn't one): offered = taken + left. */
+/**
+ * A depth's drops (a swap's part isn't one, nor a pedestal's): offered = taken + left. Its
+ * pedestals apart: pedOffered risen, pedSeen walked into (the compare showed), pedTaken worn.
+ */
 function depthDrops(depth: number) {
-  const rs = run.drops.filter((r) => r.depth === depth && r.source !== 'swap')
+  const all = run.drops.filter((r) => r.depth === depth && r.source !== 'swap')
+  const rs = all.filter((r) => !PICK_TAGS.has(r.source))
+  const ps = all.filter((r) => PICK_TAGS.has(r.source))
   return {
     drops: rs.length, offered: rs.filter((r) => r.offered).length, taken: rs.filter((r) => r.end === 'taken').length,
     left: rs.filter((r) => r.offered && lying(r)).length, missed: rs.filter((r) => !r.offered && lying(r)).length,
+    pedOffered: ps.length, pedSeen: ps.filter((r) => r.offered).length, pedTaken: ps.filter((r) => r.end === 'taken').length,
   }
 }
 /** Per part this run: offered, taken, left (as depthDrops), and where each offer came from. */
@@ -1332,17 +1342,12 @@ const statsOut = () => run.stats.map((st) => ({ ...st, strainOut: st.strainOut ?
 /** What the save has found and turned, at this depth: every drop reads it. */
 const pool = (): PoolView => poolView(save, run.depth)
 
-/** drops.ts's fill for an empty slot (FILL_EMPTY_CHANCE), from the save's found whites facing out. */
-function fillEmpty(taken: readonly AbilityDef[], empty: readonly SlotName[] = hud.slots.filter((s) => !s.def).map((s) => s.slot)): AbilityDef | null {
-  return fillSlots(taken, empty, () => facingOutWhites(save))
-}
-
 // --- shrines: one bargain each ---
 
 const SHRINE_RADIUS = 1.7
 const SHRINE_TEXT = {
   rest: { title: 'Shrine of Rest', line: 'strain \u22126. Something nearby will hear it.', action: 'rest' },
-  plenty: { title: 'Shrine of Plenty', line: 'a good part, for 4 strain.', action: 'take the bargain' },
+  plenty: { title: 'Shrine of Plenty', line: `three good parts rise; the one you take costs ${PEDESTALS.plentyStrain} strain.`, action: 'raise them' },
 }
 let atShrine: Shrine | null = null
 
@@ -1384,17 +1389,116 @@ hud.onPrompt(() => {
     overlay.banner('rested \u00b7 strain \u22126')
     combat.wakeNearest(at)
   } else {
-    const taken = [...hud.loadout, ...loot.ground.map((g) => g.def)]
-    const def = rollPart('chaser', taken, 'plenty', pool())
-    if (def) {
-      logDrop(loot.drop(def, at, still.pos), 'plenty')
-      sfx.drop(def.tier, 0)
-    }
-    overlay.banner('bargained \u00b7 strain +4')
-    // a bargain can cost everything
-    addStrain(4, screenOf(at))
+    // the bargain is a pick: three rise round the shrine, and the one he takes is paid for
+    raisePicks('plenty', at, still.pos)
+    overlay.banner(`take one for strain +${PEDESTALS.plentyStrain}`)
   }
 })
+
+// --- picks on pedestals (design/replay/PITCHES.md 2): three rise, he walks into one ---
+
+/** How far round what they stand by: the exit's beam, the Assembler's beams, a Plenty shrine. */
+const PICK_RING: Record<PickKind, number> = { exit: 2.8, gift: 3.4, plenty: 2.2 }
+/** How many one set gives. The gift's second costs strain that stays. */
+const PICK_TAKES: Record<PickKind, number> = { exit: 1, plenty: 1, gift: 2 }
+
+/** What the next take from this set costs, in strain. */
+function pickCost(set: PickSet) {
+  if (set.kind === 'plenty') return PEDESTALS.plentyStrain
+  return set.kind === 'gift' && set.took > 0 ? PEDESTALS.secondStrain : 0
+}
+
+/**
+ * n spots round `at`, clear of walls, props and the beams, on the sides away from `from` (the
+ * way he comes in), so walking straight to a beam never walks into one.
+ */
+function pickSpots(at: THREE.Vector3, from: THREE.Vector3, r: number, n: number): THREE.Vector3[] {
+  const toward = Math.atan2(from.x - at.x, from.z - at.z)
+  const beams = level ? [level.exit, ...(level.home ? [level.home] : [])] : []
+  const out: THREE.Vector3[] = []
+  const t = combat.terrain
+  // left, right and behind first, then between them; on the ring, then farther, then nearer; then looser
+  for (const [pad, gap] of [[1, 2.5], [0.6, 2.3]] as const) {
+    for (const ring of [r, r + 0.8, r - 0.6]) {
+      for (const deg of [90, -90, 180, 135, -135, 115, -115, 155, -155, 70, -70]) {
+        if (out.length >= n) return out
+        const a = toward + (deg * Math.PI) / 180
+        const p = new THREE.Vector3(at.x + Math.sin(a) * ring, 0, at.z + Math.cos(a) * ring)
+        if (t.blocked(p.x, p.z, pad) || !t.lineClear(at.x + Math.sin(a) * 0.9, at.z + Math.cos(a) * 0.9, p.x, p.z, 0.3)) continue
+        if (beams.some((b) => Math.hypot(b.x - p.x, b.z - p.z) < EXIT_RADIUS + 0.9)) continue
+        if (out.some((q) => q.distanceTo(p) < gap)) continue
+        out.push(p)
+      }
+    }
+  }
+  return out
+}
+
+/** A set rises round `at`: `ids` as they rose before (a resume), else a fresh roll. What rose, by id. */
+function raisePicks(kind: PickKind, at: THREE.Vector3, from: THREE.Vector3, ids?: readonly string[]): string[] {
+  const on = new Set(hud.loadout.map((d) => d.id))
+  const known = new Set(PARTS.map((p) => p.id))
+  const defs = ids
+    ? ids.filter((id) => known.has(id) && !on.has(id) && !save.turned.includes(id)).map((id) => byId(id))
+    : rollPicks(kind, hud.loadout, [...hud.loadout, ...loot.ground.map((g) => g.def)], pool())
+  const spots = pickSpots(at, from, PICK_RING[kind], defs.length)
+  const set: PickSet = { kind, took: 0 }
+  const rose = defs.slice(0, spots.length)
+  rose.forEach((def, i) => {
+    logDrop(loot.raise(def, spots[i]!, set), kind)
+    // the exit's rise with the level, far off; the others where he stands
+    if (kind !== 'exit') sfx.drop(def.tier, panOf(spots[i]!))
+  })
+  return rose.map((d) => d.id)
+}
+
+/** The spine room before the exit: the way he comes to its beam. */
+function exitApproach(l: Level) {
+  const i = l.rooms.findIndex((r) => r.kind === 'exit')
+  return (l.rooms[i - 1] ?? l.rooms[0]!).center
+}
+
+/** Walked into: the compare, with the price when there is one. */
+function openPick(g: GroundPart) {
+  if (!canPause() || !g.set) return
+  const set = g.set
+  const current = hud.loadout.find((p) => p.slot === g.def.slot) ?? null
+  // the loss, named where the choice is made
+  const rest = loot.ground.filter((o) => o.set === set).length - 1
+  const last = set.took + 1 >= PICK_TAKES[set.kind]
+  const note = !rest ? undefined : last ? `the other${rest > 1 ? ' two go' : ' goes'} back to the wall` : `then one more, for strain +${PEDESTALS.secondStrain}`
+  openPause()
+  pause.compare(current, g.def, hud.loadout, () => {
+    resume()
+    takePick(g)
+  }, resume, !save.found.includes(g.def.id), { tag: 'on the pedestal', cost: pickCost(set), stays: set.kind === 'gift', note })
+}
+
+/**
+ * He takes one: worn at once, and its price paid last (it can end the run). A set that has given
+ * all it gives sends the rest back to the wall.
+ */
+function takePick(g: GroundPart) {
+  const set = g.set!
+  const cost = pickCost(set)
+  const at = g.pos.clone()
+  set.took++
+  takePart(g)
+  if (set.took >= PICK_TAKES[set.kind]) for (const o of loot.ground.filter((o) => o.set === set)) toWall(o)
+  if (!cost) return
+  if (set.kind === 'gift') run.kept += cost
+  overlay.banner(set.kind === 'gift' ? `wanted more \u00b7 strain +${cost}, kept` : `bargained \u00b7 strain +${cost}`)
+  // a bargain can cost everything
+  addStrain(cost, screenOf(at))
+}
+
+/** Back to the wall: found (the Workshop's wall shows it from now on), and gone in a cold lift. */
+function toWall(g: GroundPart) {
+  if (markFound(save, g.def.id)) store.write()
+  endDrop(g, 'wall')
+  vfx.embers(at3(g.pos, 1.1), 14, 0.5, COLD)
+  loot.remove(g)
+}
 
 // --- elite names, D2-style, floating over the leader ---
 
@@ -1614,8 +1718,11 @@ function updateOffer() {
     offered = next
     const rec = next && dropRecs.get(next)
     if (rec) rec.offered = true
-    hud.offer(next?.def ?? null, !!next && !save.found.includes(next.def.id), next ? describePart(next.def) : undefined)
+    // a floor part shows its card; a pedestal's opens the compare as he walks in
+    const card = next && !next.set ? next : null
+    hud.offer(card?.def ?? null, !!card && !save.found.includes(card.def.id), card ? describePart(card.def) : undefined)
     loot.offer(next)
+    if (next?.set) openPick(next)
   }
 }
 
@@ -1794,11 +1901,18 @@ function bossDown(at: THREE.Vector3) {
   hitstop = 0.25
   rig.punch(0.12)
   navigator.vibrate?.([60, 40, 120])
-  // one blue and one gold, never for the same slot
-  const taken = [...hud.loadout, ...loot.ground.map((g) => g.def)]
-  const blue = rollPart('boss', taken, 'boss-blue', pool())
-  const gold = rollPart('boss', blue ? [...taken, blue] : taken, 'boss-gold', pool(), blue?.slot)
-  for (const def of [blue, gold]) if (def) logDrop(loot.drop(def, at, still.pos), 'boss')
+  if (run.depth < RUN_DEPTHS && level) {
+    // a boss with more of the day to come (the Assembler): its gift is a pick, on pedestals by its beams
+    run.bossLoot = raisePicks('gift', level.exit, level.entrance)
+  } else {
+    // the day's last: one blue and one gold, never for the same slot, each for a slot he wears
+    const taken = [...hud.loadout, ...loot.ground.map((g) => g.def)]
+    const empty = emptySlots(hud.loadout)
+    const blue = rollPart('boss', taken, 'boss-blue', pool(), empty)
+    const gold = rollPart('boss', blue ? [...taken, blue] : taken, 'boss-gold', pool(), blue ? [...empty, blue.slot] : empty)
+    for (const def of [blue, gold]) if (def) logDrop(loot.drop(def, at, still.pos), 'boss')
+    run.bossLoot = [blue, gold].filter((d): d is AbilityDef => !!d).map((d) => d.id)
+  }
   loot.dropScrap(new THREE.Vector3(at.x + 1.2, 0, at.z))
   loot.dropScrap(new THREE.Vector3(at.x - 1.2, 0, at.z))
   overlay.banner(`area ${run.depth / BOSS_EVERY} cleared`)
@@ -1807,7 +1921,6 @@ function bossDown(at: THREE.Vector3) {
   for (const sl of hud.slots) if (sl.def) felledBy[sl.def.id] = (felledBy[sl.def.id] ?? 0) + 1
   // a beam save: a reload here comes back to the beams open and no boss, with its drops
   run.bossFelled = true
-  run.bossLoot = [blue, gold].filter((d): d is AbilityDef => !!d).map((d) => d.id)
   writeSnapshot()
 }
 
@@ -1827,6 +1940,8 @@ function writeSnapshot() {
     bossFelled: run.bossFelled, bossLoot: [...run.bossLoot], strain: run.strain,
     loadout: hud.slots.map((sl) => sl.def?.id ?? null), tally: structuredClone(run.tally), route: run.route,
     ...(level?.crossroads ? { crossroads: true as const } : {}),
+    ...(run.picks.length ? { picks: [...run.picks] } : {}),
+    ...(run.kept ? { kept: run.kept } : {}),
   }
   save.run = snap
   store.write()
@@ -1859,6 +1974,7 @@ function resumeRun(snap: RunSnapshot) {
     phase: 'crawl', t: 0, swapped: false, ramStunSeen: false, dev: false, committed: false, ending: null, stats: [], taps: [], walkS: 0,
     breakRule: combat.breakRule, hand: combat.closeHand, eye: combat.eye, drops: [], id: snap.id, startedAt: snap.startedAt, strain: Math.min(19, Math.max(0, Math.round(snap.strain) || 0)), tally, route,
   })
+  run.kept = Math.min(run.strain, Math.max(0, Math.round(snap.kept ?? 0) || 0))
   // a resume starts its stats over, so it's its own entry in the playtest file, not an overwrite
   playKey = `${run.id}.${Date.now().toString(36)}`
   clearLoot()
@@ -1868,15 +1984,19 @@ function resumeRun(snap: RunSnapshot) {
   SLOT_NAMES.forEach((slot, i) => still.wear(slot, loadout[i] ?? null))
   // §3.5: a run saved in the crossroads comes back to it, with the road still to choose
   if (snap.crossroads) enterCrossroads(snap.seed)
-  else enterLevel(depth, { seed: snap.seed, bossFelled: !!snap.bossFelled && !!bossHere(depth), resume: true })
+  else enterLevel(depth, { seed: snap.seed, bossFelled: !!snap.bossFelled && !!bossHere(depth), resume: true, picks: Array.isArray(snap.picks) ? snap.picks : undefined })
   if (run.bossFelled && level && !level.crossroads) {
-    // what it left, lying where it fell, unless he's wearing it
-    const on = new Set(worn.map((d) => d.id))
-    for (const id of snap.bossLoot ?? []) {
-      if (!known.has(id) || on.has(id) || save.turned.includes(id)) continue
-      logDrop(loot.drop(byId(id), level.exit.clone(), still.pos), 'boss')
+    const loot0 = Array.isArray(snap.bossLoot) ? snap.bossLoot : []
+    if (depth < RUN_DEPTHS) run.bossLoot = raisePicks('gift', level.exit, level.entrance, loot0)
+    else {
+      // what it left, lying where it fell, unless he's wearing it
+      const on = new Set(worn.map((d) => d.id))
+      for (const id of loot0) {
+        if (!known.has(id) || on.has(id) || save.turned.includes(id)) continue
+        logDrop(loot.drop(byId(id), level.exit.clone(), still.pos), 'boss')
+      }
+      run.bossLoot = [...loot0]
     }
-    run.bossLoot = [...(snap.bossLoot ?? [])]
   }
   hud.bossBar(null)
   rig.reset()
@@ -1966,7 +2086,7 @@ function trainFx() {
 }
 
 /** Build a level and put Still at its entrance. HP is whole again; strain carries. `seed` repeats a layout (resume, checks). */
-function enterLevel(depth: number, o: { seed?: number; bossFelled?: boolean; resume?: boolean } = {}) {
+function enterLevel(depth: number, o: { seed?: number; bossFelled?: boolean; resume?: boolean; picks?: readonly string[] } = {}) {
   beamArmed.exit = true
   beamArmed.home = true
   clearYardDressing()
@@ -2004,6 +2124,8 @@ function enterLevel(depth: number, o: { seed?: number; bossFelled?: boolean; res
   const lt = level.thief
   lastThief = lt ? combat.addThief(new Thief(lt.nest.x, lt.nest.z, lt.nest, thiefWorld(), packOfSpec.get(lt.pack) ?? null)) : null
   thiefChimeT = 0
+  // every crawl depth: three pedestals by the exit, the pick before he leaves (a resume raises the same three)
+  run.picks = boss ? [] : raisePicks('exit', level.exit, exitApproach(level), o.picks)
   // a felled boss is never fought again: its beams are open, as they were when it fell, and a tower stands as its husk
   if (run.bossFelled) {
     for (const kind of exitsAfterBoss(depth)) kind === 'cold' ? level.openExit() : level.openHome()
@@ -2043,7 +2165,7 @@ function startRun() {
   leaveRoom()
   still.reassemble()
   Object.assign(run, {
-    phase: 'crawl', strain: 0, t: 0, swapped: false, ramStunSeen: false,
+    phase: 'crawl', strain: 0, kept: 0, t: 0, swapped: false, ramStunSeen: false,
     id: newRunId(), dev: DEPTH_PARAM !== null, committed: false, ending: null, stats: [], drops: [], taps: [], walkS: 0, tally: freshTally(),
     startedAt: new Date().toISOString(), breakRule: combat.breakRule, hand: combat.closeHand, eye: combat.eye, route: ROUTE_PARAM,
   })
@@ -2234,6 +2356,7 @@ function enterCrossroads(seed = Math.floor(Math.random() * 1e9)) {
   run.seed = seed
   run.bossFelled = true
   run.bossLoot = []
+  run.picks = []
   run.route = null
   const room = generateCrossroads(seed)
   level = room
@@ -4149,7 +4272,7 @@ if (import.meta.env.DEV) {
      */
     __lootRules: {
       rollPart: (from: Archetype, taken: readonly AbilityDef[], source: DropSource, excludeSlot?: SlotName, view?: PoolView) =>
-        rollPart(from, taken, source, view ?? { found: new Set(PARTS.map((p) => p.id)), turned: new Set(), depth: 1 }, excludeSlot),
+        rollPart(from, taken, source, view ?? { found: new Set(PARTS.map((p) => p.id)), turned: new Set(), depth: 1 }, excludeSlot ? [excludeSlot] : []),
       dropChance,
     },
     /** A deep copy of the live save. */
@@ -4163,18 +4286,13 @@ if (import.meta.env.DEV) {
       }
     },
     __store: () => store.mode,
-    /**
-     * n draws from one source at one depth through the real rollPart and the live
-     * pool. source 'fill' is fillEmpty with every slot empty (only its hits count).
-     */
-    __rollMany: (o: { source: DropSource | 'fill'; depth: number; n: number; from?: Archetype }) => {
+    /** n draws from one source at one depth through the real rollPart and the live pool. */
+    __rollMany: (o: { source: DropSource; depth: number; n: number; from?: Archetype }) => {
       const view = poolView(save, o.depth)
       const ids: Record<string, number> = {}
       let unfound = 0, got = 0
       for (let i = 0; i < o.n; i++) {
-        const def = o.source === 'fill'
-          ? fillEmpty([], SLOT_NAMES)
-          : rollPart(o.from ?? (o.source.startsWith('boss') ? 'boss' : 'chaser'), [], o.source, view)
+        const def = rollPart(o.from ?? (o.source.startsWith('boss') ? 'boss' : 'chaser'), [], o.source, view)
         if (!def) continue
         got++
         ids[def.id] = (ids[def.id] ?? 0) + 1
@@ -4193,6 +4311,8 @@ if (import.meta.env.DEV) {
       if (g) takePart(g)
       return !!g
     },
+    /** The parts on pedestals now: which set, where, and what the next take from its set costs. */
+    __picks: () => loot.ground.filter((g) => g.set).map((g) => ({ id: g.def.id, kind: g.set!.kind, x: g.pos.x, z: g.pos.z, cost: pickCost(g.set!) })),
     /** What the pickup card is offering. history arrives with "parts remember". */
     __offer: () => (offered ? { id: offered.def.id, ...describePart(offered.def), tag: save.found.includes(offered.def.id) ? null : 'new', shown: document.querySelector('#offer .name')?.textContent } : null),
     /**

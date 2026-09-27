@@ -42,4 +42,6 @@ export interface Terrain {
   tickBreaches(dt: number): BreachHole[]
   /** The faces of every unbreached wall piece within `r` of a point. Props are round and have none. */
   faces(x: number, z: number, r: number): WallFace[]
+  /** Something round and solid set down after the level was built (a pedestal's stone). Dead, it stops being solid. */
+  add(c: { x: number; z: number; r: number; dead?: boolean }): void
 }

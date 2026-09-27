@@ -43,6 +43,35 @@ take ~8-12 min, not the ~26 min in the design docs; playS will say where the min
 Next: he plays a few runs with each; ask what he felt before reading the numbers. Then close the
 switches and start **replay step 2** (below).
 
+## Picks on pedestals (replay step 2, 28 Sep)
+
+**Built:** three parts rise on pedestals (the kit's pillar cut to 0.6 u, the part a size up
+hovering over it, its tier beam and a cold pool) beside **every non-boss crawl depth's exit beam**
+(left, right and behind it, never on the way in), **after a boss with more of the day to come**
+(the Assembler: its gift, round its beams) and at **Plenty** (the shrine's prompt raises three;
+the one taken costs +4). Walking into one opens the compare ("on the pedestal"); taking one sends
+the others back to the wall (found, `toWall`); leaving keeps all three until he walks out. The
+Assembler gives a **second pick for +4 strain that stays**: `run.kept`, and `quietFloor()` never
+eases below it (a Rest still goes under). The Arbiter's gift stays two floor drops.
+**Empty slots fill only from pedestals:** every floor part (kill, crate, elite, the Arbiter's) is
+for a slot he wears (`emptySlots`), and each set puts every empty slot first, so the fourth button
+lights at the Assembler (or at a Plenty he pays for). The empty-slot fill is gone.
+- Code: the roll in `drops.ts` (`rollPicks`, knobs in `PEDESTALS`: each set's sources, the two
+  prices); the stones in `loot.ts` (`raise`, `STONE`); the flow in `main.ts` (`raisePicks`,
+  `pickSpots`, `openPick`, `takePick`, `PICK_RING`, `PICK_TAKES`). Stones are solid (`Terrain.add`).
+- Rules: each pedestal its own slot, at most one never-found part a set, nothing weighted (the
+  exit's roll as a kill's, Plenty's as Plenty's, the gift one boss-gold and two boss-blues). The
+  leaning match (step 3) goes where `rollPicks` chooses a pedestal's slot.
+- Save: optional snapshot fields `picks` (the exit set, raised again on resume) and `kept`; the
+  gift rides in `bossLoot` as before (an old snapshot's blue and gold come back as two pedestals).
+- Log: per depth `pedOffered` / `pedSeen` / `pedTaken`; floor counts no longer include pedestals.
+  Drop tags `exit`, `plenty`, `gift`; a pedestal part sent back ends `wall`.
+- Dropsim (`--second want|build|never`): a chosen build worn at the end **42% -> 67%** (57% if he
+  never takes Plenty, 62% at half of them). Knob to know: exit pedestals rolled as an elite's
+  instead of a kill's gives 77% (too sure, and it brings unfound parts to every exit).
+- Watch on the phone: depth 1 is one button plus the hand, and with a young save its floor
+  drops dry up fast (only the worn slot's other found parts can fall).
+
 ## Open field prototype (27 Sep)
 
 **Why:** his fresh full runs take ~8-12 min; he wants **20-25 min with the same 2 areas / 6 depths** (he
@@ -112,10 +141,7 @@ first, the kids' real drawings later); the hook-boss **on by default**.
 
 Order:
 1. ~~Counters and a drop simulator~~ (done).
-2. **Picks on pedestals:** three parts on pedestals you walk into, beside each crawl level's exit beam
-   (depths 1, 2, 4, 5), at the Assembler and at Plenty; the other two go back to the wall. Empty slots
-   fill **only** from pedestals (the fourth button lights at the Assembler). Plus the +4-strain second
-   pick at the Assembler. Tune with the simulator (target: a chosen build worn ~60%+).
+2. ~~**Picks on pedestals**~~ (built 28 Sep, above): he plays it before step 3.
 3. Leaning tags (close, marksman, caster, keeper) on cards and the wall; one pedestal in three matches
    a leaning you wear.
 4. Wishes on the corkboard, with save v4 (part history by name).
@@ -166,7 +192,7 @@ welcome and slower wall-fill are next on it), `design/strain/PITCHES.md`, `desig
 | `enemy.ts` / `ranged.ts` / `charger.ts` / `lane.ts` / `swarm.ts` / `lobber.ts` / `thief.ts` | hulk, sentinel, ram, mites, Lobber, thief |
 | `boss.ts` / `arbiter.ts` | the `Boss` interface and the Assembler; the Arbiter |
 | `hide.ts` | enemy body materials |
-| `abilities.ts` / `parts.ts` / `partfx.ts` / `partmodels.ts` / `pool.ts` / `drops.ts` / `loot.ts` | the 30 parts, their runtime, visuals, models, the pool, drop rules, the floor loot |
+| `abilities.ts` / `parts.ts` / `partfx.ts` / `partmodels.ts` / `pool.ts` / `drops.ts` / `loot.ts` | the 30 parts, their runtime, visuals, models, the pool, drop rules and picks, the floor loot and pedestals |
 | `still.ts` / `handring.ts` / `sightline.ts` | the Lantern; the hand's ring; the eye's sightline |
 | `workshop.ts` / `save.ts` / `notebook.ts` / `crayon.ts` / `ending.ts` | the Workshop, the save, the notebook, the kids' drawings, ending words |
 | `hud.ts` / `pause.ts` / `style.css` / `camera.ts` | UI, pause (with switches) and compare, type, zoom |

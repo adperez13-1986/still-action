@@ -109,7 +109,8 @@ triplanar, plus grime and contact darkening. Only the pieces used are vendored.
 - **Enemies**: the chaser is a headless hulk that rears and slams; the ranged is
   a tripod sentinel whose lens swells as it locks.
 - **Still starts incomplete**: one random plain part, three empty buttons, unfound
-  parts drawn bare. While a slot is empty, 60% of drops fill one.
+  parts drawn bare. Empty slots fill only from pedestals (28 Sep, replay step 2): a
+  floor drop is always for a slot he wears.
 - **Elites** (D2 champions): a named leader, bigger, double HP, blue aura, one of
   Quick / Plated / Many / Warden. Always drops, 75% blue, 10% gold.
 - **Crates and barrels** break to any hit, either side's; 10% hold a part, 30%
@@ -121,8 +122,11 @@ triplanar, plus grime and contact darkening. Only the pieces used are vendored.
 - **Effects** (`src/vfx.ts`): particles and animated textured telegraphs. Still's
   effects are cold steel-blue, the enemies' are embers. Floor decals sit at
   `DECAL_Y`, above the kit's tiles.
-- **Shrines**, most levels: Rest (−6 strain, wakes the nearest pack) or Plenty (a
-  good part for +4 strain, which can end the run).
+- **Shrines**, most levels: Rest (−6 strain, wakes the nearest pack) or Plenty (three
+  good parts on pedestals; the one taken costs +4 strain, which can end the run).
+- **Picks on pedestals** (28 Sep, `design/replay/PITCHES.md` 2): three parts beside every
+  crawl exit, after the Assembler (a second pick for +4 strain that stays) and at Plenty;
+  take one and the others go back to the wall.
 
 ---
 

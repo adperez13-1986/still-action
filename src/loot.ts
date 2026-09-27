@@ -3,10 +3,11 @@ import { DECAL_Y } from './world'
 import type { AbilityDef, Tier } from './abilities'
 import { centred, DISPLAY_EYE, EYE_ON, FLOOR_SCALE, partModel } from './partmodels'
 import type { Terrain } from './terrain'
-import { LOOT } from './drops'
+import { pieceData } from './kit'
+import { LOOT, type PickKind } from './drops'
 
 // The drop rules themselves live in drops.ts, free of three.js, so tools/dropsim.ts can run them.
-export { LOOT, KILL_WEIGHT, dropChance, rollPart, type DropSource } from './drops'
+export { LOOT, KILL_WEIGHT, dropChance, rollPart, rollPicks, emptySlots, PEDESTALS, type DropSource, type PickKind } from './drops'
 
 export const TIER_COLOR: Record<Tier, number> = {
   white: 0xdfe6ee,
@@ -15,8 +16,33 @@ export const TIER_COLOR: Record<Tier, number> = {
   gold: 0xd9b36c,
 }
 
+/** Parts risen together on pedestals (drops.ts PEDESTALS): take one and the rest go back to the wall. */
+export interface PickSet { kind: PickKind; /** Taken from it so far. */ took: number }
+
+/** A pedestal: the stone stays when its part is gone, and its cold pool dims. */
+interface Stone {
+  group: THREE.Group
+  mesh: THREE.Mesh
+  pool: THREE.MeshBasicMaterial
+  circle: { x: number; z: number; r: number; dead?: boolean }
+  /** 0 flush with the floor .. 1 up, over STONE.riseS; `full` is its height's scale when up. */
+  rise: number
+  full: number
+  part: GroundPart | null
+}
+
+/**
+ * The stone: the kit's pillar cut down, under the barrier's reach (INV: nothing tall in a room).
+ * The part on it is drawn a size up from the floor's, so it reads from the camera over the stone.
+ */
+const STONE = { h: 0.6, r: 0.3, riseS: 0.6, partScale: 1.3 }
+/** Its cold pool: bright while a part stands on it, faint once it's empty. */
+const POOL = { lit: 0.5, spent: 0.1 }
+const POOL_COLOR = 0x8fd0ff
+
 /** An angle into (−π, π]. */
 const wrap = (a: number) => Math.atan2(Math.sin(a), Math.cos(a))
+const ease = (k: number) => k * k * (3 - 2 * k)
 
 export interface GroundPart {
   def: AbilityDef
@@ -45,6 +71,9 @@ export interface GroundPart {
   owed?: object
   /** Its card has shown: he's looked at it. Left lying after that, it was turned down, and the thief wants none of it. */
   seen: boolean
+  /** Risen on a pedestal, with the rest of its set. */
+  set?: PickSet
+  stone?: Stone
 }
 
 const FLY = 0.42
@@ -61,6 +90,8 @@ export class Loot {
   private readonly scrapMat = new THREE.MeshBasicMaterial({ color: 0x9fd8c4 })
   private readonly beamGeo = new THREE.CylinderGeometry(0.07, 0.16, 5, 8, 1, true)
   private readonly discGeo = new THREE.CircleGeometry(0.55, 24)
+  private readonly poolGeo = new THREE.RingGeometry(0.55, 0.85, 32)
+  private stones: Stone[] = []
 
   /** Swapped for each level, so drops never land on the far side of a wall. */
   terrain: Terrain | null = null
@@ -129,6 +160,38 @@ export class Loot {
     return g
   }
 
+  /**
+   * A part risen on a pedestal at `at`, one of `set`: no hop, it stands where it's put. The
+   * stone is solid and rises out of the floor; the part hovers over it, its beam and disc as on
+   * the floor. Walking into it opens the compare (main).
+   */
+  raise(def: AbilityDef, at: THREE.Vector3, set: PickSet): GroundPart {
+    const g = this.drop(def, at)
+    g.fly = 0
+    g.pos.set(at.x, 0, at.z)
+    g.group.position.copy(g.pos)
+    g.set = set
+    g.spinner.scale.multiplyScalar(STONE.partScale)
+    g.half *= STONE.partScale
+    const { geometry, material, radius, height } = pieceData('pillar')
+    const mesh = new THREE.Mesh(geometry, material)
+    mesh.scale.set(STONE.r / radius, 0, STONE.r / radius)
+    const pool = new THREE.MeshBasicMaterial({ color: POOL_COLOR, transparent: true, opacity: POOL.lit, depthWrite: false, blending: THREE.AdditiveBlending })
+    const ring = new THREE.Mesh(this.poolGeo, pool)
+    ring.rotation.x = -Math.PI / 2
+    ring.position.y = DECAL_Y
+    const group = new THREE.Group()
+    group.position.set(at.x, 0, at.z)
+    group.add(mesh, ring)
+    this.scene.add(group)
+    const circle = { x: at.x, z: at.z, r: STONE.r + 0.05 }
+    this.terrain?.add(circle)
+    const stone: Stone = { group, mesh, pool, circle, rise: 0, full: STONE.h / height, part: g }
+    this.stones.push(stone)
+    g.stone = stone
+    return g
+  }
+
   /** The pickup card is showing this one (or none). */
   offer(g: GroundPart | null) {
     this.offered = g
@@ -159,6 +222,12 @@ export class Loot {
 
   /** `still` is where he stands: an offered part turns to face him. */
   update(dt: number, still?: THREE.Vector3) {
+    for (const st of this.stones) {
+      st.rise = Math.min(1, st.rise + dt / STONE.riseS)
+      st.mesh.scale.y = st.full * ease(st.rise)
+      const want = st.part ? POOL.lit : POOL.spent
+      st.pool.opacity += (want - st.pool.opacity) * Math.min(1, dt * 4)
+    }
     for (const s of this.scraps) {
       s.bob += dt * 3
       s.mesh.position.y = 0.4 + Math.sin(s.bob) * 0.08
@@ -202,7 +271,9 @@ export class Loot {
       if (on && still) g.yaw += wrap(Math.atan2(still.x - g.pos.x, still.z - g.pos.z) - g.yaw) * Math.min(1, dt * 10)
       else if (g.fly <= 0) g.yaw += dt * SPIN * (1 - g.lit)
       sp.rotation.y = g.yaw
-      sp.position.y = Math.max(0.3, g.half + 0.14) + Math.sin(g.bob) * 0.08 + bounce
+      // on a pedestal, it rides up with the stone and hovers over its top
+      const base = g.stone ? STONE.h * ease(g.stone.rise) + g.half + 0.14 : Math.max(0.3, g.half + 0.14)
+      sp.position.y = base + Math.sin(g.bob) * 0.08 + bounce
     }
   }
 
@@ -234,12 +305,19 @@ export class Loot {
     const i = this.ground.indexOf(g)
     if (i < 0) return
     this.ground.splice(i, 1)
+    if (g.stone) g.stone.part = null
     this.dispose(g)
   }
 
   clear() {
     for (const g of this.ground) this.dispose(g)
     this.ground.length = 0
+    for (const st of this.stones) {
+      this.scene.remove(st.group)
+      st.pool.dispose()
+      st.circle.dead = true
+    }
+    this.stones.length = 0
     for (const s of this.scraps) this.scene.remove(s.mesh)
     this.scraps.length = 0
   }

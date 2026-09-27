@@ -51,7 +51,7 @@ export function hookCandidates(s: Save, worn: (PartId | null)[]): PartId[] {
   return out
 }
 
-/** Found whites that face out, optionally for one slot: what fills an empty slot, and what a run can start with. */
+/** Found whites that face out, optionally for one slot: what a run can start with. */
 export function facingOutWhites(s: Save, slot?: SlotName): PartId[] {
   const found = new Set(s.found)
   const turned = new Set(s.turned)
