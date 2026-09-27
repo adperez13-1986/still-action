@@ -65,6 +65,8 @@ function stats(d: AbilityDef, other?: AbilityDef) {
 let describe: (d: AbilityDef) => { name: string; history: string | null } = (d) => ({ name: d.name, history: null })
 /** The playtest switches beside resume, as main hands them over: what each is called, and its state. */
 const playSwitches: { label: string; read: () => boolean; write: (on: boolean) => void }[] = []
+/** One-press buttons after the switches (the owner's log export), in the order main gave them. */
+const playActions: { label: () => string; run: () => void }[] = []
 
 function card(d: AbilityDef, tag: string, other?: AbilityDef, conflict?: string | null, fresh = false) {
   const past = describe(d)
@@ -109,6 +111,8 @@ export interface PauseScreen {
   setDescribe: (fn: (d: AbilityDef) => { name: string; history: string | null }) => void
   /** A playtest switch on the loadout screen (the close hand, the eye), added or replaced by label: main reads and writes it. */
   setSwitch: (label: string, read: () => boolean, write: (on: boolean) => void) => void
+  /** A one-press button on the loadout screen after the switches (the owner's log export); `label` is read each time it's shown. */
+  setAction: (label: () => string, run: () => void) => void
   hide: () => void
 }
 
@@ -165,6 +169,14 @@ export function createPauseScreen(root: HTMLElement): PauseScreen {
         paint()
         resume.before(btn)
       }
+      for (const act of playActions) {
+        const btn = document.createElement('button')
+        btn.type = 'button'
+        btn.className = 'rule act'
+        btn.innerHTML = act.label()
+        btn.addEventListener('click', () => act.run())
+        resume.before(btn)
+      }
     },
 
     compare(current, incoming, equipped, onTake, onLeave, fresh = false) {
@@ -214,6 +226,10 @@ export function createPauseScreen(root: HTMLElement): PauseScreen {
 
     setDescribe(fn) {
       describe = fn
+    },
+
+    setAction(label, run) {
+      playActions.push({ label, run })
     },
 
     setSwitch(label, read, write) {

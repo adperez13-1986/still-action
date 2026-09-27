@@ -21,6 +21,12 @@ a safe band outside the slam, which is still spacing, and the far shot stayed as
   sound, pierces, shoves each body 0.6 u. Both on: close = hand, planted = lance, walking at range = nothing.
 - Log: `eye` now counts lances; new per-depth `handBreaks` and `braced`.
 
+**Playtest log in the installed game (27 Sep):** open the live site once with `?owner` (`?owner=0`
+turns it off) and that device keeps each run on the phone (`src/playlog.ts`, last 80 runs). The pause
+screen gets an "export log N" button: share sheet with a .json (download on plain http). Fold it in with
+`npx tsx tools/mergelog.ts <file>` (by run key, later save wins). Other people's devices record nothing.
+The dev server still writes playtest.json directly.
+
 Next: he plays a few runs with each; ask what he felt before reading the numbers. Then close the
 switches and start **replay step 2** (below).
 

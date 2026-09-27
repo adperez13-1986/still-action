@@ -21,6 +21,7 @@ import { Charger, CHARGER, PLATE as RAM_PLATE } from './charger'
 import { HIDES, debrisColor } from './hide'
 import { Mite, BROOD, type Brood } from './swarm'
 import * as sfx from './audio'
+import * as playlog from './playlog'
 import { HandRing } from './handring'
 import { Sightline } from './sightline'
 import { createCameraRig } from './camera'
@@ -2102,13 +2103,14 @@ function closeStats() {
 let playKey = ''
 
 /**
- * Dev only: the phone can't open a console, so each depth's end and the run's end POST the
- * run so far to the dev server, which keeps it in playtest.json (one entry per run, replaced
- * as it grows). A production build has no such endpoint and never tries.
+ * The phone can't open a console, so each depth's end and the run's end save the run so far:
+ * on the dev server, a POST it keeps in playtest.json (one entry per run, replaced as it grows);
+ * on the owner's device (`?owner` once), the same entry kept on the phone for the pause
+ * screen's export (playlog.ts). Anyone else's build records nothing.
  */
 function savePlaytest() {
   // the owner's phone runs only: a headless check (webdriver) never lands in his numbers
-  if (!import.meta.env.DEV || !playKey || navigator.webdriver) return
+  if (!playKey || navigator.webdriver || (!import.meta.env.DEV && !owner)) return
   const body = {
     key: playKey, id: run.id, build: __BUILD__, startedAt: run.startedAt, savedAt: new Date().toISOString(),
     dev: run.dev, end: run.ending?.kind ?? null, depth: run.depth, breakRule: run.breakRule, hand: run.hand, eye: run.eye,
@@ -2117,8 +2119,13 @@ function savePlaytest() {
     parts: partDrops(),
     drops: run.drops,
   }
-  void fetch('/__save/playtest', { method: 'POST', body: JSON.stringify(body) }).catch(() => {})
+  if (owner) playlog.keep(body)
+  if (import.meta.env.DEV) void fetch('/__save/playtest', { method: 'POST', body: JSON.stringify(body) }).catch(() => {})
 }
+
+/** This device keeps its own playtest log (playlog.ts): set by `?owner`, kept per device. */
+const owner = playlog.ownerFromUrl()
+if (owner) pause.setAction(() => `export log <b>${playlog.readLog().length}</b>`, () => void playlog.exportLog())
 
 function descend() {
   run.phase = 'descending'

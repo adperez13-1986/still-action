@@ -31,7 +31,6 @@ import type { Save } from '../src/save'
 import type { SlotName } from '../src/still'
 import census from './levels.json' with { type: 'json' }
 
-declare const process: { argv: string[] }
 
 // --- options ---
 const arg = (name: string, dflt: string) => {
