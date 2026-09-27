@@ -36,6 +36,9 @@ turns it off) and that device keeps each run on the phone (`src/playlog.ts`, las
 screen gets an "export log N" button: share sheet with a .json (download on plain http). Fold it in with
 `npx tsx tools/mergelog.ts <file>` (by run key, later save wins). Other people's devices record nothing.
 The dev server still writes playtest.json directly.
+Play time (27 Sep): per depth `playS` (crawl seconds, game time: pauses, loot screens and a hidden
+app don't count) and per entry `walkS` (the walk home). Wall-clock start/save said his fresh full runs
+take ~8-12 min, not the ~26 min in the design docs; playS will say where the minutes go.
 
 Next: he plays a few runs with each; ask what he felt before reading the numbers. Then close the
 switches and start **replay step 2** (below).

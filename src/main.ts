@@ -1160,6 +1160,8 @@ interface DepthStats {
   eye: number; eyeCasts: number
   /** Windups the hand broke, and blows taken planted (halved by the eye's brace). */
   handBreaks?: number; braced?: number
+  /** Seconds actually played on this depth's crawl: game time, so pauses, loot screens and the app in the background don't count. */
+  playS?: number
 }
 /** One press on a filled button, for the playtest file: how long taps really last on the phone. */
 interface TapLog { depth: number; slot: SlotName; ms: number; ready: boolean; result: Press['result'] }
@@ -1188,6 +1190,8 @@ const run = {
   /** Where this fight's strain began: the free push is drawn above it. */
   water: 0,
   taps: [] as TapLog[],
+  /** Seconds played walking home after the Arbiter (game time, like each depth's playS). */
+  walkS: 0,
   /** ISO: when this run began (its snapshot carries it). */
   startedAt: '',
   /** This level's seed: a resume builds the same layout. */
@@ -1305,7 +1309,7 @@ function partDrops() {
   return out
 }
 /** run.stats as the playtest file and __runStats read it: the open depth's strain now, and its drops. */
-const statsOut = () => run.stats.map((st) => ({ ...st, strainOut: st.strainOut ?? run.strain, ...depthDrops(st.depth) }))
+const statsOut = () => run.stats.map((st) => ({ ...st, strainOut: st.strainOut ?? run.strain, playS: Math.round(st.playS ?? 0), ...depthDrops(st.depth) }))
 
 /** What the save has found and turned, at this depth: every drop reads it. */
 const pool = (): PoolView => poolView(save, run.depth)
@@ -1834,7 +1838,7 @@ function resumeRun(snap: RunSnapshot) {
   const route: RouteId | null = snap.crossroads ? null
     : snap.route === 'III' && flag('line') ? 'III' : snap.route === 'II' || depth >= 4 || snap.route === 'III' ? 'II' : null
   Object.assign(run, {
-    phase: 'crawl', t: 0, swapped: false, ramStunSeen: false, dev: false, committed: false, ending: null, stats: [], taps: [],
+    phase: 'crawl', t: 0, swapped: false, ramStunSeen: false, dev: false, committed: false, ending: null, stats: [], taps: [], walkS: 0,
     breakRule: combat.breakRule, hand: combat.closeHand, eye: combat.eye, drops: [], id: snap.id, startedAt: snap.startedAt, strain: Math.min(19, Math.max(0, Math.round(snap.strain) || 0)), tally, route,
   })
   // a resume starts its stats over, so it's its own entry in the playtest file, not an overwrite
@@ -2009,7 +2013,7 @@ function enterLevel(depth: number, o: { seed?: number; bossFelled?: boolean; res
   prev.copy(still.pos)
   run.depth = depth
   closeStats()
-  run.stats.push({ depth, fights: 0, pushes: 0, breaks: 0, deadTaps: 0, quiets: 0, strainIn: run.strain, strainOut: null, hand: 0, shots: 0, eye: 0, eyeCasts: 0, handBreaks: 0, braced: 0 })
+  run.stats.push({ depth, fights: 0, pushes: 0, breaks: 0, deadTaps: 0, quiets: 0, strainIn: run.strain, strainOut: null, hand: 0, shots: 0, eye: 0, eyeCasts: 0, handBreaks: 0, braced: 0, playS: 0 })
   // the card's line gets a tick where this depth began (a resumed depth already has its tick)
   if (!o.resume) run.tally.marks.push(run.tally.line.length)
   // parts remember how deep they went
@@ -2022,7 +2026,7 @@ function startRun() {
   still.reassemble()
   Object.assign(run, {
     phase: 'crawl', strain: 0, t: 0, swapped: false, ramStunSeen: false,
-    id: newRunId(), dev: DEPTH_PARAM !== null, committed: false, ending: null, stats: [], drops: [], taps: [], tally: freshTally(),
+    id: newRunId(), dev: DEPTH_PARAM !== null, committed: false, ending: null, stats: [], drops: [], taps: [], walkS: 0, tally: freshTally(),
     startedAt: new Date().toISOString(), breakRule: combat.breakRule, hand: combat.closeHand, eye: combat.eye, route: ROUTE_PARAM,
   })
   playKey = `${run.id}.${Date.now().toString(36)}`
@@ -2082,6 +2086,7 @@ function savePlaytest() {
     key: playKey, id: run.id, build: __BUILD__, startedAt: run.startedAt, savedAt: new Date().toISOString(),
     dev: run.dev, end: run.ending?.kind ?? null, depth: run.depth, breakRule: run.breakRule, hand: run.hand, eye: run.eye,
     stats: statsOut(),
+    walkS: Math.round(run.walkS),
     taps: run.taps,
     parts: partDrops(),
     drops: run.drops,
@@ -2963,6 +2968,12 @@ function simulate(realDt: number) {
     fadeInT = Math.max(0, fadeInT - realDt)
     fade.style.opacity = String(fadeInT / DESCEND_IN)
   }
+
+  // the playtest clock: only stepped time counts, so a pause or a hidden app never runs it
+  if (run.phase === 'crawl') {
+    const st = run.stats[run.stats.length - 1]
+    if (st) st.playS = (st.playS ?? 0) + realDt
+  } else if (run.phase === 'homing' || run.phase === 'toWalk' || run.phase === 'walkHome') run.walkS += realDt
 
   if (run.phase === 'homing') {
     homing(realDt)
