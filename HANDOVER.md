@@ -21,6 +21,13 @@ a safe band outside the slam, which is still spacing, and the far shot stayed as
   sound, pierces, shoves each body 0.6 u. Both on: close = hand, planted = lance, walking at range = nothing.
 - Log: `eye` now counts lances; new per-depth `handBreaks` and `braced`.
 
+**Pass 2 verdict (27 Sep, 3 runs both on, via the phone export):** he keeps both: *"a good idea that we
+don't have the auto attack now apart from the hand and the eye"*. So the switches are closed: hand and
+eye permanent, pause switches removed (dev hooks `__hand`/`__eye` still flip them for checks). The
+lance's big bolt and sound are gone (*"the lances look strong but in reality it is weak"*): planted
+shots use the old shot's look, speed and sound, and keep the pierce and the 0.6 u shove. Two of his
+three runs broke at the Assembler; watch that.
+
 **Playtest log in the installed game (27 Sep):** open the live site once with `?owner` (`?owner=0`
 turns it off) and that device keeps each run on the phone (`src/playlog.ts`, last 80 runs). The pause
 screen gets an "export log N" button: share sheet with a .json (download on plain http). Fold it in with

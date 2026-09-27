@@ -52,9 +52,10 @@ export const HAND_REACH = HAND.range + MELEE_PAD - 0.55
  * and it and the head parts aim at the back line: leaders, then shooters, then the nearest.
  * Awake bodies only: at 11 u, past the 8 u wake radius, anything else would shoot a pack awake.
  * Pass 2 (27 Sep, "standing still feels like absorbing blows"): planted, every hit is ×`brace`,
- * and the auto is the lance: slower, brighter, it pierces and shoves each body `shove` u.
+ * and the auto is the lance: it pierces and shoves each body `shove` u. It looks and sounds like
+ * the old shot ("the lances look strong but in reality it is weak").
  */
-export const EYE = { settle: 0.3, range: 11, brace: 0.5, lanceSpeed: 18, shove: 0.6 }
+export const EYE = { settle: 0.3, range: 11, brace: 0.5, shove: 0.6 }
 
 /** What a cast knows about the moment it was pressed. */
 export interface CastContext {
@@ -280,8 +281,7 @@ export interface CombatEvents {
   onSmash: (b: Breakable, loot?: boolean) => void
   /** A boss volley leaving the cannon. */
   onVolley: (at: THREE.Vector3) => void
-  /** `lance`: planted, the eye's lance instead of the shot. */
-  onShot: (lance: boolean) => void
+  onShot: () => void
   /**
    * The eye chose: an auto shot past AUTO_RANGE or at a priority body over the nearest
    * ('shot'), or a head cast at a body its usual pick wasn't ('cast').
@@ -381,9 +381,9 @@ export class Combat {
   private hurtCaught = false
   /** Dev checks switch it off to test a part in isolation. */
   autoAttack = true
-  /** The hand's switch (pause screen, on by default): off, the auto is always the shot. */
+  /** The hand: always on since 27 Sep; only dev checks turn it off (then the old far shot comes back). */
   closeHand = true
-  /** The eye's switch (pause screen, on by default): off, standing still aims like walking. */
+  /** The eye: always on since 27 Sep; only dev checks turn it off. */
   eye = true
   /** Main writes it each tick: the stick is out of its dead zone. A cast never touches it. */
   walking = false
@@ -433,9 +433,6 @@ export class Combat {
   private readonly boltGeo = new THREE.BoxGeometry(0.1, 0.1, 0.8)
   private readonly boltMat = new THREE.MeshBasicMaterial({ color: 0x8fb8e8, blending: THREE.AdditiveBlending, transparent: true })
   private readonly abilityBoltMat = new THREE.MeshBasicMaterial({ color: 0xeef6ff, blending: THREE.AdditiveBlending, transparent: true })
-  // the lance: twice the shot's length, thicker, and a paler, hotter white than any part's bolt
-  private readonly lanceGeo = new THREE.BoxGeometry(0.2, 0.2, 1.7)
-  private readonly lanceMat = new THREE.MeshBasicMaterial({ color: 0xf4fbff, blending: THREE.AdditiveBlending, transparent: true })
   private readonly shotGeo = new THREE.SphereGeometry(SHOT_RADIUS, 10, 8)
   private readonly shotMat = new THREE.MeshBasicMaterial({ color: 0xff8a50, blending: THREE.AdditiveBlending, transparent: true, fog: false })
 
@@ -576,9 +573,9 @@ export class Combat {
         const d = Math.hypot(target.pos.x - player.x, target.pos.z - player.z)
         const lance = target === this.eyeTarget
         // a lance flies to its body and a little past, never on into a sleeping room behind it
-        if (lance) this.lance(player, target.pos, Math.min(0.7, (d + 1.2) / EYE.lanceSpeed))
+        if (lance) this.lance(player, target.pos, Math.min(0.7, (d + 1.2) / PART.boltSpeed))
         else this.shoot(player, target.pos)
-        this.events.onShot(lance)
+        this.events.onShot()
         if (lance) this.events.onEye('shot')
       }
     }
@@ -1494,14 +1491,14 @@ export class Combat {
     this.bolts.push({ mesh, part: false, dir, life, damage: AUTO_DAMAGE, radius: 0.3, speed: PART.boltSpeed, bouncesLeft: 0, bounces: [] })
   }
 
-  /** The eye's lance: the auto's damage, slower and brighter, through every body on its line, shoving each. */
+  /** The eye's lance: the shot's look and damage, through every body on its line, shoving each. */
   private lance(from: THREE.Vector3, to: THREE.Vector3, life: number) {
-    const mesh = new THREE.Mesh(this.lanceGeo, this.lanceMat)
+    const mesh = new THREE.Mesh(this.boltGeo, this.boltMat)
     mesh.position.set(from.x, 1.15, from.z)
     const dir = new THREE.Vector3(to.x - from.x, 0, to.z - from.z).normalize()
     mesh.rotation.y = Math.atan2(dir.x, dir.z)
     this.scene.add(mesh)
-    this.bolts.push({ mesh, part: false, dir, life, damage: AUTO_DAMAGE, radius: 0.35, speed: EYE.lanceSpeed, pierced: new Set(), shove: EYE.shove, trail: 0.4, bouncesLeft: 0, bounces: [] })
+    this.bolts.push({ mesh, part: false, dir, life, damage: AUTO_DAMAGE, radius: 0.3, speed: PART.boltSpeed, pierced: new Set(), shove: EYE.shove, bouncesLeft: 0, bounces: [] })
   }
 
   /**

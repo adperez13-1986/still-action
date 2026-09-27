@@ -457,12 +457,10 @@ const combat = new Combat(world.scene, OPEN, {
     }
     if (ev.kind === 'cooldownStart') hud.startCooldown(ev.slot)
   },
-  onShot: (lance) => {
-    if (lance) sfx.lance(0)
-    else sfx.shot(0)
+  onShot: () => {
+    sfx.shot(0)
     still.attack({ beat: 'shot', pushed: false })
-    // the lance leaves the lens with a flash you can see from across the room
-    vfx.flash(still.lensPoint(new THREE.Vector3()), lance ? COLD : COLD_DEEP, lance ? 0.7 : 0.25)
+    vfx.flash(still.lensPoint(new THREE.Vector3()), COLD_DEEP, 0.25)
     const st = run.stats[run.stats.length - 1]
     if (st) st.shots++
   },
@@ -1538,53 +1536,22 @@ function setBreakRule(on: boolean) {
 setBreakRule(true)
 
 /**
- * The close hand's switch (design/variety/PITCHES.md 4): on by default, flipped on the pause
- * screen, kept per device. A run that sees it flipped logs 'mixed'.
+ * The hand and the eye (design/variety/PITCHES.md 1, 3) are the auto now: permanent since 27 Sep
+ * (after pass 2 he kept both: "we don't have the auto attack now apart from the hand and the eye").
+ * The pause switches are gone; only the dev hooks flip them, for checks. A run flipped logs 'mixed'.
  */
-const HAND_KEY = 'still-action.closeHand'
-function readHand(): boolean {
-  try {
-    return localStorage.getItem(HAND_KEY) !== '0'
-  } catch {
-    return true
-  }
-}
-function setHand(on: boolean, keep = true) {
+function setHand(on: boolean) {
   combat.closeHand = on
   if (run.hand !== 'mixed' && run.hand !== on && run.phase !== 'boot') run.hand = 'mixed'
-  if (!keep) return
-  try {
-    localStorage.setItem(HAND_KEY, on ? '1' : '0')
-  } catch {
-    // a private window: it holds for this session
-  }
 }
-setHand(readHand(), false)
-run.hand = combat.closeHand
-pause.setSwitch('close hand', () => combat.closeHand, (on) => setHand(on))
-
-/** The eye's switch (design/variety/PITCHES.md 4), like the hand's: on by default, per device, 'mixed' once flipped mid-run. */
-const EYE_KEY = 'still-action.eye'
-function readEye(): boolean {
-  try {
-    return localStorage.getItem(EYE_KEY) !== '0'
-  } catch {
-    return true
-  }
-}
-function setEye(on: boolean, keep = true) {
+function setEye(on: boolean) {
   combat.eye = on
   if (run.eye !== 'mixed' && run.eye !== on && run.phase !== 'boot') run.eye = 'mixed'
-  if (!keep) return
-  try {
-    localStorage.setItem(EYE_KEY, on ? '1' : '0')
-  } catch {
-    // a private window: it holds for this session
-  }
 }
-setEye(readEye(), false)
+setHand(true)
+setEye(true)
+run.hand = combat.closeHand
 run.eye = combat.eye
-pause.setSwitch('the eye', () => combat.eye, (on) => setEye(on))
 
 /**
  * C-T2: under the break rule the push is taught at its first reason, once per save: a
@@ -4248,7 +4215,7 @@ if (import.meta.env.DEV) {
     /** The playtest POST now, as a depth's end would. */
     __savePlaytest: savePlaytest,
     /** Dev only: the break rule off or on for a check. No argument reads it. */
-    /** The close hand's switch, as the pause screen flips it (kept per device), and the run's log of it. */
+    /** The hand (permanent; this flips it for checks, not kept), and the run's log of it. */
     __hand: (on?: boolean) => {
       if (on !== undefined) setHand(on)
       const ring = handRing.mesh
@@ -4257,7 +4224,7 @@ if (import.meta.env.DEV) {
         ring: { visible: ring.visible, opacity: (ring.material as THREE.MeshBasicMaterial).opacity, r: handRing.radius },
       }
     },
-    /** The eye's switch, as the pause screen flips it (kept per device); the stance, its body, the line, and the run's log. */
+    /** The eye (permanent; this flips it for checks, not kept); the stance, its body, the line, and the run's log. */
     __eye: (on?: boolean) => {
       if (on !== undefined) setEye(on)
       const t = combat.eyeTarget
