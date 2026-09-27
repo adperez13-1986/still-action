@@ -1,33 +1,28 @@
-# Handover — 26 Sep 2026
+# Handover — 27 Sep 2026
 
 For the next session. Read this, then `DESIGN.md` (the settled decisions), then the design
 folder for whatever you're touching. Don't re-derive any of them.
 
-## Start here: the owner's playtest
+## Start here: hand/eye pass 2 is waiting for his runs
 
-He's playing **three runs on the dev server** (the logs only save there): **hand only**, **eye
-only**, **both** (switches on the pause screen: "close hand", "the eye"). Then he'll say which
-he'd miss. Next session opens by reading `playtest.json` in the repo (git-ignored) and asking him.
+**27 Sep:** his switch runs were done (hand only, both, eye only x3; last switches: hand OFF, eye ON).
+His verdict: he didn't feel either much. *"hand just feels like kiting but shorter range, it still
+involves running away but keeping in range"*; the eye: *"make its projectile more distinct? having
+to stay still feels like I have to absorb blows."* Cause of the first: the hand was designed around
+a safe band outside the slam, which is still spacing, and the far shot stayed as a kiting fallback.
 
-What each entry now records: `hand` and `eye` (true / false / 'mixed'), per depth `fights`,
-`pushes`, `breaks`, `deadTaps`, `quiets`, `strainIn/Out`, `hand` strikes, `shots`, `eye` shots,
-`eyeCasts`, `drops/offered/taken/left/missed`; per part `offered/taken/left/from`; a raw `drops`
-log; and every button press (`taps`: slot, ms, ready, result). Headless browsers never write it.
+**Pass 2, built (still behind the same two switches):**
+- **Hand:** a strike on a breakable windup breaks it (plain interrupt, not the push's reel) and every
+  strike shoves the body 0.5 u (`HAND.shove`, not bosses). With the hand ON there is **no far auto**
+  (option 3). Headless: one hulk dies in 1.3 s and never lands a slam (its windup 520 ms < the 620 ms
+  beat, and the shove costs it its approach); two hulks cost 27 HP. A crowd is the brawler's risk.
+- **Eye:** settle 0.3 s (was 0.5); planted, every blow is halved (`EYE.brace`, cold flash + clang,
+  softer shake); the planted auto is the **lance**: speed 18 (shot 26), bigger paler bolt, its own
+  sound, pierces, shoves each body 0.6 u. Both on: close = hand, planted = lance, walking at range = nothing.
+- Log: `eye` now counts lances; new per-depth `handBreaks` and `braced`.
 
-Then **close the switches** (keep what he'd miss, remove the switch), and start **replay step 2**
-(below).
-
-**Run 1 of 3 is in (26 Sep):** "close hand" on all run, "the eye" switched off partway ('mixed').
-Broken at depth 3 (the Assembler); his earlier runs all reached Home. Close strikes vs shots: d1
-32/16, d2 24/24, d3 18/47, so he really brawled in the crawl. No breaks, strain peaked at 3.
-
-**His question from it:** "there always is an auto attack?" Yes: the hand is a rule for everyone,
-not a part, and beyond arm's reach the old shot (5 dmg, 7.6 u) still fires, on purpose so kiting
-stays possible. If that undercuts the point, three options to put to him after runs 2 and 3:
-1. keep it as is (the close strike is simply the better auto up close);
-2. weaken the far shot while the hand is on (e.g. 3 dmg instead of 5);
-3. the hand replaces the far auto entirely (range damage only from parts).
-Don't change anything before his other two runs (eye only, both).
+Next: he plays a few runs with each; ask what he felt before reading the numbers. Then close the
+switches and start **replay step 2** (below).
 
 ## Where it stands
 

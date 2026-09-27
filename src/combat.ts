@@ -41,16 +41,20 @@ export const MELEE_PAD = 0.6
  * The hand (design/variety/PITCHES.md 1): with the nearest awake enemy in arm's reach (the
  * arcs' own test at `range`, about 3.5 u from a hulk's centre, outside its 2.4 slam) and a
  * clear line, the auto is a close strike on that one body, on the auto's own beat.
+ * Pass 2 (27 Sep, "it still feels like kiting"): a strike breaks a windup it can and shoves
+ * the body `shove` u, so one enemy up close never lands; with the hand on there is no far shot.
  */
-export const HAND = { range: 2.9, damage: 10 }
+export const HAND = { range: 2.9, damage: 10, shove: 0.5 }
 /** How far from Still's centre a body's edge may be for the hand to reach it: the ring's radius. */
 export const HAND_REACH = HAND.range + MELEE_PAD - 0.55
 /**
  * The eye (design/variety/PITCHES.md 3): no stick for `settle` s and the auto reaches `range`,
  * and it and the head parts aim at the back line: leaders, then shooters, then the nearest.
  * Awake bodies only: at 11 u, past the 8 u wake radius, anything else would shoot a pack awake.
+ * Pass 2 (27 Sep, "standing still feels like absorbing blows"): planted, every hit is ×`brace`,
+ * and the auto is the lance: slower, brighter, it pierces and shoves each body `shove` u.
  */
-export const EYE = { settle: 0.5, range: 11 }
+export const EYE = { settle: 0.3, range: 11, brace: 0.5, lanceSpeed: 18, shove: 0.6 }
 
 /** What a cast knows about the moment it was pressed. */
 export interface CastContext {
@@ -102,6 +106,8 @@ interface Bolt {
   trail?: number
   /** Fired by a push: it lands as a pushed hit, however long it flies (the break rule). */
   pushed?: boolean
+  /** The eye's lance: each body it hits slides this far along its flight (never a boss). */
+  shove?: number
   speed: number
   /** Through-Line: ignores terrain, smashing crates it passes. */
   ghost?: boolean
@@ -262,8 +268,8 @@ interface Fx {
 export interface CombatEvents {
   /** `e`: who was hit, when it was an enemy (a stunned ram sounds and sparks differently). */
   onHit: (at: THREE.Vector3, e?: Enemy) => void
-  /** `amount`: what was actually lost. A top-up inside a hurt window reports only the difference. */
-  onPlayerHurt: (amount: number, source: HurtSource) => void
+  /** `amount`: what was actually lost. A top-up inside a hurt window reports only the difference. `braced`: planted, it was halved. */
+  onPlayerHurt: (amount: number, source: HurtSource, braced: boolean) => void
   /** `summoned`: a boss add, scrap that never drops anything. `weight`: this kill's share of the pack's payout. */
   onKill: (at: THREE.Vector3, kind: Archetype, pack: Pack, wasElite: boolean, summoned: boolean, weight: number, e: Enemy) => void
   /** An enemy's instant (a lock, a rush ending, a trample). Lasting state is polled instead. */
@@ -274,14 +280,15 @@ export interface CombatEvents {
   onSmash: (b: Breakable, loot?: boolean) => void
   /** A boss volley leaving the cannon. */
   onVolley: (at: THREE.Vector3) => void
-  onShot: () => void
+  /** `lance`: planted, the eye's lance instead of the shot. */
+  onShot: (lance: boolean) => void
   /**
    * The eye chose: an auto shot past AUTO_RANGE or at a priority body over the nearest
    * ('shot'), or a head cast at a body its usual pick wasn't ('cast').
    */
   onEye: (what: 'shot' | 'cast') => void
-  /** The hand struck `e` for HAND.damage (the auto's close form). */
-  onHand: (e: Enemy) => void
+  /** The hand struck `e` for HAND.damage (the auto's close form); `broke`: it broke a windup. */
+  onHand: (e: Enemy, broke: boolean) => void
   onWindup: (e: Enemy, ms: number) => void
   onStrike: (e: Enemy) => void
   onGone: (e: Enemy) => void
@@ -426,6 +433,9 @@ export class Combat {
   private readonly boltGeo = new THREE.BoxGeometry(0.1, 0.1, 0.8)
   private readonly boltMat = new THREE.MeshBasicMaterial({ color: 0x8fb8e8, blending: THREE.AdditiveBlending, transparent: true })
   private readonly abilityBoltMat = new THREE.MeshBasicMaterial({ color: 0xeef6ff, blending: THREE.AdditiveBlending, transparent: true })
+  // the lance: twice the shot's length, thicker, and a paler, hotter white than any part's bolt
+  private readonly lanceGeo = new THREE.BoxGeometry(0.2, 0.2, 1.7)
+  private readonly lanceMat = new THREE.MeshBasicMaterial({ color: 0xf4fbff, blending: THREE.AdditiveBlending, transparent: true })
   private readonly shotGeo = new THREE.SphereGeometry(SHOT_RADIUS, 10, 8)
   private readonly shotMat = new THREE.MeshBasicMaterial({ color: 0xff8a50, blending: THREE.AdditiveBlending, transparent: true, fog: false })
 
@@ -545,26 +555,31 @@ export class Combat {
     this.autoTimer -= dt
     if (this.autoAttack && this.autoTimer <= 0) {
       const close = this.closeHand ? this.handTarget(player) : null
-      // the auto never wastes itself on a wall: the hand's line is clear, and the shot takes the nearest it can hit
-      // (planted, the eye's body first; with nothing awake in its reach, today's shot)
-      const usual = close ? null : this.nearest(player, AUTO_RANGE, true)
+      // the auto never wastes itself on a wall: the hand's line is clear, and the shot takes the nearest it can hit.
+      // Planted, it's the lance at the eye's body; with the hand on, walking, nothing out of reach
+      const usual = close || this.closeHand ? null : this.nearest(player, AUTO_RANGE, true)
       const target = close ? null : this.eyeTarget ?? usual
       if (close) {
-        // no flight, no shove, no break: the same beat as the shot, twice the weight, one body
+        // no flight, no break of a push's kind: the same beat as the shot, twice the weight, one body.
+        // A windup it can break goes back to closing in, and the body slides off half a step
         this.autoTimer = AUTO_INTERVAL
+        const broke = this.breakable(close) && close.interrupt(false)
+        if (broke) this.interrupted(close)
         close.hit(HAND.damage)
+        if (!isBoss(close)) this.shoveFrom(close, player.x, player.z, HAND.shove)
         // a narrow cold sweep to its body, the arcs' own floor mark: the form reads as reach, not a bolt
         const aim = Math.atan2(close.pos.x - player.x, close.pos.z - player.z)
         this.sweep(player, aim, Math.hypot(close.pos.x - player.x, close.pos.z - player.z), 0x8fb8e8, 0.4)
-        this.events.onHand(close)
+        this.events.onHand(close, broke)
       } else if (target) {
         this.autoTimer = AUTO_INTERVAL
         const d = Math.hypot(target.pos.x - player.x, target.pos.z - player.z)
-        const eye = target !== usual || d > AUTO_RANGE
-        // an eye shot flies to its body and a little past, never on into a sleeping room behind it
-        this.shoot(player, target.pos, target === this.eyeTarget ? Math.min(0.7, (d + 1.2) / PART.boltSpeed) : 0.7)
-        this.events.onShot()
-        if (eye) this.events.onEye('shot')
+        const lance = target === this.eyeTarget
+        // a lance flies to its body and a little past, never on into a sleeping room behind it
+        if (lance) this.lance(player, target.pos, Math.min(0.7, (d + 1.2) / EYE.lanceSpeed))
+        else this.shoot(player, target.pos)
+        this.events.onShot(lance)
+        if (lance) this.events.onEye('shot')
       }
     }
 
@@ -724,6 +739,7 @@ export class Combat {
         e.hit(b.damage)
         this.events.onHit(e.pos, e)
       }
+      if (b.shove && !e.dead && !isBoss(e)) e.knock.addScaledVector(shoveVelocity(b.dir.x, b.dir.z, b.shove), e.knockMul)
       // a banked bolt into a sentinel arms its answer: it shoots back down the same path
       const last = b.bounces[b.bounces.length - 1]
       if (last && e instanceof Ranged && !e.dead) e.setAnswer({ at: last.at.clone(), flip: last.flip, bounces: b.bounces.length })
@@ -1204,6 +1220,9 @@ export class Combat {
    * one hit's worth. The window never extends.
    */
   private hurtPlayer(damage: number, source: HurtSource, from?: Enemy) {
+    // planted, the eye braces: every blow halved before the window, Anvil or Brace see it
+    const braced = this.inStance
+    if (braced) damage = Math.ceil(damage * EYE.brace)
     const open = this.hurtCooldown > 0
     // after a catch, the rest of the window's body strikes fold into it
     if (open && source === 'melee' && this.hurtCaught) return
@@ -1231,7 +1250,7 @@ export class Combat {
     const before = this.hp
     this.hp = Math.max(0, this.hp - amount)
     this.tickDamage += before - this.hp
-    this.events.onPlayerHurt(amount, source)
+    this.events.onPlayerHurt(amount, source, braced)
   }
 
   /** The dead branch of the enemy loop: out of the scene, out of its pack, paid out. */
@@ -1473,6 +1492,16 @@ export class Combat {
     mesh.rotation.y = Math.atan2(dir.x, dir.z)
     this.scene.add(mesh)
     this.bolts.push({ mesh, part: false, dir, life, damage: AUTO_DAMAGE, radius: 0.3, speed: PART.boltSpeed, bouncesLeft: 0, bounces: [] })
+  }
+
+  /** The eye's lance: the auto's damage, slower and brighter, through every body on its line, shoving each. */
+  private lance(from: THREE.Vector3, to: THREE.Vector3, life: number) {
+    const mesh = new THREE.Mesh(this.lanceGeo, this.lanceMat)
+    mesh.position.set(from.x, 1.15, from.z)
+    const dir = new THREE.Vector3(to.x - from.x, 0, to.z - from.z).normalize()
+    mesh.rotation.y = Math.atan2(dir.x, dir.z)
+    this.scene.add(mesh)
+    this.bolts.push({ mesh, part: false, dir, life, damage: AUTO_DAMAGE, radius: 0.35, speed: EYE.lanceSpeed, pierced: new Set(), shove: EYE.shove, trail: 0.4, bouncesLeft: 0, bounces: [] })
   }
 
   /**

@@ -240,8 +240,21 @@ const combat = new Combat(world.scene, OPEN, {
     vfx.flash(at3(at, 1.0), COLD_DEEP, 0.35)
     shake = Math.max(shake, 0.1)
   },
-  onPlayerHurt: () => {
+  onPlayerHurt: (_amount, _source, braced) => {
     sfx.hurt()
+    if (braced) {
+      // planted, the eye took half: a cold flash over fewer embers, and he barely rocks
+      sfx.braced(0)
+      const st = run.stats[run.stats.length - 1]
+      if (st) st.braced = (st.braced ?? 0) + 1
+      vfx.sparks(at3(still.pos, 1.2), EMBER, 5, 4)
+      vfx.flash(at3(still.pos, 1.2), COLD, 0.8)
+      hitstop = Math.max(hitstop, 0.05)
+      shake = Math.max(shake, 0.25)
+      rig.punch(-0.015)
+      navigator.vibrate?.(15)
+      return
+    }
     vfx.sparks(at3(still.pos, 1.2), EMBER, 12, 5)
     vfx.flash(at3(still.pos, 1.2), EMBER, 0.6)
     hitstop = Math.max(hitstop, 0.09)
@@ -443,10 +456,12 @@ const combat = new Combat(world.scene, OPEN, {
     }
     if (ev.kind === 'cooldownStart') hud.startCooldown(ev.slot)
   },
-  onShot: () => {
-    sfx.shot(0)
+  onShot: (lance) => {
+    if (lance) sfx.lance(0)
+    else sfx.shot(0)
     still.attack({ beat: 'shot', pushed: false })
-    vfx.flash(still.lensPoint(new THREE.Vector3()), COLD_DEEP, 0.25)
+    // the lance leaves the lens with a flash you can see from across the room
+    vfx.flash(still.lensPoint(new THREE.Vector3()), lance ? COLD : COLD_DEEP, lance ? 0.7 : 0.25)
     const st = run.stats[run.stats.length - 1]
     if (st) st.shots++
   },
@@ -456,7 +471,7 @@ const combat = new Combat(world.scene, OPEN, {
     if (what === 'shot') st.eye++
     else st.eyeCasts++
   },
-  onHand: (e) => {
+  onHand: (e, broke) => {
     // melee, not a bolt: the clamp's clacks, a short knock, a few sparks off the near side, half the shot's hitstop
     const at = e.pos
     sfx.hand(panOf(at))
@@ -467,10 +482,14 @@ const combat = new Combat(world.scene, OPEN, {
     const face = at3(new THREE.Vector3(at.x + (toward.x / d) * e.radius, 0, at.z + (toward.z / d) * e.radius), 0.9)
     vfx.sparks(face, COLD, 5, 4.5, toward.multiplyScalar(-1), 0.9)
     vfx.flash(face, COLD_DEEP, 0.2)
-    hitstop = Math.max(hitstop, 0.022)
+    // a broken windup holds a beat longer, like a parry
+    hitstop = Math.max(hitstop, broke ? 0.05 : 0.022)
     shake = Math.max(shake, 0.06)
     const st = run.stats[run.stats.length - 1]
-    if (st) st.hand++
+    if (st) {
+      st.hand++
+      if (broke) st.handBreaks = (st.handBreaks ?? 0) + 1
+    }
   },
   onSmash: (b, rolls = true) => {
     level?.smash(b)
@@ -1138,8 +1157,10 @@ interface DepthStats {
   depth: number; fights: number; pushes: number; breaks: number; deadTaps: number; quiets: number; strainIn: number; strainOut: number | null
   /** The auto's two forms: close strikes and shots. */
   hand: number; shots: number
-  /** The eye's choices: auto shots past 7.6 u or at a priority body over the nearest, and head casts it re-aimed. */
+  /** The eye's choices: lances (every planted auto, since pass 2), and head casts it re-aimed. */
   eye: number; eyeCasts: number
+  /** Windups the hand broke, and blows taken planted (halved by the eye's brace). */
+  handBreaks?: number; braced?: number
 }
 /** One press on a filled button, for the playtest file: how long taps really last on the phone. */
 interface TapLog { depth: number; slot: SlotName; ms: number; ready: boolean; result: Press['result'] }
@@ -2020,7 +2041,7 @@ function enterLevel(depth: number, o: { seed?: number; bossFelled?: boolean; res
   prev.copy(still.pos)
   run.depth = depth
   closeStats()
-  run.stats.push({ depth, fights: 0, pushes: 0, breaks: 0, deadTaps: 0, quiets: 0, strainIn: run.strain, strainOut: null, hand: 0, shots: 0, eye: 0, eyeCasts: 0 })
+  run.stats.push({ depth, fights: 0, pushes: 0, breaks: 0, deadTaps: 0, quiets: 0, strainIn: run.strain, strainOut: null, hand: 0, shots: 0, eye: 0, eyeCasts: 0, handBreaks: 0, braced: 0 })
   // the card's line gets a tick where this depth began (a resumed depth already has its tick)
   if (!o.resume) run.tally.marks.push(run.tally.line.length)
   // parts remember how deep they went

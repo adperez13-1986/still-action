@@ -394,6 +394,35 @@ export function shot(pan: number) {
 }
 
 /**
+ * The eye's lance: a low draw under a bright ring, so a planted shot never sounds like the walking one.
+ * On the auto's bus: it keeps the auto's 0.62 s beat.
+ */
+export function lance(pan: number) {
+  const c = live()
+  if (!c) return
+  const t = c.currentTime
+  const d = out(c, 'auto', pan)
+  const r = vary(1, 0.04)
+  // the draw: a sine falling under everything, the weight the shot doesn't have
+  tone(c, d, 'sine', t, 320 * r, 120 * r, 0.16, 0.55, 0.004)
+  // the ring: two high partials that hang a little, cold glass
+  tone(c, d, 'triangle', t + 0.01, 2400 * r, 2100 * r, 0.22, 0.22)
+  tone(c, d, 'sine', t + 0.01, 3600 * r, 3300 * r, 0.18, 0.12)
+  sample(c, 'metalLight', d, 0.2, 1.2)
+  hiss(c, d, t, 0.12, 0.2, 'bandpass', 3000, 1200, 1.2)
+}
+
+/** A blow taken planted: the eye braced, so a cold clang rides over the (quieter) hurt. */
+export function braced(pan: number) {
+  const c = live()
+  if (!c) return
+  const t = c.currentTime
+  const d = out(c, 'auto', pan)
+  tone(c, d, 'triangle', t, 1300, 1150, 0.25, 0.35)
+  sample(c, 'metalMedium', d, 0.35, 1.6)
+}
+
+/**
  * The hand: the clamp's two dry clacks (jaws out, jaws shut) and a short knock into the body.
  * On the auto's bus, like the shot it replaces: it fires every 0.62 s in a close fight.
  */
