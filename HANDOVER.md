@@ -27,6 +27,9 @@ eye permanent, pause switches removed (dev hooks `__hand`/`__eye` still flip the
 lance's big bolt and sound are gone (*"the lances look strong but in reality it is weak"*): planted
 shots use the old shot's look, speed and sound, and keep the pierce and the 0.6 u shove. Two of his
 three runs broke at the Assembler; watch that.
+Then (his ask, "while I am running away the hand is still hitting"): **no strike while backing off**:
+moving > 1 u/s with the heading > ~120° from the target (`HAND.moveMin`, `HAND.retreat`, `retreating()`).
+Standing, planted, stepping in and circling still strike; the beat stays spent, so stopping strikes at once.
 
 **Playtest log in the installed game (27 Sep):** open the live site once with `?owner` (`?owner=0`
 turns it off) and that device keeps each run on the phone (`src/playlog.ts`, last 80 runs). The pause

@@ -43,8 +43,11 @@ export const MELEE_PAD = 0.6
  * clear line, the auto is a close strike on that one body, on the auto's own beat.
  * Pass 2 (27 Sep, "it still feels like kiting"): a strike breaks a windup it can and shoves
  * the body `shove` u, so one enemy up close never lands; with the hand on there is no far shot.
+ * No strike while he backs off (27 Sep, "while I am running away the hand is still hitting"):
+ * moving faster than `moveMin` u/s with his heading more than ~120° from the body (cos < `retreat`).
+ * Standing, stepping in and circling still strike.
  */
-export const HAND = { range: 2.9, damage: 10, shove: 0.5 }
+export const HAND = { range: 2.9, damage: 10, shove: 0.5, moveMin: 1, retreat: -0.5 }
 /** How far from Still's centre a body's edge may be for the hand to reach it: the ring's radius. */
 export const HAND_REACH = HAND.range + MELEE_PAD - 0.55
 /**
@@ -551,7 +554,9 @@ export class Combat {
     // --- auto attack: nearest enemy in range, no aiming required ---
     this.autoTimer -= dt
     if (this.autoAttack && this.autoTimer <= 0) {
-      const close = this.closeHand ? this.handTarget(player) : null
+      const reach = this.closeHand ? this.handTarget(player) : null
+      // backing off from it: no strike, and the timer stays spent, so stopping strikes at once
+      const close = reach && !this.retreating(player, reach) ? reach : null
       // the auto never wastes itself on a wall: the hand's line is clear, and the shot takes the nearest it can hit.
       // Planted, it's the lance at the eye's body; with the hand on, walking, nothing out of reach
       const usual = close || this.closeHand ? null : this.nearest(player, AUTO_RANGE, true)
@@ -2064,6 +2069,17 @@ export class Combat {
       best = Math.min(best, Math.hypot(e.pos.x - o.x, e.pos.z - o.z) - e.radius)
     }
     return best
+  }
+
+  /** The hand's rule for leaving: he's moving, and clearly away from `e`. */
+  private retreating(o: THREE.Vector3, e: Enemy): boolean {
+    const v = this.playerVel
+    const speed = Math.hypot(v.x, v.z)
+    if (speed < HAND.moveMin) return false
+    const dx = e.pos.x - o.x
+    const dz = e.pos.z - o.z
+    const d = Math.hypot(dx, dz) || 1
+    return (v.x * dx + v.z * dz) / (speed * d) < HAND.retreat
   }
 
   /** Planted: the stick has rested EYE.settle s with the eye's switch on. A cast doesn't lift it; a step does. */
