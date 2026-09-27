@@ -36,7 +36,7 @@ or payoffs.
 **still-action itself** hit the first of these already: the free auto made kiting the only
 playstyle (26 Sep). The hand and the eye, and dropping the far auto, were the fix.
 
-## The rules (proposed; his to confirm)
+## The rules (proposed 27 Sep; rule 1 confirmed by him 28 Sep: "go with two leanings first")
 
 1. **Two leanings first, fully built, before four.** Close and marksman: the hand and the eye
    already anchor them in the base kit. Each gets offence, defence and a payoff across the slots
