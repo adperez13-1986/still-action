@@ -1,4 +1,4 @@
-import type { AbilityDef, AbilityShape } from './abilities'
+import { LEAN_GLYPH, riderLine, type AbilityDef, type AbilityShape } from './abilities'
 import type { SlotName } from './still'
 import * as sfx from './audio'
 
@@ -61,6 +61,8 @@ function stats(d: AbilityDef, other?: AbilityDef) {
   ].join('')
 }
 
+const glyph = (d: string) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">${d}</svg>`
+
 /** What a part is called now, and its past (parts remember): set by main from the save. */
 let describe: (d: AbilityDef) => { name: string; history: string | null } = (d) => ({ name: d.name, history: null })
 /** The playtest switches beside resume, as main hands them over: what each is called, and its state. */
@@ -72,11 +74,14 @@ function card(d: AbilityDef, tag: string, other?: AbilityDef, conflict?: string 
   const past = describe(d)
   // the price on every cast, the same pips the button carries, so the card and the button agree
   const pips = d.pips ? ` <span class="ppips">${(d.pips.hollow ? '\u25cb' : '\u25cf').repeat(d.pips.n)}</span>` : ''
+  // its lean, as the stance's floor mark; its rider, under its line
+  const lean = d.lean ? ` <span class="plean ${d.lean}" aria-label="${d.lean}">${glyph(LEAN_GLYPH[d.lean])}</span>` : ''
+  const rider = d.rider ? `<span class="prider">${riderLine(d.rider)}</span>` : ''
   return `
     <div class="pcard tier-${d.tier}">
       <div class="tag">${tag}${fresh ? ' <span class="new">new</span>' : ''}</div>
-      <div class="pname">${past.name}${pips}</div>
-      <p class="pline">${d.line}</p>
+      <div class="pname">${past.name}${pips}${lean}</div>
+      <p class="pline">${d.line}${rider}</p>
       ${past.history ? `<p class="pline phist">${past.history}</p>` : ''}
       <div class="stats">${stats(d, other)}</div>
       ${conflict ? `<p class="pconflict">${conflict}</p>` : ''}

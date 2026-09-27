@@ -13,6 +13,8 @@
  * --plenty  the chance he raises a Plenty shrine's pedestals when the level has one
  * --second  the Assembler's second pick (+4 strain, kept): want (when a pedestal left helps) |
  *           build (only for a part of the build) | never
+ * --lean    close | marksman (a committed chooser of that lean) | random (a random picker) | all (the
+ *           three, --runs each, and the leanings' pass lines); replaces --build (design/leanings/PITCHES.md)
  *
  * A run is depths 1-6 of road II. A crawl depth is one of the real levels in tools/levels.json
  * (refresh it with the dev hook __census when the level generator changes); every pack is killed,
@@ -28,8 +30,14 @@
  * the build. At pedestals, the first of: a build part for an empty slot, a build part over one
  * that isn't, anything for an empty slot; else he leaves all three. The two he doesn't take go
  * back to the wall (found, in the career pool).
+ *
+ * With --lean, a part is worth 2 of his lean with a rider, 1 of his lean, 0 off it. A committed
+ * chooser takes a floor part worth more than the one it replaces; at pedestals, the first of: his
+ * lean for an empty slot, the biggest gain over what he wears, anything for an empty slot. The
+ * random picker takes a pedestal at random, and a floor part (or the second pick) half the time.
+ * Formed: 3+ parts of his lean and 1+ of its riders worn at the Arbiter (either lean, for random).
  */
-import { PARTS, byId, type AbilityDef } from '../src/abilities'
+import { PARTS, byId, type AbilityDef, type Lean } from '../src/abilities'
 import { dropChance, emptySlots, KILL_WEIGHT, LOOT, rollPart, rollPicks, type DropSource, type PickKind } from '../src/drops'
 import { markFound, startPart, STARTER_POOL, type PoolView } from '../src/pool'
 import type { Archetype } from '../src/combat'
@@ -62,6 +70,9 @@ const BUILD = arg('build', 'random')
 const target = (): Set<string> =>
   new Set(BUILD === 'random' ? Object.values(BUILDS)[Math.floor(Math.random() * 4)]!
     : BUILDS[BUILD] ?? BUILD.split(',').map((id) => byId(id).id))
+const LEAN = arg('lean', '') as '' | Lean | 'random' | 'all'
+/** Who picks: the build's chooser, a committed chooser of one lean, or the random picker. */
+type Chooser = 'build' | Lean | 'random'
 
 // Seeded: the drop code draws from Math.random, so it's replaced before the first run.
 let s = SEED >>> 0
@@ -106,18 +117,26 @@ interface RunOut {
   /** The Assembler's second pick was taken. */
   second: boolean
   offers: { id: string; tag: Tag; unfound: boolean; filled: boolean; taken: boolean }[]
+  /** --lean: his lean formed at the Arbiter (3+ of its parts, 1+ of its riders). */
+  formed: boolean
 }
 
 const career: string[] = [...STARTER_POOL]
 
-function run(): RunOut {
+function run(who: Chooser): RunOut {
   const found = POOL === 'full' ? PARTS.map((p) => p.id) : POOL === 'career' ? career : [...STARTER_POOL]
   const save = { found, turned: [], hook: null } as unknown as Save
   const T = target()
   const worn: Partial<Record<SlotName, AbilityDef>> = {}
   const first = byId(startPart(save))
   worn[first.slot] = first
-  const out: RunOut = { fullAt: null, atAssembler: 0, atArbiter: 0, atEnd: 0, wornIn: 0, second: false, offers: [] }
+  const out: RunOut = { fullAt: null, atAssembler: 0, atArbiter: 0, atEnd: 0, wornIn: 0, second: false, offers: [], formed: false }
+  /** A committed chooser's worth of a part: 2 his lean with a rider, 1 his lean, 0 off it. */
+  const value = (def: AbilityDef) => (who !== 'build' && who !== 'random' && def.lean === who ? (def.rider ? 2 : 1) : 0)
+  const formedAs = (lean: Lean) => {
+    const on = SLOTS.map((sl) => worn[sl]).filter((p): p is AbilityDef => !!p && p.lean === lean)
+    return on.length >= 3 && on.some((p) => p.rider)
+  }
   const score = () => SLOTS.filter((sl) => worn[sl] && T.has(worn[sl]!.id)).length
   let floor: AbilityDef[] = []
   let depth = 1
@@ -138,7 +157,7 @@ function run(): RunOut {
   const offer = (def: AbilityDef | null, tag: Tag) => {
     if (!def) return
     const cur = worn[def.slot]
-    const take = !!cur && T.has(def.id) && !T.has(cur.id)
+    const take = !!cur && (who === 'build' ? T.has(def.id) && !T.has(cur.id) : who === 'random' ? Math.random() < 0.5 : value(def) > value(cur))
     out.offers.push({ id: def.id, tag, unfound: !save.found.includes(def.id), filled: !!cur, taken: take })
     if (take) wear(def)
     else floor.push(def)
@@ -148,6 +167,8 @@ function run(): RunOut {
   /** How much he wants a pedestal's part: 3 a build part for an empty slot, 2 over a part not in the build, 1 anything for an empty slot. */
   const want = (def: AbilityDef) => {
     const cur = worn[def.slot]
+    if (who === 'random') return 1
+    if (who !== 'build') return cur ? value(def) - value(cur) : value(def) > 0 ? 3 + value(def) : 1
     if (T.has(def.id) && (!cur || !T.has(cur.id))) return cur ? 2 : 3
     return cur ? 0 : 1
   }
@@ -159,7 +180,9 @@ function run(): RunOut {
     let took = 0
     for (let i = 0; i < picks; i++) {
       const left = set.filter((_, j) => !recs[j]!.taken)
-      const best = left.reduce<AbilityDef | null>((b, d) => (want(d) > (b ? want(b) : 0) ? d : b), null)
+      const best = who === 'random'
+        ? (i === 0 || Math.random() < 0.5 ? left[Math.floor(Math.random() * left.length)] ?? null : null)
+        : left.reduce<AbilityDef | null>((b, d) => (want(d) > (b ? want(b) : 0) ? d : b), null)
       if (!best || (i > 0 && SECOND === 'never') || (i > 0 && SECOND === 'build' && want(best) < 2)) break
       recs[set.indexOf(best)]!.taken = true
       wear(best)
@@ -184,6 +207,7 @@ function run(): RunOut {
         out.atAssembler = score()
       } else {
         out.atArbiter = score()
+        out.formed = who === 'random' ? formedAs('close') || formedAs('marksman') : who !== 'build' && formedAs(who)
         arbiter()
       }
     } else {
@@ -218,11 +242,62 @@ function run(): RunOut {
   return out
 }
 
+// --- the leanings' report ---
+if (LEAN) {
+  const whos: Chooser[] = LEAN === 'all' ? ['close', 'marksman', 'random'] : [LEAN]
+  const by = new Map(whos.map((w) => [w, Array.from({ length: RUNS }, () => run(w))]))
+  const pct = (n: number, of: number) => `${((100 * n) / of).toFixed(0)}%`
+  console.log(`dropsim --lean ${LEAN}: ${RUNS} runs each, seed ${SEED}, pool ${POOL}, crates ${CRATES}, plenty ${PLENTY}, second ${SECOND}\n`)
+  const formed = new Map([...by].map(([w, rs]) => [w, rs.filter((r) => r.formed).length / RUNS]))
+  for (const [w, f] of formed) console.log(`formed at the Arbiter (3+ own tags, 1+ own rider), ${w}: ${pct(f, 1)}`)
+  const pass = (ok: boolean) => (ok ? 'pass' : 'FAIL')
+  if (formed.has('close') && formed.has('marksman')) {
+    const c = formed.get('close')!
+    const m = formed.get('marksman')!
+    console.log(`  committed >= 60% each: ${pass(c >= 0.6 && m >= 0.6)}   within 10 points: ${pass(Math.abs(c - m) <= 0.1)} (${(100 * Math.abs(c - m)).toFixed(0)})`)
+  }
+  if (formed.has('random')) console.log(`  random <= 30%: ${pass(formed.get('random')! <= 0.3)}`)
+
+  // what gets picked and offered, over every chooser run
+  const all = [...by.values()].flat()
+  const n = all.length
+  const offers = all.flatMap((r) => r.offers)
+  console.log('\nper part, a run: offered (taken); * over 2x its slot\'s median taken')
+  let over = 0
+  for (const slot of SLOTS) {
+    const parts = PARTS.filter((p) => p.slot === slot)
+    const taken = new Map(parts.map((p) => [p.id, offers.filter((o) => o.id === p.id && o.taken).length / n]))
+    const sorted = [...taken.values()].sort((a, b) => a - b)
+    const mid = sorted.length % 2 ? sorted[(sorted.length - 1) / 2]! : (sorted[sorted.length / 2 - 1]! + sorted[sorted.length / 2]!) / 2
+    const row = parts.map((p) => {
+      const t = taken.get(p.id)!
+      const hot = t > 2 * mid
+      if (hot) over++
+      return `${p.id}${p.lean ? `[${p.lean[0]}]` : ''} ${(offers.filter((o) => o.id === p.id).length / n).toFixed(2)} (${t.toFixed(2)})${hot ? '*' : ''}`
+    })
+    console.log(`  ${slot.padEnd(5)} median ${mid.toFixed(2)}: ${row.join('  ')}`)
+  }
+  console.log(`  no part picked > 2x its slot's median: ${pass(over === 0)}${over ? ` (${over} over)` : ''}`)
+
+  console.log('\noffered a run, slot x lean (>= 0.5 each):')
+  let thin = 0
+  for (const slot of SLOTS) {
+    const row = (['close', 'marksman'] as const).map((lean) => {
+      const k = offers.filter((o) => { const p = byId(o.id); return p.slot === slot && p.lean === lean }).length / n
+      if (k < 0.5) thin++
+      return `${lean} ${k.toFixed(2)}`
+    })
+    console.log(`  ${slot.padEnd(5)} ${row.join('  ')}`)
+  }
+  console.log(`  every slot x lean >= 0.5: ${pass(thin === 0)}`)
+  process.exit(0)
+}
+
 // --- the report ---
 const runs: RunOut[] = []
 const wallAt: number[] = []
 for (let i = 0; i < RUNS; i++) {
-  runs.push(run())
+  runs.push(run('build'))
   if (POOL === 'career' && wallAt.length === 0 && career.length === PARTS.length) wallAt.push(i + 1)
 }
 
