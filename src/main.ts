@@ -78,7 +78,7 @@ const ROUTE_PARAM: RouteId | null = devParam('route') === 'III' ? 'III' : devPar
 const CROSSROADS_PARAM = devParam('crossroads') === '1'
 /**
  * The open field prototype (27 Sep): `?open` once turns it on for this device, `?open=0` off, like
- * `?owner`, so the installed app keeps it. On, depth 1 is an open field instead of rooms.
+ * `?owner`, so the installed app keeps it. On, depths 1 and 4 are open fields instead of rooms (never the Line's).
  */
 const OPEN_KEY = 'still-action.open'
 const OPEN_FIELD = (() => {
@@ -92,7 +92,7 @@ const OPEN_FIELD = (() => {
     return false
   }
 })()
-const OPEN_DEPTHS: readonly number[] = [1]
+const OPEN_DEPTHS: readonly number[] = [1, 4]
 
 /**
  * The save. A dev run (?depth=) reads it and never writes, so tuning at the boss

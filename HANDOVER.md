@@ -50,7 +50,7 @@ chose 2 areas when I'd estimated 26 min for them; that estimate was wrong). Dire
 **open fields at depths 1 and 4**, boss depths 3 and 6 enclosed, 2 and 5 rooms (later: longer spines).
 Don't re-offer a third act.
 
-**Built (behind `?open`, kept per device like `?owner`; `?open=0` off; depth 1 only, `OPEN_DEPTHS` in main):**
+**Built (behind `?open`, kept per device like `?owner`; `?open=0` off; depths 1 and 4, `OPEN_DEPTHS` in main; never on the Line):**
 `generateOpenLayout` in `dungeon.ts` (knobs in `OPEN`): a wide ragged band along a wandering 7-leg path,
 the path drawn as a dirt road (the corridor's first floor; the field never uses it), 9 clearings along it
 (logical rooms, the packs) and 5 pockets off the sides (side rooms), ruined wall stubs and props scattered
