@@ -34,8 +34,8 @@ is the run.
   works against everything; if Still can do it to enemies, the rule should hold
   the other way where it applies.
 - **Big threats are telegraphed and committed; ordinary bodies are pressure**
-  (28 Sep, his call: telegraphs on every enemy "is actually weird"). Heavies (the
-  elite pack) and bosses keep approach → windup → strike → recover with floor tells.
+  (28 Sep, his call: telegraphs on every enemy "is actually weird"). Heavies (an elite
+  pack's crowned leader) and bosses keep approach → windup → strike → recover with floor tells.
   An ordinary hulk or sentinel shows only its body: a short cock and a jab, a lens
   glow and a burst, no ring or line on the floor; the threat is the crowd. Phone
   readability first: a 6-inch screen, thumbs covering corners, many things on screen.

@@ -30,7 +30,7 @@ choice: you always see *over* walls, so every space needs a plausible beyond.
 `idle → approach → windup → strike → recover` machine. **Pressure (28 Sep, his call):**
 an ordinary pack's hulks and sentinels drop the big windup and the floor tell: a short
 physical cock and a jab, a lens glow and a burst, their hits stacking; the threat is the
-crowd. Big telegraphs are kept for the heavies (the elite pack) and the bosses. The 43 enemies in `still`
+crowd. Big telegraphs are kept for the heavies (an elite pack's crowned leader; its packmates are pressure) and the bosses. The 43 enemies in `still`
 port as *data* (names, hp, drops, flavour, sector), never as behaviour; their
 `Intent[]` cycles are turn-bound and dead here.
 

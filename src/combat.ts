@@ -2532,7 +2532,8 @@ export class Combat {
       this.broods.push(pack.brood)
     }
     if (elite && pack.members[0]) this.crown(pack, pack.members[0], elite.mod, elite.name)
-    if (this.pressure && !elite) for (const e of pack.members) if (e.kind === 'chaser' || (e.kind === 'ranged' && !e.variant)) e.pressure = true
+    // the crowned leader alone is the heavy (a D2 unique and its minions): its packmates are pressure too
+    if (this.pressure) for (const e of pack.members) if ((!elite || e !== pack.members[0]) && (e.kind === 'chaser' || (e.kind === 'ranged' && !e.variant))) e.pressure = true
     pack.hpSeen = this.hpOf(pack)
     this.packs.push(pack)
     return pack
