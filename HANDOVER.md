@@ -75,6 +75,11 @@ Cold/Marking/Splitting Eye. They change what the autos do, not how hard (the aut
 much). Max 6 a run, each once; saved in the snapshot (`mastery`); listed on the pause screen; log
 `mastered` per depth. Pedestals unchanged: decide after his runs (he may want them gone).
 
+**28 Sep, pressure accepted (96567ff):** no switch; every crawl depth's ordinary hulks and sentinels
+are pressure bodies, and in an elite pack only the crowned leader keeps the telegraph (D2's unique and
+minions). Rams, mites (brood ring) and Lobbers (landing circle) unchanged, pending his call. DESIGN.md
+Enemies and design/CONTEXT.md's telegraph constraint rewritten. The 5174 dev server is stopped.
+
 **Then, in order:**
 1. His runs on pedestals + leanings (open fields now always on at depths 1 and 4, logging via `?owner`; he exports from
    the pause screen, fold in with `npx tsx tools/mergelog.ts <file>`). Ask what he felt before reading
