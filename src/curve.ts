@@ -19,22 +19,24 @@ export interface DepthCurve {
   heavyDmg: number
   /** Elite packs (one crowned heavy each) on a level. */
   heavies: number
-  /** A boss's HP, x its def's 900. */
+  /** A boss's HP, x its def's 900, and its damage on every hurt path. */
   bossHp: number
+  bossDmg: number
 }
 
 /**
  * Depths 1-6; the walk home's 7 reads 5's. The harder target (his call, 28 Sep): never-melt finishes
- * ~1 in 3, median ~2 in 3, investor nearly always; modelled 28 / 74 / 97 (CURVE.md). Depth 5 is the
- * wall on purpose (density x HP charges for growth not taken); heavies carry the rest; bosses modest.
+ * ~1 in 3, median ~2 in 3, investor nearly always. Recalibrated on his runs (CURVE.md, version B, with
+ * bosses taking half from the autos, `BOSS_AUTO_MUL` in combat.ts): modelled 35 / 73 / 92. Ordinary
+ * damage carries depths 4-5; heavies carry the rest; bosses are growth checks, not walls.
  */
 export const DEPTH_CURVE: Record<number, DepthCurve> = {
-  1: { hp: 1.0, dmg: 1.0, budget: 0, bigBonus: 0, heavyHp: 1.0, heavyDmg: 1.0, heavies: 1, bossHp: 1 },
-  2: { hp: 1.0, dmg: 1.0, budget: 0, bigBonus: 0, heavyHp: 1.25, heavyDmg: 1.0, heavies: 1, bossHp: 1 },
-  3: { hp: 1.0, dmg: 1.0, budget: 1, bigBonus: 1, heavyHp: 1.0, heavyDmg: 1.0, heavies: 2, bossHp: 1.1 },
-  4: { hp: 1.1, dmg: 1.0, budget: 1, bigBonus: 0, heavyHp: 1.5, heavyDmg: 1.1, heavies: 2, bossHp: 1 },
-  5: { hp: 1.3, dmg: 1.0, budget: 2, bigBonus: 1, heavyHp: 2.0, heavyDmg: 1.3, heavies: 3, bossHp: 1 },
-  6: { hp: 1.0, dmg: 1.0, budget: 2, bigBonus: 1, heavyHp: 1.0, heavyDmg: 1.0, heavies: 3, bossHp: 1.3 },
+  1: { hp: 1.0, dmg: 1.0, budget: 0, bigBonus: 0, heavyHp: 1.0, heavyDmg: 1.0, heavies: 1, bossHp: 1, bossDmg: 1 },
+  2: { hp: 1.0, dmg: 1.0, budget: 0, bigBonus: 0, heavyHp: 1.25, heavyDmg: 1.0, heavies: 1, bossHp: 1, bossDmg: 1 },
+  3: { hp: 1.0, dmg: 1.0, budget: 1, bigBonus: 1, heavyHp: 1.0, heavyDmg: 1.0, heavies: 2, bossHp: 1.0, bossDmg: 1.1 },
+  4: { hp: 1.1, dmg: 1.5, budget: 1, bigBonus: 0, heavyHp: 1.5, heavyDmg: 1.1, heavies: 2, bossHp: 1, bossDmg: 1 },
+  5: { hp: 1.3, dmg: 1.5, budget: 2, bigBonus: 1, heavyHp: 2.0, heavyDmg: 1.3, heavies: 3, bossHp: 1, bossDmg: 1 },
+  6: { hp: 1.0, dmg: 1.0, budget: 2, bigBonus: 1, heavyHp: 1.0, heavyDmg: 1.0, heavies: 3, bossHp: 1.3, bossDmg: 1.2 },
 }
 
 /** The curve at a depth: past the table, its last crawl depth's (the walk home is 5's). */
