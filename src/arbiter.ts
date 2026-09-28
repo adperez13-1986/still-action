@@ -48,7 +48,12 @@ export const ARBITER = {
   vent: { ms: 1200, damageMul: 1.5 },
   heat: { ms: 4000 },
   shell: { hideMs: [2000, 1600] as const, cooldownMs: [3500, 3000] as const, windupMs: 620, flightMs: 1000, r: 1.6, damage: 12, lead: 0.3, leadMax: 2 },
-  scald: { trigger: 3.0, r: 3.2, windupMs: 800, damage: 14, cooldownMs: 2500 },
+  /**
+   * `hugStepMs` / `hugMinMs` (his call, 28 Sep: "Arbiter is still piece of cake", standing at its feet):
+   * every scald while he stays within `hugR` comes `hugStepMs` sooner, down to `hugMinMs`; stepping out
+   * past `hugR` resets it. Hugging stays a choice, with a price that grows.
+   */
+  scald: { trigger: 3.0, r: 3.2, windupMs: 800, damage: 14, cooldownMs: 2500, hugR: 5.5, hugStepMs: 450, hugMinMs: 900 },
   /**
    * `shellChip`: in the second phase a shell whose blast overlaps a post chips it as a lance does
    * (landing within this much of a circle's edge; the blast is r 1.6, so it visibly covers the
@@ -222,6 +227,8 @@ export class Arbiter implements Boss {
   private hiddenMs = 0
   private sinceShell = Infinity
   private sinceScald = Infinity
+  /** Scalds fired while he hasn't left its feet since (ARBITER.scald.hugR): each brings the next sooner. */
+  private hugScalds = 0
   private shellFlying = 0
   private reverseIn = 0
   /** In range and outside every wedge (seen or not), uncaught: how long (see `outrun`). */
@@ -464,7 +471,9 @@ export class Arbiter implements Boss {
         if (inWedge < 0) this.rearmed = true
         // behind a post counts too: circling outside the ring breaks the sight line every post, and the shell arcs over them
         this.uncaughtMs = inWedge < 0 && d <= ARBITER.wedge.range ? this.uncaughtMs + ms : 0
-        if (d <= ARBITER.scald.trigger && this.sinceScald >= ARBITER.scald.cooldownMs) {
+        const S = ARBITER.scald
+        if (d > S.hugR) this.hugScalds = 0
+        if (d <= S.trigger && this.sinceScald >= Math.max(S.hugMinMs, S.cooldownMs - S.hugStepMs * this.hugScalds)) {
           // he's at its feet: the base plate hisses, and the square around it scalds
           this.go('scaldWind')
           action = {
@@ -576,6 +585,7 @@ export class Arbiter implements Boss {
       case 'scaldWind':
         if (this.timer >= ARBITER.scald.windupMs) {
           this.sinceScald = 0
+          this.hugScalds++
           this.go('watch')
           this.strike('scald')
           ctx.emit({ kind: 'arbiter', e: this, what: 'scald', at: this.pos.clone() })

@@ -50,6 +50,14 @@ export const MELEE_PAD = 0.6
  * Standing, stepping in and circling still strike.
  */
 export const HAND = { range: 2.9, damage: 10, shove: 0.5, moveMin: 1, retreat: -0.5 }
+/**
+ * A boss takes this share of the autos' damage (the close strike, the planted shot, its split shots);
+ * parts and pushes hit it in full. His call, 28 Sep: at the Arbiter the free close strike alone did up to
+ * 770 of 1170 while he stood at its feet. A boss is where the parts and the push have to do the work.
+ */
+export const BOSS_AUTO_MUL = 0.5
+/** The autos' damage on `e`: a boss takes BOSS_AUTO_MUL of it. */
+const autoOn = (e: Enemy, damage: number) => (isBoss(e) ? damage * BOSS_AUTO_MUL : damage)
 /** How far from Still's centre a body's edge may be for the hand to reach it: the ring's radius. */
 export const HAND_REACH = HAND.range + MELEE_PAD - 0.55
 /**
@@ -598,7 +606,7 @@ export class Combat {
         this.autoTimer = AUTO_INTERVAL
         const broke = this.breakable(close) && close.interrupt(false)
         if (broke) this.interrupted(close, false, 'hand')
-        close.hit(HAND.damage)
+        close.hit(autoOn(close, HAND.damage))
         if (!isBoss(close)) this.shoveFrom(close, player.x, player.z, HAND.shove)
         // a narrow cold sweep to its body, the arcs' own floor mark: the form reads as reach, not a bolt
         const aim = Math.atan2(close.pos.x - player.x, close.pos.z - player.z)
@@ -617,7 +625,7 @@ export class Combat {
             }
           }
           if (next) {
-            next.hit(Math.round(HAND.damage * MASTERY_TUNE.cleaveShare))
+            next.hit(autoOn(next, Math.round(HAND.damage * MASTERY_TUNE.cleaveShare)))
             if (!isBoss(next)) this.shoveFrom(next, player.x, player.z, HAND.shove)
             this.sweep(player, Math.atan2(next.pos.x - player.x, next.pos.z - player.z), nd, 0x8fb8e8, 0.3)
             this.events.onHit(next.pos, next)
@@ -792,7 +800,7 @@ export class Combat {
       if (b.part) this.hitPart(e, b.damage, b.pushed)
       else if (b.eye) this.eyeHit(e, b.damage)
       else {
-        e.hit(b.damage)
+        e.hit(autoOn(e, b.damage))
         this.events.onHit(e.pos, e)
       }
       if (b.shove && !e.dead && !isBoss(e)) e.knock.addScaledVector(shoveVelocity(b.dir.x, b.dir.z, b.shove), e.knockMul)
@@ -1568,7 +1576,7 @@ export class Combat {
   private eyeHit(e: Enemy, damage: number) {
     const broke = this.breakable(e) && e.interrupt(false)
     if (broke) this.interrupted(e, false, 'eye')
-    e.hit(damage)
+    e.hit(autoOn(e, damage))
     this.events.onHit(e.pos, e)
     this.events.onLance(e, broke)
     this.trigger('eye', e, broke)
