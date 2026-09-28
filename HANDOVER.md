@@ -1,47 +1,66 @@
-# Handover — 27 Sep 2026
+# Handover — 28 Sep 2026
 
 For the next session. Read this, then `DESIGN.md` (the settled decisions), then the design
 folder for whatever you're touching. Don't re-derive any of them.
 
-## Start here: hand/eye pass 2 is waiting for his runs
+## Start here (28 Sep, end of a long session)
 
-**27 Sep:** his switch runs were done (hand only, both, eye only x3; last switches: hand OFF, eye ON).
-His verdict: he didn't feel either much. *"hand just feels like kiting but shorter range, it still
-involves running away but keeping in range"*; the eye: *"make its projectile more distinct? having
-to stay still feels like I have to absorb blows."* Cause of the first: the hand was designed around
-a safe band outside the slam, which is still spacing, and the far shot stayed as a kiting fallback.
+**Where the code is.** Two layers of work are **not on `main` and not pushed**:
+- branch **`pedestals`** (1a76fc2): picks on pedestals, replay step 2 (section below).
+- branch **`leanings`** on top of it (1d0b3bc, f067319): the two leanings, replay step 3 (section below).
+Both live in the git worktree **`/Users/adrianperez/repos/personal/still-action-pedestals`** (node_modules
+is a symlink to the main checkout's). `main` (the checkout at `still-action/`, whose dev server on
+:5173 feeds his phone at home) has everything up to the open fields and the design docs. The live
+site (GitHub Pages) is at b5cd80f + nothing newer of the game.
 
-**Pass 2, built (still behind the same two switches):**
-- **Hand:** a strike on a breakable windup breaks it (plain interrupt, not the push's reel) and every
-  strike shoves the body 0.5 u (`HAND.shove`, not bosses). With the hand ON there is **no far auto**
-  (option 3). Headless: one hulk dies in 1.3 s and never lands a slam (its windup 520 ms < the 620 ms
-  beat, and the shove costs it its approach); two hulks cost 27 HP. A crowd is the brawler's risk.
-- **Eye:** settle 0.3 s (was 0.5); planted, every blow is halved (`EYE.brace`, cold flash + clang,
-  softer shake); the planted auto is the **lance**: speed 18 (shot 26), bigger paler bolt, its own
-  sound, pierces, shoves each body 0.6 u. Both on: close = hand, planted = lance, walking at range = nothing.
-- Log: `eye` now counts lances; new per-depth `handBreaks` and `braced`.
+**Waiting on him, first thing:** *"Should I push?"* He was asked whether to merge `leanings` (which
+includes `pedestals`) into `main` and push, so he can play both on the installed app. He answered by
+ending the session, so it's still open: **ask him, don't push unasked**. To do it: in the main checkout
+`git merge leanings` (fast-forwardable after main's doc commits are in the branch: they are, via
+4c8cba0), `npx tsc -b`, push, watch the Pages run.
 
-**Pass 2 verdict (27 Sep, 3 runs both on, via the phone export):** he keeps both: *"a good idea that we
-don't have the auto attack now apart from the hand and the eye"*. So the switches are closed: hand and
-eye permanent, pause switches removed (dev hooks `__hand`/`__eye` still flip them for checks). The
-lance's big bolt and sound are gone (*"the lances look strong but in reality it is weak"*): planted
-shots use the old shot's look, speed and sound, and keep the pierce and the 0.6 u shove. Two of his
-three runs broke at the Assembler; watch that.
-Then (his ask, "while I am running away the hand is still hitting"): **no strike while backing off**:
-moving > 1 u/s with the heading > ~120° from the target (`HAND.moveMin`, `HAND.retreat`, `retreating()`).
-Standing, planted, stepping in and circling still strike; the beat stays spent, so stopping strikes at once.
+**Flags he was given for his first leaning runs:** a lone sentinel facing a planted Still never gets a
+shot off (the 620 ms beat beats its 760 ms windup; crowds are the real test; the dial is limiting eye
+breaks); the lean glyphs are small (card top-right); rider card lines are placeholder words ("Hand
+break: ready again."); nothing in the game names "the hand" or "the eye" yet (a first-run notebook
+page, his words); walking into a pedestal mid-fight pauses the game; a new save's depth 1 is thin
+(floor drops only for worn slots). The pedestal match (`LEAN_MATCH`) stays off until 3 pedestal runs.
 
-**Playtest log in the installed game (27 Sep):** open the live site once with `?owner` (`?owner=0`
-turns it off) and that device keeps each run on the phone (`src/playlog.ts`, last 80 runs). The pause
-screen gets an "export log N" button: share sheet with a .json (download on plain http). Fold it in with
-`npx tsx tools/mergelog.ts <file>` (by run key, later save wins). Other people's devices record nothing.
-The dev server still writes playtest.json directly.
-Play time (27 Sep): per depth `playS` (crawl seconds, game time: pauses, loot screens and a hidden
-app don't count) and per entry `walkS` (the walk home). Wall-clock start/save said his fresh full runs
-take ~8-12 min, not the ~26 min in the design docs; playS will say where the minutes go.
+**Then, in order:**
+1. His runs on pedestals + leanings (open fields on via `?open`, logging via `?owner`; he exports from
+   the pause screen, fold in with `npx tsx tools/mergelog.ts <file>`). Ask what he felt before reading
+   numbers. Check the pass lines in `design/leanings/PITCHES.md` (L1-L5) and the play time per depth
+   (`playS`, `walkS`) against the 20-25 min target.
+2. After 3 pedestal runs: `LEAN_MATCH` on.
+3. The run grows to **both roads, 9 depths**: at the crossroads after the Assembler he picks which road
+   is area 2, the other becomes area 3; open fields at the first depth of each area (1, 4, 7). Needs the
+   Line's stage B (Signalman, Sleepers, Handcar; Line depth 4 as an open rail yard) and stage C (the
+   Engine becomes required: each road needs its own boss), then the 9-depth restructure (endings, walk
+   home, save/resume, strain/HP retune). `design/area3/` has the spec; stages in `design/area3/PITCHES.md`.
+4. Backlog tied to failed pass lines: Glare, Grindstone, Flywheel, Kickstand; the verifier's other four
+   riders (Signal Flare, Skid Plates, Chill Vent, Spring Heels) if L1 fails.
 
-Next: he plays a few runs with each; ask what he felt before reading the numbers. Then close the
-switches and start **replay step 2** (below).
+**Decisions he made this session (27-28 Sep), don't re-ask:**
+- The hand and the eye are the only autos (switches closed); the eye's shot looks like the old shot.
+- The hand doesn't strike while backing away.
+- Run length target **20-25 min**; my earlier 26/41 min estimates were wrong (his runs are 8-12 min).
+- **Both roads in one run** (9 depths), order chosen at the crossroads. Open fields at depths 1 and 4
+  now ("it felt ok"), boss depths enclosed.
+- Wayfinding for open fields: road, exit chevron around Still, pause-screen map (he raised getting lost).
+- **Two leanings first** (close, marksman), from the record of what broke builds in Still and
+  still-merge: `design/builds/LESSONS.md` (read it before any part or payoff work).
+- The three design agents keep `model: opus` (the alias), not pinned.
+
+**Working setup notes:** the main checkout isn't the cwd of these sessions (`repos/personal` isn't a git
+repo), so worktree isolation for agents must be made by hand (`git worktree add`), as done here. Two
+still-action dev servers were running on :5173 (main) and :5174; Sunhill uses `npx vite --host --port 5180`.
+
+## The autos now (27 Sep, for reference)
+Hand: 10 dmg on the 0.62 s beat within arm's reach, breaks a breakable windup, shoves 0.5 u, no strike
+while backing away (`HAND.moveMin`, `HAND.retreat`). Eye: planted 0.3 s, 8 dmg on `leanings` (5 on
+`main`), pierces, shoves 0.6 u, blows taken halved, aims at a breakable windup first on `leanings`.
+Walking at range: no auto. Log fields: `handBreaks`, `braced`, `playS`, `walkS`, and on `leanings` the
+rider/eye-break fields. Phone log: `?owner` + pause-screen export (`src/playlog.ts`).
 
 ## Picks on pedestals (replay step 2, 28 Sep)
 
