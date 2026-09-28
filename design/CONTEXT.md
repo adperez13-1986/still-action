@@ -25,8 +25,11 @@ is the run.
 - **Tiers mean different, never stronger.** White = the plain ability. Blue =
   one twist on it. Gold = a named oddity that changes how you play. A gold part
   must not be strictly better than its white.
-- **Runs get wider, not stronger.** Premium, buy-once design. No grind, no
-  power-creep, no meta stat upgrades.
+- **No power creep between runs.** Premium, buy-once design. No grind, no meta
+  stat upgrades: a first run is never a weaker version of a tenth. **Inside a run,
+  Still may and should get stronger** (his call, 28 Sep: "allowed... even in the
+  other Still games, we allow getting stronger"). This line was once written
+  "runs get wider, not stronger" and read as inside a run too; it never meant that.
 - **Rules are symmetric.** Waist-high walls block projectiles both ways; cover
   works against everything; if Still can do it to enemies, the rule should hold
   the other way where it applies.

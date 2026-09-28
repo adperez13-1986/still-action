@@ -47,6 +47,8 @@ Still slowing down, and stopping.
 **Persistence.** Parts you find enter the findable pool permanently. Runs get
 *wider*, not stronger, plus a small workshop upgrade track. No power-creep curve —
 "your first runs are bad by design" contradicts the only line this game is about.
+This is about *between* runs only. **Inside a run Still gets stronger** (28 Sep, his
+call, after the line had been read as forbidding that too).
 
 **Family.** Grace is the one warm light in a cold palette, carried, navigated by —
 not a unit. Yanah and Yuri are two rare parts that are unmistakably theirs,
