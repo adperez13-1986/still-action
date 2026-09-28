@@ -24,7 +24,8 @@ import type { Breakable, Post } from './dungeon'
 const TRAIN_SMASH_GROW = 0.2
 import type { AbilityDef, BeatKey } from './abilities'
 import type { SlotName } from './still'
-import { MASTERY_TUNE, type MasteryId } from './mastery'
+import { MASTERY, MASTERY_TUNE, type MasteryId } from './mastery'
+import { STATE, STATE_IDS, masterySets, stateMul, type Payer, type StateBy, type StateId } from './states'
 import { curveAt, type DepthCurve } from './curve'
 import { PART, History, bankShot, type EnemyStatus, type Flip, type Held, type PartEvent, type PartRuntime, type StillMove, type Zone } from './parts'
 
@@ -112,8 +113,8 @@ export type HurtSource = 'melee' | 'shot' | 'wave' | 'hazard'
 
 interface Bolt {
   mesh: THREE.Mesh
-  /** A part's bolt (it consumes marks); false for the auto attack. */
-  part: boolean
+  /** The part whose bolt it is (it may pay a state); null for the autos, which never pay. */
+  payer: Payer | null
   dir: THREE.Vector3
   life: number
   damage: number
@@ -137,6 +138,9 @@ interface Bolt {
   bouncesLeft: number
   bounces: { at: THREE.Vector3; flip: Flip }[]
 }
+
+/** A shot a Mirror Ward sent back: the torso's bolt, and it pays nothing. */
+const MIRROR: Payer = { slot: 'torso' }
 
 /** Where Patient Lens sits after a swap or a new level: ready, but with nothing banked. */
 const PATIENT_START = 1.5
@@ -290,7 +294,7 @@ interface Fx {
 export interface CombatEvents {
   /** `e`: who was hit, when it was an enemy (a stunned ram sounds and sparks differently). */
   onHit: (at: THREE.Vector3, e?: Enemy) => void
-  /** A part's hit landed for `damage` (after the mark), for the log's part damage beside the autos'. */
+  /** A part's hit landed for `damage` (after a state's pay), for the log's part damage beside the autos'. */
   onPartDamage?: (damage: number) => void
   /** `amount`: what was actually lost. A top-up inside a hurt window reports only the difference. `braced`: planted, it was halved. */
   onPlayerHurt: (amount: number, source: HurtSource, braced: boolean) => void
@@ -437,7 +441,7 @@ export class Combat {
   mastery: ReadonlySet<MasteryId> = new Set()
   /** The depth curve for packs added now (curve.ts): main sets it per level; keyed on depth alone. */
   curve: DepthCurve = curveAt(1)
-  /** Marks and slows, per enemy. Deleted when the enemy is buried. */
+  /** States and slows, per enemy. Deleted when the enemy is buried. */
   private readonly status = new Map<Enemy, EnemyStatus>()
   /** Enemies in the clamp's throw. While held, an enemy doesn't think. */
   private readonly held = new Map<Enemy, Held>()
@@ -567,10 +571,10 @@ export class Combat {
       }
       if (action?.kind === 'shot') this.fireShot(e.pos, action.dir, action.damage * (e.dmgMul ?? 1), e, action.bounces ?? 0)
       if (action?.kind === 'shots') {
-        for (const d of action.dirs) this.fireShot(action.from, d, action.damage, e)
+        for (const d of action.dirs) this.fireShot(action.from, d, action.damage * (e.dmgMul ?? 1), e)
         this.events.onVolley(action.from)
       }
-      if (action?.kind === 'wave') this.startWave(action.center, action.gaps, action.damage, action.gapWidth, action.minGap)
+      if (action?.kind === 'wave') this.startWave(action.center, action.gaps, action.damage * (e.dmgMul ?? 1), action.gapWidth, action.minGap)
       if (action?.kind === 'summon' && pack) this.summon(pack, action.points, action.maxAdds)
       if (action?.kind === 'hazard') this.addHazard(e.dmgMul && e.dmgMul !== 1 ? { ...action.spec, damage: action.spec.damage * e.dmgMul } : action.spec)
       if (action?.kind === 'unhazard') for (const h of this.live) if (h.spec.owner === e && h.spec.source === action.source && !h.armed) this.endHazard(h)
@@ -797,7 +801,7 @@ export class Combat {
     for (const e of this.enemies) {
       if (b.pierced?.has(e) || b.once?.has(e)) continue
       if (Math.hypot(p.x - e.pos.x, p.z - e.pos.z) >= b.radius + e.radius) continue
-      if (b.part) this.hitPart(e, b.damage, b.pushed)
+      if (b.payer) this.hitPart(e, b.damage, !!b.pushed, b.payer)
       else if (b.eye) this.eyeHit(e, b.damage)
       else {
         e.hit(autoOn(e, b.damage))
@@ -836,7 +840,7 @@ export class Combat {
         const o = s.owner && !s.owner.dead ? s.owner.pos : null
         const aim = o ? Math.atan2(o.x - p.x, o.z - p.z) : Math.atan2(-s.dir.x, -s.dir.z)
         // his shot now: a cold bolt, and walls stop it like any other
-        this.spawnBolt(p, aim, g.reflectDamage, 0.3, 20)
+        this.spawnBolt(p, aim, g.reflectDamage, 0.3, 20, { payer: MIRROR })
         this.events.onPart({ kind: 'shield', at: p.clone(), reflected: true })
         return true
       }
@@ -963,7 +967,7 @@ export class Combat {
     this.tickDamage = 0
   }
 
-  // --- statuses: marks and slows, the same hooks for every archetype ---
+  // --- statuses: the states (states.ts) and the slow, the same hooks for every archetype ---
 
   /** Read-only, for what's drawn on bodies (badges, rime motes). */
   statusOf(e: Enemy): Readonly<EnemyStatus> | undefined {
@@ -983,25 +987,33 @@ export class Combat {
   private statusFor(e: Enemy): EnemyStatus {
     let st = this.status.get(e)
     if (!st) {
-      st = { markT: 0, slowT: 0, slowMul: 1 }
+      st = { chilled: { t: 0, by: 'hand' }, marked: { t: 0, by: 'hand' }, slowT: 0, slowMul: 1 }
       this.status.set(e, st)
     }
     return st
   }
 
-  /** Signal Flare's mark: the next hit from a part lands twice. Refreshes, never stacks. Public for dev checks. */
-  mark(e: Enemy, seconds: number) {
-    const st = this.statusFor(e)
-    st.markT = Math.max(st.markT, seconds)
-    this.events.onPart({ kind: 'mark', enemy: e, state: 'on' })
+  /**
+   * A state on a body: it refreshes to the longer, never stacks, and remembers who set it last
+   * (a state from the payer's own slot pays nothing). A dead body takes none. Public for dev checks.
+   */
+  setState(e: Enemy, id: StateId, seconds: number, by: StateBy) {
+    if (e.dead) return
+    const s = this.statusFor(e)[id]
+    const fresh = s.t <= 0
+    s.t = Math.max(s.t, seconds)
+    s.by = by
+    if (fresh) this.events.onPart({ kind: 'state', id, enemy: e, state: 'on', by })
   }
 
   /**
    * A slow multiplies speedMul and the restore divides it back out: store and
    * divide, so Quick (1.45) × 0.5 comes back to exactly 1.45. Refreshes, never stacks.
    * It only touches speedMul, which every archetype reads only in its walk.
+   * A boss is never slowed, by anything; it still takes the chill.
    */
   applySlow(e: Enemy, seconds: number, mul: number) {
+    if (isBoss(e)) return
     const st = this.statusFor(e)
     if (st.slowT <= 0) {
       e.speedMul *= mul
@@ -1012,9 +1024,12 @@ export class Combat {
   }
 
   private tickStatus(e: Enemy, st: EnemyStatus, dt: number) {
-    if (st.markT > 0 && (st.markT -= dt) <= 0) {
-      st.markT = 0
-      this.events.onPart({ kind: 'mark', enemy: e, state: 'expired' })
+    for (const id of STATE_IDS) {
+      const s = st[id]
+      if (s.t > 0 && (s.t -= dt) <= 0) {
+        s.t = 0
+        this.events.onPart({ kind: 'state', id, enemy: e, state: 'expired', by: s.by })
+      }
     }
     if (st.slowT > 0 && (st.slowT -= dt) <= 0) {
       st.slowT = 0
@@ -1022,28 +1037,91 @@ export class Combat {
       st.slowMul = 1
       this.events.onPart({ kind: 'slow', enemy: e, state: 'off' })
     }
-    // frost climbs while it's slowed and recedes after (presentation, read by each class's tint)
-    e.rime = st.slowT > 0 ? Math.min(1, e.rime + dt * 3) : Math.max(0, e.rime - dt * 2)
+    // frost climbs while it's chilled and recedes after (presentation, read by each class's tint)
+    e.rime = st.chilled.t > 0 ? Math.min(1, e.rime + dt * 3) : Math.max(0, e.rime - dt * 2)
   }
 
   /**
-   * Every part hit comes through here, so a mark is used by the next part that
-   * lands, whichever it is. The auto attack and Signal Flare's own 4 don't come
-   * through here. A mark doubles damage only: shoves come from the def, never from this.
+   * Every part hit comes through here, with the part that landed it. A state pays only a part
+   * whose `pays` lists it, set outside its slot (stateMul): x2 at most, and used up. The autos,
+   * the hazards and Signal Flare's own hit don't come through here, so they never pay. A pay
+   * doubles damage only: shoves come from the def, never from this. A paid hit that kills shatters.
    */
-  private hitPart(e: Enemy, damage: number, pushed = false): boolean {
+  private hitPart(e: Enemy, damage: number, pushed: boolean, payer: Payer): boolean {
     const st = this.status.get(e)
-    let d = damage
-    if (st && st.markT > 0) {
-      d *= 2
-      st.markT = 0
-      this.events.onPart({ kind: 'mark', enemy: e, state: 'consumed' })
-    }
+    const { mul, used } = stateMul(st, payer)
+    const d = damage * mul
     const killed = e.hit(d)
     this.events.onHit(e.pos, e)
     this.events.onPartDamage?.(d)
+    if (used && st) {
+      const s = st[used]
+      if (STATE[used].consumed) s.t = 0
+      this.events.onPart({ kind: 'state', id: used, enemy: e, state: 'paid', by: s.by, payer: payer.slot, pushed, killed, mul, bonus: d - damage })
+      // what the kill had left over goes on to the next body
+      if (killed) this.shatter(e, -e.hp)
+    }
     if (pushed) this.pushBreak(e)
     return killed
+  }
+
+  /**
+   * Shatter: a paid kill passes its excess (what it hit beyond the HP left) to the nearest awake
+   * body whose edge is within PART.shatterReach of where it fell, with a clear line. A plain hit:
+   * it pays nothing and never chains.
+   */
+  private shatter(from: Enemy, excess: number) {
+    if (excess <= 0) return
+    let best: Enemy | null = null
+    let bestD = Infinity
+    for (const o of this.enemies) {
+      if (o === from || o.dead || !targetable(o) || this.held.has(o) || !this.awakeNow(o)) continue
+      const d = Math.hypot(o.pos.x - from.pos.x, o.pos.z - from.pos.z)
+      if (d - o.radius > PART.shatterReach || d >= bestD) continue
+      if (!this.terrain.lineClear(from.pos.x, from.pos.z, o.pos.x, o.pos.z, PART.linePad)) continue
+      best = o
+      bestD = d
+    }
+    if (!best) return
+    best.hit(excess)
+    this.events.onHit(best.pos, best)
+    this.events.onPart({ kind: 'shatter', from: from.pos.clone(), to: best.pos.clone(), enemy: best, damage: excess })
+  }
+
+  /**
+   * A payer aims at its state (bolts, lobs and arcs): of the awake bodies this part reaches now,
+   * the nearest carrying a state it would pay beats `usual`, unless a body nearer than that one
+   * is winding up. After the pushed-threat rule, never instead of it.
+   */
+  private prefer(o: THREE.Vector3, def: AbilityDef, usual: Enemy | null): Enemy | null {
+    if (!def.pays?.length) return usual
+    let best: Enemy | null = null
+    let bestD = Infinity
+    for (const [e, st] of this.status) {
+      if (e.dead || !targetable(e) || this.held.has(e) || !this.awakeNow(e) || stateMul(st, def).mul <= 1) continue
+      const d = Math.hypot(e.pos.x - o.x, e.pos.z - o.z)
+      if (d < bestD && this.reaches(def, o, e)) {
+        best = e
+        bestD = d
+      }
+    }
+    if (!best || best === usual) return usual
+    for (const e of this.enemies) {
+      if (e !== best && !e.dead && e.phase === 'windup' && Math.hypot(e.pos.x - o.x, e.pos.z - o.z) < bestD) return usual
+    }
+    return best
+  }
+
+  /**
+   * The push cue: a state this part pays is live, set outside its slot, on an awake body it
+   * reaches from `o` now, so a push would pay it.
+   */
+  wouldPay(def: AbilityDef, o: THREE.Vector3): boolean {
+    if (!def.pays?.length) return false
+    for (const [e, st] of this.status) {
+      if (!e.dead && this.awakeNow(e) && stateMul(st, def).mul > 1 && this.reaches(def, o, e)) return true
+    }
+    return false
   }
 
   /** The break rule: a pushed hit that lands in a windup a push can break breaks it, and it reels open. */
@@ -1117,8 +1195,8 @@ export class Combat {
   private landThrow(e: Enemy, h: Held) {
     const mod = h.def.mod?.kind === 'toss' ? h.def.mod : null
     e.group.position.y = 0
-    this.hitPart(e, h.def.damage, h.pushed)
-    // not doubled: the mark was used by the first hit
+    this.hitPart(e, h.def.damage, h.pushed, h.def)
+    // a plain hit: a state was the first hit's to pay
     if (h.short && mod && !e.dead) {
       e.hit(mod.wallDamage)
       this.events.onHit(e.pos, e)
@@ -1129,7 +1207,7 @@ export class Combat {
     for (const o of this.enemies) {
       if (o === e || o.dead) continue
       if (Math.hypot(o.pos.x - to.x, o.pos.z - to.z) > blast + o.radius || !this.terrain.lineClear(to.x, to.z, o.pos.x, o.pos.z, PART.linePad)) continue
-      this.hitPart(o, h.def.blastDamage ?? 0, h.pushed)
+      this.hitPart(o, h.def.blastDamage ?? 0, h.pushed, h.def)
       this.shoveFrom(o, to.x, to.z, mod?.splashShove ?? 0)
     }
     for (const b of this.breakables) {
@@ -1213,7 +1291,7 @@ export class Combat {
     this.parts.decoy = null
     for (const e of this.enemies) {
       if (!this.inBlast(d.pos, e, d.def.radius) || this.shaded(d.pos, e)) continue
-      this.hitPart(e, d.def.damage, pushed || d.pushed)
+      this.hitPart(e, d.def.damage, pushed || d.pushed, d.def)
       this.shoveFrom(e, d.pos.x, d.pos.z, d.def.shove ?? 0)
     }
     for (const b of this.breakables) {
@@ -1233,9 +1311,9 @@ export class Combat {
   }
 
   /**
-   * Frost strips slow whatever stands on them, lingering a moment after it steps
-   * off. A ram rushing onto one goes down: a stop, not a stun. It runs before the
-   * enemy thinks, so the rush ends on the tick its centre reaches the strip.
+   * Frost strips slow and chill whatever stands on them, the slow lingering a moment after it
+   * steps off, the chill longer. A ram rushing onto one goes down: a stop, not a stun. It runs
+   * before the enemy thinks, so the rush ends on the tick its centre reaches the strip.
    */
   private applyZones(e: Enemy) {
     const z = this.zoneAt(e.pos.x, e.pos.z, e.radius * 0.5)
@@ -1244,6 +1322,7 @@ export class Combat {
       this.emitEnemy({ kind: 'rushEnd', e, how: 'trip', at: e.pos.clone() })
     }
     this.applySlow(e, PART.zoneLinger, z.mul)
+    this.setState(e, 'chilled', PART.stripChill, z.by)
   }
 
   /** The floor strip under a point (grown by `r`), if any. */
@@ -1268,7 +1347,7 @@ export class Combat {
     this.events.onPart({ kind: 'catch', at })
     for (const e of this.enemies) {
       if (!this.inBlast(at, e, a.def.radius) || this.shaded(at, e)) continue
-      this.hitPart(e, a.def.damage)
+      this.hitPart(e, a.def.damage, false, a.def)
       this.shoveFrom(e, at.x, at.z, a.def.shove ?? 0)
     }
     for (const b of this.breakables) {
@@ -1559,7 +1638,7 @@ export class Combat {
     const dir = new THREE.Vector3(to.x - from.x, 0, to.z - from.z).normalize()
     mesh.rotation.y = Math.atan2(dir.x, dir.z)
     this.scene.add(mesh)
-    this.bolts.push({ mesh, part: false, dir, life, damage: AUTO_DAMAGE, radius: 0.3, speed: PART.boltSpeed, bouncesLeft: 0, bounces: [] })
+    this.bolts.push({ mesh, payer: null, dir, life, damage: AUTO_DAMAGE, radius: 0.3, speed: PART.boltSpeed, bouncesLeft: 0, bounces: [] })
   }
 
   /** The eye's lance: the shot's look, EYE.damage, through every body on its line, shoving each. */
@@ -1569,7 +1648,7 @@ export class Combat {
     const dir = new THREE.Vector3(to.x - from.x, 0, to.z - from.z).normalize()
     mesh.rotation.y = Math.atan2(dir.x, dir.z)
     this.scene.add(mesh)
-    this.bolts.push({ mesh, part: false, dir, life, damage: EYE.damage, radius: 0.3, speed: PART.boltSpeed, pierced: new Set(), shove: EYE.shove, eye: true, bouncesLeft: 0, bounces: [] })
+    this.bolts.push({ mesh, payer: null, dir, life, damage: EYE.damage, radius: 0.3, speed: PART.boltSpeed, pierced: new Set(), shove: EYE.shove, eye: true, bouncesLeft: 0, bounces: [] })
   }
 
   /** The eye break: a planted shot landing in a windup the hand could break breaks it the same way. */
@@ -1594,11 +1673,13 @@ export class Combat {
     }
   }
 
-  /** Mastery's hand or eye riders on a hit: a slow, a mark (a boss takes the mark, never the slow). */
+  /** Mastery on an auto's hit: the state its form learned to set, a boss included. A mastery's chill never slows. */
   private masterHit(form: 'hand' | 'eye', e: Enemy) {
     if (e.dead) return
-    if (this.mastery.has(`${form}-chill`) && !isBoss(e)) this.applySlow(e, MASTERY_TUNE.chillS, MASTERY_TUNE.chillMul)
-    if (this.mastery.has(`${form}-mark`)) this.mark(e, MASTERY_TUNE.markS)
+    for (const id of this.mastery) {
+      const s = masterySets(id)
+      if (s && MASTERY[id].form === form) this.setState(e, s, s === 'chilled' ? MASTERY_TUNE.chillS : MASTERY_TUNE.markS, form)
+    }
   }
 
   /**
@@ -1632,8 +1713,8 @@ export class Combat {
           this.throughLine(def, mod.breachMs, ctx, r)
           break
         }
-        // no line needed to pick a target: walls stop the bolt, not the aim (a push aims at the threat)
-        const target = (ctx.pushed && this.threat(o, def)) || this.eyeCast(o, def, this.nearest(o, def.range))
+        // no line needed to pick a target: walls stop the bolt, not the aim (a push aims at the threat, a payer at its state)
+        const target = (ctx.pushed && this.threat(o, def)) || this.prefer(o, def, this.eyeCast(o, def, this.nearest(o, def.range)))
         const aim = target ? Math.atan2(target.pos.x - o.x, target.pos.z - o.z) : ctx.facing
         let damage = def.damage
         let scale = 1
@@ -1654,14 +1735,14 @@ export class Combat {
         const once = fan ? new Set<Enemy>() : undefined
         if (fan) trail = 0.16
         for (const off of spread) {
-          this.spawnBolt(o, aim + off, damage, def.radius, def.range, { pierced: mod?.kind === 'pierce' ? new Set() : undefined, once, scale, trail, pushed: ctx.pushed })
+          this.spawnBolt(o, aim + off, damage, def.radius, def.range, { payer: def, pierced: mod?.kind === 'pierce' ? new Set() : undefined, once, scale, trail, pushed: ctx.pushed })
         }
         break
       }
 
       case 'lob': {
         // arcs over walls onto where the target stands now: it can't miss a sleeper, it can miss a mover
-        const target = (ctx.pushed && this.threat(o, def)) || this.eyeCast(o, def, this.pickTarget(o, def.range, true))
+        const target = (ctx.pushed && this.threat(o, def)) || this.prefer(o, def, this.eyeCast(o, def, this.pickTarget(o, def.range, true)))
         const to = target ? new THREE.Vector3(target.pos.x, 0, target.pos.z) : this.ahead(o, ctx.facing, Math.min(def.range, PART.lobNoTarget))
         const pushed = ctx.pushed
         const ms = def.travelMs ?? 800
@@ -1674,13 +1755,13 @@ export class Combat {
             for (const e of this.enemies) {
               if (Math.hypot(e.pos.x - to.x, e.pos.z - to.z) > def.radius + e.radius) continue
               if (mark) {
-                // Signal Flare: its own 4 is a plain hit, so it never uses up the mark it leaves
+                // Signal Flare: its own hit is a plain one (a setter, not a payer), so it never uses up the mark it leaves
                 e.hit(def.damage)
                 this.events.onHit(e.pos, e)
-                this.mark(e, mark.ms / 1000)
+                this.setState(e, 'marked', mark.ms / 1000, def.slot)
                 if (pushed) this.pushBreak(e)
               } else {
-                this.hitPart(e, def.damage, pushed)
+                this.hitPart(e, def.damage, pushed, def)
               }
             }
             for (const b of this.breakables) {
@@ -1699,9 +1780,12 @@ export class Combat {
           // a blast doesn't go through the wall you're hiding behind, either way
           if (!this.inBlast(o, e, def.radius) || this.shaded(o, e)) continue
           const d = Math.hypot(e.pos.x - o.x, e.pos.z - o.z)
-          this.hitPart(e, def.damage, ctx.pushed)
-          // Chill Vent: slows the walk, never a windup or a strike
-          if (mod?.kind === 'slow') this.applySlow(e, mod.ms / 1000, mod.mul)
+          this.hitPart(e, def.damage, ctx.pushed, def)
+          // Chill Vent: chills, and slows the walk, never a windup or a strike (a boss only chills)
+          if (mod?.kind === 'slow') {
+            this.applySlow(e, mod.ms / 1000, mod.mul)
+            this.setState(e, 'chilled', mod.ms / 1000, def.slot)
+          }
           const ox = e.pos.x - o.x
           const oz = e.pos.z - o.z
           if (pull) {
@@ -1762,7 +1846,7 @@ export class Combat {
         r.aim = Math.atan2(e.pos.x - o.x, e.pos.z - o.z)
         // too heavy to lift (the Assembler): it just takes the bite
         if (e.knockMul < 0.1) {
-          this.hitPart(e, def.damage)
+          this.hitPart(e, def.damage, false, def)
           break
         }
         // lifted out of its swing; pushed, under the break rule, it reels once it lands
@@ -1822,7 +1906,7 @@ export class Combat {
         // back along the straight line, stopping at a wall, running over what's in the way
         const end = this.terrain.clampMove(o.x, o.z, a.pos.x, a.pos.z, PLAYER_RADIUS)
         const ms = def.travelMs ?? 240
-        this.runOver(o, end, def.radius, def.damage, def.shove ?? 0, ms, null, ctx.pushed)
+        this.runOver(o, end, def.radius, def.damage, def.shove ?? 0, ms, null, ctx.pushed, def)
         this.parts.anchor = null
         this.emitMove({ kind: 'snap', path: [new THREE.Vector3(end.x, 0, end.z)], ms, vault: false, lockMs: 0 }, 'snap')
         this.events.onPart({ kind: 'anchor', state: 'snap', at: a.pos.clone() })
@@ -1872,8 +1956,9 @@ export class Combat {
             snapD = d
           }
         }
-        // pushed: the windup that lands soonest, if the blade reaches it
-        if (ctx.pushed) snap = this.threat(o, def) ?? snap
+        // pushed: the windup that lands soonest, if the blade reaches it; else a payer swings at its state
+        const threat = ctx.pushed ? this.threat(o, def) : null
+        snap = threat ?? this.prefer(o, def, snap)
         const face = snap ?? this.nearest(o, 9.5)
         const aimed = face ? Math.atan2(face.pos.x - o.x, face.pos.z - o.z) : ctx.facing
         r.aim = aimed
@@ -1886,7 +1971,7 @@ export class Combat {
           // behind a wall: no spark, no sound. The swing visibly fails to reach it.
           if (this.shaded(o, e)) continue
           const winding = e.phase === 'windup'
-          this.hitPart(e, def.damage, ctx.pushed && !parry)
+          this.hitPart(e, def.damage, ctx.pushed && !parry, def)
           if (parry) {
             // Parry Clamp: caught mid-windup, the attack breaks and it stumbles back (pushed, it reels)
             const reel = ctx.pushed && this.breakRule && this.breakable(e)
@@ -1931,13 +2016,13 @@ export class Combat {
         const ex = end.x
         const ez = end.z
         // the charge throws them aside, off the path, instead of ahead of it
-        this.runOver(o, end, width, damage, knock, ms, over ? dir : null, ctx.pushed)
+        this.runOver(o, end, width, damage, knock, ms, over ? dir : null, ctx.pushed, def)
         this.ring(o, 0.3, 1.6, 0.3, 0xbcd6ff)
         this.emitMove({ kind: 'dash', path: [new THREE.Vector3(ex, 0, ez)], ms, vault: false, lockMs: 0 }, r.beat)
         if (mod?.kind === 'strip') {
           // Frost Trail: a cold track along the path, live from the cast. It slows; it never shoves.
           const s = mod.ms / 1000
-          this.zones.push({ ax: o.x, az: o.z, bx: ex, bz: ez, halfW: mod.width / 2, t: s, max: s, mul: mod.mul })
+          this.zones.push({ ax: o.x, az: o.z, bx: ex, bz: ez, halfW: mod.width / 2, t: s, max: s, mul: mod.mul, by: def.slot })
         }
 
         if (mod?.kind === 'slam') {
@@ -1949,7 +2034,7 @@ export class Combat {
             run: () => {
               for (const e of this.enemies) {
                 if (!this.inBlast(at, e, mod.radius) || this.shaded(at, e)) continue
-                this.hitPart(e, mod.damage, pushed)
+                this.hitPart(e, mod.damage, pushed, def)
                 this.shoveFrom(e, at.x, at.z, mod.shove)
               }
               this.ring(at, 0.3, mod.radius, 0.35, 0x8fb8e8)
@@ -2021,7 +2106,7 @@ export class Combat {
     const aim = bank ? Math.atan2(bank.at.x - o.x, bank.at.z - o.z) : t ? Math.atan2(t.pos.x - o.x, t.pos.z - o.z) : ctx.facing
     // the head cants toward the bank side, so it reads "at an angle"
     r.lean = bank ? Math.sign(Math.sin(aim - ctx.facing)) || 1 : 0
-    this.spawnBolt(o, aim, def.damage, def.radius, def.range, { bounces: 2, trail: 0.2, pushed: ctx.pushed })
+    this.spawnBolt(o, aim, def.damage, def.radius, def.range, { payer: def, bounces: 2, trail: 0.2, pushed: ctx.pushed })
     // you didn't pick the angle, so the whole path flashes first
     const points = bank && t
       ? [o.clone(), bank.at.clone(), t.pos.clone()]
@@ -2039,7 +2124,7 @@ export class Combat {
     const aim = t ? Math.atan2(t.pos.x - o.x, t.pos.z - o.z) : ctx.facing
     // he faces down the line: the draw, the beam and the recoil all run along it
     r.aim = aim
-    const dir = this.spawnBolt(o, aim, def.damage, def.radius, def.range, { speed: PART.ghostSpeed, ghost: true, pierced: new Set(), pushed: ctx.pushed })
+    const dir = this.spawnBolt(o, aim, def.damage, def.radius, def.range, { payer: def, speed: PART.ghostSpeed, ghost: true, pierced: new Set(), pushed: ctx.pushed })
     const holes = this.terrain.breach(o.x, o.z, o.x + dir.x * def.range, o.z + dir.z * def.range, breachMs / 1000)
     this.events.onPart({ kind: 'breach', holes, open: true, seconds: breachMs / 1000 })
   }
@@ -2058,7 +2143,7 @@ export class Combat {
   /** One of Still's bolts, leaving from lens height. `scale` shrinks the mesh only, never the hit. */
   private spawnBolt(
     o: THREE.Vector3, aim: number, damage: number, radius: number, range: number,
-    opts: { pierced?: Set<Enemy>; once?: Set<Enemy>; scale?: number; trail?: number; speed?: number; ghost?: boolean; bounces?: number; pushed?: boolean } = {},
+    opts: { payer: Payer; pierced?: Set<Enemy>; once?: Set<Enemy>; scale?: number; trail?: number; speed?: number; ghost?: boolean; bounces?: number; pushed?: boolean },
   ) {
     const dir = new THREE.Vector3(Math.sin(aim), 0, Math.cos(aim))
     const mesh = new THREE.Mesh(this.boltGeo, this.abilityBoltMat)
@@ -2069,7 +2154,7 @@ export class Combat {
     this.scene.add(mesh)
     const speed = opts.speed ?? PART.boltSpeed
     this.bolts.push({
-      mesh, part: true, dir, life: range / speed, damage, radius, speed, pierced: opts.pierced, once: opts.once, trail: opts.trail,
+      mesh, payer: opts.payer, dir, life: range / speed, damage, radius, speed, pierced: opts.pierced, once: opts.once, trail: opts.trail,
       ghost: opts.ghost, bouncesLeft: opts.bounces ?? 0, bounces: [], pushed: opts.pushed,
     })
     return dir
@@ -2112,7 +2197,7 @@ export class Combat {
    * path when `sideways` is the travel direction (Overrun's charge). No line check:
    * the path is already clamped at the first wall. Crates on it break either way.
    */
-  private runOver(o: THREE.Vector3, end: { x: number; z: number }, width: number, damage: number, knock: number, ms: number, sideways: { x: number; z: number } | null, pushed: boolean) {
+  private runOver(o: THREE.Vector3, end: { x: number; z: number }, width: number, damage: number, knock: number, ms: number, sideways: { x: number; z: number } | null, pushed: boolean, payer: Payer) {
     const sx = o.x
     const sz = o.z
     const ex = end.x
@@ -2128,7 +2213,7 @@ export class Combat {
           t: reachT * (ms / 1000),
           run: () => {
             if (e.dead || distToSegment(e.pos.x, e.pos.z, sx, sz, ex, ez) > width + 1.1) return
-            this.hitPart(e, damage, pushed)
+            this.hitPart(e, damage, pushed, payer)
             if (sideways) {
               const nx = -sideways.z
               const nz = sideways.x
@@ -2431,7 +2516,7 @@ export class Combat {
       group?.add(e)
       // a rushing ram reads knockMul 0
       if (s.shove) e.knock.add(this.stripShove(sh, s.shove, e.pos.x, e.pos.z).multiplyScalar(e.knockMul))
-      // not a part: it never uses a mark. A sleeper hit this way wakes its pack (hpSeen).
+      // not a part: it never pays a state. A sleeper hit this way wakes its pack (hpSeen).
       // The harmless lesson train (damage 0) passes through without a flash.
       if (s.damage > 0) {
         if (e.hit(s.damage)) this.hazardKilled.add(e)
@@ -2459,7 +2544,7 @@ export class Combat {
     const o = s.owner && !s.owner.dead ? s.owner.pos : null
     const aim = o ? Math.atan2(o.x - player.x, o.z - player.z) : 0
     // back down the line at whoever fired it, its own weight (the lance's 18); walls stop it
-    this.spawnBolt(player, aim, s.damage, 0.3, 20)
+    this.spawnBolt(player, aim, s.damage, 0.3, 20, { payer: MIRROR })
     this.events.onPart({ kind: 'shield', at: player.clone(), reflected: true })
     return true
   }
@@ -2596,6 +2681,8 @@ export class Combat {
   /** The area's boss, as its def says: its own pack, woken by walking into the arena, never leashed. */
   addBoss(x: number, z: number, face: THREE.Vector3, def: BossDef, posts: Post[] = []): Boss {
     const b = makeBoss(def, x, z, face, posts)
+    // the depth curve's boss damage (curve.ts), on every hurt path its hits take
+    if (this.curve.bossDmg !== 1) b.dmgMul = this.curve.bossDmg
     this.scene.add(b.group, b.tellGroup, b.worldGroup)
     this.enemies.push(b)
     b.setAsleep(true)

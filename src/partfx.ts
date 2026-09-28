@@ -59,7 +59,7 @@ const SLAM_S = 0.12
 const FADE_S = 0.25
 /** With more marked than this on screen, each badge drops to one steady bracket (the crowd rule). */
 const CROWD = 5
-/** Falling frost motes, at most this many a beat across every slowed enemy. */
+/** Falling frost motes, at most this many a beat across every chilled enemy. */
 const MOTES_MAX = 12
 /** The path flash, and a rim's ember flare when a shot goes through its hole. */
 const PATH_S = 0.15
@@ -244,14 +244,18 @@ export class PartFx {
       } else {
         this.dropDecoy()
       }
-    } else if (ev.kind === 'mark') {
+    } else if (ev.kind === 'state' && ev.id === 'marked') {
       const b = this.badges.get(ev.enemy)
-      if (ev.state === 'on' && !b) this.badges.set(ev.enemy, this.makeBadge())
+      // marked again while the last one's brackets were still going: they come back
+      if (ev.state === 'on') {
+        if (!b) this.badges.set(ev.enemy, this.makeBadge())
+        else b.end = null
+      }
       if (b && ev.state !== 'on') {
-        b.end = ev.state
+        b.end = ev.state === 'paid' ? 'consumed' : 'expired'
         b.endT = 0
-        // "twice": two flashes 60 ms apart as the brackets slam shut
-        if (ev.state === 'consumed') {
+        // "twice": two flashes 60 ms apart as the brackets slam shut (on a kill, the kill burst is enough)
+        if (ev.state === 'paid' && !ev.killed) {
           this.vfx.flash(this.badgeAt(ev.enemy), COLD, 0.6)
           b.flash2 = 0.06
         }
@@ -645,14 +649,14 @@ export class PartFx {
   /** N3: each marked enemy's brackets orbit its head and close in as the mark runs out. */
   private drawBadges(dt: number) {
     let marked = 0
-    for (const [, st] of this.status.statuses()) if (st.markT > 0) marked++
+    for (const [, st] of this.status.statuses()) if (st.marked.t > 0) marked++
     const crowd = marked > CROWD
     for (const [e, b] of this.badges) {
       if (e.dead) {
         this.dropBadge(e)
         continue
       }
-      const markT = this.status.statusOf(e)?.markT ?? 0
+      const markT = this.status.statusOf(e)?.marked.t ?? 0
       const close = b.end ? 1 : 1 - Math.min(1, markT / MARK_S)
       let r = Math.max(0.45, e.radius * 1.3) * (1 - 0.45 * close)
       let opacity = 0.9
@@ -680,13 +684,13 @@ export class PartFx {
     }
   }
 
-  /** N4a: slowed enemies shed falling cold motes, a few at a time across the whole screen. */
+  /** N4a: chilled enemies shed falling cold motes, a few at a time across the whole screen. */
   private drawFrost(dt: number) {
     if ((this.motesT -= dt) > 0) return
     this.motesT = 0.5
     let n = 0
     for (const [e, st] of this.status.statuses()) {
-      if (st.slowT <= 0 || e.dead || n >= MOTES_MAX) continue
+      if (st.chilled.t <= 0 || e.dead || n >= MOTES_MAX) continue
       this.vfx.frost(new THREE.Vector3(e.pos.x, 1.0 * e.size, e.pos.z), 1, e.radius)
       n++
     }

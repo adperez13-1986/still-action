@@ -11,6 +11,7 @@ import { SLOT_NAMES, type SlotName } from './still'
 import { TEMPER, ROMAN, tempered } from './temper'
 import { curveAt } from './curve'
 import { MASTERY, MASTERY_MAX, FORM_NAME, masteryOffer, type MasteryId, type MasteryForm } from './mastery'
+import { STATE_IDS, pairWith, paired, type StateId } from './states'
 import type { Enemy, EnemyEvent } from './enemy'
 import { isBoss, Assembler } from './boss'
 import { Arbiter, ARBITER, arbiterHusk } from './arbiter'
@@ -123,6 +124,8 @@ const STONE = new THREE.Color(0x5a5550)
 /** The quarter's brick, for the chips off a cracking post. */
 const BRICK = new THREE.Color(0x6a3a2c)
 const WOOD = new THREE.Color(0x6b4a30)
+/** Rime: the frost a chill leaves, and what it breaks into when it's paid or runs out. */
+const ICE = new THREE.Color(0x9fb4c8)
 /** What each body breaks into: its own metal (hide.ts). */
 const HULK_C = debrisColor('hulk')
 const SENTINEL_C = debrisColor('sentinel')
@@ -435,15 +438,22 @@ const combat = new Combat(world.scene, OPEN, {
       }
       breakFx(ev.enemy, ev.by)
     }
-    if (ev.kind === 'mark' && ev.state === 'consumed') {
-      sfx.markConsumed(panOf(ev.enemy.pos))
-      hitstop = Math.max(hitstop, 0.06)
+    if (ev.kind === 'state') {
+      logState(ev)
+      // the pay is loud: the state breaks with its own look (the mark's brackets slam in partFx) and
+      // one shared cold sound. On a body that dies, the kill burst is enough.
+      if (ev.state === 'paid' && !ev.killed) {
+        sfx.statePaid(panOf(ev.enemy.pos))
+        hitstop = Math.max(hitstop, 0.06)
+        if (ev.id === 'chilled') chillBreak(ev.enemy)
+      }
+      if (ev.id === 'chilled' && ev.state === 'expired') {
+        // the frost falls off it: three pale chunks and a glass tick
+        vfx.chunks(at3(ev.enemy.pos, 0.6), 3, ICE, 2, 0.08)
+        sfx.chillEnd(panOf(ev.enemy.pos))
+      }
     }
-    if (ev.kind === 'slow' && ev.state === 'off') {
-      // the frost falls off it: three pale chunks and a glass tick
-      vfx.chunks(at3(ev.enemy.pos, 0.6), 3, new THREE.Color(0x9fb4c8), 2, 0.08)
-      sfx.slowEnd(panOf(ev.enemy.pos))
-    }
+    if (ev.kind === 'shatter') shatterFx(ev)
     if (ev.kind === 'throw') vfx.sparks(still.jawL.getWorldPosition(new THREE.Vector3()), COLD, 6, 4)
     if (ev.kind === 'decoy' && ev.state === 'burst') {
       // the decoy bursts and shatters into cold chunks: never Still's own breaking
@@ -1006,6 +1016,68 @@ function breakFx(e: Enemy, by?: AutoForm) {
   rig.punch(0.05)
 }
 
+/** A chill paid on a body that lives: the rime bursts off it outward, a cold ring on the floor under it. */
+function chillBreak(e: Enemy) {
+  const at = at3(e.pos, 0.9 * e.size)
+  vfx.flash(at, COLD, 1.1)
+  vfx.sparks(at, COLD, 22, 7)
+  vfx.chunks(at3(e.pos, 0.7 * e.size), 10, ICE, 5, 0.12)
+  vfx.frost(at, 12, e.radius + 0.6)
+  combat.ring(e.pos, 0.3, e.radius + 1.6, 0.4, 0x8fb8e8, true)
+}
+
+/** Shatter: the kill's leftover flies on as ice, a cold streak from where it fell to the body it lands in. */
+function shatterFx(ev: Extract<PartEvent, { kind: 'shatter' }>) {
+  const from = at3(ev.from, 0.8)
+  const to = at3(ev.to, 0.9)
+  const way = to.clone().sub(from)
+  vfx.chunks(from, 8, ICE, 5, 0.1)
+  // shards thrown down the line at it, the line itself on the floor and in the air, lingering a moment
+  vfx.sparks(from, COLD, 14, Math.max(6, way.length() * 3), way, 0.35)
+  partFx.beam(ev.from, ev.to, 0.22, 0.35)
+  for (let k = 1; k <= 8; k++) vfx.trail(from.clone().lerp(to, k / 9), COLD_DEEP, 0.3, 0.5)
+  vfx.flash(to, COLD, 0.9)
+  vfx.sparks(to, COLD, 14, 6, way, 0.7)
+  vfx.chunks(to, 5, ICE, 3.5, 0.09)
+  sfx.iceShatter(panOf(ev.to))
+  hitstop = Math.max(hitstop, 0.04)
+  const st = run.stats[run.stats.length - 1]
+  if (st?.shatter) {
+    st.shatter.n++
+    st.shatter.dmg += ev.damage
+  }
+}
+
+/** One push per slot at a time, for pushedIntoState: a push that pays two bodies is still one push into a state. */
+const pushSerial: Partial<Record<SlotName, number>> = {}
+const pushCounted: Partial<Record<SlotName, number>> = {}
+/** The slot whose push is being cast right now: its hits that land at once are the push's (a parry's say pushed: false). */
+let pushing: SlotName | null = null
+
+/**
+ * The states' log (design/synergy/2-verifier.md): per depth, each state's fresh sets, pays and
+ * unpaid run-outs, the bonus it added, who paid (a slot, never the hand or the eye), pushes that
+ * paid one, and the largest multiplier seen.
+ */
+function logState(ev: Extract<PartEvent, { kind: 'state' }>) {
+  const st = run.stats[run.stats.length - 1]
+  if (!st?.states) return
+  const s = st.states[ev.id]
+  if (ev.state === 'on') s.set++
+  else if (ev.state === 'expired') s.expired++
+  else {
+    s.paid++
+    const bonus = ev.bonus ?? 0
+    st.stateBonus![ev.id] += bonus
+    if (ev.payer) st.paidBy![ev.payer]++
+    st.maxMul = Math.max(st.maxMul ?? 1, ev.mul ?? 1)
+    if ((ev.pushed || ev.payer === pushing) && ev.payer && pushCounted[ev.payer] !== pushSerial[ev.payer]) {
+      pushCounted[ev.payer] = pushSerial[ev.payer]
+      st.pushedIntoState = (st.pushedIntoState ?? 0) + 1
+    }
+  }
+}
+
 /** When each rider may fire next (game ms), by part id. */
 const riderNext = new Map<string, number>()
 /**
@@ -1239,8 +1311,19 @@ interface DepthStats {
   pressure?: boolean; hpLost?: number
   /** Temper on at this depth, and parts melted into a worn one here; mastery learned here. */
   temper?: boolean; melts?: number; mastered?: string[]
-  /** Parts' damage through hitPart (nominal, after a mark), beside `autoDmg`: the auto/part split. */
+  /** Parts' damage through hitPart (nominal, after a state's pay), beside `autoDmg`: the auto/part split. */
   partDmg?: number
+  /**
+   * Enemy states (design/synergy/2-verifier.md): per state, fresh sets, pays, and run-outs unpaid;
+   * the damage pays added (nominal), by state; pays by who paid (a slot; the hand and the eye must
+   * stay 0); pushes that paid one; shatters and the damage they passed on; the largest multiplier (<= 2).
+   */
+  states?: Record<StateId, { set: number; paid: number; expired: number }>
+  stateBonus?: Record<StateId, number>
+  paidBy?: Record<SlotName | MasteryForm, number>
+  pushedIntoState?: number
+  shatter?: { n: number; dmg: number }
+  maxMul?: number
 }
 /** One press on a filled button, for the playtest file: how long taps really last on the phone. */
 interface TapLog { depth: number; slot: SlotName; ms: number; ready: boolean; result: Press['result'] }
@@ -1282,8 +1365,10 @@ const run = {
   picks: [] as string[],
   /** Strain the Assembler's second pick added: no quiet eases below it, for the rest of the run. */
   kept: 0,
-  /** Temper's ranks this run, by slot (temper.ts): absent is I; a swap clears the slot's. */
+  /** Temper's ranks this run, by slot (temper.ts): absent is I; a swap lands at TEMPER.swapRank. */
   ranks: {} as Partial<Record<SlotName, number>>,
+  /** Every swap this run (design/synergy): the slot, the part given up and the one taken, and the rank given up. */
+  swaps: [] as { slot: SlotName; from: string; to: string; rankLost: number }[],
   /** Mastery learned this run (mastery.ts): combat reads the same set. */
   mastery: new Set<MasteryId>(),
   /** His last tagged pick's lean: the match's tie-break (LEAN_MATCH). Not kept by a resume. */
@@ -1537,11 +1622,12 @@ function openPick(g: GroundPart) {
   const rest = loot.ground.filter((o) => o.set === set).length - 1
   const last = set.took + 1 >= PICK_TAKES[set.kind]
   const note = !rest ? undefined : last ? `the other${rest > 1 ? ' two go' : ' goes'} back to the wall` : `then one more, for strain +${PEDESTALS.secondStrain}`
+  const swap = swapWords(g.def)
   openPause()
   pause.compare(current, g.def, hud.loadout, () => {
     resume()
     takePick(g)
-  }, resume, !save.found.includes(g.def.id), { tag: 'on the pedestal', cost: pickCost(set), stays: set.kind === 'gift', note })
+  }, resume, !save.found.includes(g.def.id), { tag: 'on the pedestal', cost: pickCost(set), stays: set.kind === 'gift', note, take: swap?.take, melts: swap?.melts, pair: pairWords(g.def) ?? undefined })
 }
 
 /**
@@ -1811,7 +1897,8 @@ function updateOffer() {
     if (rec) rec.offered = true
     // a floor part shows its card; a pedestal's opens the compare as he walks in
     const card = next && !next.set ? next : null
-    hud.offer(card?.def ?? null, !!card && !save.found.includes(card.def.id), card ? describePart(card.def) : undefined, card ? meltLabel(card) : null)
+    hud.offer(card?.def ?? null, !!card && !save.found.includes(card.def.id), card ? describePart(card.def) : undefined, card ? meltLabel(card) : null,
+      card ? { swap: swapWords(card.def), pair: pairWords(card.def) } : undefined)
     loot.offer(next)
     if (next?.set) openPick(next)
   }
@@ -1914,10 +2001,11 @@ hud.onCompare(() => {
   sfx.uiClick()
   const current = hud.loadout.find((p) => p.slot === g.def.slot) ?? null
   openPause()
+  const swap = swapWords(g.def)
   pause.compare(current, g.def, hud.loadout, () => {
     resume()
     takePart(g)
-  }, resume, !save.found.includes(g.def.id))
+  }, resume, !save.found.includes(g.def.id), { take: swap?.take, melts: swap?.melts, pair: pairWords(g.def) ?? undefined })
 })
 
 /** A swap: what the outgoing part had running ends first, and a live anchor hands on a full cooldown (R8). */
@@ -1927,21 +2015,53 @@ function swapIn(def: AbilityDef): AbilityDef | null {
   return hud.equip(def, anchorLive ? 1 : undefined)
 }
 
+/**
+ * A swap lands at II (design/synergy, temper on): the part given up melts into the one taken and
+ * is used up. Null when nothing would melt: an empty slot, or temper off (the old swap, at I).
+ */
+function swapsIn(d: AbilityDef): AbilityDef | null {
+  return temperOn ? hud.loadout.find((p) => p.slot === d.slot) ?? null : null
+}
+
+/** What the card and the compare say a take does: "take · Piston II", "Scrap Cleaver III melts in". Null: no swap. */
+function swapWords(d: AbilityDef): { take: string; melts: string } | null {
+  const cur = swapsIn(d)
+  return cur ? { take: `take \u00b7 ${tempered(d, TEMPER.swapRank).name}`, melts: `${cur.name} melts in` } : null
+}
+
+/** The card's one spare line: the pair this part makes with what's worn (parts or mastery), else the pair it ends. */
+function pairWords(d: AbilityDef): string | null {
+  const worn = hud.loadout
+  const w = pairWith(d, worn, run.mastery)
+  if (w) return `pairs with ${w}`
+  const cur = worn.find((p) => p.slot === d.slot)
+  const was = cur ? pairWith(cur, worn, run.mastery) : null
+  return was ? `ends its pair with ${was}` : null
+}
+
 function takePart(g: GroundPart) {
   // found the moment it's taken, and saved in the same call: closing the tab can't lose it
   if (markFound(save, g.def.id)) store.write()
   carry(g.def.id)
   saw(g.def.id)
-  const old = swapIn(g.def)
-  // a new part starts at I: whatever was tempered in this slot is given up with the old one
-  delete run.ranks[g.def.slot]
+  const slot = g.def.slot
+  const melts = swapsIn(g.def)
+  const old = swapIn(melts ? tempered(g.def, TEMPER.swapRank) : g.def)
+  if (melts) {
+    // the part he gave up melts into this one: it lands at II, and nothing falls out
+    run.ranks[slot] = TEMPER.swapRank
+    run.swaps.push({ slot, from: melts.id, to: g.def.id, rankLost: melts.rank ?? 1 })
+    vfx.embers(at3(still.pos, 0.7), 18, 1.0, COLD)
+  } else {
+    // an empty slot starts at I; with temper off, so does a swap
+    delete run.ranks[slot]
+  }
   if (g.def.lean) run.lastLean = g.def.lean
   endDrop(g, 'taken')
   loot.remove(g)
-  // an empty slot filled: nothing falls out
-  // the part he gave up lands at his feet as itself
-  if (old) logDrop(loot.drop(byId(old.id), still.pos), 'swap')
-  still.wear(g.def.slot, g.def)
+  // temper off: the part he gave up lands at his feet as itself
+  if (old && !melts) logDrop(loot.drop(byId(old.id), still.pos), 'swap')
+  still.wear(slot, g.def)
   offered = null
   offerHeld = true
   hud.offer(null)
@@ -2153,7 +2273,7 @@ function resumeRun(snap: RunSnapshot) {
   const route: RouteId | null = snap.crossroads ? null
     : snap.route === 'III' && flag('line') ? 'III' : snap.route === 'II' || depth >= 4 || snap.route === 'III' ? 'II' : null
   Object.assign(run, {
-    phase: 'crawl', t: 0, swapped: false, ramStunSeen: false, dev: false, committed: false, ending: null, stats: [], taps: [], walkS: 0, lastLean: null,
+    phase: 'crawl', t: 0, swapped: false, ramStunSeen: false, dev: false, committed: false, ending: null, stats: [], taps: [], walkS: 0, lastLean: null, swaps: [],
     breakRule: combat.breakRule, hand: combat.closeHand, eye: combat.eye, drops: [], id: snap.id, startedAt: snap.startedAt, strain: Math.min(19, Math.max(0, Math.round(snap.strain) || 0)), tally, route,
   })
   run.kept = Math.min(run.strain, Math.max(0, Math.round(snap.kept ?? 0) || 0))
@@ -2352,7 +2472,10 @@ function enterLevel(depth: number, o: { seed?: number; bossFelled?: boolean; res
   prev.copy(still.pos)
   run.depth = depth
   closeStats()
-  run.stats.push({ depth, fights: 0, pushes: 0, breaks: 0, deadTaps: 0, quiets: 0, strainIn: run.strain, strainOut: null, hand: 0, shots: 0, eye: 0, eyeCasts: 0, handBreaks: 0, braced: 0, playS: 0, eyeBreaks: 0, openings: 0, plantedS: 0, autoDmg: { hand: 0, eye: 0 }, riders: {}, pressure: combat.pressure, hpLost: 0, temper: temperOn, melts: 0 })
+  run.stats.push({ depth, fights: 0, pushes: 0, breaks: 0, deadTaps: 0, quiets: 0, strainIn: run.strain, strainOut: null, hand: 0, shots: 0, eye: 0, eyeCasts: 0, handBreaks: 0, braced: 0, playS: 0, eyeBreaks: 0, openings: 0, plantedS: 0, autoDmg: { hand: 0, eye: 0 }, riders: {}, pressure: combat.pressure, hpLost: 0, temper: temperOn, melts: 0,
+    states: Object.fromEntries(STATE_IDS.map((id) => [id, { set: 0, paid: 0, expired: 0 }])) as DepthStats['states'],
+    stateBonus: Object.fromEntries(STATE_IDS.map((id) => [id, 0])) as DepthStats['stateBonus'],
+    paidBy: { head: 0, torso: 0, arms: 0, legs: 0, hand: 0, eye: 0 }, pushedIntoState: 0, shatter: { n: 0, dmg: 0 }, maxMul: 1 })
   // the card's line gets a tick where this depth began (a resumed depth already has its tick)
   if (!o.resume) run.tally.marks.push(run.tally.line.length)
   // parts remember how deep they went
@@ -2364,7 +2487,7 @@ function startRun() {
   leaveRoom()
   still.reassemble()
   Object.assign(run, {
-    phase: 'crawl', strain: 0, kept: 0, ranks: {}, mastery: new Set<MasteryId>(), lastLean: null, t: 0, swapped: false, ramStunSeen: false,
+    phase: 'crawl', strain: 0, kept: 0, ranks: {}, swaps: [], mastery: new Set<MasteryId>(), lastLean: null, t: 0, swapped: false, ramStunSeen: false,
     id: newRunId(), dev: DEPTH_PARAM !== null, committed: false, ending: null, stats: [], drops: [], taps: [], walkS: 0, tally: freshTally(),
     startedAt: new Date().toISOString(), breakRule: combat.breakRule, hand: combat.closeHand, eye: combat.eye, route: ROUTE_PARAM,
   })
@@ -2428,6 +2551,7 @@ function savePlaytest() {
     stats: statsOut(),
     walkS: Math.round(run.walkS),
     taps: run.taps,
+    swaps: run.swaps,
     parts: partDrops(),
     drops: run.drops,
   }
@@ -2993,7 +3117,10 @@ function leaveRoom() {
 
 hud.onFire((def, pushed) => {
   if (run.phase !== 'crawl') return { cooldown: 'refused' }
+  if (pushed) pushSerial[def.slot] = (pushSerial[def.slot] ?? 0) + 1
+  pushing = pushed ? def.slot : null
   const r = cast(def, pushed)
+  pushing = null
   if (r.cooldown === 'refused') return r
   const st = run.stats[run.stats.length - 1]
   if (pushed && st) st.pushes++
@@ -3305,8 +3432,15 @@ function partFaces(dt: number) {
   still.setLive('legs', !!combat.parts.anchor)
   if (head?.mod?.kind === 'mark') {
     let marked = false
-    for (const [, st] of combat.statuses()) if (st.markT > 0) marked = true
+    for (const [, st] of combat.statuses()) if (st.marked.t > 0) marked = true
     still.ctx.marked = marked
+  }
+  // the push cue: a worn pair's payer shows its state's glyph, lit while a push would pay it
+  const worn = hud.loadout
+  for (const sl of hud.slots) {
+    const d = sl.def
+    const id = d?.pays?.find((s) => paired(d, s, worn, run.mastery)) ?? null
+    hud.stateCue(sl.slot, id, !!d && !!id && run.phase === 'crawl' && combat.wouldPay(d, still.pos))
   }
 }
 

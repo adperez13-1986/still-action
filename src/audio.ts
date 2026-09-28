@@ -1309,8 +1309,8 @@ export function signalLand(pan: number) {
   hiss(c, d, t, 0.05, 0.2, 'highpass', 5000, 5000, 0.7)
 }
 
-/** A mark used: a doubled hit, two strikes 60 ms apart. You hear "twice". */
-export function markConsumed(pan: number) {
+/** A state paid (a chill or a mark): a doubled hit, two strikes 60 ms apart. You hear "twice". One sound for every state. */
+export function statePaid(pan: number) {
   const c = live()
   if (!c) return
   const t = c.currentTime
@@ -1321,11 +1321,22 @@ export function markConsumed(pan: number) {
   tone(c, d, 'triangle', t + 0.06, 1976, 1976, 0.1, 0.15)
 }
 
-/** A slow ran out: the frost falls off with a tiny glass tick. */
-export function slowEnd(pan: number) {
+/** A chill ran out: the frost falls off with a tiny glass tick. */
+export function chillEnd(pan: number) {
   const c = live()
   if (!c) return
   tone(c, out(c, 'hits', pan), 'triangle', c.currentTime, 3136, 2800, 0.03, 0.06)
+}
+
+/** A paid kill's leftover flies on as ice (the state's shatter). A glassy crack, falling, and the tick of it landing. */
+export function iceShatter(pan: number) {
+  const c = live()
+  if (!c) return
+  const t = c.currentTime
+  const d = out(c, 'hits', pan)
+  hiss(c, d, t, 0.08, 0.16, 'highpass', 6000, 3500, 0.8)
+  tone(c, d, 'triangle', t, 2637, 1760, 0.12, 0.1)
+  tone(c, d, 'triangle', t + 0.05, 3520, 3136, 0.04, 0.07)
 }
 
 /** A windup broken by a parry: the clang of an attack that didn't happen. */

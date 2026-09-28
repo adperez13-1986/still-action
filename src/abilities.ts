@@ -1,4 +1,5 @@
 import type { SlotName } from './still'
+import type { StateId } from './states'
 
 /**
  * The deckbuilder's EquipmentDefinition carried one BodyAction and no stat block.
@@ -45,7 +46,7 @@ export type Mod =
   | { kind: 'charge'; minDamage: number; minS: number; fullS: number }
   /** bolt: `count` bolts spread `spreadRad` apart. An enemy takes at most one per cast. */
   | { kind: 'fan'; count: number; spreadRad: number }
-  /** lob: everything caught is marked for `ms`. The next hit from another part on a marked enemy lands twice. */
+  /** lob: everything caught is marked for `ms`. A part that pays marks, in another slot, hits a marked enemy twice. */
   | { kind: 'mark'; ms: number }
   /** nova: drags enemies in, stopping `to` u from Still. */
   | { kind: 'pull'; to: number }
@@ -160,6 +161,10 @@ export interface AbilityDef {
   /** Close, marksman, or none (Borrowed Time). */
   lean?: Lean
   rider?: Rider
+  /** Enemy states this part sets (states.ts); its mod does the setting, this says so to the checks and the card. */
+  sets?: StateId[]
+  /** Enemy states this part pays: a hit on a body carrying one, set outside its slot, lands twice and uses it up. */
+  pays?: StateId[]
 }
 
 const KEYS: Record<SlotName, string> = { head: 'H', torso: 'T', arms: 'A', legs: 'L' }
@@ -198,8 +203,8 @@ export const PARTS: AbilityDef[] = [
   }),
   part({
     id: 'cracked-lens', slot: 'head', name: 'Cracked Lens', tier: 'blue', beat: 'cracked', lean: 'marksman',
-    line: 'The bolt passes through every enemy it hits. Walls still stop it.',
-    shape: 'bolt', mod: { kind: 'pierce' }, cooldownMs: 4600, damage: 20, range: 15, radius: 0.7,
+    line: 'The bolt passes through every enemy it hits. Walls still stop it. On a chilled enemy: lands twice.',
+    shape: 'bolt', mod: { kind: 'pierce' }, pays: ['chilled'], cooldownMs: 4600, damage: 20, range: 15, radius: 0.7,
     icon: '<circle cx="6" cy="12" r="3.5"/><path d="M5 8.8 6.5 11 5 13"/><path d="M10.5 12H22"/><path d="M14.5 8.5v7M18.5 8.5v7"/>',
   }),
   part({
@@ -210,14 +215,14 @@ export const PARTS: AbilityDef[] = [
   }),
   part({
     id: 'patient-lens', slot: 'head', name: 'Patient Lens', tier: 'blue', beat: 'patient', lean: 'marksman',
-    line: 'Charges between shots. Push it for a full shot.',
-    shape: 'bolt', mod: { kind: 'charge', minDamage: 6, minS: 1.5, fullS: 7.5 }, cooldownMs: 1500, damage: 32, range: 13, radius: 0.85,
+    line: 'Charges between shots. Push it for a full shot. On a marked enemy: lands twice.',
+    shape: 'bolt', mod: { kind: 'charge', minDamage: 6, minS: 1.5, fullS: 7.5 }, pays: ['marked'], cooldownMs: 1500, damage: 32, range: 13, radius: 0.85,
     icon: '<circle cx="8.5" cy="12" r="5.5"/><circle cx="8.5" cy="12" r="2.2" fill="currentColor" stroke="none" class="charge"/><path d="M16 12h1M19.5 12h2.5"/>',
   }),
   part({
     id: 'signal-flare', slot: 'head', name: 'Signal Flare', tier: 'blue', beat: 'signal', lean: 'close',
-    line: 'Marks enemies where it lands. Your next part hits a marked one twice.',
-    shape: 'lob', mod: { kind: 'mark', ms: 4000 }, cooldownMs: 5000, damage: 4, range: 11, radius: 2.2, travelMs: 800,
+    line: 'Marks enemies where it lands. Parts that pay marks hit them twice.',
+    shape: 'lob', mod: { kind: 'mark', ms: 4000 }, sets: ['marked'], cooldownMs: 5000, damage: 12, range: 11, radius: 2.2, travelMs: 800,
     icon: '<path d="M3 19C4.5 8 11 5 15.5 11"/><path d="M13 15v-2h2M19 13h2v2M13 19v2h2M21 19v2h-2"/>',
   }),
   part({
@@ -255,8 +260,8 @@ export const PARTS: AbilityDef[] = [
   }),
   part({
     id: 'chill-vent', slot: 'torso', name: 'Chill Vent', tier: 'blue', beat: 'chill', lean: 'marksman',
-    line: 'A cold blast that makes enemies walk slowly for a while.',
-    shape: 'nova', mod: { kind: 'slow', mul: 0.5, ms: 3000 }, cooldownMs: 6500, damage: 10, range: 0, radius: 4.3,
+    line: 'A cold blast that chills enemies and makes them walk slowly for a while.',
+    shape: 'nova', mod: { kind: 'slow', mul: 0.5, ms: 3000 }, sets: ['chilled'], cooldownMs: 6500, damage: 10, range: 0, radius: 4.3,
     icon: '<path d="M12 2.5v19M3.8 7.25l16.4 9.5M3.8 16.75l16.4-9.5"/><path d="M9.5 4l2.5 2 2.5-2M9.5 20l2.5-2 2.5 2"/>',
   }),
   part({
@@ -282,8 +287,8 @@ export const PARTS: AbilityDef[] = [
   // ---------------- ARMS: close ----------------
   part({
     id: 'scrap-cleaver', slot: 'arms', name: 'Scrap Cleaver', tier: 'white', beat: 'cleaver', lean: 'close',
-    line: 'A wide swing at whatever is closest.',
-    shape: 'arc', cooldownMs: 2600, damage: 18, range: 3.1, radius: 0, cone: 120,
+    line: 'A wide swing at whatever is closest. On a chilled enemy: lands twice.',
+    shape: 'arc', pays: ['chilled'], cooldownMs: 2600, damage: 18, range: 3.1, radius: 0, cone: 120,
     icon: I.cleaver,
   }),
   part({
@@ -300,8 +305,8 @@ export const PARTS: AbilityDef[] = [
   }),
   part({
     id: 'parry-clamp', slot: 'arms', name: 'Parry Clamp', tier: 'blue', beat: 'parry', lean: 'close',
-    line: 'A quick snap. Catch an enemy winding up and it breaks the attack.',
-    shape: 'arc', mod: { kind: 'parry', shove: 2.5 }, cooldownMs: 3600, damage: 10, range: 2.6, radius: 0, cone: 90,
+    line: 'A quick snap. Catch an enemy winding up and it breaks the attack. On a marked enemy: lands twice.',
+    shape: 'arc', mod: { kind: 'parry', shove: 2.5 }, pays: ['marked'], cooldownMs: 3600, damage: 10, range: 2.6, radius: 0, cone: 90,
     icon: '<path d="M3 6c4.5 0 7.5 2 8.5 6M3 18c4.5 0 7.5-2 8.5-6"/><path d="M15 8.5l6 7M21 8.5l-6 7"/>',
   }),
   part({
@@ -349,15 +354,15 @@ export const PARTS: AbilityDef[] = [
   }),
   part({
     id: 'overrun', slot: 'legs', name: 'Overrun', tier: 'blue', beat: 'overrun-step', lean: 'close',
-    line: 'A short step. Push it for a long charge that hits.',
-    shape: 'dash', mod: { kind: 'overrun', range: 9, damage: 22, radius: 1.4, shove: 2.4, travelMs: 300 },
+    line: 'A short step. Push it for a long charge that hits. On a marked enemy: lands twice.',
+    shape: 'dash', mod: { kind: 'overrun', range: 9, damage: 22, radius: 1.4, shove: 2.4, travelMs: 300 }, pays: ['marked'],
     cooldownMs: 7000, damage: 0, range: 4.0, radius: 0, travelMs: 220,
     icon: '<path d="M3 7l5 5-5 5"/><path class="push" d="M11 12h9M17 8l4 4-4 4"/>',
   }),
   part({
     id: 'frost-trail', slot: 'legs', name: 'Frost Trail', tier: 'blue', beat: 'frost', lean: 'marksman',
-    line: 'A dash that leaves a cold track that slows enemies on it.',
-    shape: 'dash', mod: { kind: 'strip', width: 1.4, ms: 3000, mul: 0.5 }, cooldownMs: 8000, damage: 0, range: 6.4, radius: 0, travelMs: 280,
+    line: 'A dash that leaves a cold track that chills and slows enemies on it.',
+    shape: 'dash', mod: { kind: 'strip', width: 1.4, ms: 3000, mul: 0.5 }, sets: ['chilled'], cooldownMs: 8000, damage: 0, range: 6.4, radius: 0, travelMs: 280,
     icon: '<path d="M4 3.5l4 4-4 4M11 3.5l4 4-4 4"/><path d="M2.5 17.5h19"/><path d="M5.5 15v5M10 15v5M14.5 15v5M19 15v5"/>',
   }),
   part({

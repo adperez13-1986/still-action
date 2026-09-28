@@ -3,6 +3,7 @@ import type { SlotName } from './still'
 import type { Terrain } from './terrain'
 import type { AbilityDef, BeatKey } from './abilities'
 import type { Enemy } from './enemy'
+import type { StateBy, StateId, StateMark } from './states'
 
 /**
  * What parts leave out in the world, and the engine numbers that aren't any one
@@ -28,6 +29,10 @@ export const PART = {
   throwPeak: 1.5,
   /** A zone keeps an enemy slowed this long after it steps off. */
   zoneLinger: 0.25,
+  /** A Frost strip keeps an enemy chilled this long after it steps off: the rime outlasts the slow. */
+  stripChill: 1.5,
+  /** Shatter: a paid kill's excess reaches the nearest awake body whose edge is this close to where it fell. */
+  shatterReach: 3,
   /** The sentinel keeps its answer this long, waiting for its reload. */
   answerSeconds: 4,
   /** A throw carries the enemy with the clamp for this long before the lob. */
@@ -59,16 +64,21 @@ export interface PartRuntime {
   patientSince: number
 }
 
-/** Per-enemy status. Map<Enemy, EnemyStatus> in Combat; deleted when the enemy is buried. */
+/**
+ * Per-enemy status. Map<Enemy, EnemyStatus> in Combat; deleted when the enemy is buried.
+ * The states (states.ts) are apart from the slow: Chill Vent and Frost Trail set both, the
+ * masteries the chill alone. The rime shows the chill.
+ */
 export interface EnemyStatus {
-  markT: number      // seconds left, 0 = unmarked
+  chilled: StateMark
+  marked: StateMark
   slowT: number      // seconds left, 0 = not slowed
   /** The factor applied to speedMul while slowT > 0. Divided back out on expiry: never set speedMul to 1. */
   slowMul: number
 }
 
 /** A floor strip (Frost Trail). Never shoves. */
-export interface Zone { ax: number; az: number; bx: number; bz: number; halfW: number; t: number; max: number; mul: number }
+export interface Zone { ax: number; az: number; bx: number; bz: number; halfW: number; t: number; max: number; mul: number; by: SlotName }
 
 /** An enemy in the clamp's throw. While held, it doesn't think. */
 export interface Held { from: THREE.Vector3; to: THREE.Vector3; t: number; T: number; short: boolean; def: AbilityDef; pushed: boolean }
@@ -169,7 +179,14 @@ export type PartEvent =
    * break rule, and it reels. `by`: the hand's strike or the eye's planted shot broke it (a trigger).
    */
   | { kind: 'interrupt'; enemy: Enemy; push?: boolean; by?: 'hand' | 'eye' }
-  | { kind: 'mark'; enemy: Enemy; state: 'on' | 'consumed' | 'expired' }
+  /**
+   * A state set fresh on a body ('on', not a refresh), paid by a part's hit, or run out unpaid.
+   * A pay says who set it, which slot paid, whether a push did, whether the hit killed, its
+   * multiplier and the damage it added.
+   */
+  | { kind: 'state'; id: StateId; enemy: Enemy; state: 'on' | 'paid' | 'expired'; by: StateBy; payer?: SlotName; pushed?: boolean; killed?: boolean; mul?: number; bonus?: number }
+  /** A paid kill's excess, passed on to the nearest body as a plain hit. */
+  | { kind: 'shatter'; from: THREE.Vector3; to: THREE.Vector3; enemy: Enemy; damage: number }
   | { kind: 'slow'; enemy: Enemy; state: 'on' | 'off' }
   | { kind: 'lob'; from: THREE.Vector3; to: THREE.Vector3; ms: number; radius: number; signal: boolean }
   | { kind: 'land'; at: THREE.Vector3; radius: number; what: 'flare' | 'signal' | 'throw' | 'wall'; enemy?: Enemy }

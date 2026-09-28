@@ -90,6 +90,20 @@ heavies x2.0 HP / x1.3 damage). First dial if the median dies at depth 5 more th
 HP at 5 to x1.2. Log gains `partDmg` per depth (the auto/part split the model guessed at 65/35).
 tools/levels.json regenerated.
 
+**28 Sep, synergy trial build 1 (his calls: "build the synergy trial with shatter"; bosses take half from the
+autos; the scald speeds up while hugged; mastery chill without the slow, the recommended default):**
+spec `design/synergy/PITCHES.md`, build brief `design/synergy/BUILD-1.md`. `src/states.ts` (`stateMul`: one
+multiplier, cap x2, a state from the payer's own slot pays nothing, mastery-set states pay any slot);
+`sets` / `pays` on parts (chilled: Chill Vent, Frost Trail set; Scrap Cleaver, Cracked Lens pay. marked:
+Signal Flare 12 sets; Patient Lens, Parry Clamp, Overrun pay); marks no longer paid by any part; Cold
+Strike/Shot chill with no slow; bosses never slowed, but take states; shatter (a paid kill's overkill to the
+nearest body within 3 u, once); paying parts aim at carriers; **a swap lands at II** (temper on; the old
+part melts in); the push cue (a glyph on the payer's rim, lit when a push would pay; "hold · pay it" once);
+"pairs with X" on the floor card. `tools/statecheck.ts`. Log: `states`, `stateBonus`, `paidBy` (hand/eye
+must be 0), `pushedIntoState`, `shatter`, `maxMul`, `swaps`. Boss damage from the curve (`bossDmg` ->
+`dmgMul` in addBoss). Pay and shatter effects need a look on the phone (headless barely draws them). Next
+queued: the mender (design/variety/PITCHES.md) if he agrees. Slammed and hauled after his runs.
+
 **Then, in order:**
 1. His runs on pedestals + leanings (open fields now always on at depths 1 and 4, logging via `?owner`; he exports from
    the pause screen, fold in with `npx tsx tools/mergelog.ts <file>`). Ask what he felt before reading

@@ -1,3 +1,5 @@
+import type { StateId } from './states'
+
 /**
  * Mastery (28 Sep prototype, his idea: "option 3 but after the rank III"). Melting a part into one
  * already at III masters the auto its lean feeds: a close part the hand, a marksman part the eye
@@ -14,19 +16,23 @@ export type MasteryForm = 'hand' | 'eye'
  */
 export const FORM_NAME: Record<MasteryForm, string> = { hand: 'close strike', eye: 'planted shot' }
 
-export const MASTERY: Record<MasteryId, { form: MasteryForm; name: string; line: string }> = {
-  'hand-chill': { form: 'hand', name: 'Cold Strike', line: 'Every close strike slows what it hits for a moment.' },
-  'hand-mark': { form: 'hand', name: 'Marking Strike', line: 'Every close strike marks what it hits: your next part hits it twice.' },
+/** `sets`: the state its auto's every hit sets (states.ts). A mastery never pays one. */
+export const MASTERY: Record<MasteryId, { form: MasteryForm; name: string; line: string; sets?: StateId }> = {
+  'hand-chill': { form: 'hand', name: 'Cold Strike', line: 'Every close strike chills what it hits.', sets: 'chilled' },
+  'hand-mark': { form: 'hand', name: 'Marking Strike', line: 'Every close strike marks what it hits.', sets: 'marked' },
   'hand-cleave': { form: 'hand', name: 'Wide Strike', line: 'Every close strike also catches the next body in reach.' },
-  'eye-chill': { form: 'eye', name: 'Cold Shot', line: 'Every planted shot slows what it hits for a moment.' },
-  'eye-mark': { form: 'eye', name: 'Marking Shot', line: 'Every planted shot marks what it hits: your next part hits it twice.' },
+  'eye-chill': { form: 'eye', name: 'Cold Shot', line: 'Every planted shot chills what it hits.', sets: 'chilled' },
+  'eye-mark': { form: 'eye', name: 'Marking Shot', line: 'Every planted shot marks what it hits.', sets: 'marked' },
   'eye-split': { form: 'eye', name: 'Splitting Shot', line: 'A planted shot that kills splits into two at the nearest bodies.' },
 }
 
 export const MASTERY_MAX = 6
 
-/** The numbers, in one place: a slow's length and pace, a mark's length, the cleave's share, the split's reach and hit. */
-export const MASTERY_TUNE = { chillS: 1.5, chillMul: 0.6, markS: 3, cleaveShare: 0.6, splitRange: 6, splitDamage: 6 }
+/**
+ * The numbers, in one place: a chill's length, a mark's length, the cleave's share, the split's reach and hit.
+ * A mastery's chill never slows (his call, 28 Sep): a free auto may set only states that don't protect him on their own.
+ */
+export const MASTERY_TUNE = { chillS: 1.5, markS: 3, cleaveShare: 0.6, splitRange: 6, splitDamage: 6 }
 
 /** Two not yet owned for `form` (both forms for a part with no lean), fewer if fewer are left. */
 export function masteryOffer(form: MasteryForm | null, owned: ReadonlySet<MasteryId>): MasteryId[] {

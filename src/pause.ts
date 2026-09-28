@@ -72,7 +72,7 @@ let learned: () => { name: string; line: string }[] = () => []
 /** One-press buttons after the switches (the owner's log export), in the order main gave them. */
 const playActions: { label: () => string; run: () => void; show?: () => boolean }[] = []
 
-function card(d: AbilityDef, tag: string, other?: AbilityDef, conflict?: string | null, fresh = false, cost?: string, note?: string) {
+function card(d: AbilityDef, tag: string, other?: AbilityDef, conflict?: string | null, fresh = false, cost?: string, note?: string, cold: string[] = []) {
   const past = describe(d)
   // the price on every cast, the same pips the button carries, so the card and the button agree
   const pips = d.pips ? ` <span class="ppips">${(d.pips.hollow ? '\u25cb' : '\u25cf').repeat(d.pips.n)}</span>` : ''
@@ -86,6 +86,7 @@ function card(d: AbilityDef, tag: string, other?: AbilityDef, conflict?: string 
       <p class="pline">${d.line}${rider}</p>
       ${past.history ? `<p class="pline phist">${past.history}</p>` : ''}
       <div class="stats">${stats(d, other)}</div>
+      ${cold.map((l) => `<p class="ppair">${l}</p>`).join('')}
       ${conflict ? `<p class="pconflict">${conflict}</p>` : ''}
       ${cost ? `<p class="pcost">${cost}</p>` : ''}
       ${note ? `<p class="pconflict">${note}</p>` : ''}
@@ -109,10 +110,12 @@ export interface PauseScreen {
   /**
    * `o.tag` says where it is ("on the floor" if not given); `o.cost`, its price in strain, on the card
    * and the take button; `o.stays`, no quiet takes it back; `o.note`, what taking it does to the rest.
+   * A swap (design/synergy): `o.take` is the take button's words ("take · Piston II"), `o.melts` what
+   * melts into it; `o.pair`, the pair it makes or ends with what's worn.
    */
   compare: (
     current: AbilityDef | null, incoming: AbilityDef, equipped: readonly AbilityDef[], onTake: () => void, onLeave: () => void, fresh?: boolean,
-    o?: { tag?: string; cost?: number; stays?: boolean; note?: string },
+    o?: { tag?: string; cost?: number; stays?: boolean; note?: string; take?: string; melts?: string; pair?: string },
   ) => void
   /**
    * The look-back screen: every run's card, large, newest first, with the arrows to
@@ -209,9 +212,10 @@ export function createPauseScreen(root: HTMLElement): PauseScreen {
          <div class="row two">
            ${current ? card(current, 'on Still now', incoming) : emptyCard(incoming.slot, 'on Still now')}
            <div class="arrow">&rarr;</div>
-           ${card(incoming, o.tag ?? 'on the floor', current ?? undefined, conflictLine(incoming, equipped), fresh, price && (o.stays ? `${price}, and it stays` : price), o.note)}
+           ${card(incoming, o.tag ?? 'on the floor', current ?? undefined, conflictLine(incoming, equipped), fresh, price && (o.stays ? `${price}, and it stays` : price), o.note,
+             [o.melts, o.pair].filter((l): l is string => !!l))}
          </div>`,
-        [['leave', 'leave it', onLeave], ['take', price ? `take it \u00b7 ${price}` : 'take it', onTake]],
+        [['leave', 'leave it', onLeave], ['take', [o.take ?? 'take it', price].filter(Boolean).join(' \u00b7 '), onTake]],
       )
     },
 

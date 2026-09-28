@@ -2,6 +2,7 @@ import type { ChooserSpec } from './workshop'
 import { LEAN_GLYPH, riderLine, type AbilityDef, type IconState } from './abilities'
 import type { CastResult } from './combat'
 import { SLOT_NAMES, type SlotName } from './still'
+import { STATE_GLYPH, type StateId } from './states'
 
 /**
  * The ability arc. Variant A's r96 packed 62px buttons only ~43px apart, so they
@@ -41,6 +42,9 @@ const HEAT_CAPTION_MS = 2400
 const BREAK_CAPTION = 'hold \u00b7 break it'
 /** Its own hint id, so a save that saw the old hints still gets this one. */
 const BREAK_HINT = 'break'
+/** PLACEHOLDER words (Adrian's): the push cue's one-time caption, over the first cooling payer whose state is live in reach. */
+const PAY_CAPTION = 'hold \u00b7 pay it'
+const PAY_HINT = 'pay'
 
 /** What the run tells the button after a press: start the cooldown, stay live, or nothing happened. */
 export type FireResult = Pick<CastResult, 'cooldown'>
@@ -78,6 +82,8 @@ interface ButtonState {
   arc: { from: number; at: number; hold: number } | null
   /** Ready last frame: a part that just started recharging may owe its one-time push hint. */
   wasReady: boolean
+  /** The push cue drawn now ('chilled', 'chilled lit'), or '' for none: repaints only on change. */
+  cue: string
 }
 
 export interface Hud {
@@ -142,7 +148,14 @@ export interface Hud {
   onPrompt: (cb: () => void) => void
   /** The pickup card. Null hides it. `fresh`: never found before, and the card says so. */
   /** `melt`: the melt button's label ("melt into Cleaver II"), or null for none (temper.ts). */
-  offer: (incoming: AbilityDef | null, fresh?: boolean, past?: { name: string; history: string | null }, melt?: string | null) => void
+  /**
+   * `o.swap`: a swap's words ("take · Piston II", "Scrap Cleaver III melts in") in place of "replaces";
+   * `o.pair`: the card's spare line, the pair it makes or ends ("pairs with Chill Vent").
+   */
+  offer: (
+    incoming: AbilityDef | null, fresh?: boolean, past?: { name: string; history: string | null }, melt?: string | null,
+    o?: { swap?: { take: string; melts: string } | null; pair?: string | null },
+  ) => void
   onMelt: (cb: () => void) => void
   onTake: (cb: () => void) => void
   onCompare: (cb: () => void) => void
@@ -196,6 +209,12 @@ export interface Hud {
    * that just started. The pulse and a caption over it. False if it was shown before.
    */
   breakHint: (slot: SlotName) => boolean
+  /**
+   * The push cue (design/synergy): a worn pair's state as a small glyph on the payer's top rim, dim;
+   * `lit` while a push would pay it. Null clears it. The first time it lights on a cooling button,
+   * once per save, a caption over it.
+   */
+  stateCue: (slot: SlotName, id: StateId | null, lit: boolean) => void
   /** Dev only: the path a tap (false) or a push (true) takes once the gesture is recognised. */
   fireSlot: (slot: SlotName, pushed: boolean) => void
   /** Dev only: hold the stick at a world direction (0, 0 lets go). */
@@ -224,6 +243,7 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
         <p class="line"></p>
         <p class="hist"></p>
         <p class="replaces"></p>
+        <p class="pair"></p>
       </div>
       <div class="choices">
         <button type="button" class="take">take</button>
@@ -279,6 +299,7 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
   const offerReplaces = offerEl.querySelector<HTMLElement>('.replaces')!
   const offerNew = offerEl.querySelector<HTMLElement>('.new')!
   const offerHist = offerEl.querySelector<HTMLElement>('.hist')!
+  const offerPair = offerEl.querySelector<HTMLElement>('.pair')!
   const chooserEl = root.querySelector<HTMLElement>('#chooser')!
   const chooseListeners: ((id: string) => void)[] = []
   const chooserActListeners: (() => void)[] = []
@@ -336,12 +357,12 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
   }
   const buttons: ButtonState[] = SLOT_NAMES.map((slot, i) => {
     const el = document.createElement('div')
-    el.innerHTML = `<div class="cd"></div><div class="heat"></div><div class="live"></div><div class="arm"></div><span class="lbl" aria-label="${KEYS[slot]}"></span><span class="pips"></span>`
+    el.innerHTML = `<div class="cd"></div><div class="heat"></div><div class="live"></div><div class="arm"></div><span class="lbl" aria-label="${KEYS[slot]}"></span><span class="scue"></span><span class="pips"></span>`
     const th = (ARC_DEG[i] ?? 0) * (Math.PI / 180)
     el.style.right = `calc(env(safe-area-inset-right, 0px) + ${PAD + ARC_R * Math.cos(th) - BTN / 2}px)`
     el.style.bottom = `calc(env(safe-area-inset-bottom, 0px) + ${PAD + ARC_R * Math.sin(th) - BTN / 2}px)`
     root.appendChild(el)
-    const b: ButtonState = { el, cdEl: el.querySelector<HTMLElement>('.cd')!, slot, def: null, icon: null, readyAt: 0, hotUntil: 0, hotMs: 0, pointerId: null, downAt: 0, downWall: 0, readyAtDown: true, pushed: false, pressed: null, queued: false, deadAt: -Infinity, arc: null, wasReady: true }
+    const b: ButtonState = { el, cdEl: el.querySelector<HTMLElement>('.cd')!, slot, def: null, icon: null, readyAt: 0, hotUntil: 0, hotMs: 0, pointerId: null, downAt: 0, downWall: 0, readyAtDown: true, pushed: false, pressed: null, queued: false, deadAt: -Infinity, arc: null, wasReady: true, cue: '' }
     paint(b)
     return b
   })
@@ -386,10 +407,10 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
   /** Once per save, a push-shaped part's pushed half pulses the first time it starts recharging. */
   const { hinted, markHinted } = hints
 
-  /** A one-time caption over a button, kept on screen whichever edge the button sits against. */
-  const caption = (b: ButtonState, text: string) => {
+  /** A one-time caption over a button, kept on screen whichever edge the button sits against. `cold`: Still's own (the push cue's), not the heat's. */
+  const caption = (b: ButtonState, text: string, cold = false) => {
     const cap = document.createElement('div')
-    cap.className = 'heatCaption'
+    cap.className = cold ? 'heatCaption cold' : 'heatCaption'
     cap.textContent = text
     b.el.appendChild(cap)
     const r = cap.getBoundingClientRect()
@@ -732,7 +753,7 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
     onChooserAction(cb) { chooserActListeners.push(cb) },
     onPrompt(cb) { promptListeners.push(cb) },
 
-    offer(incoming, fresh = false, past, melt = null) {
+    offer(incoming, fresh = false, past, melt = null, o = {}) {
       offered = incoming
       meltBtn.style.display = incoming && melt ? '' : 'none'
       meltBtn.textContent = melt ?? 'melt'
@@ -751,7 +772,9 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
       offerName.style.color = TIER_CSS[incoming.tier]
       // the rider's words ride along; the lean's glyph stays off the fight's screen
       offerLine.textContent = incoming.rider ? `${incoming.line} ${riderLine(incoming.rider)}` : incoming.line
-      offerReplaces.textContent = current ? `replaces ${current.name}` : `fills the empty ${SLOT_LABEL[incoming.slot]} slot`
+      offerReplaces.textContent = o.swap ? `${o.swap.take}\n${o.swap.melts}` : current ? `replaces ${current.name}` : `fills the empty ${SLOT_LABEL[incoming.slot]} slot`
+      offerPair.textContent = o.pair ?? ''
+      offerPair.style.display = o.pair ? '' : 'none'
       offerEl.classList.add('show')
     },
 
@@ -873,6 +896,22 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
       setTimeout(() => b.el.classList.remove('pulse'), 400)
       caption(b, BREAK_CAPTION)
       return true
+    },
+
+    stateCue(slot, id, lit) {
+      const b = buttons.find((x) => x.slot === slot)!
+      const cue = id && b.def ? `${id}${lit ? ' lit' : ''}` : ''
+      if (cue !== b.cue) {
+        b.cue = cue
+        const el = b.el.querySelector<HTMLElement>('.scue')!
+        el.innerHTML = id ? svg(STATE_GLYPH[id]) : ''
+        el.className = `scue${lit ? ' lit' : ''}`
+      }
+      // the first time a push would pay, on a cooling button: say so, once per save
+      if (lit && !isReadyAt(b, state.clock) && !hinted(PAY_HINT)) {
+        markHinted(PAY_HINT)
+        caption(b, PAY_CAPTION, true)
+      }
     },
 
     fireSlot(slot, pushed) {

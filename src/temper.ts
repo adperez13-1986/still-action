@@ -3,9 +3,10 @@ import type { AbilityDef, Mod } from './abilities'
 /**
  * Temper (28 Sep prototype, his ask: "after some time, I don't really care about the drops").
  * A floor part he doesn't want can be melted into the part he wears in that slot: it ranks up,
- * I -> II -> III, for this run only (a swap starts the new part at I). Every rank hits harder and
+ * I -> II -> III, for this run only. Every rank hits harder and
  * comes back sooner; a blast, a shell, a lob and a swing also reach wider, so a rank is seen.
  * Inside a run Still gets stronger (DESIGN.md, Persistence, 28 Sep); between runs nothing carries.
+ * A swap lands at `swapRank` (design/synergy, 28 Sep): the part given up melts into the new one.
  */
 export const TEMPER = {
   maxRank: 3,
@@ -18,6 +19,11 @@ export const TEMPER = {
    * Elites, a side room's last kill, crates and pedestals are as they were.
    */
   killPayout: 0.4,
+  /**
+   * A new part taken over a worn one lands at this rank, whatever the old one's was, and the old one
+   * is used up. Keeping half the rank would make swaps free; a full reset kills them by mid-run.
+   */
+  swapRank: 2,
 }
 
 export const ROMAN = ['', 'I', 'II', 'III'] as const

@@ -131,6 +131,7 @@ html, body {
   font: 600 12px/1 var(--ui); letter-spacing: .06em; color: #ffc9b0; text-shadow: 0 1px 3px #000;
   animation: heat-caption 2.4s ease-out forwards;
 }
+.btn .heatCaption.cold { color: #bcd6f5; text-shadow: 0 1px 3px #000, 0 0 6px rgba(111, 155, 208, .55); }
 @keyframes heat-caption { 0% { opacity: 0; } 10% { opacity: 1; } 80% { opacity: 1; } 100% { opacity: 0; } }
 /*
  * The price on the rim: ember dots, the part's own always visible (● always, ○ when it depends),
@@ -143,6 +144,14 @@ html, body {
 .btn .pips i.f { background: radial-gradient(circle at 40% 35%, #ffb08a, #e0603a 45%, #8a2a18); }
 .btn .pips i.h { background: radial-gradient(closest-side, rgba(20, 8, 5, .6) 40%, #ff9a6a 52%, #d9502e 72%, #7a2616 100%); }
 .btn.ready .pips .owed { display: none; }
+/*
+ * The push cue (design/synergy): a worn pair's state, small on the payer's top rim, the price
+ * staying on the bottom one. Dim frost while the pair is worn; lit, with a cold halo, while a
+ * push would pay it.
+ */
+.btn .scue { position: absolute; top: 2px; left: 50%; width: 14px; height: 14px; margin-left: -7px; z-index: 3; pointer-events: none; color: #6f9bd0; opacity: .45; transition: opacity .12s, color .12s; }
+.btn .scue svg { display: block; width: 100%; height: 100%; stroke-width: 2.6; }
+.btn .scue.lit { opacity: 1; color: #b8d6fa; filter: drop-shadow(0 0 2px rgba(143, 184, 232, .95)) drop-shadow(0 0 5px rgba(111, 155, 208, .6)); }
 /* parts that change when pushed show what the push buys: dim while ready, ember while a hold would push */
 .btn.ready .push { opacity: .35; }
 .btn:not(.ready) .push { stroke: var(--strain); }
@@ -296,7 +305,9 @@ html, body {
 #offer .slot { font: 700 10px/1 var(--ui); letter-spacing: .14em; text-transform: uppercase; color: #6f8196; }
 #offer .name, #prompt .name { font: 700 15px/1.2 var(--display); letter-spacing: .02em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #offer p, #prompt p { margin: 3px 0 0; font-size: 12.5px; line-height: 1.25; color: #9fb2c6; }
-#offer .replaces { color: #6f8196; }
+#offer .replaces { color: #6f8196; white-space: pre-line; }
+/* the pair it makes or ends with what's worn: one spare line, in Still's cold */
+#offer .pair, .pcard .ppair { color: #a9cdea; }
 #offer .hist, .pcard .phist { color: #8fa3b8; font-style: italic; }
 /* a prompt's title may take two lines rather than hide behind its button */
 #prompt .name { white-space: normal; }
@@ -357,6 +368,7 @@ html, body {
 #pause .row.four .pcard .ppips { color: var(--strain); font: 700 11px/1 var(--ui); letter-spacing: 2px; vertical-align: middle; }
 .pcard .pconflict { margin: 8px 0 0; font: 500 12px/1.35 var(--ui); color: rgba(203, 215, 230, .55); font-style: italic; }
 /* a pick's price: plain, the strain bar's own words, never a warning colour */
+.pcard .ppair { margin: 8px 0 0; font: 500 12px/1.35 var(--ui); }
 .pcard .pcost { margin: 8px 0 0; font: 600 13px/1.35 var(--ui); color: #cbd7e6; letter-spacing: .02em; }
 .pcard { width: 180px; }
 #pause .row.two .pcard { width: 240px; }
