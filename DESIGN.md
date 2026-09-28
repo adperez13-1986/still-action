@@ -27,7 +27,10 @@ Walls stay waist-to-chest height so nothing ever occludes the camera. Cost of th
 choice: you always see *over* walls, so every space needs a plausible beyond.
 
 **Enemies.** Four archetypes — chaser, ranged, charger, swarm — each an
-`idle → approach → windup → strike → recover` machine. The 43 enemies in `still`
+`idle → approach → windup → strike → recover` machine. **Pressure (28 Sep, his call):**
+an ordinary pack's hulks and sentinels drop the big windup and the floor tell: a short
+physical cock and a jab, a lens glow and a burst, their hits stacking; the threat is the
+crowd. Big telegraphs are kept for the heavies (the elite pack) and the bosses. The 43 enemies in `still`
 port as *data* (names, hp, drops, flavour, sector), never as behaviour; their
 `Intent[]` cycles are turn-bound and dead here.
 

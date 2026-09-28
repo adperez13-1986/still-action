@@ -151,7 +151,7 @@ export interface Enemy {
   hp: number
   phase: EnemyPhase
   /**
-   * The pressure prototype (28 Sep, his ask: telegraphs on every enemy "is actually weird"):
+   * Pressure (accepted 28 Sep; his ask: telegraphs on every enemy "is actually weird"):
    * an ordinary hulk or sentinel with no big windup, pressure instead. Set by Combat on a non-elite pack.
    */
   pressure?: boolean
@@ -305,7 +305,7 @@ export const CHASER = {
 }
 
 /**
- * The pressure hulk (prototype): no ring and no rear-back. In contact it cocks a fist for a
+ * The pressure hulk (accepted 28 Sep): no ring and no rear-back. In contact it cocks a fist for a
  * beat and swipes whoever is still in reach; a crowd of them is the threat, not one slam.
  * Its swipes stack with its packmates' (Combat skips the hurt window for them).
  */

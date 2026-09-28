@@ -33,9 +33,12 @@ is the run.
 - **Rules are symmetric.** Waist-high walls block projectiles both ways; cover
   works against everything; if Still can do it to enemies, the rule should hold
   the other way where it applies.
-- **Every threat is telegraphed and committed** (enemies: approach → windup →
-  strike → recover). Phone readability first: a 6-inch screen, thumbs covering
-  corners, many things on screen.
+- **Big threats are telegraphed and committed; ordinary bodies are pressure**
+  (28 Sep, his call: telegraphs on every enemy "is actually weird"). Heavies (the
+  elite pack) and bosses keep approach → windup → strike → recover with floor tells.
+  An ordinary hulk or sentinel shows only its body: a short cock and a jab, a lens
+  glow and a burst, no ring or line on the floor; the threat is the crowd. Phone
+  readability first: a 6-inch screen, thumbs covering corners, many things on screen.
 - **Colour language:** Still's effects cold steel-blue/white (`COLD`
   0x8fb8e8-ish, `COLD_DEEP`); enemies' effects ember orange/red. Grace (Still's
   wife-figure) is the one warm light in the game — gold loot is kept thin and

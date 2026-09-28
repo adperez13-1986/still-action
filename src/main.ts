@@ -1743,22 +1743,6 @@ run.hand = combat.closeHand
 run.eye = combat.eye
 
 /**
- * The pressure prototype (28 Sep, his ask: "to have [telegraphs] for all the enemies is actually
- * weird"): at depths 1 and 2 an ordinary pack's hulks and sentinels are pressure bodies (a short
- * cock and a swipe, a short glow and a burst; their hits stack), and the elite pack keeps the big
- * telegraphs as the level's heavies. A pause switch, kept per device, on by default; it takes
- * effect from the next depth. Each depth's stats say whether it was on.
- */
-const PRESSURE_KEY = 'still-action.pressure'
-const PRESSURE_DEPTHS: readonly number[] = [1, 2]
-let pressureOn = (() => {
-  try {
-    return localStorage.getItem(PRESSURE_KEY) !== '0'
-  } catch {
-    return true
-  }
-})()
-/**
  * The temper prototype (temper.ts): melt a floor part into the worn one, ranks I-III, and fewer
  * kill drops. A pause switch, kept per device, on by default; ranks already earned stay either way.
  */
@@ -1774,14 +1758,6 @@ pause.setSwitch('temper', () => temperOn, (on) => {
   temperOn = on
   try {
     localStorage.setItem(TEMPER_KEY, on ? '1' : '0')
-  } catch {
-    // private window: it holds for this session
-  }
-})
-pause.setSwitch('pressure', () => pressureOn, (on) => {
-  pressureOn = on
-  try {
-    localStorage.setItem(PRESSURE_KEY, on ? '1' : '0')
   } catch {
     // private window: it holds for this session
   }
@@ -2318,7 +2294,10 @@ function enterLevel(depth: number, o: { seed?: number; bossFelled?: boolean; res
   loot.terrain = level.terrain
   // the Line's own bodies and looks arrive in stage B: until then a Sleepers' brood sleeps as any brood does
   const packOfSpec = new Map<PackSpec, Pack>()
-  combat.pressure = pressureOn && PRESSURE_DEPTHS.includes(depth) && !level.boss
+  // pressure, accepted 28 Sep ("I prefer it"): on every crawl depth an ordinary pack's hulks and
+  // sentinels are pressure bodies (a short cock and a jab, a short glow and a burst; their hits stack);
+  // the elite pack keeps the big telegraphs as the level's heavies, and bosses keep theirs
+  combat.pressure = !level.boss
   for (const p of level.packs) {
     const members = p.members.map((m) => ({ ...m, variant: m.variant === 'lobber' ? ('lobber' as const) : undefined }))
     packOfSpec.set(p, combat.addPack(members, p.room.kind === 'side', p.elite, p.look === 'heap' ? 'heap' : undefined))

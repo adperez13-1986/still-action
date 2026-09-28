@@ -42,7 +42,7 @@ export const RANGED = {
 }
 
 /**
- * The pressure sentinel (prototype): no aim line and no lock. The lens glows for a beat and it
+ * The pressure sentinel (accepted 28 Sep): no aim line and no lock. The lens glows for a beat and it
  * looses a short burst at where he is, each shot aimed afresh; walls stop them as ever, and
  * moving across its line is the answer. Its shots stack (Combat skips the hurt window for them).
  */

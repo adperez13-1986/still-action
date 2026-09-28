@@ -418,7 +418,7 @@ export class Combat {
    */
   breakRule = false
   /**
-   * The pressure prototype: packs added while this is on have their ordinary hulks and sentinels
+   * Pressure (accepted 28 Sep): packs added while this is on have their ordinary hulks and sentinels
    * pressure bodies (no big windup, their hits stack); an elite pack keeps its telegraphs, the heavies.
    */
   pressure = false
