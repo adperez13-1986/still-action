@@ -1500,9 +1500,19 @@ const pool = (): PoolView => poolView(save, run.depth)
 // --- shrines: one bargain each ---
 
 const SHRINE_RADIUS = 1.7
+
+/**
+ * Pedestals are off (28 Sep, his call: "remove the pedestals"; he was "not feeling the benefit").
+ * Exits raise nothing, Plenty drops one part for its strain, the Assembler leaves a blue and a gold
+ * on the floor, as before pedestals. The code stays behind this for a way back.
+ */
+const PEDESTALS_ON = false
+
 const SHRINE_TEXT = {
   rest: { title: 'Shrine of Rest', line: 'strain \u22126. Something nearby will hear it.', action: 'rest' },
-  plenty: { title: 'Shrine of Plenty', line: `three good parts rise; the one you take costs ${PEDESTALS.plentyStrain} strain.`, action: 'raise them' },
+  plenty: PEDESTALS_ON
+    ? { title: 'Shrine of Plenty', line: `three good parts rise; the one you take costs ${PEDESTALS.plentyStrain} strain.`, action: 'raise them' }
+    : { title: 'Shrine of Plenty', line: `a good part, for ${PEDESTALS.plentyStrain} strain.`, action: 'take the bargain' },
 }
 let atShrine: Shrine | null = null
 
@@ -1543,14 +1553,26 @@ hud.onPrompt(() => {
     run.strain = Math.max(0, run.strain - 6)
     overlay.banner('rested \u00b7 strain \u22126')
     combat.wakeNearest(at)
-  } else {
+  } else if (PEDESTALS_ON) {
     // the bargain is a pick: three rise round the shrine, and the one he takes is paid for
     raisePicks('plenty', at, still.pos)
     overlay.banner(`take one for strain +${PEDESTALS.plentyStrain}`)
+  } else {
+    // the bargain as it was before pedestals: one good part on the floor, paid for at once
+    const taken = [...hud.loadout, ...loot.ground.map((g) => g.def)]
+    const def = rollPart('chaser', taken, 'plenty', pool())
+    if (def) {
+      logDrop(loot.drop(def, at, still.pos), 'plenty')
+      sfx.drop(def.tier, 0)
+    }
+    overlay.banner(`bargained \u00b7 strain +${PEDESTALS.plentyStrain}`)
+    // a bargain can cost everything
+    addStrain(PEDESTALS.plentyStrain, screenOf(at))
   }
 })
 
 // --- picks on pedestals (design/replay/PITCHES.md 2): three rise, he walks into one ---
+
 
 /** How far round what they stand by: the exit's beam, the Assembler's beams, a Plenty shrine. */
 const PICK_RING: Record<PickKind, number> = { exit: 2.8, gift: 3.4, plenty: 2.2 }
@@ -2202,7 +2224,7 @@ function bossDown(at: THREE.Vector3) {
   hitstop = 0.25
   rig.punch(0.12)
   navigator.vibrate?.([60, 40, 120])
-  if (run.depth < RUN_DEPTHS && level) {
+  if (PEDESTALS_ON && run.depth < RUN_DEPTHS && level) {
     // a boss with more of the day to come (the Assembler): its gift is a pick, on pedestals by its beams
     run.bossLoot = raisePicks('gift', level.exit, level.entrance)
   } else {
@@ -2301,7 +2323,7 @@ function resumeRun(snap: RunSnapshot) {
   else enterLevel(depth, { seed: snap.seed, bossFelled: !!snap.bossFelled && !!bossHere(depth), resume: true, picks: Array.isArray(snap.picks) ? snap.picks : undefined })
   if (run.bossFelled && level && !level.crossroads) {
     const loot0 = Array.isArray(snap.bossLoot) ? snap.bossLoot : []
-    if (depth < RUN_DEPTHS) run.bossLoot = raisePicks('gift', level.exit, level.entrance, loot0)
+    if (PEDESTALS_ON && depth < RUN_DEPTHS) run.bossLoot = raisePicks('gift', level.exit, level.entrance, loot0)
     else {
       // what it left, lying where it fell, unless he's wearing it
       const on = new Set(worn.map((d) => d.id))
@@ -2444,7 +2466,7 @@ function enterLevel(depth: number, o: { seed?: number; bossFelled?: boolean; res
   lastThief = lt ? combat.addThief(new Thief(lt.nest.x, lt.nest.z, lt.nest, thiefWorld(), packOfSpec.get(lt.pack) ?? null)) : null
   thiefChimeT = 0
   // every crawl depth: three pedestals by the exit, the pick before he leaves (a resume raises the same three)
-  run.picks = boss ? [] : raisePicks('exit', level.exit, exitApproach(level), o.picks)
+  run.picks = boss || !PEDESTALS_ON ? [] : raisePicks('exit', level.exit, exitApproach(level), o.picks)
   // a felled boss is never fought again: its beams are open, as they were when it fell, and a tower stands as its husk
   if (run.bossFelled) {
     for (const kind of exitsAfterBoss(depth)) kind === 'cold' ? level.openExit() : level.openHome()
