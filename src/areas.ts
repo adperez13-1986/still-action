@@ -3,6 +3,7 @@ import { RIM, type Piece } from './kit'
 import type { RosterId } from './save'
 import type { AmbienceMood } from './ambience'
 import { grade, FOCUS_DEPTH, type World } from './world'
+import { curveAt } from './curve'
 
 /**
  * The run's shape: how deep it goes, where the Assemblers stand, which beams open
@@ -375,7 +376,8 @@ export interface BossDef {
   kind: BossKind
   /** Shown on the boss bar. */
   name: string
-  hp: 900
+  /** 900 in each def; bossFor scales it by the depth curve (curve.ts). */
+  hp: number
   adds: 'hulks' | 'rams-mites' | 'none'
   /** Its notebook page. */
   roster: RosterId
@@ -411,9 +413,11 @@ export const ARBITER_AT_6 = true
  */
 export function bossFor(depth: number, arbiterAt6 = ARBITER_AT_6, route: RouteId = 'II', engineOnLine = ENGINE_ON_LINE): BossDef | null {
   if (depth % BOSS_EVERY !== 0) return null
-  if (depth === RUN_DEPTHS && route === 'III' && engineOnLine) return ENGINE_DEF
-  if (depth === RUN_DEPTHS && arbiterAt6) return ARBITER_DEF
-  return { ...ASSEMBLER_DEF, adds: depth === RUN_DEPTHS ? 'rams-mites' : 'hulks' }
+  // its HP by the depth curve, never by what he carries
+  const hp = (d: BossDef) => Math.round(d.hp * curveAt(depth).bossHp)
+  if (depth === RUN_DEPTHS && route === 'III' && engineOnLine) return { ...ENGINE_DEF, hp: hp(ENGINE_DEF) }
+  if (depth === RUN_DEPTHS && arbiterAt6) return { ...ARBITER_DEF, hp: hp(ARBITER_DEF) }
+  return { ...ASSEMBLER_DEF, hp: hp(ASSEMBLER_DEF), adds: depth === RUN_DEPTHS ? 'rams-mites' : 'hulks' }
 }
 
 // --- the one day -----------------------------------------------------------------------

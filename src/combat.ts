@@ -25,6 +25,7 @@ const TRAIN_SMASH_GROW = 0.2
 import type { AbilityDef, BeatKey } from './abilities'
 import type { SlotName } from './still'
 import { MASTERY_TUNE, type MasteryId } from './mastery'
+import { curveAt, type DepthCurve } from './curve'
 import { PART, History, bankShot, type EnemyStatus, type Flip, type Held, type PartEvent, type PartRuntime, type StillMove, type Zone } from './parts'
 
 /** A boss that never walks: spacing leaves it where it stands. */
@@ -424,6 +425,8 @@ export class Combat {
   pressure = false
   /** Mastery (mastery.ts): what the hand and the eye have learned this run. Main owns the set; reset() leaves it. */
   mastery: ReadonlySet<MasteryId> = new Set()
+  /** The depth curve for packs added now (curve.ts): main sets it per level; keyed on depth alone. */
+  curve: DepthCurve = curveAt(1)
   /** Marks and slows, per enemy. Deleted when the enemy is buried. */
   private readonly status = new Map<Enemy, EnemyStatus>()
   /** Enemies in the clamp's throw. While held, an enemy doesn't think. */
@@ -550,16 +553,16 @@ export class Combat {
       // lane was already tested against the real Still
       if (action?.kind === 'melee') {
         const reaches = action.tested || target === player || Math.hypot(e.pos.x - player.x, e.pos.z - player.z) <= (action.reach ?? 0)
-        if (reaches) this.hurtPlayer(action.damage, 'melee', action.source ?? e, !!e.pressure)
+        if (reaches) this.hurtPlayer(action.damage * (e.dmgMul ?? 1), 'melee', action.source ?? e, !!e.pressure)
       }
-      if (action?.kind === 'shot') this.fireShot(e.pos, action.dir, action.damage, e, action.bounces ?? 0)
+      if (action?.kind === 'shot') this.fireShot(e.pos, action.dir, action.damage * (e.dmgMul ?? 1), e, action.bounces ?? 0)
       if (action?.kind === 'shots') {
         for (const d of action.dirs) this.fireShot(action.from, d, action.damage, e)
         this.events.onVolley(action.from)
       }
       if (action?.kind === 'wave') this.startWave(action.center, action.gaps, action.damage, action.gapWidth, action.minGap)
       if (action?.kind === 'summon' && pack) this.summon(pack, action.points, action.maxAdds)
-      if (action?.kind === 'hazard') this.addHazard(action.spec)
+      if (action?.kind === 'hazard') this.addHazard(e.dmgMul && e.dmgMul !== 1 ? { ...action.spec, damage: action.spec.damage * e.dmgMul } : action.spec)
       if (action?.kind === 'unhazard') for (const h of this.live) if (h.spec.owner === e && h.spec.source === action.source && !h.armed) this.endHazard(h)
       if (action?.kind === 'pull') this.pull = { center: action.center, strength: action.strength, t: action.seconds }
       if (e instanceof Charger && e.sweep) this.trample(e)
@@ -2531,6 +2534,12 @@ export class Combat {
       if (look === 'heap') pack.brood.bury(this.scene)
       this.broods.push(pack.brood)
     }
+    // the depth curve (curve.ts): ordinary bodies' HP and damage; the crowned leader's comes with its crown
+    for (const e of pack.members) {
+      if (elite && e === pack.members[0]) continue
+      e.hp = Math.round(e.hp * this.curve.hp)
+      if (this.curve.dmg !== 1) e.dmgMul = this.curve.dmg
+    }
     if (elite && pack.members[0]) this.crown(pack, pack.members[0], elite.mod, elite.name)
     // the crowned leader alone is the heavy (a D2 unique and its minions): its packmates are pressure too
     if (this.pressure) for (const e of pack.members) if ((!elite || e !== pack.members[0]) && (e.kind === 'chaser' || (e.kind === 'ranged' && !e.variant))) e.pressure = true
@@ -2692,7 +2701,9 @@ export class Combat {
 
   private crown(pack: Pack, leader: Enemy, mod: EliteMod, name: string) {
     leader.size = 1.28
-    leader.hp *= 2
+    // a heavy: twice its body, and the depth curve on top (curve.ts)
+    leader.hp = Math.round(leader.hp * 2 * this.curve.heavyHp)
+    if (this.curve.heavyDmg !== 1) leader.dmgMul = this.curve.heavyDmg
     if (mod === 'swift') for (const e of pack.members) e.speedMul = 1.45
     if (mod === 'plated') {
       leader.armor = 0.5

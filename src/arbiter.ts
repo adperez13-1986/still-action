@@ -281,6 +281,8 @@ export class Arbiter implements Boss {
   private readonly shellRing: THREE.Mesh
 
   constructor(readonly def: BossDef, x: number, z: number, face: THREE.Vector3, readonly posts: Post[] = []) {
+    // its HP is its def's (the depth curve scales it), not the table's 900
+    this.hp = def.hp
     this.pos.set(x, 0, z)
     const body = buildBody(this.mat, this.jointMat)
     this.base = body.base

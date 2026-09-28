@@ -9,6 +9,7 @@ import { Combat, eliteLine, HAND, HAND_REACH, EYE, type Archetype, type AutoForm
 import { STARTING, PARTS, byId, type AbilityDef, type AbilityShape, type BeatKey, type Lean } from './abilities'
 import { SLOT_NAMES, type SlotName } from './still'
 import { TEMPER, ROMAN, tempered } from './temper'
+import { curveAt } from './curve'
 import { MASTERY, MASTERY_MAX, FORM_NAME, masteryOffer, type MasteryId, type MasteryForm } from './mastery'
 import type { Enemy, EnemyEvent } from './enemy'
 import { isBoss, Assembler } from './boss'
@@ -2298,6 +2299,7 @@ function enterLevel(depth: number, o: { seed?: number; bossFelled?: boolean; res
   // sentinels are pressure bodies (a short cock and a jab, a short glow and a burst; their hits stack);
   // the elite pack keeps the big telegraphs as the level's heavies, and bosses keep theirs
   combat.pressure = !level.boss
+  combat.curve = curveAt(depth)
   for (const p of level.packs) {
     const members = p.members.map((m) => ({ ...m, variant: m.variant === 'lobber' ? ('lobber' as const) : undefined }))
     packOfSpec.set(p, combat.addPack(members, p.room.kind === 'side', p.elite, p.look === 'heap' ? 'heap' : undefined))

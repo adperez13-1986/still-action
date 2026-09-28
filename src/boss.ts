@@ -195,6 +195,8 @@ export class Assembler implements Boss {
   private readonly tells: THREE.ShaderMaterial[] = []
 
   constructor(readonly def: BossDef, x: number, z: number) {
+    // its HP is its def's (the depth curve scales it), not the table's 900
+    this.hp = def.hp
     this.pos.set(x, 0, z)
     const hide = hideMaterials('assembler')
     this.mat = hide.mat
@@ -382,7 +384,7 @@ export class Assembler implements Boss {
     let action: EnemyAction | null = null
 
     // --- overload: once, at 55% ---
-    if (!this.overloaded && this.hp < BOSS.hp * BOSS.overloadAt) {
+    if (!this.overloaded && this.hp < this.def.hp * BOSS.overloadAt) {
       this.overloaded = true
       this.justOverloaded = true
       this.stunned = false

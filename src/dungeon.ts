@@ -9,6 +9,7 @@ import { exitsAfterBoss, lookAt, type BossDef, type ExitKind, type KitPreset, ty
 import { LINE, SIDING, buildLinePieces, distToSpan, type LaneDef, type SidingDef } from './line'
 import { buildMachines, machineTop, CHIMNEY_H, type MachinePlacement } from './machines'
 import { THIEF } from './thief'
+import { curveAt } from './curve'
 
 /**
  * A D2-style crawl level on a 4-unit grid (KayKit's floor tile). A main path of
@@ -1466,8 +1467,8 @@ export function generateLevel(
   let lobberPacks = lobberLesson ? 1 : 0
   packRooms.forEach((room, idx) => {
     const big = room.rx >= 2 || room.rz >= 2
-    // the room's budget, in body-equivalents: today's size formula, unchanged
-    const size = 2 + Math.floor(rand() * 2) + Math.floor((depth - 1) / 2) + (big && depth > 2 ? 1 : 0)
+    // the room's budget, in body-equivalents: the depth curve's (curve.ts; the same rand() call, so seeds hold)
+    const size = 2 + Math.floor(rand() * 2) + curveAt(depth).budget + (big ? curveAt(depth).bigBonus : 0)
     const rangedCount = depth === 1
       ? (idx === rangedPack ? 1 : 0)
       : (rand() < Math.min(0.85, 0.3 * depth) ? 1 : 0) + (depth >= 4 && big && rand() < 0.5 ? 1 : 0)
@@ -1598,7 +1599,8 @@ export function generateLevel(
   const POOL: Partial<Record<Archetype, string[]>> = { charger: ['horn', 'brow', 'skull', 'hoof'], swarm: ['mother', 'nest', 'hive', 'brood'] }
   const TITLES: Record<EliteMod, string> = { swift: 'the Quick', plated: 'the Plated', splitting: 'the Many', warding: 'the Warden' }
   const mainPacks = packs.filter((p) => p.room.kind === 'main' && p.members.length >= 2 && !p.lesson)
-  const eliteCount = Math.min(mainPacks.length, 1 + Math.floor((depth - 1) / 2))
+  // how many heavies: the depth curve's (curve.ts)
+  const eliteCount = Math.min(mainPacks.length, curveAt(depth).heavies)
   for (let n = 0; n < eliteCount; n++) {
     const p = mainPacks.splice(Math.floor(rand() * mainPacks.length), 1)[0]!
     const kind = p.members[0]!.kind as Exclude<Archetype, 'boss'>

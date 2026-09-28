@@ -159,6 +159,8 @@ export interface Enemy {
   /** Damage taken is multiplied by this. Elites and their wards change it. */
   armor: number
   speedMul: number
+  /** The depth curve's damage multiplier on its hits (curve.ts): a heavy's, or an ordinary body's. Absent is 1. */
+  dmgMul?: number
   /** Knockback taken is multiplied by this. */
   knockMul: number
   /** Overall scale; an elite leader stands bigger than its pack. */
