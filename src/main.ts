@@ -28,7 +28,7 @@ import { Sightline } from './sightline'
 import { createCameraRig } from './camera'
 import { updateMusic, musicNow } from './music'
 import { updateAmbience } from './ambience'
-import { Loot, LOOT, dropChance, rollPart, rollPicks, emptySlots, leanOf, PEDESTALS, type GroundPart, type PickKind, type PickSet } from './loot'
+import { Loot, LOOT, dropChance, rollPart, rollPicks, leanOf, PEDESTALS, type GroundPart, type PickKind, type PickSet } from './loot'
 import { createPauseScreen } from './pause'
 import { createOverlay } from './ending'
 import { loadKit, setSurfaces, pieceData, surfaceNow, buildInstanced, PIECES, type Piece } from './kit'
@@ -520,7 +520,7 @@ const combat = new Combat(world.scene, OPEN, {
     const roll = Math.random()
     if (roll < LOOT.crateParts) {
       const taken = [...hud.loadout, ...loot.ground.map((g) => g.def)]
-      const def = rollPart('chaser', taken, 'crate', pool(), emptySlots(hud.loadout))
+      const def = rollPart('chaser', taken, 'crate', pool())
       if (def) {
         logDrop(loot.drop(def, at, still.pos), 'crate')
         sfx.drop(def.tier, panOf(at))
@@ -1312,8 +1312,8 @@ function maybeDrop(at: THREE.Vector3, kind: Archetype, pack: Pack, wasElite: boo
   // a side room's pack always pays out (the last kill drops if nothing else did), elites always do
   if (Math.random() >= dropChance(pack, wasElite, summoned, weight)) return
   const taken = [...hud.loadout, ...loot.ground.map((g) => g.def)]
-  // empty slots fill only from pedestals: a floor part is for a slot he wears
-  const def = rollPart(kind, taken, wasElite ? 'elite' : 'kill', pool(), emptySlots(hud.loadout))
+  // any slot, empty ones too (28 Sep, his ask: "I don't like it that the drops are only for those that I already have")
+  const def = rollPart(kind, taken, wasElite ? 'elite' : 'kill', pool())
   if (!def) return
   pack.dropped = true
   // an elite's drop is owed: the thief in that pack's barrel runs for it
@@ -1984,11 +1984,10 @@ function bossDown(at: THREE.Vector3) {
     // a boss with more of the day to come (the Assembler): its gift is a pick, on pedestals by its beams
     run.bossLoot = raisePicks('gift', level.exit, level.entrance)
   } else {
-    // the day's last: one blue and one gold, never for the same slot, each for a slot he wears
+    // the day's last: one blue and one gold, never for the same slot
     const taken = [...hud.loadout, ...loot.ground.map((g) => g.def)]
-    const empty = emptySlots(hud.loadout)
-    const blue = rollPart('boss', taken, 'boss-blue', pool(), empty)
-    const gold = rollPart('boss', blue ? [...taken, blue] : taken, 'boss-gold', pool(), blue ? [...empty, blue.slot] : empty)
+    const blue = rollPart('boss', taken, 'boss-blue', pool())
+    const gold = rollPart('boss', blue ? [...taken, blue] : taken, 'boss-gold', pool(), blue ? [blue.slot] : [])
     for (const def of [blue, gold]) if (def) logDrop(loot.drop(def, at, still.pos), 'boss')
     run.bossLoot = [blue, gold].filter((d): d is AbilityDef => !!d).map((d) => d.id)
   }

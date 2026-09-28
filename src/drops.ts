@@ -131,8 +131,8 @@ function pickPart(from: Archetype, pool: readonly AbilityDef[], source: DropSour
 const SLOTS: readonly SlotName[] = ['head', 'torso', 'arms', 'legs']
 
 /**
- * Still starts incomplete, and empty slots fill only from pedestals: a floor part (a kill's,
- * a crate's, an elite's, the Arbiter's) is only ever for a slot he wears.
+ * The slots he has nothing on. Pedestal sets put these first; floor parts can be for any slot
+ * (28 Sep: the pedestals-only rule for empty slots is gone, at his ask).
  */
 export const emptySlots = (worn: readonly AbilityDef[]): SlotName[] => SLOTS.filter((sl) => !worn.some((p) => p.slot === sl))
 
