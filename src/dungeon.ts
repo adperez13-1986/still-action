@@ -186,7 +186,7 @@ export interface Level {
   roads?: { route: RouteId; at: THREE.Vector3; label: string }[]
   /** The crossroads: no lean, no banner, no packs. */
   crossroads?: true
-  /** The open field (prototype, `?open`): the map and the exit's edge marker are for it. */
+  /** The open field: the map and the exit's edge marker are for it. */
   open?: true
   /** The open field's path cells, the way through (the map draws them lighter). */
   path?: ReadonlySet<string>
@@ -412,7 +412,7 @@ function generateLayout(rand: () => number, sideRooms: number, hallShare = 0.25,
 }
 
 /**
- * The open field (prototype, `?open`; his ask, 27 Sep: "something like D2 where it is a really big
+ * The open field (his ask, 27 Sep: "something like D2 where it is a really big
  * area"). A wide ragged band along a wandering path, not rooms and corridors: the path is the
  * way through (drawn in the corridor floor), clearings along it hold the packs, and pockets off
  * its sides are the side rooms. Rooms here are logical, never walled: the floor is one piece.

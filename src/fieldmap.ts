@@ -2,7 +2,7 @@ import type * as THREE from 'three'
 import { CELL, key, type Level } from './dungeon'
 
 /**
- * The open field's map (prototype, `?open`): the pause screen draws what he has seen, the way
+ * The open field's map: the pause screen draws what he has seen, the way
  * D2's automap fills in. Floor within REVEAL cells of Still (about what the screen shows) is seen; the exit, the entrance and
  * shrines show once their cell is. Drawn turned to match the camera, which looks from +x,+z, so
  * "up" on the map is "up" on the screen.

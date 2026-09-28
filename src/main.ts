@@ -75,22 +75,7 @@ const devParam = (k: string): string | null => (import.meta.env.DEV ? params.get
 const ROUTE_PARAM: RouteId | null = devParam('route') === 'III' ? 'III' : devParam('route') === 'II' ? 'II' : null
 /** `?crossroads=1` (DEV): the crossroads after the Assembler, whatever the switch and the save say. */
 const CROSSROADS_PARAM = devParam('crossroads') === '1'
-/**
- * The open field prototype (27 Sep): `?open` once turns it on for this device, `?open=0` off, like
- * `?owner`, so the installed app keeps it. On, depths 1 and 4 are open fields instead of rooms (never the Line's).
- */
-const OPEN_KEY = 'still-action.open'
-const OPEN_FIELD = (() => {
-  try {
-    if (params.has('open')) {
-      if (params.get('open') === '0') localStorage.removeItem(OPEN_KEY)
-      else localStorage.setItem(OPEN_KEY, '1')
-    }
-    return localStorage.getItem(OPEN_KEY) === '1'
-  } catch {
-    return false
-  }
-})()
+/** Depths 1 and 4 are open fields instead of rooms (never the Line's); on for everyone since 28 Sep. */
 const OPEN_DEPTHS: readonly number[] = [1, 4]
 
 /**
@@ -2164,7 +2149,7 @@ function enterLevel(depth: number, o: { seed?: number; bossFelled?: boolean; res
   run.bossLoot = []
   const place = lookAt(depth, routeNow(), flag('engine'))
   // the thief's first meeting is certain (G8): its page unmet
-  level = generateLevel(depth, run.seed, { boss: bossHere(depth), place, thiefFirst: !save.notebook[THIEF_PAGE], open: OPEN_FIELD && OPEN_DEPTHS.includes(depth) })
+  level = generateLevel(depth, run.seed, { boss: bossHere(depth), place, thiefFirst: !save.notebook[THIEF_PAGE], open: OPEN_DEPTHS.includes(depth) })
   world.scene.add(level.group)
   combat.terrain = level.terrain
   loot.terrain = level.terrain
