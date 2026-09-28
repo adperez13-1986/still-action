@@ -23,13 +23,17 @@ export interface DepthCurve {
   bossHp: number
 }
 
-/** Depths 1-6; the walk home's 7 reads 5's. First pass (CURVE.md, "floor finishes ~2 in 3"). */
+/**
+ * Depths 1-6; the walk home's 7 reads 5's. The harder target (his call, 28 Sep): never-melt finishes
+ * ~1 in 3, median ~2 in 3, investor nearly always; modelled 28 / 74 / 97 (CURVE.md). Depth 5 is the
+ * wall on purpose (density x HP charges for growth not taken); heavies carry the rest; bosses modest.
+ */
 export const DEPTH_CURVE: Record<number, DepthCurve> = {
   1: { hp: 1.0, dmg: 1.0, budget: 0, bigBonus: 0, heavyHp: 1.0, heavyDmg: 1.0, heavies: 1, bossHp: 1 },
   2: { hp: 1.0, dmg: 1.0, budget: 0, bigBonus: 0, heavyHp: 1.25, heavyDmg: 1.0, heavies: 1, bossHp: 1 },
   3: { hp: 1.0, dmg: 1.0, budget: 1, bigBonus: 1, heavyHp: 1.0, heavyDmg: 1.0, heavies: 2, bossHp: 1.1 },
   4: { hp: 1.1, dmg: 1.0, budget: 1, bigBonus: 0, heavyHp: 1.5, heavyDmg: 1.1, heavies: 2, bossHp: 1 },
-  5: { hp: 1.2, dmg: 1.0, budget: 1, bigBonus: 1, heavyHp: 1.75, heavyDmg: 1.2, heavies: 3, bossHp: 1 },
+  5: { hp: 1.3, dmg: 1.0, budget: 2, bigBonus: 1, heavyHp: 2.0, heavyDmg: 1.3, heavies: 3, bossHp: 1 },
   6: { hp: 1.0, dmg: 1.0, budget: 2, bigBonus: 1, heavyHp: 1.0, heavyDmg: 1.0, heavies: 3, bossHp: 1.3 },
 }
 

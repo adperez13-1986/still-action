@@ -282,6 +282,8 @@ interface Fx {
 export interface CombatEvents {
   /** `e`: who was hit, when it was an enemy (a stunned ram sounds and sparks differently). */
   onHit: (at: THREE.Vector3, e?: Enemy) => void
+  /** A part's hit landed for `damage` (after the mark), for the log's part damage beside the autos'. */
+  onPartDamage?: (damage: number) => void
   /** `amount`: what was actually lost. A top-up inside a hurt window reports only the difference. `braced`: planted, it was halved. */
   onPlayerHurt: (amount: number, source: HurtSource, braced: boolean) => void
   /** `summoned`: a boss add, scrap that never drops anything. `weight`: this kill's share of the pack's payout. */
@@ -1031,6 +1033,7 @@ export class Combat {
     }
     const killed = e.hit(d)
     this.events.onHit(e.pos, e)
+    this.events.onPartDamage?.(d)
     if (pushed) this.pushBreak(e)
     return killed
   }

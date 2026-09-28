@@ -223,6 +223,10 @@ const sightline = new Sightline()
 world.scene.add(sightline.mesh)
 
 const combat = new Combat(world.scene, OPEN, {
+  onPartDamage: (damage) => {
+    const st = run.stats[run.stats.length - 1]
+    if (st) st.partDmg = (st.partDmg ?? 0) + damage
+  },
   onHit: (at, e) => {
     castHits++
     const pan = panOf(at)
@@ -1235,6 +1239,8 @@ interface DepthStats {
   pressure?: boolean; hpLost?: number
   /** Temper on at this depth, and parts melted into a worn one here; mastery learned here. */
   temper?: boolean; melts?: number; mastered?: string[]
+  /** Parts' damage through hitPart (nominal, after a mark), beside `autoDmg`: the auto/part split. */
+  partDmg?: number
 }
 /** One press on a filled button, for the playtest file: how long taps really last on the phone. */
 interface TapLog { depth: number; slot: SlotName; ms: number; ready: boolean; result: Press['result'] }

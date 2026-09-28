@@ -80,6 +80,16 @@ are pressure bodies, and in an elite pack only the crowned leader keeps the tele
 minions). Rams, mites (brood ring) and Lobbers (landing circle) unchanged, pending his call. DESIGN.md
 Enemies and design/CONTEXT.md's telegraph constraint rewritten. The 5174 dev server is stopped.
 
+**28 Sep, enemy curve (his calls: in-run growth allowed; lift "never more enemy HP or damage"; "be
+smart so that growth is not punished"; the harder target):** `src/curve.ts` `DEPTH_CURVE`, keyed on depth
+only, never his loadout. Read by dungeon.ts (room budget, heavies per level), combat.addPack / crown
+(ordinary HP / damage; a heavy's HP x2 x heavyHp and `dmgMul`), areas.bossFor (boss HP; boss.ts and
+arbiter.ts now read `def.hp`). Modelled finish: never-melt 28%, median 74%, investor 97%
+(design/scaling/CURVE.md). **Depth 5 is the wall on purpose** (ordinary HP x1.3, full room budget,
+heavies x2.0 HP / x1.3 damage). First dial if the median dies at depth 5 more than 1 run in 3: ordinary
+HP at 5 to x1.2. Log gains `partDmg` per depth (the auto/part split the model guessed at 65/35).
+tools/levels.json regenerated.
+
 **Then, in order:**
 1. His runs on pedestals + leanings (open fields now always on at depths 1 and 4, logging via `?owner`; he exports from
    the pause screen, fold in with `npx tsx tools/mergelog.ts <file>`). Ask what he felt before reading
