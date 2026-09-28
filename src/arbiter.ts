@@ -54,6 +54,14 @@ export const ARBITER = {
    * (landing within this much of a circle's edge; the blast is r 1.6, so it visibly covers the
    * brick), so hiding from post to post wears the cover away.
    */
+  /**
+   * Outrun (his report, 28 Sep: "I just run around so the revolving light does not hit me"): at
+   * 5.5 u/s he out-turns a 40°/s sweep anywhere inside ~8 u, and the mortar only answered hiding.
+   * In range but outside every wedge (behind a post too) for `reverseMs`, it judders and turns back to meet
+   * him (in both phases, at most once a `reverseMs`); for `shellMs`, the mortar fires where he'd be
+   * if he kept circling (`leadS` of his turn round it, capped at `guess.maxDeg`). Both have their tells.
+   */
+  outrun: { reverseMs: 4000, shellMs: 6500, leadS: 1.0 },
   phase2: { judderMs: 600, reverseEveryMs: [4000, 7000] as const, reverseJudderMs: 400, crackAt: 3, shellChip: 1.2 },
   posts: { crackedR: 0.45, rubbleScale: 0.4 },
   /**
@@ -216,6 +224,11 @@ export class Arbiter implements Boss {
   private sinceScald = Infinity
   private shellFlying = 0
   private reverseIn = 0
+  /** In range and outside every wedge (seen or not), uncaught: how long (see `outrun`). */
+  private uncaughtMs = 0
+  private sinceReverse = Infinity
+  /** The shell being aimed leads his circling, not his straight line. */
+  private runnerShell = false
   private strikeTick = false
   private aimNext = true
   private swept = 0
@@ -395,6 +408,7 @@ export class Arbiter implements Boss {
     // the shell lands: in the second phase, on a post it chips the brick
     if (flying && this.shellFlying <= 0 && this.phase2 && !this.dead) this.chipPost(this.lead, ARBITER.phase2.shellChip, ctx)
     this.reverseIn -= ms
+    this.sinceReverse += ms
     this.strikeTick = false
     let action: EnemyAction | null = null
 
@@ -446,6 +460,8 @@ export class Arbiter implements Boss {
         this.sweep(dt, ctx)
         const inWedge = this.wedges.findIndex((w) => Math.abs(angleDiff(bearing, w)) <= ARBITER.wedge.halfDeg * DEG && d <= ARBITER.wedge.range)
         if (inWedge < 0) this.rearmed = true
+        // behind a post counts too: circling outside the ring breaks the sight line every post, and the shell arcs over them
+        this.uncaughtMs = inWedge < 0 && d <= ARBITER.wedge.range ? this.uncaughtMs + ms : 0
         if (d <= ARBITER.scald.trigger && this.sinceScald >= ARBITER.scald.cooldownMs) {
           // he's at its feet: the base plate hisses, and the square around it scalds
           this.go('scaldWind')
@@ -464,8 +480,19 @@ export class Arbiter implements Boss {
           ctx.emit({ kind: 'arbiter', e: this, what: 'catch', at: still.clone() })
         } else if (this.hiddenMs >= hideMs && d <= ARBITER.wedge.range && this.shellFlying <= 0 && this.sinceShell >= shellCd && ctx.canLock(ARBITER.shell.windupMs)) {
           ctx.book(this, ARBITER.shell.windupMs)
+          this.runnerShell = false
           this.go('shellAim')
           this.leadAt(ctx, terrain)
+        } else if (this.uncaughtMs >= ARBITER.outrun.shellMs && this.shellFlying <= 0 && this.sinceShell >= shellCd && ctx.canLock(ARBITER.shell.windupMs)) {
+          // he has outrun the gaze too long: the mortar lobs one onto the circle he's running
+          ctx.book(this, ARBITER.shell.windupMs)
+          this.runnerShell = true
+          this.go('shellAim')
+          this.leadAt(ctx, terrain)
+        } else if (this.uncaughtMs >= ARBITER.outrun.reverseMs && this.sinceReverse >= ARBITER.outrun.reverseMs) {
+          // it notices it's being outrun: a judder, and the gaze turns back to meet him
+          this.judder('reverse', ARBITER.phase2.reverseJudderMs)
+          ctx.emit({ kind: 'arbiter', e: this, what: 'judder', at: this.pos.clone(), ms: ARBITER.phase2.reverseJudderMs })
         } else if (this.phase2 && this.reverseIn <= 0) {
           this.judder('reverse', ARBITER.phase2.reverseJudderMs)
           ctx.emit({ kind: 'arbiter', e: this, what: 'judder', at: this.pos.clone(), ms: ARBITER.phase2.reverseJudderMs })
@@ -558,6 +585,7 @@ export class Arbiter implements Boss {
           if (this.judderFor === 'reverse') {
             this.omega = -this.omega
             this.reverseIn = this.reverseDelay()
+            this.sinceReverse = 0
           }
           this.go('watch')
         }
@@ -639,6 +667,15 @@ export class Arbiter implements Boss {
   /** His lead point for a shell: 0.3 s of his velocity on, at most 2 u, stepped back toward the tower out of anything solid. */
   private leadAt(ctx: EnemyCtx, terrain: Terrain) {
     const s = ctx.player
+    if (this.runnerShell) {
+      // on round the circle he's running, at his turn rate
+      const d = Math.hypot(s.x - this.pos.x, s.z - this.pos.z)
+      const cap = ARBITER.guess.maxDeg * DEG
+      const a = Math.atan2(s.x - this.pos.x, s.z - this.pos.z) + Math.max(-cap, Math.min(cap, this.spin * ARBITER.outrun.leadS))
+      this.lead.set(this.pos.x + Math.sin(a) * d, 0, this.pos.z + Math.cos(a) * d)
+      this.stepOut(terrain)
+      return
+    }
     let lx = ctx.playerVel.x * ARBITER.shell.lead
     let lz = ctx.playerVel.z * ARBITER.shell.lead
     const l = Math.hypot(lx, lz)
@@ -647,6 +684,11 @@ export class Arbiter implements Boss {
       lz *= ARBITER.shell.leadMax / l
     }
     this.lead.set(s.x + lx, 0, s.z + lz)
+    this.stepOut(terrain)
+  }
+
+  /** The lead stepped back toward the tower out of anything solid. */
+  private stepOut(terrain: Terrain) {
     const bx = this.pos.x - this.lead.x
     const bz = this.pos.z - this.lead.z
     const bd = Math.hypot(bx, bz)

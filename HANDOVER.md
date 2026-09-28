@@ -26,8 +26,17 @@ break: ready again."); nothing in the game names "the hand" or "the eye" yet (a 
 page, his words); walking into a pedestal mid-fight pauses the game; a new save's depth 1 is thin
 (floor drops only for worn slots). The pedestal match (`LEAN_MATCH`) stays off until 3 pedestal runs.
 
+**28 Sep, pushed on his word:** `leanings` merged into main and deployed; open fields no flag;
+the Arbiter's outrun fix. His report: "I just run around so the revolving light does not hit me".
+Cause: at 5.5 u/s Still out-turns the 40°/s sweep inside ~8 u, and the mortar only answered hiding
+(outside the post ring, the posts broke the sight line so nothing built up either). Now (`ARBITER.outrun`):
+4 s in range and outside every wedge, seen or not, and it judders and reverses (both phases); 6.5 s,
+and the mortar lobs onto the circle he's running (`leadS` 1.0 of his turn). Headless circling with the
+sweep for 45 s, damage before -> after: 5 u 54 -> 102, 6.5 u 18 -> 108, 8 u 0 -> 60, 10 u 0 -> 108
+(the bot reverses on the judder's frame; a person is slower, so it's harder than that). Ask how it feels.
+
 **Then, in order:**
-1. His runs on pedestals + leanings (open fields on via `?open`, logging via `?owner`; he exports from
+1. His runs on pedestals + leanings (open fields now always on at depths 1 and 4, logging via `?owner`; he exports from
    the pause screen, fold in with `npx tsx tools/mergelog.ts <file>`). Ask what he felt before reading
    numbers. Check the pass lines in `design/leanings/PITCHES.md` (L1-L5) and the play time per depth
    (`playS`, `walkS`) against the 20-25 min target.
@@ -137,7 +146,7 @@ chose 2 areas when I'd estimated 26 min for them; that estimate was wrong). Dire
 **open fields at depths 1 and 4**, boss depths 3 and 6 enclosed, 2 and 5 rooms (later: longer spines).
 Don't re-offer a third act.
 
-**Built (behind `?open`, kept per device like `?owner`; `?open=0` off; depths 1 and 4, `OPEN_DEPTHS` in main; never on the Line):**
+**Built, and on for everyone since 28 Sep (the `?open` flag is gone; depths 1 and 4, `OPEN_DEPTHS` in main; never on the Line):**
 `generateOpenLayout` in `dungeon.ts` (knobs in `OPEN`): a wide ragged band along a wandering 7-leg path,
 the path drawn as a dirt road (the corridor's first floor; the field never uses it), 9 clearings along it
 (logical rooms, the packs) and 5 pockets off the sides (side rooms), ruined wall stubs and props scattered
