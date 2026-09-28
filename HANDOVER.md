@@ -104,6 +104,15 @@ must be 0), `pushedIntoState`, `shatter`, `maxMul`, `swaps`. Boss damage from th
 `dmgMul` in addBoss). Pay and shatter effects need a look on the phone (headless barely draws them). Next
 queued: the mender (design/variety/PITCHES.md) if he agrees. Slammed and hauled after his runs.
 
+**28 Sep, pedestals off and the mender (his calls, pushed):** `PEDESTALS_ON = false` in main.ts: exits
+raise nothing, Plenty drops one part for its 4 strain, the Assembler leaves a blue and a gold (the code stays
+for a way back). **The mender** (`src/mender.ts`, brief `design/enemies/MENDER.md`): a stilt-legged support
+that stands behind its pack, never attacks, and heals its most hurt packmate (a hurt heavy first) ~6 HP/s
+through a cable on the floor; walking through the cable cuts it (1.5 s reel, 4 s before it relinks); hits
+on the cable do nothing; killing it ends it. Depths 2/4/5 in main packs of 3+, at most 2 a level. Its own
+plum-dark hide. No notebook page yet: its name is his. Log `menders { met, cut, killed, healed }`. Check on
+the phone: the cable on depth 5's dark floor.
+
 **Then, in order:**
 1. His runs on pedestals + leanings (open fields now always on at depths 1 and 4, logging via `?owner`; he exports from
    the pause screen, fold in with `npx tsx tools/mergelog.ts <file>`). Ask what he felt before reading

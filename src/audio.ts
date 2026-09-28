@@ -1339,6 +1339,19 @@ export function iceShatter(pan: number) {
   tone(c, d, 'triangle', t + 0.05, 3520, 3136, 0.04, 0.07)
 }
 
+/** A mender's cable parted under him: a taut wire giving, a bright zip falling away, the two ends slapping the floor. */
+export function cableSnap(pan: number) {
+  const c = live()
+  if (!c) return
+  const t = c.currentTime
+  const d = out(c, 'hits', pan)
+  sample(c, 'metalLight', d, 0.45, 2.1)
+  tone(c, d, 'triangle', t, 2600, 520, 0.11, 0.13)
+  hiss(c, d, t, 0.12, 0.2, 'bandpass', 5200, 1500, 1.6)
+  sample(c, 'tin', d, 0.25, 1.4, 0.07)
+  sample(c, 'tin', d, 0.2, 1.2, 0.11)
+}
+
 /** A windup broken by a parry: the clang of an attack that didn't happen. */
 export function parryBreak(pan: number) {
   const c = live()

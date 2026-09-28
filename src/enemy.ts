@@ -128,10 +128,15 @@ export type EnemyEvent =
    * vent opening and closing, a judder (`ms`), a post cracking, the scald going off.
    */
   | { kind: 'arbiter'; e: Enemy; what: 'catch' | 'ratchet' | 'vent' | 'ventEnd' | 'judder' | 'crack' | 'scald' | 'phase2'; at: THREE.Vector3; ms?: number }
+  /**
+   * A mender's cable (mender.ts): linked to `patient`, let go (its patient died, a wall, out of reach),
+   * or cut by his body at `at`, the cable then running `from` its feet `to` where it reached.
+   */
+  | { kind: 'mend'; e: Enemy; what: 'link' | 'drop' | 'cut'; at: THREE.Vector3; patient: Enemy; from?: THREE.Vector3; to?: THREE.Vector3 }
 
 export interface Enemy {
-  /** 'thief': a body without a pack that never attacks (thief.ts). */
-  readonly kind: 'chaser' | 'ranged' | 'charger' | 'swarm' | 'boss' | 'thief'
+  /** 'thief': a body without a pack that never attacks (thief.ts). 'mender': a packmate that never attacks (mender.ts). */
+  readonly kind: 'chaser' | 'ranged' | 'charger' | 'swarm' | 'boss' | 'thief' | 'mender'
   /** 'lobber' for the sentinel variant that lobs shells; loot, budget and treasure follow `kind`. */
   readonly variant?: 'lobber'
   /** Where an elite's name floats, before size. */

@@ -12,7 +12,7 @@ import { localDate, LEADERS_MAX } from './save'
  * From design/meta/SPEC.md §7.3 (ids are still's ALL_ENEMIES keys).
  */
 
-export type RosterRole = 'hulk' | 'sentinel' | 'ram' | 'mites' | 'elite' | 'fragment' | 'boss' | 'lobber' | 'heap' | 'thief' | 'reserved'
+export type RosterRole = 'hulk' | 'sentinel' | 'ram' | 'mites' | 'elite' | 'fragment' | 'boss' | 'lobber' | 'heap' | 'thief' | 'mender' | 'reserved'
 export interface RosterEntry {
   id: RosterId
   name: string
@@ -82,7 +82,8 @@ export const ROSTER: readonly RosterEntry[] = [
 ]
 export const ROSTER_BY_ID = new Map(ROSTER.map((r) => [r.id, r]))
 
-const ROLE_OF: Record<Exclude<Archetype, 'boss'>, RosterRole> = { chaser: 'hulk', ranged: 'sentinel', charger: 'ram', swarm: 'mites', thief: 'thief' }
+// the mender has no page yet: its name is his to choose, so it's met and felled unwritten
+const ROLE_OF: Record<Exclude<Archetype, 'boss'>, RosterRole> = { chaser: 'hulk', ranged: 'sentinel', charger: 'ram', swarm: 'mites', thief: 'thief', mender: 'mender' }
 const bandOf = (depth: number): 'I' | 'II' => (depth <= 3 ? 'I' : 'II')
 /** The Assembler's page, both depths. */
 export const BOSS_PAGE: RosterId = 'the-first-warden'
@@ -162,5 +163,5 @@ export function addLeader(e: NotebookEntry, name: string) {
 export const WHAT: Record<RosterRole, string> = {
   // PLACEHOLDER words for the content pages
   hulk: 'a hulk', sentinel: 'a sentinel', ram: 'a ram', mites: 'mites', elite: 'an elite', boss: 'the boss', fragment: 'pieces of one',
-  lobber: 'a lobber', heap: 'a slag heap', thief: 'a thief', reserved: '',
+  lobber: 'a lobber', heap: 'a slag heap', thief: 'a thief', mender: 'a mender', reserved: '',
 }

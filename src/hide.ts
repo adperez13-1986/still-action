@@ -101,6 +101,15 @@ export const HIDES = {
     jointFinish: GRAIN_ONLY,
   },
   /**
+   * The mender: heat-tinted steel, gone plum-dark from the torch, with straw-brown where the heat
+   * ran lightest. The one violet body: none of the others' hues, and dark enough not to read as Still.
+   */
+  mender: {
+    body: 0x5a4a66, joint: 0x2a2430, rough: 0.4, metal: 0.7, jointRough: 0.55, jointMetal: 0.55,
+    finish: { scale: [4, 10, 4], grain: 0.14, roughVar: 0.2, tone: [1.45, 1.2, 0.72], mask: 0.64, toneRough: 0.05, toneMetal: -0.1, bump: 0.15 },
+    jointFinish: GRAIN_ONLY,
+  },
+  /**
    * The Assembler: built from scrap, so plates of cast iron, bronze and steel on one
    * hull. The plates differ in shine as much as colour: on a dark metal it's the
    * sheen that tells them apart under Grace's light.

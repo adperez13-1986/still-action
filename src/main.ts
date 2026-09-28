@@ -21,6 +21,7 @@ import { Line, LINE, type LineEvent, type Train } from './line'
 import { RANGED } from './ranged'
 import { LOBBER } from './lobber'
 import { Thief, type ThiefEvent, type ThiefWorld } from './thief'
+import { Mender } from './mender'
 import { Charger, CHARGER, PLATE as RAM_PLATE } from './charger'
 import { HIDES, debrisColor } from './hide'
 import { Mite, BROOD, type Brood } from './swarm'
@@ -135,10 +136,11 @@ const RAM_JOINT_C = new THREE.Color(HIDES.ram.joint)
 const PLATE_C = new THREE.Color(RAM_PLATE)
 const MITE_C = debrisColor('mite')
 const THIEF_C = debrisColor('thief')
+const MENDER_C = debrisColor('mender')
 function metalOf(e: Enemy | undefined): THREE.Color {
   if (!e) return HULK_C
   if (e.kind === 'ranged') return (e as { variant?: string }).variant === 'lobber' ? LOBBER_C : SENTINEL_C
-  return e.kind === 'charger' ? RAM_C : e.kind === 'swarm' ? MITE_C : e.kind === 'thief' ? THIEF_C : HULK_C
+  return e.kind === 'charger' ? RAM_C : e.kind === 'swarm' ? MITE_C : e.kind === 'thief' ? THIEF_C : e.kind === 'mender' ? MENDER_C : HULK_C
 }
 /** A sleeping ram's banked fire: a thin grey wisp, "asleep, not scrap". */
 const BANKED = new THREE.Color(0x4a4744)
@@ -283,6 +285,7 @@ const combat = new Combat(world.scene, OPEN, {
   onKill: (at, kind, pack, wasElite, summoned, weight, e) => {
     run.killed = true
     felled(kind, pack, wasElite, summoned, weight, pageOf(e, pack))
+    if (e instanceof Mender) menderDown(e)
     if (kind === 'boss') {
       bossDown(at)
       return
@@ -555,6 +558,12 @@ const combat = new Combat(world.scene, OPEN, {
   },
   onWake: (at, pack) => {
     metPack(pack)
+    for (const e of pack.members) {
+      if (!(e instanceof Mender) || mendersMet.has(e)) continue
+      mendersMet.add(e)
+      const st = mendStats()
+      if (st) st.met++
+    }
     vfx.embers(at3(at, 0.8), 14, 1.2)
     sfx.alert(panOf(at))
     rig.punch(-0.02)
@@ -711,7 +720,54 @@ function packEvent(ev: EnemyEvent) {
       // the Arbiter's aim sets with a clank of its brake (the others' locks are in their windup voices)
       if (ev.e instanceof Arbiter) sfx.servoLock(panOf(ev.e.pos))
       break
+    case 'mend':
+      if (ev.what === 'cut') cableCut(ev)
+      break
   }
+}
+
+// --- the mender (mender.ts): the cable's cut, its end, the log ---
+
+/** Menders whose pack has woken, so a pack woken twice counts once. */
+const mendersMet = new WeakSet<Enemy>()
+const mendStats = () => run.stats[run.stats.length - 1]?.menders
+
+/** His body parted a cable: his cold where he crossed it, its ember whipping back both ways, and a snap. */
+function cableCut(ev: Extract<EnemyEvent, { kind: 'mend' }>) {
+  const st = mendStats()
+  if (st) st.cut++
+  const at = at3(ev.at, 0.15)
+  vfx.flash(at, COLD, 0.9)
+  vfx.sparks(at, COLD, 14, 5)
+  combat.ring(ev.at, 0.2, 1.0, 0.25, 0x8fb8e8, true)
+  // each half's ember thrown back along it as it whips home
+  for (const end of [ev.from, ev.to]) {
+    if (!end) continue
+    const dir = new THREE.Vector3(end.x - ev.at.x, 0.35, end.z - ev.at.z).normalize()
+    vfx.sparks(at, EMBER, 8, 7, dir, 0.3)
+    for (let i = 1; i <= 3; i++) vfx.sparks(new THREE.Vector3().lerpVectors(ev.at, end, i / 4).setY(0.15), EMBER, 2, 2)
+  }
+  sfx.cableSnap(panOf(ev.at))
+  shake = Math.max(shake, 0.12)
+  hitstop = Math.max(hitstop, 0.03)
+}
+
+/** A mender killed: counted, its last HP logged, and a live cable goes dark in a line of embers. */
+function menderDown(m: Mender) {
+  const st = mendStats()
+  if (st) {
+    st.killed++
+    st.healed += m.flush()
+  }
+  if (!m.patient) return
+  const [a, b] = m.cableEnds()
+  for (let i = 1; i <= 6; i++) vfx.embers(new THREE.Vector3().lerpVectors(a, b, i / 7).setY(0.1), 1, 0.15)
+}
+
+/** Each frame: what the cables mended goes in the log. */
+function menderLog() {
+  const st = mendStats()
+  for (const e of combat.enemies) if (e instanceof Mender && st) st.healed += e.flush()
 }
 
 /** The Arbiter's instants: its gaze catching, the ratchet of its sweep, a judder, a post cracking, the scald. */
@@ -1324,6 +1380,8 @@ interface DepthStats {
   pushedIntoState?: number
   shatter?: { n: number; dmg: number }
   maxMul?: number
+  /** Menders (mender.ts): met (their pack woke), cables cut by his body, menders killed, HP their cables restored. */
+  menders?: { met: number; cut: number; killed: number; healed: number }
 }
 /** One press on a filled button, for the playtest file: how long taps really last on the phone. */
 interface TapLog { depth: number; slot: SlotName; ms: number; ready: boolean; result: Press['result'] }
@@ -1492,7 +1550,10 @@ function partDrops() {
   return out
 }
 /** run.stats as the playtest file and __runStats read it: the open depth's strain now, and its drops. */
-const statsOut = () => run.stats.map((st) => ({ ...st, strainOut: st.strainOut ?? run.strain, playS: Math.round(st.playS ?? 0), plantedS: Math.round(st.plantedS ?? 0), ...depthDrops(st.depth) }))
+const statsOut = () => run.stats.map((st) => ({
+  ...st, strainOut: st.strainOut ?? run.strain, playS: Math.round(st.playS ?? 0), plantedS: Math.round(st.plantedS ?? 0), ...depthDrops(st.depth),
+  ...(st.menders ? { menders: { ...st.menders, healed: Math.round(st.menders.healed) } } : {}),
+}))
 
 /** What the save has found and turned, at this depth: every drop reads it. */
 const pool = (): PoolView => poolView(save, run.depth)
@@ -2497,7 +2558,8 @@ function enterLevel(depth: number, o: { seed?: number; bossFelled?: boolean; res
   run.stats.push({ depth, fights: 0, pushes: 0, breaks: 0, deadTaps: 0, quiets: 0, strainIn: run.strain, strainOut: null, hand: 0, shots: 0, eye: 0, eyeCasts: 0, handBreaks: 0, braced: 0, playS: 0, eyeBreaks: 0, openings: 0, plantedS: 0, autoDmg: { hand: 0, eye: 0 }, riders: {}, pressure: combat.pressure, hpLost: 0, temper: temperOn, melts: 0,
     states: Object.fromEntries(STATE_IDS.map((id) => [id, { set: 0, paid: 0, expired: 0 }])) as DepthStats['states'],
     stateBonus: Object.fromEntries(STATE_IDS.map((id) => [id, 0])) as DepthStats['stateBonus'],
-    paidBy: { head: 0, torso: 0, arms: 0, legs: 0, hand: 0, eye: 0 }, pushedIntoState: 0, shatter: { n: 0, dmg: 0 }, maxMul: 1 })
+    paidBy: { head: 0, torso: 0, arms: 0, legs: 0, hand: 0, eye: 0 }, pushedIntoState: 0, shatter: { n: 0, dmg: 0 }, maxMul: 1,
+    menders: { met: 0, cut: 0, killed: 0, healed: 0 } })
   // the card's line gets a tick where this depth began (a resumed depth already has its tick)
   if (!o.resume) run.tally.marks.push(run.tally.line.length)
   // parts remember how deep they went
@@ -3612,6 +3674,7 @@ function simulate(realDt: number) {
   combat.update(dt, still.pos)
   still.planted = combat.inStance
   thiefFx(dt)
+  menderLog()
   trackDay(dt)
   partFx.update(dt)
   loot.update(dt, still.pos)
@@ -3867,7 +3930,7 @@ function footsteps(now: number) {
     const d = dist(e)
     const ek = Math.floor(e.gait / Math.PI)
     if (d <= STEP_HEAR && e.walking && ek !== lastStep.get(e) && stepTimes.length < STEPS_MAX) {
-      const who = e.kind === 'chaser' ? 'hulk' : e.kind === 'ranged' ? 'tripod' : e.kind === 'charger' ? 'ram' : e.kind === 'thief' ? 'thief' : 'boss'
+      const who = e.kind === 'chaser' ? 'hulk' : e.kind === 'ranged' || e.kind === 'mender' ? 'tripod' : e.kind === 'charger' ? 'ram' : e.kind === 'thief' ? 'thief' : 'boss'
       const loud = (1 - d / STEP_HEAR) * (e.kind === 'chaser' ? Math.min(1, e.size) : 1) * quiet
       sfx.step(who, panOf(e.pos), loud, placeNow().footsteps)
       // the Assembler's weight comes down through its rams: a hiss and a thunk under the step

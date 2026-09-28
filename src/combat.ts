@@ -5,6 +5,7 @@ import { Chaser, shoveVelocity, distToSegment, PLAYER_RADIUS, KNOCK_DECAY, type 
 import { Ranged } from './ranged'
 import { Lobber } from './lobber'
 import { Thief, THIEF, type ThiefEvent } from './thief'
+import { Mender } from './mender'
 import { Charger, CHARGER } from './charger'
 import { Mite, Brood, MiteBatch, MITE } from './swarm'
 import { KILL_WEIGHT } from './loot'
@@ -222,8 +223,9 @@ export const ELITE_MODS: Record<Exclude<Archetype, 'boss'>, EliteMod[]> = {
   charger: ['swift', 'plated', 'splitting', 'warding'],
   // a swarm already is many, and a 16-HP body at half damage is a number, not a decision
   swarm: ['swift', 'warding'],
-  // the thief is never crowned
+  // the thief is never crowned, nor the mender: it keeps behind, it doesn't lead
   thief: [],
+  mender: [],
 }
 /** The line under an elite's name. A Plated ram's plate lifts in a stun, so it says so. */
 export function eliteLine(kind: Archetype, mod: EliteMod): string {
@@ -388,6 +390,8 @@ export class Combat {
   private readonly summoned = new WeakSet<Enemy>()
   /** Halves of a Many: the elite's own guaranteed drop is the payout, so they weigh 0. */
   private readonly splitBorn = new WeakSet<Enemy>()
+  /** Each pack body's HP at birth (after the curve and any crown): a mender mends up to it and no further. */
+  private readonly fullHp = new WeakMap<Enemy, number>()
   /** One per pack with mites. Ticked after the packs, before the enemies. */
   readonly broods: Brood[] = []
   /** Draws every mite in the level in 8 calls. */
@@ -2582,6 +2586,7 @@ export class Combat {
     switch (kind) {
       case 'ranged': return variant === 'lobber' ? new Lobber(x, z) : new Ranged(x, z)
       case 'charger': return new Charger(x, z)
+      case 'mender': return new Mender(x, z)
       case 'swarm': {
         const m = new Mite(x, z)
         this.miteBatch.add(m)
@@ -2639,6 +2644,13 @@ export class Combat {
     if (elite && pack.members[0]) this.crown(pack, pack.members[0], elite.mod, elite.name)
     // the crowned leader alone is the heavy (a D2 unique and its minions): its packmates are pressure too
     if (this.pressure) for (const e of pack.members) if ((!elite || e !== pack.members[0]) && (e.kind === 'chaser' || (e.kind === 'ranged' && !e.variant))) e.pressure = true
+    for (const e of pack.members) this.fullHp.set(e, e.hp)
+    // a mender sees its pack (the live list: a Many's halves join it) and mends each up to its birth HP
+    for (const e of pack.members) {
+      if (!(e instanceof Mender)) continue
+      e.pack = pack
+      e.full = (q) => this.fullHp.get(q) ?? q.hp
+    }
     pack.hpSeen = this.hpOf(pack)
     this.packs.push(pack)
     return pack
@@ -2826,6 +2838,7 @@ export class Combat {
       const c = this.make(from.kind, from.pos.x + side * 0.6, from.pos.z)
       c.size = CHARGER.splitSize
       c.hp = CHARGER.splitHp
+      this.fullHp.set(c, c.hp)
       this.splitBorn.add(c)
       this.scene.add(c.group, c.tellGroup)
       this.enemies.push(c)

@@ -43,6 +43,8 @@ const TREASURE: Record<Archetype, Record<SlotName, number>> = {
   boss: { head: 1, torso: 1, arms: 1, legs: 1 },
   // never rolled (it adds no loot, and weighs 0), but the record needs the key
   thief: { head: 1, torso: 1, arms: 1, legs: 1 },
+  // the mender drops like the sentinel it's about the size of
+  mender: { head: 3, torso: 1, arms: 1, legs: 3 },
 }
 
 /**
@@ -50,9 +52,9 @@ const TREASURE: Record<Archetype, Record<SlotName, number>> = {
  * birth, so a pack pays out the same whatever it's made of. Split halves and boss
  * adds weigh 0 (Combat passes 0 for them). A mite is a quarter: a
  * brood of 8 pays out like two hulks. The thief weighs nothing: it has no pack, and a catch
- * gives back only what it took.
+ * gives back only what it took. A mender weighs a sentinel's.
  */
-export const KILL_WEIGHT: Record<Archetype, number> = { chaser: 1, ranged: 1, charger: 1, swarm: 0.25, boss: 1, thief: 0 }
+export const KILL_WEIGHT: Record<Archetype, number> = { chaser: 1, ranged: 1, charger: 1, swarm: 0.25, boss: 1, thief: 0, mender: 1 }
 
 function pickWeighted<T extends string>(weights: Record<T, number>): T {
   const entries = Object.entries(weights) as [T, number][]

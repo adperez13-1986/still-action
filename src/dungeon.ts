@@ -9,6 +9,7 @@ import { exitsAfterBoss, lookAt, type BossDef, type ExitKind, type KitPreset, ty
 import { LINE, SIDING, buildLinePieces, distToSpan, type LaneDef, type SidingDef } from './line'
 import { buildMachines, machineTop, CHIMNEY_H, type MachinePlacement } from './machines'
 import { THIEF } from './thief'
+import { MENDER } from './mender'
 import { curveAt } from './curve'
 
 /**
@@ -213,7 +214,7 @@ export function rng(seed: number) {
  * Separate seeded streams for what area II adds (slag, the heap, machinery, the thief):
  * the main sequence never sees them, so the ruin builds exactly as it did.
  */
-const SALT = { slag: 0x51a6, heap: 0x4ea9, far: 0xfa51, machine: 0x3ac1, thief: 0x7417, rail: 0x2a11 }
+const SALT = { slag: 0x51a6, heap: 0x4ea9, far: 0xfa51, machine: 0x3ac1, thief: 0x7417, rail: 0x2a11, mender: 0x3e4d }
 /**
  * The salted seed is scrambled before it seeds its stream: rng's first draws follow its
  * seed almost linearly, so seeds 1, 2, 3 xor one salt would all open on the same roll.
@@ -1663,6 +1664,38 @@ export function generateLevel(
       }
     }
     if (nest) thief = { nest, room, pack }
+  }
+
+  // --- the mender: its own stream too, joined to a main pack of 3+ from depth 2 (never a lesson, a side room or a boss's) ---
+  // Added last, so no pack is crowned with it at its head, and nothing placed before it moves.
+  const mendChance = MENDER.chance[depth]
+  if (mendChance && !opts.boss) {
+    const ms = stream(seed, SALT.mender)
+    let menders = 0
+    // every pack's roll first, so where one mender stands never shifts the next pack's roll
+    const rolls = packs.map(() => ms())
+    for (const [i, p] of packs.entries()) {
+      if (menders >= MENDER.perLevel) break
+      if (p.room.kind !== 'main' || p.lesson || p.members.length < MENDER.minPack || rolls[i]! >= mendChance) continue
+      // behind its pack as he'd come at it: on from the room's middle through the pack, a few units on
+      const cx = p.members.reduce((a, m) => a + m.x, 0) / p.members.length
+      const cz = p.members.reduce((a, m) => a + m.z, 0) / p.members.length
+      const out = Math.atan2(cx - p.room.center.x, cz - p.room.center.z)
+      const spot = (tries: number) => {
+        const a = out + (ms() * 2 - 1) * (0.5 + tries * 0.12)
+        const r = 2.4 + ms() * (1.6 + tries * 0.1)
+        return { x: cx + Math.sin(a) * r, z: cz + Math.cos(a) * r }
+      }
+      for (let tries = 0; tries < 24; tries++) {
+        const { x, z } = spot(tries)
+        if (makeTerrainNow.blocked(x, z, 0.7) || !offLine(x, z, LINE.halfW + 0.85, 1.45)) continue
+        if (p.members.some((m) => Math.hypot(m.x - x, m.z - z) < 1.3)) continue
+        if (thief && Math.hypot(thief.nest.x - x, thief.nest.z - z) < THIEF.barrelR + 1) continue
+        p.members.push({ kind: 'mender', x, z })
+        menders++
+        break
+      }
+    }
   }
 
   // --- a shrine, most levels: one bargain, in a main room ---
