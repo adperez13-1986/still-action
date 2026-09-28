@@ -67,6 +67,8 @@ const glyph = (d: string) => `<svg viewBox="0 0 24 24" fill="none" stroke="curre
 let describe: (d: AbilityDef) => { name: string; history: string | null } = (d) => ({ name: d.name, history: null })
 /** The playtest switches beside resume, as main hands them over: what each is called, and its state. */
 const playSwitches: { label: string; read: () => boolean; write: (on: boolean) => void }[] = []
+/** Mastery learned this run, for the loadout screen: set by main. */
+let learned: () => { name: string; line: string }[] = () => []
 /** One-press buttons after the switches (the owner's log export), in the order main gave them. */
 const playActions: { label: () => string; run: () => void; show?: () => boolean }[] = []
 
@@ -117,6 +119,10 @@ export interface PauseScreen {
    * page through them and close. `render` draws card i (0 is the newest).
    */
   lookBack: (count: number, render: (i: number) => Promise<HTMLCanvasElement>, onClose: () => void) => void
+  /** Mastery (mastery.ts): one of two, as big cards; picking one closes it. */
+  choose: (title: string, intro: string, options: { name: string; line: string; onPick: () => void }[]) => void
+  /** What the pause screen lists under the loadout: mastery learned this run ("Cold Hand: ..."). */
+  setLearned: (fn: () => { name: string; line: string }[]) => void
   /** The notebook: its pages, one at a time, and close. */
   notebook: (pages: NotebookPage[], onClose: () => void) => void
   /** How part cards name a part and tell its past. */
@@ -160,8 +166,10 @@ export function createPauseScreen(root: HTMLElement): PauseScreen {
     get open() { return isOpen },
 
     loadout(slots, onResume) {
+      const known = learned()
       show(
-        `<h2>Paused</h2><div class="row four">${slots.map((s) => (s.def ? card(s.def, SLOT_LABEL[s.slot]) : emptyCard(s.slot, SLOT_LABEL[s.slot]))).join('')}</div>`,
+        `<h2>Paused</h2><div class="row four">${slots.map((s) => (s.def ? card(s.def, SLOT_LABEL[s.slot]) : emptyCard(s.slot, SLOT_LABEL[s.slot]))).join('')}</div>` +
+        (known.length ? `<p class="learned">${known.map((m) => `<b>${m.name}</b> ${m.line}`).join('<br>')}</p>` : ''),
         [['resume', 'resume', onResume]],
       )
       // the playtest switches, before resume in the order main gave them: one tap flips one, and it says which way it is
@@ -205,6 +213,19 @@ export function createPauseScreen(root: HTMLElement): PauseScreen {
          </div>`,
         [['leave', 'leave it', onLeave], ['take', price ? `take it \u00b7 ${price}` : 'take it', onTake]],
       )
+    },
+
+    choose(title, intro, options) {
+      show(
+        `<h2>${title}</h2><p class="intro">${intro}</p><div class="row two">${options.map((o, i) =>
+          `<button type="button" class="pcard master" data-i="${i}"><b class="pname">${o.name}</b><p>${o.line}</p></button>`).join('')}</div>`,
+        [],
+      )
+      el.querySelectorAll<HTMLElement>('.master').forEach((b) => b.addEventListener('click', () => options[Number(b.dataset.i)]?.onPick()))
+    },
+
+    setLearned(fn) {
+      learned = fn
     },
 
     lookBack(count, render, onClose) {

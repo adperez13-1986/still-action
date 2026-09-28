@@ -64,6 +64,17 @@ untouched. Kill drops x0.4 while it's on (elites, side rooms, crates, pedestals 
 depth `temper`, `melts`; drop end `melted`. Next agreed: pedestals offer hand/eye mods (option 3),
 after his feel on temper.
 
+**28 Sep, riders cut, rank audit, mastery (his asks, pushed):** the four riders are gone (breaks are
+rare under pressure, and a free ready sold the push; the `rider` field and its runtime stay, unused).
+Temper now reaches every part's own numbers (`temperMod` in temper.ts: Patient Lens's charge clock,
+Frayed's widths, Clamp Toss's wall hit, Skid Plates' slam, Overrun's pushed dash, Frost Trail's strip,
+Mirror Ward's reflection; shields and catches hold longer). **Mastery** (`src/mastery.ts`, his idea:
+"option 3 but after the rank III"): melting into a part at III pauses and offers one of two mods for
+the auto its lean feeds (close -> hand, marksman -> eye, no lean -> either): Cold/Marking/Wide Hand,
+Cold/Marking/Splitting Eye. They change what the autos do, not how hard (the autos already carry too
+much). Max 6 a run, each once; saved in the snapshot (`mastery`); listed on the pause screen; log
+`mastered` per depth. Pedestals unchanged: decide after his runs (he may want them gone).
+
 **Then, in order:**
 1. His runs on pedestals + leanings (open fields now always on at depths 1 and 4, logging via `?owner`; he exports from
    the pause screen, fold in with `npx tsx tools/mergelog.ts <file>`). Ask what he felt before reading

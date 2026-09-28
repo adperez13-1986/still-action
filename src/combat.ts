@@ -24,6 +24,7 @@ import type { Breakable, Post } from './dungeon'
 const TRAIN_SMASH_GROW = 0.2
 import type { AbilityDef, BeatKey } from './abilities'
 import type { SlotName } from './still'
+import { MASTERY_TUNE, type MasteryId } from './mastery'
 import { PART, History, bankShot, type EnemyStatus, type Flip, type Held, type PartEvent, type PartRuntime, type StillMove, type Zone } from './parts'
 
 /** A boss that never walks: spacing leaves it where it stands. */
@@ -421,6 +422,8 @@ export class Combat {
    * pressure bodies (no big windup, their hits stack); an elite pack keeps its telegraphs, the heavies.
    */
   pressure = false
+  /** Mastery (mastery.ts): what the hand and the eye have learned this run. Main owns the set; reset() leaves it. */
+  mastery: ReadonlySet<MasteryId> = new Set()
   /** Marks and slows, per enemy. Deleted when the enemy is buried. */
   private readonly status = new Map<Enemy, EnemyStatus>()
   /** Enemies in the clamp's throw. While held, an enemy doesn't think. */
@@ -595,6 +598,27 @@ export class Combat {
         // a narrow cold sweep to its body, the arcs' own floor mark: the form reads as reach, not a bolt
         const aim = Math.atan2(close.pos.x - player.x, close.pos.z - player.z)
         this.sweep(player, aim, Math.hypot(close.pos.x - player.x, close.pos.z - player.z), 0x8fb8e8, 0.4)
+        this.masterHit('hand', close)
+        if (this.mastery.has('hand-cleave')) {
+          // the next body in reach takes a share of it, with its own sweep
+          let next: Enemy | null = null
+          let nd = Infinity
+          for (const e of this.enemies) {
+            if (e === close || e.dead || !targetable(e) || this.held.has(e) || !this.awakeNow(e) || !this.inReach(player, e, HAND.range) || this.shaded(player, e)) continue
+            const d = Math.hypot(e.pos.x - player.x, e.pos.z - player.z)
+            if (d < nd) {
+              nd = d
+              next = e
+            }
+          }
+          if (next) {
+            next.hit(Math.round(HAND.damage * MASTERY_TUNE.cleaveShare))
+            if (!isBoss(next)) this.shoveFrom(next, player.x, player.z, HAND.shove)
+            this.sweep(player, Math.atan2(next.pos.x - player.x, next.pos.z - player.z), nd, 0x8fb8e8, 0.3)
+            this.events.onHit(next.pos, next)
+            this.masterHit('hand', next)
+          }
+        }
         this.events.onHand(close, broke)
         this.trigger('hand', close, broke)
       } else if (target) {
@@ -1542,6 +1566,25 @@ export class Combat {
     this.events.onHit(e.pos, e)
     this.events.onLance(e, broke)
     this.trigger('eye', e, broke)
+    this.masterHit('eye', e)
+    if (e.dead && this.mastery.has('eye-split')) {
+      // the kill splits the shot: plain shots at the two nearest bodies it can see from where it fell
+      const near = this.enemies
+        .filter((o) => o !== e && !o.dead && targetable(o) && this.awakeNow(o) && Math.hypot(o.pos.x - e.pos.x, o.pos.z - e.pos.z) <= MASTERY_TUNE.splitRange && this.clearShot(e.pos, o.pos))
+        .sort((a, b) => Math.hypot(a.pos.x - e.pos.x, a.pos.z - e.pos.z) - Math.hypot(b.pos.x - e.pos.x, b.pos.z - e.pos.z))
+        .slice(0, 2)
+      for (const o of near) {
+        this.shoot(e.pos, o.pos, (Math.hypot(o.pos.x - e.pos.x, o.pos.z - e.pos.z) + 1) / PART.boltSpeed)
+        this.bolts[this.bolts.length - 1]!.damage = MASTERY_TUNE.splitDamage
+      }
+    }
+  }
+
+  /** Mastery's hand or eye riders on a hit: a slow, a mark (a boss takes the mark, never the slow). */
+  private masterHit(form: 'hand' | 'eye', e: Enemy) {
+    if (e.dead) return
+    if (this.mastery.has(`${form}-chill`) && !isBoss(e)) this.applySlow(e, MASTERY_TUNE.chillS, MASTERY_TUNE.chillMul)
+    if (this.mastery.has(`${form}-mark`)) this.mark(e, MASTERY_TUNE.markS)
   }
 
   /**

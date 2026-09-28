@@ -516,3 +516,12 @@ html, body {
 /* the open field's map on the pause screen */
 #pause .fieldmap { display: flex; justify-content: center; margin: 4px 0 10px; }
 #pause .fieldmap canvas { border: 1px solid #243140; border-radius: 6px; background: #0a0e14; }
+
+/* mastery: two big choices, cold like Still's light; what's learned sits under the loadout */
+#pause .intro { margin: 0 0 10px; color: #9fb2c6; font-size: 13px; text-align: center; }
+#pause .pcard.master { appearance: none; cursor: pointer; text-align: left; border: 1px solid #3f6f86; background: #13202a; color: #d8ecf6; min-width: 180px; }
+#pause .pcard.master .pname { font: 700 16px/1.2 var(--display); color: #bfe4f2; }
+#pause .pcard.master p { margin: 6px 0 0; font-size: 13px; line-height: 1.3; color: #a9c3d4; }
+#pause .pcard.master:active { transform: scale(.97); }
+#pause .learned { margin: 10px 0 0; font-size: 12.5px; line-height: 1.5; color: #9fb2c6; text-align: center; }
+#pause .learned b { color: #bfe4f2; font-weight: 700; }

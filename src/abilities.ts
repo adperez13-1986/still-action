@@ -164,8 +164,8 @@ export interface AbilityDef {
 
 const KEYS: Record<SlotName, string> = { head: 'H', torso: 'T', arms: 'A', legs: 'L' }
 
-/** One fire per 4 s per part: the dial if a rider proves too strong, before partial cuts. */
-const RIDER_ICD = 4000
+// Riders (a part readied by a hand or eye break, 4 s cap) were cut on 28 Sep: breaks are rare under
+// the pressure prototype and a free ready sold what the push buys. The `rider` field and its runtime stay.
 
 function part(p: Omit<AbilityDef, 'key' | 'drops'> & { drops?: DropGate }): AbilityDef {
   return { drops: 'any', ...p, key: KEYS[p.slot] }
@@ -210,7 +210,6 @@ export const PARTS: AbilityDef[] = [
   }),
   part({
     id: 'patient-lens', slot: 'head', name: 'Patient Lens', tier: 'blue', beat: 'patient', lean: 'marksman',
-    rider: { on: 'eye', act: 'charge', icdMs: RIDER_ICD },
     line: 'Charges between shots. Push it for a full shot.',
     shape: 'bolt', mod: { kind: 'charge', minDamage: 6, minS: 1.5, fullS: 7.5 }, cooldownMs: 1500, damage: 32, range: 13, radius: 0.85,
     icon: '<circle cx="8.5" cy="12" r="5.5"/><circle cx="8.5" cy="12" r="2.2" fill="currentColor" stroke="none" class="charge"/><path d="M16 12h1M19.5 12h2.5"/>',
@@ -250,7 +249,6 @@ export const PARTS: AbilityDef[] = [
   }),
   part({
     id: 'backdraft-vent', slot: 'torso', name: 'Backdraft Vent', tier: 'blue', beat: 'backdraft', lean: 'close',
-    rider: { on: 'hand', act: 'ready', icdMs: RIDER_ICD },
     line: 'The blast drags enemies in instead of out.',
     shape: 'nova', mod: { kind: 'pull', to: 1.4 }, cooldownMs: 6500, damage: 12, range: 0, radius: 5.2,
     icon: '<circle cx="12" cy="12" r="2"/><path d="M12 2.5v5M12 16.5v5M2.5 12h5M16.5 12h5"/><path d="M10 5.5l2 2 2-2M10 18.5l2-2 2 2M5.5 10l2 2-2 2M18.5 10l-2 2 2 2"/>',
@@ -302,7 +300,6 @@ export const PARTS: AbilityDef[] = [
   }),
   part({
     id: 'parry-clamp', slot: 'arms', name: 'Parry Clamp', tier: 'blue', beat: 'parry', lean: 'close',
-    rider: { on: 'hand', act: 'ready', icdMs: RIDER_ICD },
     line: 'A quick snap. Catch an enemy winding up and it breaks the attack.',
     shape: 'arc', mod: { kind: 'parry', shove: 2.5 }, cooldownMs: 3600, damage: 10, range: 2.6, radius: 0, cone: 90,
     icon: '<path d="M3 6c4.5 0 7.5 2 8.5 6M3 18c4.5 0 7.5-2 8.5-6"/><path d="M15 8.5l6 7M21 8.5l-6 7"/>',
@@ -319,7 +316,6 @@ export const PARTS: AbilityDef[] = [
   }),
   part({
     id: 'clamp-toss', slot: 'arms', name: 'Clamp Toss', tier: 'blue', beat: 'toss', lean: 'marksman',
-    rider: { on: 'eye', act: 'ready', icdMs: RIDER_ICD },
     line: "Grabs the nearest enemy and throws it the way you're steering.",
     shape: 'grab', mod: { kind: 'toss', splashShove: 1.2, wallDamage: 12 }, cooldownMs: 4500, damage: 14, range: 2.4, radius: 0,
     shove: 5.0, blast: 1.2, blastDamage: 14, travelMs: 350,

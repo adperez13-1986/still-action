@@ -143,6 +143,8 @@ export interface RunSnapshot {
   kept?: number
   /** Temper's ranks by slot, for the parts worn (temper.ts). Absent: all I. */
   ranks?: Partial<Record<'head' | 'torso' | 'arms' | 'legs', number>>
+  /** Mastery learned this run (mastery.ts ids). Absent: none. */
+  mastery?: string[]
 }
 
 export interface Save {

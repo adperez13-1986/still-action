@@ -18,13 +18,11 @@ const TAGS: Record<Lean | 'none', string[]> = {
     'chill-vent', 'mirror-ward', 'lure', 'piston', 'clamp-toss', 'skitter', 'frost-trail', 'spring-heels', 'plumb-line'],
   none: ['borrowed-time'],
 }
-/** The four riders the lead settled: the trigger each answers, and what it does to its own button. */
-const RIDERS: Record<string, { on: 'hand' | 'eye'; act: 'ready' | 'charge' }> = {
-  'parry-clamp': { on: 'hand', act: 'ready' },
-  'backdraft-vent': { on: 'hand', act: 'ready' },
-  'patient-lens': { on: 'eye', act: 'charge' },
-  'clamp-toss': { on: 'eye', act: 'ready' },
-}
+/**
+ * The riders the lead settled. None since 28 Sep (his call): under the pressure prototype breaks are
+ * rare, a free ready sold what the push buys, and temper's mastery is the leaning payoff now.
+ */
+const RIDERS: Record<string, { on: 'hand' | 'eye'; act: 'ready' | 'charge' }> = {}
 const SLOTS: SlotName[] = ['head', 'torso', 'arms', 'legs']
 
 const fails: string[] = []

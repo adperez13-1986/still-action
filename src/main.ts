@@ -9,6 +9,7 @@ import { Combat, eliteLine, HAND, HAND_REACH, EYE, type Archetype, type AutoForm
 import { STARTING, PARTS, byId, type AbilityDef, type AbilityShape, type BeatKey, type Lean } from './abilities'
 import { SLOT_NAMES, type SlotName } from './still'
 import { TEMPER, ROMAN, tempered } from './temper'
+import { MASTERY, MASTERY_MAX, masteryOffer, type MasteryId, type MasteryForm } from './mastery'
 import type { Enemy, EnemyEvent } from './enemy'
 import { isBoss, Assembler } from './boss'
 import { Arbiter, ARBITER, arbiterHusk } from './arbiter'
@@ -1231,8 +1232,8 @@ interface DepthStats {
   playS?: number
   /** The pressure prototype on at this depth (its ordinary packs), and integrity lost here, all sources. */
   pressure?: boolean; hpLost?: number
-  /** Temper on at this depth, and parts melted into a worn one here. */
-  temper?: boolean; melts?: number
+  /** Temper on at this depth, and parts melted into a worn one here; mastery learned here. */
+  temper?: boolean; melts?: number; mastered?: string[]
 }
 /** One press on a filled button, for the playtest file: how long taps really last on the phone. */
 interface TapLog { depth: number; slot: SlotName; ms: number; ready: boolean; result: Press['result'] }
@@ -1276,6 +1277,8 @@ const run = {
   kept: 0,
   /** Temper's ranks this run, by slot (temper.ts): absent is I; a swap clears the slot's. */
   ranks: {} as Partial<Record<SlotName, number>>,
+  /** Mastery learned this run (mastery.ts): combat reads the same set. */
+  mastery: new Set<MasteryId>(),
   /** His last tagged pick's lean: the match's tie-break (LEAN_MATCH). Not kept by a resume. */
   lastLean: null as Lean | null,
   /**
@@ -1840,8 +1843,52 @@ function meltLabel(g: GroundPart): string | null {
   if (!temperOn || g.set) return null
   const cur = hud.loadout.find((p) => p.slot === g.def.slot)
   const rank = run.ranks[g.def.slot] ?? 1
-  if (!cur || rank >= TEMPER.maxRank) return null
-  return `melt into ${byId(cur.id).name} ${ROMAN[rank + 1]}`
+  if (!cur) return null
+  if (rank < TEMPER.maxRank) return `melt into ${byId(cur.id).name} ${ROMAN[rank + 1]}`
+  // at III: melting masters the auto its lean feeds (mastery.ts)
+  const form = masteryForm(cur)
+  if (run.mastery.size >= MASTERY_MAX || !masteryOffer(form, run.mastery).length) return null
+  return form ? `melt: master the ${form}` : 'melt: master hand or eye'
+}
+
+/** Which auto a part at III feeds: close the hand, marksman the eye, no lean either (null). */
+const masteryForm = (d: AbilityDef): MasteryForm | null => (d.lean === 'close' ? 'hand' : d.lean === 'marksman' ? 'eye' : null)
+
+pause.setLearned(() => [...run.mastery].map((id) => MASTERY[id]))
+
+/** Mastery: the floor part is melted, and he picks what the hand or the eye learns. The world waits. */
+function masterWith(g: GroundPart, cur: AbilityDef) {
+  const form = masteryForm(cur)
+  const offer = masteryOffer(form, run.mastery)
+  if (!offer.length || !canPause()) return
+  if (markFound(save, g.def.id)) store.write()
+  endDrop(g, 'melted')
+  loot.remove(g)
+  offered = null
+  offerHeld = true
+  hud.offer(null)
+  loot.offer(null)
+  sfx.take()
+  vfx.embers(at3(still.pos, 0.7), 30, 1.3, COLD)
+  openPause()
+  const whom = form ? `the ${form}` : 'the hand or the eye'
+  pause.choose(`Mastery \u00b7 ${whom}`, `${byId(cur.id).name} is at its best. What it knows goes to ${whom}.`, offer.map((id) => ({
+    name: MASTERY[id].name,
+    line: MASTERY[id].line,
+    onPick: () => {
+      run.mastery.add(id)
+      const st = run.stats[run.stats.length - 1]
+      if (st) {
+        st.melts = (st.melts ?? 0) + 1
+        ;(st.mastered ??= []).push(id)
+      }
+      resume()
+      sfx.uiClick()
+      vfx.flash(at3(still.pos, 1.0), COLD, 0.9)
+      overlay.banner(MASTERY[id].name)
+      navigator.vibrate?.([18, 30, 18, 30, 18])
+    },
+  })))
 }
 
 hud.onMelt(() => {
@@ -1852,7 +1899,11 @@ hud.onMelt(() => {
 function meltPart(g: GroundPart) {
   const cur = hud.loadout.find((p) => p.slot === g.def.slot)
   const rank = (run.ranks[g.def.slot] ?? 1) + 1
-  if (!cur || g.set || rank > TEMPER.maxRank) return
+  if (!cur || g.set) return
+  if (rank > TEMPER.maxRank) {
+    masterWith(g, cur)
+    return
+  }
   // melted is found: it joins the pool like a part taken
   if (markFound(save, g.def.id)) store.write()
   run.ranks[g.def.slot] = rank
@@ -2089,6 +2140,7 @@ function writeSnapshot() {
     ...(run.picks.length ? { picks: [...run.picks] } : {}),
     ...(run.kept ? { kept: run.kept } : {}),
     ...(Object.keys(run.ranks).length ? { ranks: { ...run.ranks } } : {}),
+    ...(run.mastery.size ? { mastery: [...run.mastery] } : {}),
   }
   save.run = snap
   store.write()
@@ -2122,7 +2174,9 @@ function resumeRun(snap: RunSnapshot) {
     breakRule: combat.breakRule, hand: combat.closeHand, eye: combat.eye, drops: [], id: snap.id, startedAt: snap.startedAt, strain: Math.min(19, Math.max(0, Math.round(snap.strain) || 0)), tally, route,
   })
   run.kept = Math.min(run.strain, Math.max(0, Math.round(snap.kept ?? 0) || 0))
-  // temper's ranks come back on the parts they were earned on
+  // mastery and temper's ranks come back as they were earned
+  run.mastery = new Set((snap.mastery ?? []).filter((id): id is MasteryId => id in MASTERY))
+  combat.mastery = run.mastery
   run.ranks = {}
   SLOT_NAMES.forEach((slot, i) => {
     const r = Math.floor(snap.ranks?.[slot] ?? 1)
@@ -2323,10 +2377,11 @@ function startRun() {
   leaveRoom()
   still.reassemble()
   Object.assign(run, {
-    phase: 'crawl', strain: 0, kept: 0, ranks: {}, lastLean: null, t: 0, swapped: false, ramStunSeen: false,
+    phase: 'crawl', strain: 0, kept: 0, ranks: {}, mastery: new Set<MasteryId>(), lastLean: null, t: 0, swapped: false, ramStunSeen: false,
     id: newRunId(), dev: DEPTH_PARAM !== null, committed: false, ending: null, stats: [], drops: [], taps: [], walkS: 0, tally: freshTally(),
     startedAt: new Date().toISOString(), breakRule: combat.breakRule, hand: combat.closeHand, eye: combat.eye, route: ROUTE_PARAM,
   })
+  combat.mastery = run.mastery
   playKey = `${run.id}.${Date.now().toString(36)}`
   if (!run.dev) {
     // the first night: the doorframe's marks grow from here, in calendar time
