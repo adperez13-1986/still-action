@@ -157,7 +157,7 @@ export interface Enemy {
   phase: EnemyPhase
   /**
    * Pressure (accepted 28 Sep; his ask: telegraphs on every enemy "is actually weird"):
-   * an ordinary hulk or sentinel with no big windup, pressure instead. Set by Combat on a non-elite pack.
+   * an ordinary hulk, sentinel or mite with no big windup, pressure instead. Set by Combat on a non-elite pack.
    */
   pressure?: boolean
   dead: boolean

@@ -36,8 +36,9 @@ is the run.
 - **Big threats are telegraphed and committed; ordinary bodies are pressure**
   (28 Sep, his call: telegraphs on every enemy "is actually weird"). Heavies (an elite
   pack's crowned leader) and bosses keep approach → windup → strike → recover with floor tells.
-  An ordinary hulk or sentinel shows only its body: a short cock and a jab, a lens
-  glow and a burst, no ring or line on the floor; the threat is the crowd. Phone
+  An ordinary hulk, sentinel or mite shows only its body: a short cock and a jab, a lens
+  glow and a burst, a mite's rear and nip, no ring or line on the floor (rams and Lobbers keep
+  their charge lane and landing circle for now); the threat is the crowd. Phone
   readability first: a 6-inch screen, thumbs covering corners, many things on screen.
 - **Colour language:** Still's effects cold steel-blue/white (`COLD`
   0x8fb8e8-ish, `COLD_DEEP`); enemies' effects ember orange/red. Grace (Still's

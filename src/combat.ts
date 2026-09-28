@@ -7,7 +7,7 @@ import { Lobber } from './lobber'
 import { Thief, THIEF, type ThiefEvent } from './thief'
 import { Mender } from './mender'
 import { Charger, CHARGER } from './charger'
-import { Mite, Brood, MiteBatch, MITE } from './swarm'
+import { Mite, Brood, MiteBatch, MITE, type SwarmCap } from './swarm'
 import { KILL_WEIGHT } from './loot'
 import { BOSS, isBoss, makeBoss, type Boss } from './boss'
 import type { BossDef } from './areas'
@@ -437,10 +437,12 @@ export class Combat {
    */
   breakRule = false
   /**
-   * Pressure (accepted 28 Sep): packs added while this is on have their ordinary hulks and sentinels
-   * pressure bodies (no big windup, their hits stack); an elite pack keeps its telegraphs, the heavies.
+   * Pressure (accepted 28 Sep): packs added while this is on have their ordinary hulks, sentinels
+   * and broods pressure bodies (no big windup, their hits stack); an elite pack keeps its telegraphs, the heavies.
    */
   pressure = false
+  /** ms until any brood's next nip may start: the gap holds over every brood, as the inner cap does. */
+  private nipWait = 0
   /** Mastery (mastery.ts): what the hand and the eye have learned this run. Main owns the set; reset() leaves it. */
   mastery: ReadonlySet<MasteryId> = new Set()
   /** The depth curve for packs added now (curve.ts): main sets it per level; keyed on depth alone. */
@@ -2642,8 +2644,13 @@ export class Combat {
       if (this.curve.dmg !== 1) e.dmgMul = this.curve.dmg
     }
     if (elite && pack.members[0]) this.crown(pack, pack.members[0], elite.mod, elite.name)
-    // the crowned leader alone is the heavy (a D2 unique and its minions): its packmates are pressure too
-    if (this.pressure) for (const e of pack.members) if ((!elite || e !== pack.members[0]) && (e.kind === 'chaser' || (e.kind === 'ranged' && !e.variant))) e.pressure = true
+    // the crowned leader alone is the heavy (a D2 unique and its minions): its packmates are pressure too.
+    // Not a brood's: an elite pack's mites keep the surge and its ring, her brood's or not
+    if (this.pressure) {
+      for (const e of pack.members) {
+        if ((!elite || e !== pack.members[0]) && (e.kind === 'chaser' || (e.kind === 'ranged' && !e.variant) || (e.kind === 'swarm' && !elite))) e.pressure = true
+      }
+    }
     for (const e of pack.members) this.fullHp.set(e, e.hp)
     // a mender sees its pack (the live list: a Many's halves join it) and mends each up to its birth HP
     for (const e of pack.members) {
@@ -2789,7 +2796,11 @@ export class Combat {
     })
     const brood = this.addPack(members, false)
     brood.leash = Infinity
-    for (const m of brood.members) this.summoned.add(m)
+    for (const m of brood.members) {
+      this.summoned.add(m)
+      // a boss's adds keep the surge and its ring, pressure on or not
+      m.pressure = false
+    }
     for (const p of at) this.ring(p, 0.3, 1.8, 0.4, 0xff7a55)
     this.wake(brood)
   }
@@ -2953,14 +2964,15 @@ export class Combat {
     }
     const awake = this.broods.filter((b) => b.pack.state === 'awake')
     if (!awake.length) return
-    const cap = { used: awake.reduce((n, b) => n + (b.isActive ? b.innerCount() : 0), 0) }
+    const cap: SwarmCap = { used: awake.reduce((n, b) => n + (b.isActive ? b.innerCount() : 0), 0), nipWait: Math.max(0, this.nipWait - dt * 1000) }
     for (const b of awake) b.seatQueen(cap, awake)
     const p = this.ctx.player
     awake.sort((a, b) => a.nearestTo(p) - b.nearestTo(p))
     for (const b of awake) {
-      const bite = b.tick(dt, this.terrain, this.ctx, cap, this.parts.decoy)
-      if (bite) this.hurtPlayer(bite.damage, 'melee', bite.source)
+      // a surge's one bite folds into the hurt window; a pressure mite's nip stacks
+      for (const bite of b.tick(dt, this.terrain, this.ctx, cap, this.parts.decoy)) this.hurtPlayer(bite.damage, 'melee', bite.source, !!bite.source?.pressure)
     }
+    this.nipWait = cap.nipWait
   }
 
   /**

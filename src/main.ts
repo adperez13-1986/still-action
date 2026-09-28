@@ -2504,9 +2504,9 @@ function enterLevel(depth: number, o: { seed?: number; bossFelled?: boolean; res
   loot.terrain = level.terrain
   // the Line's own bodies and looks arrive in stage B: until then a Sleepers' brood sleeps as any brood does
   const packOfSpec = new Map<PackSpec, Pack>()
-  // pressure, accepted 28 Sep ("I prefer it"): on every crawl depth an ordinary pack's hulks and
-  // sentinels are pressure bodies (a short cock and a jab, a short glow and a burst; their hits stack);
-  // the elite pack keeps the big telegraphs as the level's heavies, and bosses keep theirs
+  // pressure, accepted 28 Sep ("I prefer it"): on every crawl depth an ordinary pack's hulks, sentinels
+  // and mites are pressure bodies (a short cock and a jab, a short glow and a burst, a rear and a nip;
+  // their hits stack); the elite pack keeps the big telegraphs as the level's heavies, and bosses keep theirs
   combat.pressure = !level.boss
   combat.curve = curveAt(depth)
   for (const p of level.packs) {

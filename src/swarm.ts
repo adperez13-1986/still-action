@@ -22,6 +22,9 @@ import type { EliteMod, Pack } from './combat'
  *   windup   550 ms: a ring at L (where he'll be), in as many pieces as there are biters
  *   strike   150 ms lunge; the bite is decided on the 550 tick
  *   recover  800 ms: the biters sit in a clump. The punish window.
+ *
+ * That surge is the queen's brood's: she is the heavy. An ordinary brood is pressure
+ * (PRESSURE_MITE): the same two rings, but no surge and no ring on the floor.
  */
 export const MITE = {
   hp: 8,
@@ -74,6 +77,34 @@ export const BROOD = {
   heartStep: 0.25,
   packSolo: 8,
   packMixed: 6,
+}
+
+/**
+ * The pressure brood (accepted 28 Sep): no surge and no ring. Each inner mite in reach nips on
+ * its own clock: it rears with its ember flaring, darts in, and bites whoever is still there.
+ * Its bites stack with the others' (Combat skips the hurt window for them).
+ *
+ *   tell     120 ms: it rears and flares where it stands. The bite is decided at its end
+ *   strike   150 ms: the dart in, to his side (BROOD.strikeMs)
+ *   recover  300 ms: it sits where it landed, then skitters back to its slot
+ */
+export const PRESSURE_MITE = {
+  /** An inner mite this close to its target, with a line, may nip. Its ring is at BROOD.innerR. */
+  contact: 2.4,
+  tellMs: 120,
+  /** Still within this of the mite when its tell ends is bitten. */
+  reach: 2.8,
+  /** Before the depth curve (dmgMul). */
+  bite: 3,
+  /** It lands this far from its target, on its own side: beside him, not in him. */
+  landR: 0.8,
+  recoverMs: 300,
+  /** From one of its nips to its next. Four biters × 3 every 2 s is the surge's 12 every 2 s. */
+  cycleMs: 2000,
+  /** Each cycle is this share longer or shorter, at random: four clocks drift apart instead of falling in step. */
+  jitter: 0.2,
+  /** No two nips start closer than this, over every brood. */
+  gapMs: 150,
 }
 
 /**
@@ -231,6 +262,8 @@ export class Mite implements Enemy {
   dead = false
   armor = 1
   speedMul = 1
+  /** The depth curve's, on a pressure mite's nip; a surge's bite doesn't take it. */
+  dmgMul?: number
   knockMul = 1
   size = 1
   rime = 0
@@ -244,6 +277,12 @@ export class Mite implements Enemy {
   refill = 0
   readonly slot = new THREE.Vector3()
   staggered = false
+  /** A mite of an ordinary brood (Combat sets it): it nips on its own clock, no surge. */
+  pressure = false
+  /** Pressure: ms into its tell, or -1. */
+  nip = -1
+  /** Pressure: ms until it may nip again. */
+  rest = 0
   queen = false
   /** A Quick queen: her whole brood is fast (speedMul), and she scuttles faster. */
   quick = false
@@ -318,8 +357,8 @@ export class Mite implements Enemy {
     const T = this.brood.T
     this.moving = false
     this.outT += dt
-    // still in the heap: it waits its turn to come out
-    if (this.phase === 'approach' && !this.staggered && !this.buried) {
+    // still in the heap: it waits its turn to come out. Rearing for a nip, it stands
+    if (this.phase === 'approach' && !this.staggered && !this.buried && this.nip < 0) {
       const dT = dist(T, this.pos)
       const far = dT > MITE.farDist || !terrain.lineClear(this.pos.x, this.pos.z, T.x, T.z, MITE.streamPad)
       // in orbit it walks round its ring to the slot, never across: a chord through the middle
@@ -462,6 +501,15 @@ export class Mite implements Enemy {
       tgt.y = 0.06
       tgt.legs = 0.6
       sy = 1 + 0.04 * (0.5 + 0.5 * Math.sin(Math.PI * 2 * 0.4 * this.life + this.seed * 6.28))
+    } else if (this.nip >= 0) {
+      // pressure: it rears at him, swollen, jaws wide. Its body is the whole tell
+      const T = this.brood.T
+      yaw = this.face = Math.atan2(T.x - this.pos.x, T.z - this.pos.z)
+      tgt.y = 0.16
+      tgt.rx = -0.5
+      tgt.sx = tgt.sz = 1.12
+      tgt.jaw = 0.6
+      tgt.legs = -0.25
     } else if (this.phase === 'approach') {
       if (this.moving) {
         legsL = Math.sin(g) * 0.35
@@ -570,6 +618,8 @@ export class Mite implements Enemy {
     const hb = 0.85 + 0.15 * Math.sin(Math.PI * 2 * this.brood.heartHz * clock)
     const surging = this.phase === 'windup'
     if (surging) out.copy(CORE_C).lerp(SURGE_HOT, Math.min(1, this.t / BROOD.windupMs))
+    // a nip's flare: the surge's heat, in its short tell
+    else if (this.nip >= 0) out.copy(CORE_C).lerp(SURGE_HOT, Math.min(1, this.nip / PRESSURE_MITE.tellMs))
     else out.copy(CORE_C).multiplyScalar(this.phase === 'recover' ? 0.3 : this.role === 'outer' ? 0.55 : 1)
     return out.multiplyScalar(hb)
   }
@@ -578,12 +628,13 @@ export class Mite implements Enemy {
   haloColor(out: THREE.Color) {
     if (this.asleep || this.wakeDelay > 0 || this.blinkT > 0 || this.isSealed) return out.setRGB(0, 0, 0)
     const k = this.phase === 'windup' ? 0.9 + 0.1 * Math.min(1, this.t / BROOD.windupMs)
-      : this.phase === 'recover' ? 0.15 : this.role === 'outer' ? 0.45 : 0.9
+      : this.nip >= 0 ? 1 : this.phase === 'recover' ? 0.15 : this.role === 'outer' ? 0.45 : 0.9
     return out.copy(HALO_C).multiplyScalar(k)
   }
 
   /** Smaller than the mite (0.54 across): at T's 0.55 the additive glow washed the whole dome ember. */
   get haloScale() {
+    if (this.nip >= 0) return HALO + 0.25 * Math.min(1, this.nip / PRESSURE_MITE.tellMs)
     return this.phase === 'windup' ? HALO + 0.25 * Math.min(1, this.t / BROOD.windupMs) : HALO
   }
 
@@ -839,11 +890,13 @@ export class BiteRing {
 
 type Bite = Extract<EnemyAction, { kind: 'melee' }>
 type Decoy = { pos: THREE.Vector3; def: { range: number } } | null
+/** Shared by every awake brood each tick: inner seats taken, and ms until the next nip may start. */
+export type SwarmCap = { used: number; nipWait: number }
 
 /**
  * The swarm's one mind, one per pack that has mites. Combat ticks it after the
  * packs and before the enemies. It owns the roles, the slots, the surge and the
- * ring, and returns the bite for Combat to resolve.
+ * ring (or, a pressure brood, its mites' nips), and returns the bites for Combat to resolve.
  */
 export class Brood {
   readonly mites: Mite[] = []
@@ -883,6 +936,8 @@ export class Brood {
     if (b >= 0 && !m.dead) this.biters.splice(b, 1)
   }
   get isActive() { return this.active }
+  /** An ordinary brood's: its mites nip on their own clocks, with no surge and no ring. A queen's brood never is. */
+  get pressure() { return this.mites.some((m) => m.pressure) }
   innerCount() { return this.mites.filter((m) => !m.dead && m.role !== 'outer').length }
   movingCount() { return this.mites.filter((m) => !m.dead && m.phase === 'approach' && m.moving).length }
   nearestTo(p: THREE.Vector3) {
@@ -896,6 +951,9 @@ export class Brood {
     for (const m of this.mites) {
       m.role = 'outer'
       m.refill = 0
+      m.nip = -1
+      // waking, the clocks start out of step: the first nips don't come as one
+      m.rest = Math.random() * PRESSURE_MITE.cycleMs * 0.5
       if (!m.dead) m.phase = 'approach'
     }
     this.state = 'gather'
@@ -907,7 +965,7 @@ export class Brood {
   }
 
   /** The queen always bites: she takes an inner seat at once, from the farthest orbiting mite of any brood if she must. */
-  seatQueen(cap: { used: number }, awake: Brood[]) {
+  seatQueen(cap: SwarmCap, awake: Brood[]) {
     const q = this.queen
     if (!q || q.dead || q.role !== 'outer' || !this.active) return
     if (cap.used >= BROOD.innerMax) {
@@ -925,7 +983,7 @@ export class Brood {
     cap.used++
   }
 
-  tick(dt: number, terrain: Terrain, ctx: EnemyCtx, cap: { used: number }, decoy: Decoy): Bite | null {
+  tick(dt: number, terrain: Terrain, ctx: EnemyCtx, cap: SwarmCap, decoy: Decoy): Bite[] {
     if (!this.active) {
       // the first tick awake: roles from scratch, and the cores light out from the nest
       this.reset()
@@ -957,7 +1015,7 @@ export class Brood {
         this.state = 'gather'
         this.timer = BROOD.regroupMs
       }
-      return null
+      return []
     }
 
     // 1. one target for all of them: the decoy if any of them is in its range, else Still
@@ -995,7 +1053,8 @@ export class Brood {
     this.place(alive.filter((m) => m.role === 'inner' && m.phase === 'approach'), BROOD.innerR, BROOD.spinIn * dt, terrain)
     this.place(alive.filter((m) => m.role === 'outer'), BROOD.outerR, BROOD.spinOut * dt, terrain)
 
-    // 5. the surge
+    // 5. the surge, or, an ordinary brood, each biter's own nip
+    if (this.pressure) return this.nips(alive, ms, terrain, ctx, cap)
     this.timer -= ms
     let bite: Bite | null = null
     switch (this.state) {
@@ -1059,19 +1118,7 @@ export class Brood {
         if (hit) bite = { kind: 'melee', damage: BROOD.bite * n, source: live[0], tested: true }
         for (const m of this.biters) {
           // each lands on its own side of L: a clump you can cleave
-          const bx = m.pos.x - L.x
-          const bz = m.pos.z - L.z
-          const bd = Math.hypot(bx, bz) || 1
-          let tx = L.x + (bx / bd) * BROOD.clumpR
-          let tz = L.z + (bz / bd) * BROOD.clumpR
-          const ld = Math.hypot(tx - m.pos.x, tz - m.pos.z)
-          if (ld > BROOD.lungeMax) {
-            tx = m.pos.x + ((tx - m.pos.x) / ld) * BROOD.lungeMax
-            tz = m.pos.z + ((tz - m.pos.z) / ld) * BROOD.lungeMax
-          }
-          const to = terrain.clampMove(m.pos.x, m.pos.z, tx, tz, m.radius)
-          m.lungeFrom.copy(m.pos)
-          m.lungeTo.set(to.x, 0, to.z)
+          this.lunge(m, L, BROOD.clumpR, terrain)
           m.phase = 'strike'
           m.t = 0
         }
@@ -1111,7 +1158,73 @@ export class Brood {
     }
     const toBite = this.state === 'windup' ? Math.max(0, this.timer) : 0
     this.ring.update(dt, this.state, this.state === 'windup' ? 1 - toBite / BROOD.windupMs : 1, tellOrder(toBite))
-    return bite
+    return bite ? [bite] : []
+  }
+
+  /**
+   * A pressure brood's step 5. Each inner mite in contact rears for its tell, then darts in and
+   * bites if Still is still in reach, sits a moment, and goes back to its slot. Each keeps its
+   * own clock, and no two start within gapMs of each other over every brood.
+   */
+  private nips(alive: Mite[], ms: number, terrain: Terrain, ctx: EnemyCtx, cap: SwarmCap): Bite[] {
+    const bites: Bite[] = []
+    for (const m of this.mites) {
+      if (m.dead) continue
+      // flung, sent back out, or in the clamp's throw: the rear is lost
+      if (m.nip >= 0 && (m.staggered || m.role !== 'inner' || ctx.held(m))) m.nip = -1
+      // thrown mid-dart, it lands where it's thrown, not where the dart was going
+      if (ctx.held(m) && m.phase !== 'approach') {
+        m.phase = 'approach'
+        m.t = 0
+      }
+    }
+    for (const m of alive) {
+      m.rest -= ms
+      if (m.nip >= 0) {
+        m.nip += ms
+        if (m.nip < PRESSURE_MITE.tellMs) continue
+        m.nip = -1
+        // decided now, on the real Still: a nip at the decoy bites him only if he's in reach of it too
+        const hit = dist(m.pos, ctx.player) <= PRESSURE_MITE.reach && terrain.lineClear(m.pos.x, m.pos.z, ctx.player.x, ctx.player.z, 0.2)
+        ctx.emit({ kind: 'bite', brood: this, at: m.pos.clone(), biters: 1, hit })
+        // the depth curve on its bite, as on any body's
+        if (hit) bites.push({ kind: 'melee', damage: PRESSURE_MITE.bite * (m.dmgMul ?? 1), source: m, tested: true })
+        this.lunge(m, this.T, PRESSURE_MITE.landR, terrain)
+        m.phase = 'strike'
+        m.t = 0
+      } else if (m.phase === 'strike') {
+        if (m.t < BROOD.strikeMs) continue
+        m.phase = 'recover'
+        m.t = 0
+      } else if (m.phase === 'recover') {
+        if (m.t < PRESSURE_MITE.recoverMs) continue
+        m.phase = 'approach'
+        m.t = 0
+      } else if (m.role === 'inner' && m.rest <= 0 && cap.nipWait <= 0 && !m.staggered && !m.buried
+        && dist(m.pos, this.T) <= PRESSURE_MITE.contact && terrain.lineClear(m.pos.x, m.pos.z, this.T.x, this.T.z, 0.2)) {
+        m.nip = 0
+        m.rest = PRESSURE_MITE.cycleMs * (1 + PRESSURE_MITE.jitter * (Math.random() * 2 - 1))
+        cap.nipWait = PRESSURE_MITE.gapMs
+      }
+    }
+    return bites
+  }
+
+  /** Sets a mite's lunge to land r from `at` on its own side, at most lungeMax long, never into a wall. */
+  private lunge(m: Mite, at: THREE.Vector3, r: number, terrain: Terrain) {
+    const bx = m.pos.x - at.x
+    const bz = m.pos.z - at.z
+    const bd = Math.hypot(bx, bz) || 1
+    let tx = at.x + (bx / bd) * r
+    let tz = at.z + (bz / bd) * r
+    const ld = Math.hypot(tx - m.pos.x, tz - m.pos.z)
+    if (ld > BROOD.lungeMax) {
+      tx = m.pos.x + ((tx - m.pos.x) / ld) * BROOD.lungeMax
+      tz = m.pos.z + ((tz - m.pos.z) / ld) * BROOD.lungeMax
+    }
+    const to = terrain.clampMove(m.pos.x, m.pos.z, tx, tz, m.radius)
+    m.lungeFrom.copy(m.pos)
+    m.lungeTo.set(to.x, 0, to.z)
   }
 
   /** Where the ring goes: where he's heading, 0.45 s on, never more than 2.5 u out, never in a wall. No lead on a decoy. */
