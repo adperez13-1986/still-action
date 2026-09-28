@@ -93,7 +93,11 @@ leans toward it. Walk in → fade → next depth, full HP, strain carries, no go
 back. The exit is always open, even while chased.
 
 **Depth.** Level 1: packs of 2–3 chasers, one ranged among them. Deeper: bigger
-packs, more ranged, later archetypes by depth. Never more enemy HP or damage.
+packs, more ranged, later archetypes by depth. ~~Never more enemy HP or damage.~~
+**Lifted 28 Sep (his call, once Still may grow inside a run):** enemies follow a fixed curve by
+depth, never his actual strength, set below a median run's power so growth is felt and never
+punished. Ordinary bodies rise little and come in more numbers; heavies and bosses carry the
+curve (design/scaling/CURVE.md).
 
 **Loot.** 0.66 ÷ pack size per kill (weighted: a mite counts 0.25), so a pack pays
 about the same at every depth; side-room packs always drop. Parts stay on the floor until
