@@ -318,6 +318,19 @@ html, body {
   appearance: none; border: 1px solid #2d4460; background: transparent; color: #9fb6d0;
   padding: 6px 8px; border-radius: 7px; font: 600 12px/1 var(--ui); letter-spacing: .04em;
 }
+/* temper: melt a part you don't want into the one you wear; cold, like Still's own light */
+#offer .melt {
+  appearance: none; border: 1px solid #3f6f86; background: #13202a; color: #bfe4f2;
+  padding: 6px 8px; border-radius: 7px; font: 600 12px/1.1 var(--ui); letter-spacing: .03em; max-width: 92px;
+}
+#offer .melt:active { transform: scale(.93); }
+/* a tempered part's rank on its button: small cold strokes under the icon */
+.btn .lbl { position: relative; }
+.btn .rank {
+  position: absolute; left: 50%; bottom: -9px; transform: translateX(-50%);
+  font: 700 9px/1 var(--display); letter-spacing: .12em; font-style: normal; color: #bfe4f2;
+  text-shadow: 0 0 4px rgba(143, 184, 232, .8);
+}
 .btn.target { animation: target-pulse .9s ease-in-out infinite; }
 @keyframes target-pulse { 50% { box-shadow: 0 0 0 5px rgba(223, 230, 238, .35), 0 4px 12px rgba(0, 0, 0, .5); } }
 

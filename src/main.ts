@@ -8,6 +8,7 @@ import { createPacer, createQuality, createReadout, FRAME_S, BEHIND_CARD_S, IDLE
 import { Combat, eliteLine, HAND, HAND_REACH, EYE, type Archetype, type AutoForm, type CastResult, type EliteMod, type Pack } from './combat'
 import { STARTING, PARTS, byId, type AbilityDef, type AbilityShape, type BeatKey, type Lean } from './abilities'
 import { SLOT_NAMES, type SlotName } from './still'
+import { TEMPER, ROMAN, tempered } from './temper'
 import type { Enemy, EnemyEvent } from './enemy'
 import { isBoss, Assembler } from './boss'
 import { Arbiter, ARBITER, arbiterHusk } from './arbiter'
@@ -1230,6 +1231,8 @@ interface DepthStats {
   playS?: number
   /** The pressure prototype on at this depth (its ordinary packs), and integrity lost here, all sources. */
   pressure?: boolean; hpLost?: number
+  /** Temper on at this depth, and parts melted into a worn one here. */
+  temper?: boolean; melts?: number
 }
 /** One press on a filled button, for the playtest file: how long taps really last on the phone. */
 interface TapLog { depth: number; slot: SlotName; ms: number; ready: boolean; result: Press['result'] }
@@ -1271,6 +1274,8 @@ const run = {
   picks: [] as string[],
   /** Strain the Assembler's second pick added: no quiet eases below it, for the rest of the run. */
   kept: 0,
+  /** Temper's ranks this run, by slot (temper.ts): absent is I; a swap clears the slot's. */
+  ranks: {} as Partial<Record<SlotName, number>>,
   /** His last tagged pick's lean: the match's tie-break (LEAN_MATCH). Not kept by a resume. */
   lastLean: null as Lean | null,
   /**
@@ -1310,7 +1315,9 @@ let offerHeld = false
 
 function maybeDrop(at: THREE.Vector3, kind: Archetype, pack: Pack, wasElite: boolean, summoned: boolean, weight: number) {
   // a side room's pack always pays out (the last kill drops if nothing else did), elites always do
-  if (Math.random() >= dropChance(pack, wasElite, summoned, weight)) return
+  const chance = dropChance(pack, wasElite, summoned, weight)
+  // temper on: fewer, louder drops; an elite's and a side room's owed drop are as ever
+  if (Math.random() >= (temperOn && chance < 1 ? chance * TEMPER.killPayout : chance)) return
   const taken = [...hud.loadout, ...loot.ground.map((g) => g.def)]
   // any slot, empty ones too (28 Sep, his ask: "I don't like it that the drops are only for those that I already have")
   const def = rollPart(kind, taken, wasElite ? 'elite' : 'kill', pool())
@@ -1334,7 +1341,7 @@ type DropTag = 'kill' | 'crate' | 'elite' | 'boss' | 'swap' | 'thief' | 'dev' | 
  * (worn), left (on the floor when the level ended), stolen (the thief got away with it), wall
  * (a pedestal's, gone back when another of its set was taken), or null while it's still lying there.
  */
-interface DropRec { depth: number; id: string; source: DropTag; offered: boolean; end: 'taken' | 'left' | 'stolen' | 'wall' | null }
+interface DropRec { depth: number; id: string; source: DropTag; offered: boolean; end: 'taken' | 'left' | 'stolen' | 'wall' | 'melted' | null }
 const PICK_TAGS: ReadonlySet<DropTag> = new Set<DropTag>(['exit', 'plenty', 'gift'])
 const dropRecs = new WeakMap<GroundPart, DropRec>()
 /** A lifted part's record, by part id, until its thief is caught (the same drop comes back down). */
@@ -1748,6 +1755,26 @@ let pressureOn = (() => {
     return true
   }
 })()
+/**
+ * The temper prototype (temper.ts): melt a floor part into the worn one, ranks I-III, and fewer
+ * kill drops. A pause switch, kept per device, on by default; ranks already earned stay either way.
+ */
+const TEMPER_KEY = 'still-action.temper'
+let temperOn = (() => {
+  try {
+    return localStorage.getItem(TEMPER_KEY) !== '0'
+  } catch {
+    return true
+  }
+})()
+pause.setSwitch('temper', () => temperOn, (on) => {
+  temperOn = on
+  try {
+    localStorage.setItem(TEMPER_KEY, on ? '1' : '0')
+  } catch {
+    // private window: it holds for this session
+  }
+})
 pause.setSwitch('pressure', () => pressureOn, (on) => {
   pressureOn = on
   try {
@@ -1798,7 +1825,7 @@ function updateOffer() {
     if (rec) rec.offered = true
     // a floor part shows its card; a pedestal's opens the compare as he walks in
     const card = next && !next.set ? next : null
-    hud.offer(card?.def ?? null, !!card && !save.found.includes(card.def.id), card ? describePart(card.def) : undefined)
+    hud.offer(card?.def ?? null, !!card && !save.found.includes(card.def.id), card ? describePart(card.def) : undefined, card ? meltLabel(card) : null)
     loot.offer(next)
     if (next?.set) openPick(next)
   }
@@ -1807,6 +1834,45 @@ function updateOffer() {
 hud.onTake(() => {
   if (offered) takePart(offered)
 })
+
+/** Temper: "melt into Cleaver II" when this floor part could rank up the one he wears there, else null. */
+function meltLabel(g: GroundPart): string | null {
+  if (!temperOn || g.set) return null
+  const cur = hud.loadout.find((p) => p.slot === g.def.slot)
+  const rank = run.ranks[g.def.slot] ?? 1
+  if (!cur || rank >= TEMPER.maxRank) return null
+  return `melt into ${byId(cur.id).name} ${ROMAN[rank + 1]}`
+}
+
+hud.onMelt(() => {
+  if (offered) meltPart(offered)
+})
+
+/** Temper: the floor part is gone into the one he wears in its slot, which ranks up; its cooldown keeps its place. */
+function meltPart(g: GroundPart) {
+  const cur = hud.loadout.find((p) => p.slot === g.def.slot)
+  const rank = (run.ranks[g.def.slot] ?? 1) + 1
+  if (!cur || g.set || rank > TEMPER.maxRank) return
+  // melted is found: it joins the pool like a part taken
+  if (markFound(save, g.def.id)) store.write()
+  run.ranks[g.def.slot] = rank
+  endDrop(g, 'melted')
+  loot.remove(g)
+  hud.equip(tempered(byId(cur.id), rank))
+  const st = run.stats[run.stats.length - 1]
+  if (st) st.melts = (st.melts ?? 0) + 1
+  offered = null
+  offerHeld = true
+  hud.offer(null)
+  loot.offer(null)
+  sfx.take()
+  vfx.embers(at3(still.pos, 0.7), 26, 1.2, COLD)
+  vfx.flash(at3(still.pos, 1.0), COLD, 0.7)
+  overlay.banner(`${byId(cur.id).name} ${ROMAN[rank]}`)
+  rig.punch(0.03)
+  still.group.scale.setScalar(1.12)
+  navigator.vibrate?.([18, 30, 18])
+}
 
 hud.onCompare(() => {
   const g = offered
@@ -1833,12 +1899,14 @@ function takePart(g: GroundPart) {
   carry(g.def.id)
   saw(g.def.id)
   const old = swapIn(g.def)
+  // a new part starts at I: whatever was tempered in this slot is given up with the old one
+  delete run.ranks[g.def.slot]
   if (g.def.lean) run.lastLean = g.def.lean
   endDrop(g, 'taken')
   loot.remove(g)
   // an empty slot filled: nothing falls out
   // the part he gave up lands at his feet as itself
-  if (old) logDrop(loot.drop(old, still.pos), 'swap')
+  if (old) logDrop(loot.drop(byId(old.id), still.pos), 'swap')
   still.wear(g.def.slot, g.def)
   offered = null
   offerHeld = true
@@ -2020,6 +2088,7 @@ function writeSnapshot() {
     ...(level?.crossroads ? { crossroads: true as const } : {}),
     ...(run.picks.length ? { picks: [...run.picks] } : {}),
     ...(run.kept ? { kept: run.kept } : {}),
+    ...(Object.keys(run.ranks).length ? { ranks: { ...run.ranks } } : {}),
   }
   save.run = snap
   store.write()
@@ -2053,6 +2122,16 @@ function resumeRun(snap: RunSnapshot) {
     breakRule: combat.breakRule, hand: combat.closeHand, eye: combat.eye, drops: [], id: snap.id, startedAt: snap.startedAt, strain: Math.min(19, Math.max(0, Math.round(snap.strain) || 0)), tally, route,
   })
   run.kept = Math.min(run.strain, Math.max(0, Math.round(snap.kept ?? 0) || 0))
+  // temper's ranks come back on the parts they were earned on
+  run.ranks = {}
+  SLOT_NAMES.forEach((slot, i) => {
+    const r = Math.floor(snap.ranks?.[slot] ?? 1)
+    const d = loadout[i]
+    if (d && r > 1) {
+      run.ranks[slot] = Math.min(TEMPER.maxRank, r)
+      loadout[i] = tempered(d, r)
+    }
+  })
   // a resume starts its stats over, so it's its own entry in the playtest file, not an overwrite
   playKey = `${run.id}.${Date.now().toString(36)}`
   clearLoot()
@@ -2232,7 +2311,7 @@ function enterLevel(depth: number, o: { seed?: number; bossFelled?: boolean; res
   prev.copy(still.pos)
   run.depth = depth
   closeStats()
-  run.stats.push({ depth, fights: 0, pushes: 0, breaks: 0, deadTaps: 0, quiets: 0, strainIn: run.strain, strainOut: null, hand: 0, shots: 0, eye: 0, eyeCasts: 0, handBreaks: 0, braced: 0, playS: 0, eyeBreaks: 0, openings: 0, plantedS: 0, autoDmg: { hand: 0, eye: 0 }, riders: {}, pressure: combat.pressure, hpLost: 0 })
+  run.stats.push({ depth, fights: 0, pushes: 0, breaks: 0, deadTaps: 0, quiets: 0, strainIn: run.strain, strainOut: null, hand: 0, shots: 0, eye: 0, eyeCasts: 0, handBreaks: 0, braced: 0, playS: 0, eyeBreaks: 0, openings: 0, plantedS: 0, autoDmg: { hand: 0, eye: 0 }, riders: {}, pressure: combat.pressure, hpLost: 0, temper: temperOn, melts: 0 })
   // the card's line gets a tick where this depth began (a resumed depth already has its tick)
   if (!o.resume) run.tally.marks.push(run.tally.line.length)
   // parts remember how deep they went
@@ -2244,7 +2323,7 @@ function startRun() {
   leaveRoom()
   still.reassemble()
   Object.assign(run, {
-    phase: 'crawl', strain: 0, kept: 0, lastLean: null, t: 0, swapped: false, ramStunSeen: false,
+    phase: 'crawl', strain: 0, kept: 0, ranks: {}, lastLean: null, t: 0, swapped: false, ramStunSeen: false,
     id: newRunId(), dev: DEPTH_PARAM !== null, committed: false, ending: null, stats: [], drops: [], taps: [], walkS: 0, tally: freshTally(),
     startedAt: new Date().toISOString(), breakRule: combat.breakRule, hand: combat.closeHand, eye: combat.eye, route: ROUTE_PARAM,
   })

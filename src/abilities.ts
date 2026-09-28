@@ -107,6 +107,8 @@ export interface AbilityDef {
   key: string
   name: string
   tier: Tier
+  /** Temper's rank this run (temper.ts): absent is I. */
+  rank?: number
   /** The pickup card's one line (T §6). */
   line: string
   shape: AbilityShape

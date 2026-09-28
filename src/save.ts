@@ -141,6 +141,8 @@ export interface RunSnapshot {
   picks?: PartId[]
   /** Strain the Assembler's second pick keeps: no quiet eases below it. Absent: 0. */
   kept?: number
+  /** Temper's ranks by slot, for the parts worn (temper.ts). Absent: all I. */
+  ranks?: Partial<Record<'head' | 'torso' | 'arms' | 'legs', number>>
 }
 
 export interface Save {

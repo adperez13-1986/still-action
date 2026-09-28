@@ -51,6 +51,19 @@ Next: his feel after 2 runs. Dials if it's flat: more bodies per pack at pressur
 not halving nicks. If it lands, a design round on three threat kinds (pressure bodies, space-shapers,
 telegraphed heavies) and the rules redone inside it.
 
+**28 Sep, drops (his asks, pushed):** floor drops can fill empty slots again (the pedestals-only rule
+is gone; he's "not feeling the benefit of the pedestals"). "After some time, I don't really care about
+the drops": a drop could only ever be a sideways swap. He then set that **inside a run Still gets
+stronger** (DESIGN.md Persistence and design/CONTEXT.md reworded: "wider, not stronger" is between
+runs only). Built behind the pause switch **"temper"** (per device, on by default, `src/temper.ts`):
+a floor part's card has **melt**: it goes into the part worn in that slot, rank I -> II -> III (damage
+x1.3 / x1.6, cooldown x0.85 / x0.72, blasts, shells, lobs and swings x1.15 / x1.3 wider). A swap starts the
+new part at I. Ranks show on the button (II, III), live in `run.ranks`, ride the snapshot
+(`ranks`), and a tempered part is a copy of its def with the same id (`tempered()`), so combat is
+untouched. Kill drops x0.4 while it's on (elites, side rooms, crates, pedestals as ever). Log: per
+depth `temper`, `melts`; drop end `melted`. Next agreed: pedestals offer hand/eye mods (option 3),
+after his feel on temper.
+
 **Then, in order:**
 1. His runs on pedestals + leanings (open fields now always on at depths 1 and 4, logging via `?owner`; he exports from
    the pause screen, fold in with `npx tsx tools/mergelog.ts <file>`). Ask what he felt before reading

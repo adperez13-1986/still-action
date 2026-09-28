@@ -141,7 +141,9 @@ export interface Hud {
   onChooserAction: (cb: () => void) => void
   onPrompt: (cb: () => void) => void
   /** The pickup card. Null hides it. `fresh`: never found before, and the card says so. */
-  offer: (incoming: AbilityDef | null, fresh?: boolean, past?: { name: string; history: string | null }) => void
+  /** `melt`: the melt button's label ("melt into Cleaver II"), or null for none (temper.ts). */
+  offer: (incoming: AbilityDef | null, fresh?: boolean, past?: { name: string; history: string | null }, melt?: string | null) => void
+  onMelt: (cb: () => void) => void
   onTake: (cb: () => void) => void
   onCompare: (cb: () => void) => void
   onPause: (cb: () => void) => void
@@ -226,6 +228,7 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
       <div class="choices">
         <button type="button" class="take">take</button>
         <button type="button" class="compare">compare</button>
+        <button type="button" class="melt">melt</button>
       </div>
     </div>
     <div id="bossBar"><b></b><div class="track"><i></i></div></div>
@@ -287,6 +290,8 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
   })
   const takeBtn = offerEl.querySelector<HTMLElement>('.take')!
   const compareBtn = offerEl.querySelector<HTMLElement>('.compare')!
+  const meltBtn = offerEl.querySelector<HTMLElement>('.melt')!
+  const meltListeners: (() => void)[] = []
   const pauseBtn = root.querySelector<HTMLElement>('#pauseBtn')!
   const takeListeners: (() => void)[] = []
   const compareListeners: (() => void)[] = []
@@ -301,6 +306,10 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
   compareBtn.addEventListener('pointerdown', (e) => {
     e.preventDefault()
     if (offered && state.enabled) for (const cb of compareListeners) cb()
+  })
+  meltBtn.addEventListener('pointerdown', (e) => {
+    e.preventDefault()
+    if (offered && state.enabled) for (const cb of meltListeners) cb()
   })
   pauseBtn.addEventListener('pointerdown', (e) => {
     e.preventDefault()
@@ -318,7 +327,7 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
   const paint = (b: ButtonState) => {
     b.el.className = b.def ? `btn tier-${b.def.tier}` : 'btn empty'
     b.icon = null
-    b.el.querySelector('.lbl')!.innerHTML = b.def ? svg(b.def.icon) : SLOT_ICON[b.slot]
+    b.el.querySelector('.lbl')!.innerHTML = (b.def ? svg(b.def.icon) : SLOT_ICON[b.slot]) + (b.def?.rank && b.def.rank > 1 ? `<em class="rank">${'I'.repeat(b.def.rank)}</em>` : '')
     // the price of every cast, printed on the rim before you press it: ● always, ○ when it depends.
     // The push's own price sits beside it, shown only while a press would push.
     const pips = b.def?.pips
@@ -723,8 +732,10 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
     onChooserAction(cb) { chooserActListeners.push(cb) },
     onPrompt(cb) { promptListeners.push(cb) },
 
-    offer(incoming, fresh = false, past) {
+    offer(incoming, fresh = false, past, melt = null) {
       offered = incoming
+      meltBtn.style.display = incoming && melt ? '' : 'none'
+      meltBtn.textContent = melt ?? 'melt'
       offerNew.style.display = incoming && fresh ? '' : 'none'
       // the button that would change pulses, so "which slot" needs no reading
       for (const b of buttons) b.el.classList.toggle('target', !!incoming && b.slot === incoming.slot)
@@ -746,6 +757,7 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
 
     onTake(cb) { takeListeners.push(cb) },
     onCompare(cb) { compareListeners.push(cb) },
+    onMelt(cb) { meltListeners.push(cb) },
     onPause(cb) { pauseListeners.push(cb) },
     healing() {
       const meter = hpFill.parentElement!
