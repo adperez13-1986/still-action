@@ -1,30 +1,76 @@
-# Handover — 28 Sep 2026
+# Handover — 28 Sep 2026 (night)
 
 For the next session. Read this, then `DESIGN.md` (the settled decisions), then the design
 folder for whatever you're touching. Don't re-derive any of them.
 
-## Start here (28 Sep, end of a long session)
+## Start here (28 Sep, night: end of a long session)
 
-**Where the code is.** Two layers of work are **not on `main` and not pushed**:
-- branch **`pedestals`** (1a76fc2): picks on pedestals, replay step 2 (section below).
-- branch **`leanings`** on top of it (1d0b3bc, f067319): the two leanings, replay step 3 (section below).
-Both live in the git worktree **`/Users/adrianperez/repos/personal/still-action-pedestals`** (node_modules
-is a symlink to the main checkout's). `main` (the checkout at `still-action/`, whose dev server on
-:5173 feeds his phone at home) has everything up to the open fields and the design docs. The live
-site (GitHub Pages) is at b5cd80f + nothing newer of the game.
+**Everything is on `main`, pushed and live** (last a4c11dd). No branches in flight; the old `pedestals` /
+`leanings` branches and the `still-action-pedestals/` worktree are fully merged (safe to remove). The dev
+server was stopped at the end of the session: start it (`npx vite --host`, give him the LAN address) when
+work resumes.
 
-**Waiting on him, first thing:** *"Should I push?"* He was asked whether to merge `leanings` (which
-includes `pedestals`) into `main` and push, so he can play both on the installed app. He answered by
-ending the session, so it's still open: **ask him, don't push unasked**. To do it: in the main checkout
-`git merge leanings` (fast-forwardable after main's doc commits are in the branch: they are, via
-4c8cba0), `npx tsc -b`, push, watch the Pages run.
+**First thing: ask how his runs felt, before reading any numbers.** A lot changed since his last logged
+runs (28 Sep 14:59 and 15:27 UTC in `playtest.json`): the recalibrated depth curve, bosses taking half from
+the autos, the Arbiter's hug scald, the synergy trial, pedestals off, the mender, pressure mites. Then read
+the log (dev-server runs land in `playtest.json` directly; phone exports fold in with
+`npx tsx tools/mergelog.ts <file>`).
 
-**Flags he was given for his first leaning runs:** a lone sentinel facing a planted Still never gets a
-shot off (the 620 ms beat beats its 760 ms windup; crowds are the real test; the dial is limiting eye
-breaks); the lean glyphs are small (card top-right); rider card lines are placeholder words ("Hand
-break: ready again."); nothing in the game names "the hand" or "the eye" yet (a first-run notebook
-page, his words); walking into a pedestal mid-fight pauses the game; a new save's depth 1 is thin
-(floor drops only for worn slots). The pedestal match (`LEAN_MATCH`) stays off until 3 pedestal runs.
+**The game today, in one breath.** 6 depths, open fields at 1 and 4. Ordinary hulks, sentinels and mites are
+**pressure bodies** (no big windups; the crowd is the threat); an elite pack's crowned leader keeps the old
+telegraphs (the heavy); rams and Lobbers keep theirs; bosses keep theirs. The autos: the **close strike**
+(in reach) and the **planted shot** (standing still) — never "the hand" / "the eye" on screen. **Temper**:
+melt a floor part into the worn one, ranks I-III; a swap lands at II. **Mastery**: melting into a III part
+teaches the close strike (close parts) or the planted shot (marksman parts) one of six mods. **Synergy
+trial 1**: chilled and marked states, set by the autos (mastery) and some parts, paid x2 by paying parts;
+shatter. **Depth curve** (`src/curve.ts`): keyed on depth only; bosses take half from the autos. No riders,
+no pedestals. Inside a run Still gets stronger (between runs, never).
+
+**Pass lines to read after his runs:**
+- Curve (design/scaling/CURVE.md): modelled finish never-melt 35% / median 73% / investor 92%, anchored on only
+  two never-melt runs. First dial if the median dies at depth 5 more than 1 run in 3: ordinary HP at 5 to x1.2.
+  The autos' share of a boss's HP (`autoDmg` vs `partDmg`) should now be well under half.
+- Synergy (design/synergy/2-verifier.md): must hold exactly: `paidBy.hand + paidBy.eye == 0`, `maxMul <= 2`,
+  every pay crosses slots. Directional: >= 0.5 paid a pack fight and 1 a heavy where a pair is worn; bonus
+  0.15-0.33 of the payer's damage; `expired/set` < 0.8; median set-to-pay < 2.5 s; >= 0.3 pushes into a state
+  a fight (crawl pushes were 0.49 a fight).
+- Mender: `menders { met, cut, killed, healed }`; does he cut or kill, and does the cable read on depth 5's
+  dark floor?
+
+**Open, his to decide:**
+1. Rams and Lobbers keep their telegraphs (my recommendation, not confirmed).
+2. Next after his runs, in my suggested order: synergy step 2 (slammed: a part's shove into a wall pins, some
+   parts pay x2) or the counter-moves (the hulk lunges at a Still who holds the band ~1.5 s; the sentinel steps
+   behind cover from a planted Still), depending on what the runs show. Then hauled (step 3), named champions
+   with stacked mods and the Mirrored one (design/variety/PITCHES.md 7-8).
+3. Parry Clamp needs a new job (its catch-a-windup rarely fires now).
+4. **Run length:** his runs are ~10 min against a 20-25 min target. The agreed route is both roads in one
+   run (9 depths: at the crossroads he picks which road is area 2, the other becomes area 3), which needs the
+   Line's stages B and C (`design/area3/`). The biggest item, separate from the rest.
+5. Words that are his: the mender's name and notebook line (it has no page), the Home ending, `src/ending.ts`,
+   the Wandering Drone's line, the new captions ("hold · pay it").
+
+**Decisions he made (27-28 Sep), don't re-ask:**
+- The close strike and planted shot are the only autos; on screen they are never "the hand" / "the eye".
+- **Pressure accepted** ("I prefer it"): no floor rings or lines on ordinary bodies; the body's own animation
+  and the projectile are enough.
+- **Inside a run Still gets stronger**; "wider, not stronger" is between runs only. "Never more enemy HP or
+  damage" is lifted: a fixed depth curve, never scaled to his loadout ("be smart so that growth is not punished").
+- The harder target: never-melt finishes ~1 in 3, median ~2 in 3, investor nearly always.
+- Bosses take half from the autos; the Arbiter's scald comes sooner while he hugs it.
+- Temper and mastery (his idea: "option 3 but after the rank III"); riders cut; pedestals removed ("not feeling
+  the benefit"); floor drops fill empty slots.
+- Synergy: build it, with shatter. Mastery chill has no slow (the recommended default; he didn't pick).
+- Run length target 20-25 min; both roads in one run (9 depths). Open fields at depths 1 and 4.
+- The build rules were re-read (`design/rules/PITCHES.md`); several were inherited from the turn-based games and
+  stricter than their sources. The rules round's trial (poise etc.) is superseded by pressure + synergy.
+- The three design agents keep `model: opus` (the alias), not pinned.
+
+**Working setup notes:** `repos/personal` isn't a git repo; the still-action checkout is. Engineer agents were
+briefed with a written spec (`design/*/BUILD-*.md`, `design/enemies/*.md`), told not to commit, and reviewed
+(checks + screenshots) before each push. Sunhill uses `npx vite --host --port 5180`.
+
+## What changed on 28 Sep (in order)
 
 **28 Sep, pushed on his word:** `leanings` merged into main and deployed; open fields no flag;
 the Arbiter's outrun fix. His report: "I just run around so the revolving light does not hit me".
@@ -113,43 +159,20 @@ on the cable do nothing; killing it ends it. Depths 2/4/5 in main packs of 3+, a
 plum-dark hide. No notebook page yet: its name is his. Log `menders { met, cut, killed, healed }`. Check on
 the phone: the cable on depth 5's dark floor.
 
-**Then, in order:**
-1. His runs on pedestals + leanings (open fields now always on at depths 1 and 4, logging via `?owner`; he exports from
-   the pause screen, fold in with `npx tsx tools/mergelog.ts <file>`). Ask what he felt before reading
-   numbers. Check the pass lines in `design/leanings/PITCHES.md` (L1-L5) and the play time per depth
-   (`playS`, `walkS`) against the 20-25 min target.
-2. After 3 pedestal runs: `LEAN_MATCH` on.
-3. The run grows to **both roads, 9 depths**: at the crossroads after the Assembler he picks which road
-   is area 2, the other becomes area 3; open fields at the first depth of each area (1, 4, 7). Needs the
-   Line's stage B (Signalman, Sleepers, Handcar; Line depth 4 as an open rail yard) and stage C (the
-   Engine becomes required: each road needs its own boss), then the 9-depth restructure (endings, walk
-   home, save/resume, strain/HP retune). `design/area3/` has the spec; stages in `design/area3/PITCHES.md`.
-4. Backlog tied to failed pass lines: Glare, Grindstone, Flywheel, Kickstand; the verifier's other four
-   riders (Signal Flare, Skid Plates, Chill Vent, Spring Heels) if L1 fails.
+**28 Sep, mites as pressure bodies (a4c11dd):** an ordinary brood's inner mites rear 120 ms and nip for 3
+on their own clocks (`PRESSURE_MITE` in swarm.ts), no surge ring, bites stack; a queen's brood and boss adds
+keep the surge. Surrounded, ~6 dps at depth 1 as before; the curve's x1.5 now reaches them at depths 4-5.
+Known, untouched: an elite Quick brood surges with only its queen (1.5 dps, before this change too).
 
-**Decisions he made this session (27-28 Sep), don't re-ask:**
-- The hand and the eye are the only autos (switches closed); the eye's shot looks like the old shot.
-- The hand doesn't strike while backing away.
-- Run length target **20-25 min**; my earlier 26/41 min estimates were wrong (his runs are 8-12 min).
-- **Both roads in one run** (9 depths), order chosen at the crossroads. Open fields at depths 1 and 4
-  now ("it felt ok"), boss depths enclosed.
-- Wayfinding for open fields: road, exit chevron around Still, pause-screen map (he raised getting lost).
-- **Two leanings first** (close, marksman), from the record of what broke builds in Still and
-  still-merge: `design/builds/LESSONS.md` (read it before any part or payoff work).
-- The three design agents keep `model: opus` (the alias), not pinned.
 
-**Working setup notes:** the main checkout isn't the cwd of these sessions (`repos/personal` isn't a git
-repo), so worktree isolation for agents must be made by hand (`git worktree add`), as done here. Two
-still-action dev servers were running on :5173 (main) and :5174; Sunhill uses `npx vite --host --port 5180`.
+## The autos now (28 Sep, for reference)
+Close strike ("hand" in code): 10 dmg on the 0.62 s beat within arm's reach, breaks a breakable windup (heavies
+only now), shoves 0.5 u, no strike while backing away. Planted shot ("eye"): planted 0.3 s, 8 dmg, pierces,
+shoves 0.6 u, blows taken halved, aims at a breakable windup first. Walking at range: no auto. A boss takes
+`BOSS_AUTO_MUL` 0.5 of both. Mastery adds behaviour (slow-free chill, mark, cleave, split). Log fields:
+`handBreaks`, `braced`, `autoDmg`, `partDmg`, `playS`, `walkS`. Phone log: `?owner` + pause-screen export.
 
-## The autos now (27 Sep, for reference)
-Hand: 10 dmg on the 0.62 s beat within arm's reach, breaks a breakable windup, shoves 0.5 u, no strike
-while backing away (`HAND.moveMin`, `HAND.retreat`). Eye: planted 0.3 s, 8 dmg on `leanings` (5 on
-`main`), pierces, shoves 0.6 u, blows taken halved, aims at a breakable windup first on `leanings`.
-Walking at range: no auto. Log fields: `handBreaks`, `braced`, `playS`, `walkS`, and on `leanings` the
-rider/eye-break fields. Phone log: `?owner` + pause-screen export (`src/playlog.ts`).
-
-## Picks on pedestals (replay step 2, 28 Sep)
+## Picks on pedestals (replay step 2, 28 Sep) — OFF since 28 Sep (`PEDESTALS_ON`), kept for history
 
 **Built:** three parts rise on pedestals (the kit's pillar cut to 0.6 u, the part a size up
 hovering over it, its tier beam and a cold pool) beside **every non-boss crawl depth's exit beam**
@@ -178,7 +201,7 @@ lights at the Assembler (or at a Plenty he pays for). The empty-slot fill is gon
 - Watch on the phone: depth 1 is one button plus the hand, and with a young save its floor
   drops dry up fast (only the worn slot's other found parts can fall).
 
-## The two leanings (replay step 3, 28 Sep, branch `leanings` on `pedestals`)
+## The two leanings (replay step 3, 28 Sep) — merged; riders cut since, mastery is the payoff now
 
 Spec: `design/leanings/PITCHES.md` (four voices, two rounds, the lead's calls); the frame is
 `design/builds/LESSONS.md`. **Built:**
@@ -244,7 +267,7 @@ service worker precaches; installable PWA). Repo public: `adperez13-1986/still-a
 Direction for the project, in his words: *"premium quality little by little... maybe sell someday,
 no obligation, no timeline."* No milestone plans or dates.
 
-**The run:** one day, 6 depths, ~26 minutes. Area I (ruin, depths 1-2, the Assembler at 3), area II
+**The run:** one day, 6 depths, ~10 minutes of play today (target 20-25). Area I (ruin, depths 1-2, the Assembler at 3), area II
 (the Works at 4, the workers' quarter at 5, the Arbiter at 6), the walk home. Three endings (Broken,
 Stopped, Home), every ending keeps everything, then the Workshop.
 
@@ -277,7 +300,7 @@ upgrade now keeps the original save untouched). Stage B is later in the replay o
 - Engine question settled: stay on three.js/web; Godot only if phones can't hold 60 fps or consoles
   matter.
 
-## The plan: `design/replay/PITCHES.md` (read it)
+## The replay plan: `design/replay/PITCHES.md` (partly superseded on 28 Sep: pedestals off, riders cut; see Start here)
 
 Direction (all four voices): **choices for depth, content only where it multiplies.** His play time
 is the budget: one combat change and one economy change on trial at a time. His decisions: direction
@@ -334,13 +357,17 @@ welcome and slower wall-fill are next on it), `design/strain/PITCHES.md`, `desig
 | `areas.ts` / `day.ts` / `look.ts` / `grade.ts` / `world.ts` / `perf.ts` | places, the day, the grade, fog, lights, frame pacing and adaptive resolution |
 | `dungeon.ts` / `terrain.ts` / `kit.ts` / `crossroads.ts` / `line.ts` | levels, packs, arenas, the walk home, the crossroads, the Line's rails and trains |
 | `combat.ts` / `hazard.ts` | enemies, packs, shots, abilities, breaks, the hand, the eye; the floor hazard |
-| `enemy.ts` / `ranged.ts` / `charger.ts` / `lane.ts` / `swarm.ts` / `lobber.ts` / `thief.ts` | hulk, sentinel, ram, mites, Lobber, thief |
+| `enemy.ts` / `ranged.ts` / `charger.ts` / `lane.ts` / `swarm.ts` / `lobber.ts` / `thief.ts` | hulk, sentinel, ram, mites, Lobber, thief (pressure variants in enemy / ranged / swarm) |
 | `boss.ts` / `arbiter.ts` | the `Boss` interface and the Assembler; the Arbiter |
 | `hide.ts` | enemy body materials |
 | `abilities.ts` / `parts.ts` / `partfx.ts` / `partmodels.ts` / `pool.ts` / `drops.ts` / `loot.ts` | the 30 parts, their runtime, visuals, models, the pool, drop rules and picks, the floor loot and pedestals |
+| `temper.ts` / `mastery.ts` / `states.ts` | ranks I-III and melting; the six masteries; enemy states and the one multiplier (`stateMul`) |
+| `curve.ts` | the enemy curve by depth (`DEPTH_CURVE`) |
+| `mender.ts` | the mender and its cable |
 | `still.ts` / `handring.ts` / `sightline.ts` | the Lantern; the hand's ring; the eye's sightline |
 | `workshop.ts` / `save.ts` / `notebook.ts` / `crayon.ts` / `ending.ts` | the Workshop, the save, the notebook, the kids' drawings, ending words |
 | `hud.ts` / `pause.ts` / `style.css` / `camera.ts` | UI, pause (with switches) and compare, type, zoom |
 | `vfx.ts` / `audio.ts` / `music.ts` / `ambience.ts` | particles and shaders; synth and samples; score; room tone |
 | `tools/dropsim.ts` | the drop simulator (`npx tsx tools/dropsim.ts`; `--lean all` for the leanings) |
 | `tools/leancheck.ts` | the leanings' static checks (`npx tsx tools/leancheck.ts`) |
+| `tools/statecheck.ts` | the synergy states' static checks (`npx tsx tools/statecheck.ts`) |
