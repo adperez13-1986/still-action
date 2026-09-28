@@ -35,6 +35,22 @@ and the mortar lobs onto the circle he's running (`leadS` 1.0 of his turn). Head
 sweep for 45 s, damage before -> after: 5 u 54 -> 102, 6.5 u 18 -> 108, 8 u 0 -> 60, 10 u 0 -> 108
 (the bot reverses on the judder's frame; a person is slower, so it's harder than that). Ask how it feels.
 
+**28 Sep, the pressure prototype (pushed; his call after the rules round):** he questioned the
+telegraph itself: "the break mechanic was born from the telegraph mechanic... to have it for all
+the enemies is actually weird". The rules round (`design/rules/PITCHES.md`) is **on hold**: its
+trial (poise, riders on pushed breaks) is all built on the break. Built instead, behind the pause
+switch **"pressure"** (per device, on by default, takes effect from the next depth): at depths 1-2
+an ordinary pack's hulks and sentinels are pressure bodies. Hulk: no ring; in contact it cocks 180 ms
+and swipes 5 (`PRESSURE_HULK`, enemy.ts). Sentinel: no line or lock; a 260 ms lens glow, then a
+3-shot burst of 3, each aimed afresh (`PRESSURE_SENTINEL`, ranged.ts). Their hits stack (they skip
+the hurt window, `hurtPlayer(..., stack)`) and small hits get lighter feedback (a "nick"). The
+hand and eye can't break them (`breakable`). The elite pack keeps the old telegraphs: the level's
+heavy. Log: per depth `pressure` and `hpLost`. Headless, standing planted with the autos: 3 hulks
+25 -> 30 HP lost, 5 hulks 60 -> 78 (the eye's brace halves pressure hits too; moving, they land full).
+Next: his feel after 2 runs. Dials if it's flat: more bodies per pack at pressure depths, the brace
+not halving nicks. If it lands, a design round on three threat kinds (pressure bodies, space-shapers,
+telegraphed heavies) and the rules redone inside it.
+
 **Then, in order:**
 1. His runs on pedestals + leanings (open fields now always on at depths 1 and 4, logging via `?owner`; he exports from
    the pause screen, fold in with `npx tsx tools/mergelog.ts <file>`). Ask what he felt before reading

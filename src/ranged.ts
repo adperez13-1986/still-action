@@ -41,6 +41,13 @@ export const RANGED = {
   aimLength: 16,
 }
 
+/**
+ * The pressure sentinel (prototype): no aim line and no lock. The lens glows for a beat and it
+ * looses a short burst at where he is, each shot aimed afresh; walls stop them as ever, and
+ * moving across its line is the answer. Its shots stack (Combat skips the hurt window for them).
+ */
+export const PRESSURE_SENTINEL = { cockMs: 260, shots: 3, gapMs: 140, damage: 3, reloadMs: 1300 }
+
 /** A floor strip starting at the enemy and running along local +z. */
 function strip(width: number, length: number) {
   const g = new THREE.PlaneGeometry(width, length)
@@ -61,6 +68,10 @@ export class Ranged implements Enemy {
   readonly pos = new THREE.Vector3()
   hp = RANGED.hp
   phase: EnemyPhase = 'approach'
+  pressure = false
+  /** Pressure: ms the lens has glowed before a burst, or -1; shots left in the burst. */
+  private cock = -1
+  private burst = 0
   dead = false
   armor = 1
   speedMul = 1
@@ -255,7 +266,18 @@ export class Ranged implements Enemy {
         // an answer comes first: it aims at the bounce and doesn't track, whatever the sight or the band.
         // Every lock is booked, so two never land within BOOK_GAP of each other: it waits, still moving.
         const lockMs = RANGED.windupMs * RANGED.lockAt
-        if (this.answer && this.reload <= 0) {
+        if (this.pressure) {
+          // no line, no lock, no booking: the lens glows a beat, then a burst at where he is now
+          if (this.cock >= 0) {
+            this.cock += dt * 1000
+            if (this.cock >= PRESSURE_SENTINEL.cockMs) {
+              this.cock = -1
+              this.phase = 'strike'
+              this.burst = PRESSURE_SENTINEL.shots
+              this.timer = 0
+            }
+          } else if (this.reload <= 0 && dist <= RANGED.fireRange && sight) this.cock = 0
+        } else if (this.answer && this.reload <= 0) {
           if (ctx.canLock(0)) {
             ctx.book(this, 0)
             this.phase = 'windup'
@@ -299,6 +321,16 @@ export class Ranged implements Enemy {
         break
       }
       case 'strike': {
+        if (this.pressure && this.burst > 0) {
+          if (this.timer <= 0) {
+            this.aim = toward
+            this.recoil = 1
+            this.burst--
+            this.timer = this.burst > 0 ? PRESSURE_SENTINEL.gapMs : 110
+            action = { kind: 'shot', dir: new THREE.Vector3(Math.sin(this.aim), 0, Math.cos(this.aim)), damage: PRESSURE_SENTINEL.damage }
+          }
+          break
+        }
         if (this.timer <= 0) {
           this.phase = 'recover'
           this.timer = RANGED.recoverMs
@@ -308,7 +340,7 @@ export class Ranged implements Enemy {
       case 'recover': {
         if (this.timer <= 0) {
           this.phase = 'approach'
-          this.reload = RANGED.reloadMs
+          this.reload = this.pressure ? PRESSURE_SENTINEL.reloadMs : RANGED.reloadMs
           if (this.reel >= 0) this.coreMat.color.setHex(this.coreOn)
           this.reel = -1
         }
@@ -346,8 +378,10 @@ export class Ranged implements Enemy {
     this.group.scale.setScalar(this.size * (1 + this.flash * 0.1))
     this.tint()
     // the lens swells as it locks, and the barrel kicks back on the shot
-    this.orb.scale.setScalar(1 + (winding ? t * (this.locked ? 0.9 : 0.4) : 0))
-    this.halo.scale.setScalar(1.1 + (winding ? t * (this.locked ? 1.4 : 0.6) : 0))
+    // pressure: the lens swells over its short glow instead
+    const glow = this.cock >= 0 ? Math.min(1, this.cock / PRESSURE_SENTINEL.cockMs) : 0
+    this.orb.scale.setScalar(1 + (winding ? t * (this.locked ? 0.9 : 0.4) : glow * 0.9))
+    this.halo.scale.setScalar(1.1 + (winding ? t * (this.locked ? 1.4 : 0.6) : glow * 1.4))
     this.halo.material.opacity = 1
     this.barrel.position.z = 0.44 - this.recoil * 0.22
 

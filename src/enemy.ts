@@ -150,6 +150,11 @@ export interface Enemy {
   readonly knock: THREE.Vector3
   hp: number
   phase: EnemyPhase
+  /**
+   * The pressure prototype (28 Sep, his ask: telegraphs on every enemy "is actually weird"):
+   * an ordinary hulk or sentinel with no big windup, pressure instead. Set by Combat on a non-elite pack.
+   */
+  pressure?: boolean
   dead: boolean
   /** Damage taken is multiplied by this. Elites and their wards change it. */
   armor: number
@@ -299,6 +304,13 @@ export const CHASER = {
   recoverMs: 760,
 }
 
+/**
+ * The pressure hulk (prototype): no ring and no rear-back. In contact it cocks a fist for a
+ * beat and swipes whoever is still in reach; a crowd of them is the threat, not one slam.
+ * Its swipes stack with its packmates' (Combat skips the hurt window for them).
+ */
+export const PRESSURE_HULK = { contact: 1.5, reach: 1.9, cockMs: 180, damage: 5, recoverMs: 550 }
+
 /** Closes, telegraphs a ring, strikes where the ring is. */
 export class Chaser implements Enemy {
   readonly kind = 'chaser'
@@ -310,6 +322,9 @@ export class Chaser implements Enemy {
   readonly pos = new THREE.Vector3()
   hp = CHASER.hp
   phase: EnemyPhase = 'approach'
+  pressure = false
+  /** Pressure: ms the fist has been cocked, or -1. */
+  private cock = -1
   dead = false
   armor = 1
   speedMul = 1
@@ -476,7 +491,24 @@ export class Chaser implements Enemy {
 
     switch (this.phase) {
       case 'approach': {
-        if (staggered) break
+        if (staggered) {
+          this.cock = -1
+          break
+        }
+        if (this.pressure) {
+          const touching = dist <= PRESSURE_HULK.contact + this.radius && terrain.lineClear(this.pos.x, this.pos.z, target.x, target.z, 0.2)
+          if (this.cock >= 0 || touching) {
+            // the fist cocks for a beat, then swipes whoever is still in reach
+            this.cock = Math.max(0, this.cock) + dt * 1000
+            if (this.cock >= PRESSURE_HULK.cockMs) {
+              this.cock = -1
+              this.phase = 'strike'
+              this.timer = 90
+              if (dist <= PRESSURE_HULK.reach + this.radius) action = { kind: 'melee', damage: PRESSURE_HULK.damage, reach: PRESSURE_HULK.reach + this.radius }
+            }
+            break
+          }
+        }
         // no striking through a wall, even a low one: close in until the way is clear
         if (dist > CHASER.strikeRange || !terrain.lineClear(this.pos.x, this.pos.z, target.x, target.z, 0.2)) {
           const to = terrain.nextStep(this.pos.x, this.pos.z, target.x, target.z, this.radius)
@@ -503,7 +535,7 @@ export class Chaser implements Enemy {
       case 'strike': {
         if (this.timer <= 0) {
           this.phase = 'recover'
-          this.timer = CHASER.recoverMs
+          this.timer = this.pressure ? PRESSURE_HULK.recoverMs : CHASER.recoverMs
         }
         break
       }
@@ -543,6 +575,9 @@ export class Chaser implements Enemy {
 
     // winding: rear back and raise both fists. strike: slam them into the floor.
     if (winding) this.strikePose(dt, { lean: -0.32 * t, arms: -2.5 * t, squash: 1 + 0.06 * t })
+    // pressure: a short cock of the fists, and a jab, not the slam
+    else if (this.cock >= 0) this.strikePose(dt, { lean: -0.1, arms: -1.2 * Math.min(1, this.cock / PRESSURE_HULK.cockMs), squash: 1 })
+    else if (this.phase === 'strike' && this.pressure) this.strikePose(dt, { lean: 0.22, arms: -0.9, squash: 0.95 }, true)
     else if (this.phase === 'strike') this.strikePose(dt, { lean: 0.42, arms: -0.55, squash: 0.86 }, true)
     // reeling: knocked back on its heels, fists thrown wide, the chest open
     else if (this.reel >= 0) this.strikePose(dt, { lean: -0.42, arms: -1.1, squash: 0.94 })
@@ -555,7 +590,7 @@ export class Chaser implements Enemy {
       this.core.scale.setScalar(1.35)
     }
 
-    const walking = this.phase === 'approach' && !staggered
+    const walking = this.phase === 'approach' && !staggered && this.cock < 0
     this.walking = walking
     const stride = walking ? Math.sin(this.bob * 1.6) * 0.4 : 0
     this.legL.rotation.x = stride

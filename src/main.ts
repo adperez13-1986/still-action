@@ -244,7 +244,9 @@ const combat = new Combat(world.scene, OPEN, {
     vfx.flash(at3(at, 1.0), COLD_DEEP, 0.35)
     shake = Math.max(shake, 0.1)
   },
-  onPlayerHurt: (_amount, _source, braced) => {
+  onPlayerHurt: (amount, _source, braced) => {
+    const hurtSt = run.stats[run.stats.length - 1]
+    if (hurtSt) hurtSt.hpLost = (hurtSt.hpLost ?? 0) + amount
     sfx.hurt()
     if (braced) {
       // planted, the eye took half: a cold flash over fewer embers, and he barely rocks
@@ -259,12 +261,14 @@ const combat = new Combat(world.scene, OPEN, {
       navigator.vibrate?.(15)
       return
     }
-    vfx.sparks(at3(still.pos, 1.2), EMBER, 12, 5)
-    vfx.flash(at3(still.pos, 1.2), EMBER, 0.6)
-    hitstop = Math.max(hitstop, 0.09)
-    shake = Math.max(shake, 0.5)
-    rig.punch(-0.03)
-    navigator.vibrate?.(30)
+    // a pressure body's small hit is a nick, not a blow: a crowd of them must not freeze the game
+    const nick = amount <= 5
+    vfx.sparks(at3(still.pos, 1.2), EMBER, nick ? 6 : 12, 5)
+    vfx.flash(at3(still.pos, 1.2), EMBER, nick ? 0.35 : 0.6)
+    hitstop = Math.max(hitstop, nick ? 0.025 : 0.09)
+    shake = Math.max(shake, nick ? 0.2 : 0.5)
+    rig.punch(nick ? -0.015 : -0.03)
+    navigator.vibrate?.(nick ? 12 : 30)
   },
   onKill: (at, kind, pack, wasElite, summoned, weight, e) => {
     run.killed = true
@@ -1224,6 +1228,8 @@ interface DepthStats {
   riders?: Record<string, number>
   /** Seconds actually played on this depth's crawl: game time, so pauses, loot screens and the app in the background don't count. */
   playS?: number
+  /** The pressure prototype on at this depth (its ordinary packs), and integrity lost here, all sources. */
+  pressure?: boolean; hpLost?: number
 }
 /** One press on a filled button, for the playtest file: how long taps really last on the phone. */
 interface TapLog { depth: number; slot: SlotName; ms: number; ready: boolean; result: Press['result'] }
@@ -1727,6 +1733,31 @@ run.hand = combat.closeHand
 run.eye = combat.eye
 
 /**
+ * The pressure prototype (28 Sep, his ask: "to have [telegraphs] for all the enemies is actually
+ * weird"): at depths 1 and 2 an ordinary pack's hulks and sentinels are pressure bodies (a short
+ * cock and a swipe, a short glow and a burst; their hits stack), and the elite pack keeps the big
+ * telegraphs as the level's heavies. A pause switch, kept per device, on by default; it takes
+ * effect from the next depth. Each depth's stats say whether it was on.
+ */
+const PRESSURE_KEY = 'still-action.pressure'
+const PRESSURE_DEPTHS: readonly number[] = [1, 2]
+let pressureOn = (() => {
+  try {
+    return localStorage.getItem(PRESSURE_KEY) !== '0'
+  } catch {
+    return true
+  }
+})()
+pause.setSwitch('pressure', () => pressureOn, (on) => {
+  pressureOn = on
+  try {
+    localStorage.setItem(PRESSURE_KEY, on ? '1' : '0')
+  } catch {
+    // private window: it holds for this session
+  }
+})
+
+/**
  * C-T2: under the break rule the push is taught at its first reason, once per save: a
  * windup starting that a cooling part on Still reaches and could break.
  */
@@ -2155,6 +2186,7 @@ function enterLevel(depth: number, o: { seed?: number; bossFelled?: boolean; res
   loot.terrain = level.terrain
   // the Line's own bodies and looks arrive in stage B: until then a Sleepers' brood sleeps as any brood does
   const packOfSpec = new Map<PackSpec, Pack>()
+  combat.pressure = pressureOn && PRESSURE_DEPTHS.includes(depth) && !level.boss
   for (const p of level.packs) {
     const members = p.members.map((m) => ({ ...m, variant: m.variant === 'lobber' ? ('lobber' as const) : undefined }))
     packOfSpec.set(p, combat.addPack(members, p.room.kind === 'side', p.elite, p.look === 'heap' ? 'heap' : undefined))
@@ -2201,7 +2233,7 @@ function enterLevel(depth: number, o: { seed?: number; bossFelled?: boolean; res
   prev.copy(still.pos)
   run.depth = depth
   closeStats()
-  run.stats.push({ depth, fights: 0, pushes: 0, breaks: 0, deadTaps: 0, quiets: 0, strainIn: run.strain, strainOut: null, hand: 0, shots: 0, eye: 0, eyeCasts: 0, handBreaks: 0, braced: 0, playS: 0, eyeBreaks: 0, openings: 0, plantedS: 0, autoDmg: { hand: 0, eye: 0 }, riders: {} })
+  run.stats.push({ depth, fights: 0, pushes: 0, breaks: 0, deadTaps: 0, quiets: 0, strainIn: run.strain, strainOut: null, hand: 0, shots: 0, eye: 0, eyeCasts: 0, handBreaks: 0, braced: 0, playS: 0, eyeBreaks: 0, openings: 0, plantedS: 0, autoDmg: { hand: 0, eye: 0 }, riders: {}, pressure: combat.pressure, hpLost: 0 })
   // the card's line gets a tick where this depth began (a resumed depth already has its tick)
   if (!o.resume) run.tally.marks.push(run.tally.line.length)
   // parts remember how deep they went

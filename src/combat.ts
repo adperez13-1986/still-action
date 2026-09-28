@@ -416,6 +416,11 @@ export class Combat {
    * hit that lands in a windup breaks it, and a pushed cast aims at the windup that lands soonest.
    */
   breakRule = false
+  /**
+   * The pressure prototype: packs added while this is on have their ordinary hulks and sentinels
+   * pressure bodies (no big windup, their hits stack); an elite pack keeps its telegraphs, the heavies.
+   */
+  pressure = false
   /** Marks and slows, per enemy. Deleted when the enemy is buried. */
   private readonly status = new Map<Enemy, EnemyStatus>()
   /** Enemies in the clamp's throw. While held, an enemy doesn't think. */
@@ -542,7 +547,7 @@ export class Combat {
       // lane was already tested against the real Still
       if (action?.kind === 'melee') {
         const reaches = action.tested || target === player || Math.hypot(e.pos.x - player.x, e.pos.z - player.z) <= (action.reach ?? 0)
-        if (reaches) this.hurtPlayer(action.damage, 'melee', action.source ?? e)
+        if (reaches) this.hurtPlayer(action.damage, 'melee', action.source ?? e, !!e.pressure)
       }
       if (action?.kind === 'shot') this.fireShot(e.pos, action.dir, action.damage, e, action.bounces ?? 0)
       if (action?.kind === 'shots') {
@@ -800,7 +805,7 @@ export class Combat {
       }
     }
     if (Math.hypot(p.x - player.x, p.z - player.z) < SHOT_RADIUS + PLAYER_RADIUS) {
-      this.hurtPlayer(s.damage, 'shot')
+      this.hurtPlayer(s.damage, 'shot', undefined, !!s.owner?.pressure)
       return true
     }
     const hit = this.terrain.blocker(p.x, p.z, 0.15, true)
@@ -1013,7 +1018,7 @@ export class Combat {
    * ram's only while it tracks. After the lock the hit can't land in time to count.
    */
   breakable(e: Enemy): boolean {
-    if (e.dead || e.phase !== 'windup' || isBoss(e) || e.kind === 'thief') return false
+    if (e.dead || e.phase !== 'windup' || isBoss(e) || e.kind === 'thief' || e.pressure) return false
     return !(e instanceof Charger && e.locked)
   }
 
@@ -1242,21 +1247,23 @@ export class Combat {
    * the difference: a bite can't shield him from a rush, and a window still takes
    * one hit's worth. The window never extends.
    */
-  private hurtPlayer(damage: number, source: HurtSource, from?: Enemy) {
+  /** `stack`: a pressure body's hit adds to the others' instead of folding into the hurt window. */
+  private hurtPlayer(damage: number, source: HurtSource, from?: Enemy, stack = false) {
     // planted, the eye braces: every blow halved before the window, Anvil or Brace see it
     const braced = this.inStance
     if (braced) damage = Math.ceil(damage * EYE.brace)
-    const open = this.hurtCooldown > 0
+    const open = !stack && this.hurtCooldown > 0
     // after a catch, the rest of the window's body strikes fold into it
     if (open && source === 'melee' && this.hurtCaught) return
     const amount = open ? damage - this.hurtMax : damage
     if (amount <= 0) return
-    if (!open) {
+    // a stacking hit leaves the window alone: it neither opens one nor folds a slam into it
+    if (!open && !stack) {
       this.hurtCooldown = HURT_WINDOW
       this.hurtMax = 0
       this.hurtCaught = false
     }
-    this.hurtMax = Math.max(this.hurtMax, damage)
+    if (!stack) this.hurtMax = Math.max(this.hurtMax, damage)
     // Anvil first: it catches body strikes only, even inside an open window
     if (source === 'melee' && this.parts.anvil) {
       this.catchBlow(from)
@@ -2482,6 +2489,7 @@ export class Combat {
       this.broods.push(pack.brood)
     }
     if (elite && pack.members[0]) this.crown(pack, pack.members[0], elite.mod, elite.name)
+    if (this.pressure && !elite) for (const e of pack.members) if (e.kind === 'chaser' || (e.kind === 'ranged' && !e.variant)) e.pressure = true
     pack.hpSeen = this.hpOf(pack)
     this.packs.push(pack)
     return pack
