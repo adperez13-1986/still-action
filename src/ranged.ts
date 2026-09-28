@@ -363,7 +363,8 @@ export class Ranged implements Enemy {
       const o = tellOrder(this.timer)
       this.line.renderOrder = this.bendLine.renderOrder = o
       this.fill.renderOrder = this.bendFill.renderOrder = o + 0.2
-    } else if (this.phase === 'strike') {
+    } else if (this.phase === 'strike' && !this.pressure) {
+      // a pressure burst is the lens and the shots alone: no aim line on the floor
       this.lineMat.opacity = 0.5
       this.fillMat.opacity = 0.9
       this.fill.scale.z = 1

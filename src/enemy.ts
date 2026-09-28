@@ -562,7 +562,8 @@ export class Chaser implements Enemy {
       // soonest on top: a slam about to land draws over a fainter tell
       this.disc.renderOrder = tellOrder(this.timer)
       this.ring.renderOrder = this.disc.renderOrder + 0.2
-    } else if (this.phase === 'strike') {
+    } else if (this.phase === 'strike' && !this.pressure) {
+      // a pressure hulk's jab is its body alone: no ring flashes on the floor
       this.ringMat.opacity = 0.95
       this.discMat.opacity = 0.8
       this.disc.scale.setScalar(1)
