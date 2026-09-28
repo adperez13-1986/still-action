@@ -8,13 +8,19 @@
 export type MasteryId = 'hand-chill' | 'hand-mark' | 'hand-cleave' | 'eye-chill' | 'eye-mark' | 'eye-split'
 export type MasteryForm = 'hand' | 'eye'
 
+/**
+ * What the player reads for each form (28 Sep, his call): "the hand" and "the eye" read as the arms
+ * and head slots, so on screen they are the close strike and the planted shot. Code keeps hand / eye.
+ */
+export const FORM_NAME: Record<MasteryForm, string> = { hand: 'close strike', eye: 'planted shot' }
+
 export const MASTERY: Record<MasteryId, { form: MasteryForm; name: string; line: string }> = {
-  'hand-chill': { form: 'hand', name: 'Cold Hand', line: 'Every strike slows what it hits for a moment.' },
-  'hand-mark': { form: 'hand', name: 'Marking Hand', line: 'Every strike marks what it hits: your next part hits it twice.' },
-  'hand-cleave': { form: 'hand', name: 'Wide Hand', line: 'Every strike also catches the next body in reach.' },
-  'eye-chill': { form: 'eye', name: 'Cold Eye', line: 'Every planted shot slows what it hits for a moment.' },
-  'eye-mark': { form: 'eye', name: 'Marking Eye', line: 'Every planted shot marks what it hits: your next part hits it twice.' },
-  'eye-split': { form: 'eye', name: 'Splitting Eye', line: 'A planted shot that kills splits into two at the nearest bodies.' },
+  'hand-chill': { form: 'hand', name: 'Cold Strike', line: 'Every close strike slows what it hits for a moment.' },
+  'hand-mark': { form: 'hand', name: 'Marking Strike', line: 'Every close strike marks what it hits: your next part hits it twice.' },
+  'hand-cleave': { form: 'hand', name: 'Wide Strike', line: 'Every close strike also catches the next body in reach.' },
+  'eye-chill': { form: 'eye', name: 'Cold Shot', line: 'Every planted shot slows what it hits for a moment.' },
+  'eye-mark': { form: 'eye', name: 'Marking Shot', line: 'Every planted shot marks what it hits: your next part hits it twice.' },
+  'eye-split': { form: 'eye', name: 'Splitting Shot', line: 'A planted shot that kills splits into two at the nearest bodies.' },
 }
 
 export const MASTERY_MAX = 6

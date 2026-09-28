@@ -9,7 +9,7 @@ import { Combat, eliteLine, HAND, HAND_REACH, EYE, type Archetype, type AutoForm
 import { STARTING, PARTS, byId, type AbilityDef, type AbilityShape, type BeatKey, type Lean } from './abilities'
 import { SLOT_NAMES, type SlotName } from './still'
 import { TEMPER, ROMAN, tempered } from './temper'
-import { MASTERY, MASTERY_MAX, masteryOffer, type MasteryId, type MasteryForm } from './mastery'
+import { MASTERY, MASTERY_MAX, FORM_NAME, masteryOffer, type MasteryId, type MasteryForm } from './mastery'
 import type { Enemy, EnemyEvent } from './enemy'
 import { isBoss, Assembler } from './boss'
 import { Arbiter, ARBITER, arbiterHusk } from './arbiter'
@@ -1824,7 +1824,7 @@ function meltLabel(g: GroundPart): string | null {
   // at III: melting masters the auto its lean feeds (mastery.ts)
   const form = masteryForm(cur)
   if (run.mastery.size >= MASTERY_MAX || !masteryOffer(form, run.mastery).length) return null
-  return form ? `melt: master the ${form}` : 'melt: master hand or eye'
+  return form ? `melt: master the ${FORM_NAME[form]}` : 'melt: master strike or shot'
 }
 
 /** Which auto a part at III feeds: close the hand, marksman the eye, no lean either (null). */
@@ -1847,7 +1847,7 @@ function masterWith(g: GroundPart, cur: AbilityDef) {
   sfx.take()
   vfx.embers(at3(still.pos, 0.7), 30, 1.3, COLD)
   openPause()
-  const whom = form ? `the ${form}` : 'the hand or the eye'
+  const whom = form ? `the ${FORM_NAME[form]}` : 'the close strike or the planted shot'
   pause.choose(`Mastery \u00b7 ${whom}`, `${byId(cur.id).name} is at its best. What it knows goes to ${whom}.`, offer.map((id) => ({
     name: MASTERY[id].name,
     line: MASTERY[id].line,

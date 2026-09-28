@@ -121,7 +121,7 @@ export interface PauseScreen {
   lookBack: (count: number, render: (i: number) => Promise<HTMLCanvasElement>, onClose: () => void) => void
   /** Mastery (mastery.ts): one of two, as big cards; picking one closes it. */
   choose: (title: string, intro: string, options: { name: string; line: string; onPick: () => void }[]) => void
-  /** What the pause screen lists under the loadout: mastery learned this run ("Cold Hand: ..."). */
+  /** What the pause screen lists under the loadout: mastery learned this run ("Cold Strike: ..."). */
   setLearned: (fn: () => { name: string; line: string }[]) => void
   /** The notebook: its pages, one at a time, and close. */
   notebook: (pages: NotebookPage[], onClose: () => void) => void

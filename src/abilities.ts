@@ -395,7 +395,7 @@ export const LEAN_GLYPH: Record<Lean, string> = {
 
 /** A rider's line on the card, after the part's own: "Hand break:" / "Eye break:", then what it does. */
 export function riderLine(r: Rider): string {
-  return `${r.on === 'hand' ? 'Hand' : 'Eye'} break: ${r.act === 'charge' ? 'ready, and fully charged.' : 'ready again.'}`
+  return `${r.on === 'hand' ? 'Close strike' : 'Planted shot'} break: ${r.act === 'charge' ? 'ready, and fully charged.' : 'ready again.'}`
 }
 
 /** The kit `?depth=` hands out, and the pool the random first part comes from. */

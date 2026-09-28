@@ -91,3 +91,9 @@ slide speed are staggered (can't advance or start a windup).
 
 Enemy interface fields available to parts: `hp`, `armor` (damage multiplier),
 `speedMul`, `knockMul`, `knock` (velocity), `phase`, `radius`, `size`.
+
+## Words on screen
+
+- The two autos are **the close strike** (in arm's reach) and **the planted shot** (standing still).
+  Never "the hand" or "the eye" in anything the player reads: they read as the arms and head slots
+  (his call, 28 Sep). Code and design notes may keep hand / eye.
