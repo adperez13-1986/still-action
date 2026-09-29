@@ -432,6 +432,12 @@ const combat = new Combat(world.scene, OPEN, {
       // its heat broken by his cold: the tell shatters, the tone cuts dead, and the moment holds
       windups.get(ev.enemy)?.stop(true)
       windups.delete(ev.enemy)
+      if (ev.parry && combat.parryCatch && combat.time - parryReadyAt >= PARRY_CATCH.capS) {
+        parryReadyAt = combat.time
+        parryReadyPending = true
+        const st = run.stats[run.stats.length - 1]
+        if (st) st.parryReadies = (st.parryReadies ?? 0) + 1
+      }
       // a pressure hulk has no windup but a counter's crouch: this broke one. A caught tell (Parry, R3) is not that, and is counted apart
       if (ev.tell) {
         const c = run.stats[run.stats.length - 1]?.catches
@@ -1445,6 +1451,9 @@ interface DepthStats {
   lunges?: { started: number; hit: number; broken: number }
   /** Parry Clamp's caught tells (LINE-RULES R3): a pressure hulk's cock, sentinel's lens glow, mite's rear. Not `lunges.broken`. */
   catches?: { hulk: number; sentinel: number; mite: number }
+  /** The parry-catch trial on at this depth, and the times a Parry snap readied Parry. */
+  parryCatch?: boolean
+  parryReadies?: number
   ducks?: { started: number; peeked: number; backed: number }
   /** Temper on at this depth, and parts melted into a worn one here; mastery learned here. */
   temper?: boolean; melts?: number; mastered?: string[]
@@ -2043,6 +2052,47 @@ pause.setSwitch('counters', () => countersOn, (on) => {
 })
 
 /**
+ * The parry-catch trial (design/parry/README.md: the balancer's option B with grace 150; his call, 29 Sep). Parry Clamp
+ * was a dead slot from depth 4. On, a tell may be caught up to PARRY_CATCH.graceMs after it ended, and a Parry snap that
+ * catches a tell or breaks a windup (pushed or not) readies Parry, at most once per `capS` of combat time. A pause switch,
+ * kept per device, on by default; it takes effect from the next depth, as counters do. Off is today's behaviour exactly.
+ */
+const PARRY_CATCH = { graceMs: 150, capS: 1.5 }
+const PARRY_CATCH_KEY = 'still-action.parryCatch'
+let parryCatchOn = (() => {
+  try {
+    return localStorage.getItem(PARRY_CATCH_KEY) !== '0'
+  } catch {
+    return true
+  }
+})()
+pause.setSwitch('parry catch', () => parryCatchOn, (on) => {
+  parryCatchOn = on
+  try {
+    localStorage.setItem(PARRY_CATCH_KEY, on ? '1' : '0')
+  } catch {
+    // private window: it holds for this session
+  }
+})
+/** Combat time of the last readying, and whether one is waiting for the button to have finished its cast (the cast sets the cooldown after the snap). */
+let parryReadyAt = -Infinity
+let parryReadyPending = false
+/** Ready Parry's button now, if a catch asked (called before the HUD's clock moves). */
+function flushParryReady() {
+  if (!parryReadyPending) return
+  parryReadyPending = false
+  const def = hud.loadout.find((d) => d.id === 'parry-clamp')
+  if (def) hud.ready(def.slot, 'cold')
+}
+/** The switch's state applied to Combat and the grace dial: at each level, and by the DEV hook. */
+function applyParryCatch(on: boolean) {
+  combat.parryCatch = on
+  PARRY.graceMs = on ? PARRY_CATCH.graceMs : 0
+  parryReadyAt = -Infinity
+  parryReadyPending = false
+}
+
+/**
  * C-T2: under the break rule the push is taught at its first reason, once per save: a
  * windup starting that a cooling part on Still reaches and could break.
  */
@@ -2623,6 +2673,7 @@ function enterLevel(depth: number, o: { seed?: number; bossFelled?: boolean; res
   // their hits stack); the elite pack keeps the big telegraphs as the level's heavies, and bosses keep theirs
   combat.pressure = !level.boss
   combat.counters = combat.pressure && countersOn
+  applyParryCatch(parryCatchOn)
   combat.curve = curveAt(depth, RUN_DEPTHS)
   for (const p of level.packs) {
     // the Lobber and the Signalman (B4); the Handcar and the Porter stay out until their steps; a lesson pack's Signalman calls once on waking (R10)
@@ -2676,7 +2727,7 @@ function enterLevel(depth: number, o: { seed?: number; bossFelled?: boolean; res
   run.depth = depth
   closeStats()
   run.stats.push({ depth, fights: 0, pushes: 0, breaks: 0, deadTaps: 0, quiets: 0, strainIn: run.strain, strainOut: null, hand: 0, shots: 0, eye: 0, eyeCasts: 0, handBreaks: 0, braced: 0, playS: 0, eyeBreaks: 0, openings: 0, plantedS: 0, autoDmg: { hand: 0, eye: 0 }, riders: {}, pressure: combat.pressure, hpLost: 0, temper: temperOn, melts: 0,
-    counters: combat.counters, lunges: { started: 0, hit: 0, broken: 0 }, catches: { hulk: 0, sentinel: 0, mite: 0 }, ducks: { started: 0, peeked: 0, backed: 0 },
+    counters: combat.counters, lunges: { started: 0, hit: 0, broken: 0 }, catches: { hulk: 0, sentinel: 0, mite: 0 }, parryCatch: combat.parryCatch, parryReadies: 0, ducks: { started: 0, peeked: 0, backed: 0 },
     states: Object.fromEntries(STATE_IDS.map((id) => [id, { set: 0, paid: 0, expired: 0 }])) as DepthStats['states'],
     stateBonus: Object.fromEntries(STATE_IDS.map((id) => [id, 0])) as DepthStats['stateBonus'],
     paidBy: { head: 0, torso: 0, arms: 0, legs: 0, hand: 0, eye: 0 }, pushedIntoState: 0, shatter: { n: 0, dmg: 0 }, maxMul: 1,
@@ -4342,6 +4393,7 @@ function frame(nowMs: number) {
   drawEliteLabels()
   drawRoadLabels()
   partFaces(elapsed)
+  flushParryReady()
   hud.update(clock)
   if (!paused) {
     vfx.update(elapsed * breakScale(), world.camera, world.renderer.domElement.height)
@@ -4391,6 +4443,7 @@ function devTick() {
   simulate(STEP)
   clock += STEP * 1000
   partFaces(STEP)
+  flushParryReady()
   hud.update(clock)
 }
 
@@ -4674,6 +4727,11 @@ if (import.meta.env.DEV) {
     __heard: sfx.heardLog,
     /** B3 (R4): whether a body counts as committed for the Line's step-off, as Combat reads it. */
     __isCommitted: (e: Enemy) => Combat.committed(e, combat['held'].has(e)),
+    /** The parry-catch trial's switch, applied now (grace 150 and the readying); returns whether it is on. */
+    __parryCatch: (on?: boolean) => {
+      if (on !== undefined) applyParryCatch(on)
+      return combat.parryCatch
+    },
     /** B1 (R3): Parry Clamp's grace after a pressure tell, ms. Sets it if given (150 is the dial to try); returns it. */
     __parryGrace: (ms?: number) => {
       if (ms !== undefined) PARRY.graceMs = ms

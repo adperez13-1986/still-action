@@ -425,6 +425,11 @@ export class Combat {
   private hurtCaught = false
   /** Dev checks switch it off to test a part in isolation. */
   autoAttack = true
+  /**
+   * The parry-catch trial (design/parry/README.md, option B + grace 150): main sets it per level from its pause switch, with
+   * PARRY.graceMs. Combat itself only tags the interrupt a Parry snap made; main readies the button. Off is exactly today's game.
+   */
+  parryCatch = false
   /** The hand: always on since 27 Sep; only dev checks turn it off (then the old far shot comes back). */
   closeHand = true
   /** The eye: always on since 27 Sep; only dev checks turn it off. */
@@ -2063,11 +2068,11 @@ export class Combat {
                 const brk = reel && this.breakable(e)
                 if (e.interrupt(brk)) {
                   this.shoveFrom(e, o.x, o.z, parry.shove)
-                  this.interrupted(e, brk)
+                  this.interrupted(e, brk, undefined, false, true)
                 }
               } else if (e.catchTell?.(this.time, PARRY.graceMs, reel)) {
                 this.shoveFrom(e, o.x, o.z, parry.shove)
-                this.interrupted(e, reel, undefined, true)
+                this.interrupted(e, reel, undefined, true, true)
               }
             }
           } else if (hook) {
@@ -2464,10 +2469,11 @@ export class Combat {
    * A broken windup: its booked lock goes with it, and the run hears of it (`push`: the break rule's;
    * `by`: the hand or the eye broke it, not a part; `tell`: Parry caught a pressure body's own tell, not a windup).
    */
-  private interrupted(e: Enemy, push = false, by?: AutoForm, tell = false) {
+  private interrupted(e: Enemy, push = false, by?: AutoForm, tell = false, parry = false) {
     this.book.unbook(e)
     const ev = push ? { kind: 'interrupt' as const, enemy: e, push } : by ? { kind: 'interrupt' as const, enemy: e, by } : { kind: 'interrupt' as const, enemy: e }
-    this.events.onPart(tell ? { ...ev, tell: true } : ev)
+    // `parry`: Parry Clamp's snap did it (a windup broken or a tell caught): the parry-catch trial (main) reads it
+    this.events.onPart({ ...ev, ...(tell ? { tell: true } : {}), ...(parry ? { parry: true } : {}) })
   }
 
   /** Every enemy instant passes here: Combat does its own part first (a rush into a crate breaks it), then the run's. */

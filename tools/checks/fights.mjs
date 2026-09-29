@@ -28,7 +28,7 @@ const IDS = ['F1', 'F2', 'F3', 'F4', 'F5', 'F6', 'F7', 'F8', 'F9', 'F10', 'F11',
  * `{ loadout, ticks: [{ t, lost, still, e: [[x, z, hp, phase], ...] }], part, enemy }`: every 0.5 s the HP Still lost in
  * that window, where he stands and each body; at the end the counts of the part events and the enemy events, by kind.
  */
-function fight({ id, seed }) {
+function fight({ id, seed, parry }) {
   const W = window
   /** mulberry32, the usual: one 32-bit state, no dependency. */
   const mulberry32 = (a) => () => {
@@ -49,6 +49,8 @@ function fight({ id, seed }) {
   W.__equip('scrap-cleaver')
   const original = Math.random
   Math.random = mulberry32(seed)
+  // the parry-catch trial's switch is on by default in the page: the baseline is the game with it OFF (today's), `--parry-on` the trial
+  W.__parryCatch(!!parry)
   try {
     W.__arena()
     const C = W.__combat
@@ -207,12 +209,12 @@ function fight({ id, seed }) {
 }
 
 /** Everything the baseline records, from one flag-off page held still. */
-async function collect(page) {
+async function collect(page, parry = false) {
   await page.evaluate(() => window.__hold(true))
   const out = {}
   for (const id of IDS) {
     out[id] = {}
-    for (const seed of SEEDS) out[id][seed] = await evalJson(page, fight, { id, seed })
+    for (const seed of SEEDS) out[id][seed] = await evalJson(page, fight, { id, seed, parry })
   }
   return out
 }
@@ -256,16 +258,19 @@ if (mode === 'capture') {
   writeFileSync(FILE, JSON.stringify(rec, null, 1) + '\n')
   console.log(`captured ${FILE}`)
 } else if (mode === 'compare') {
-  const now = JSON.parse(JSON.stringify(await withPage(collect)))
+  const parryOn = process.argv.includes('--parry-on')
+  const now = JSON.parse(JSON.stringify(await withPage((page) => collect(page, parryOn))))
   const want = JSON.parse(readFileSync(FILE, 'utf8'))
   let bad = 0
   for (const id of IDS) {
     const d = firstDiff(now[id], want[id])
-    if (mayDiffer.has(id)) console.log(d ? `INFO K-90F: ${id} differs at ${d}` : `INFO K-90F: ${id} equal`)
+    // --parry-on: the trial's diff against the switch-off baseline, all INFO (which scenarios it changes)
+    if (parryOn) console.log(d ? `INFO K-90F --parry-on: ${id} differs at ${d}` : `INFO K-90F --parry-on: ${id} equal`)
+    else if (mayDiffer.has(id)) console.log(d ? `INFO K-90F: ${id} differs at ${d}` : `INFO K-90F: ${id} equal`)
     else if (d) { bad++; console.log(`FAIL K-90F: ${id} differs at ${d}`) }
   }
   if (bad) process.exit(1)
-  console.log('PASS K-90F')
+  if (!parryOn) console.log('PASS K-90F')
 } else if (mode === 'capture-names') {
   writeFileSync(NAMES, JSON.stringify(await withPage(collectNames), null, 1) + '\n')
   console.log(`captured ${NAMES}`)
@@ -275,6 +280,6 @@ if (mode === 'capture') {
   console.log(d ? `FAIL K-90N: ${d}` : 'PASS K-90N')
   if (d) process.exit(1)
 } else {
-  console.log('usage: node tools/checks/fights.mjs capture|compare [--may-differ F5,F9]|capture-names|compare-names')
+  console.log('usage: node tools/checks/fights.mjs capture|compare [--may-differ F5,F9] [--parry-on]|capture-names|compare-names')
   process.exit(2)
 }

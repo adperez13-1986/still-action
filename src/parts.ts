@@ -179,7 +179,7 @@ export type PartEvent =
    * break rule, and it reels. `by`: the hand's strike or the eye's planted shot broke it (a trigger).
    * `tell`: Parry Clamp caught a pressure body's own tell (a cock, a lens glow, a rear), not a windup (LINE-RULES R3).
    */
-  | { kind: 'interrupt'; enemy: Enemy; push?: boolean; by?: 'hand' | 'eye'; tell?: boolean }
+  | { kind: 'interrupt'; enemy: Enemy; push?: boolean; by?: 'hand' | 'eye'; tell?: boolean; parry?: boolean }
   /**
    * A state set fresh on a body ('on', not a refresh), paid by a part's hit, or run out unpaid.
    * A pay says who set it, which slot paid, whether a push did, whether the hit killed, its

@@ -45,6 +45,7 @@ const begin = (seed, part) => {
   W.__equip('scrap-cleaver')
   const original = Math.random
   Math.random = mulberry32(seed)
+  W.__parryCatch(false) // the trial's switch is on by default in the page; the checks of R3 alone are of the game with it off
   W.__arena()
   C.time = 0
   C.pressure = true
@@ -246,7 +247,8 @@ check('K-W3d', ARENA, async ({ page }) => {
     for (let seed = 1; seed <= 40; seed++) {
       const end = begin(seed, arg.part)
       try {
-        W.__parryGrace(arg.grace ?? 0)
+        if (arg.catchOn) W.__parryCatch(true)
+        else W.__parryGrace(arg.grace ?? 0)
         C.autoAttack = arg.auto
         const hulks = Array.from({ length: 3 }, () => { const r = 3 + Math.random() * 2, a = Math.random() * Math.PI * 2; return W.__spawn('chaser', Math.sin(a) * r, Math.cos(a) * r, true) })
         const c0 = stat().catches.hulk
@@ -260,7 +262,7 @@ check('K-W3d', ARENA, async ({ page }) => {
           if (clear < 0 && hulks.every((h) => h.dead)) { clear = i / 60; if (arg.auto) break }
         }
         out.push({ seed, catches: stat().catches.hulk - c0, cocks, lost, clear })
-      } finally { W.__parryGrace(0); end() }
+      } finally { W.__parryGrace(0); W.__parryCatch(false); end() }
     }
     return out`, { part, auto, cap, ...o })
   const mean = (xs) => xs.reduce((a, b) => a + b, 0) / xs.length
@@ -282,8 +284,162 @@ check('K-W3d', ARENA, async ({ page }) => {
   const literal = await fights('parry-clamp', true, 60, { everyTick: true })
   const graced = await fights('parry-clamp', true, 60, { grace: 150 })
   console.log(`INFO K-W3d: Parry catches/fight, autos on: ${mean(literal.map((r) => r.catches)).toFixed(2)} casting every ready tick anywhere, ${mean(graced.map((r) => r.catches)).toFixed(2)} with __parryGrace(150) (shipped 0)`)
+  // the parry-catch trial (switch on: grace 150 and a catch readies Parry): the same fights, INFO only (the thresholds were for R3 alone)
+  const onParry = await fights('parry-clamp', true, 60, { catchOn: true })
+  const onSolo = await fights('parry-clamp', false, 20, { catchOn: true })
+  const op = mean(onParry.map((r) => r.catches)), oh = mean(onParry.map((r) => r.lost)), ot = mean(cleared(onParry))
+  console.log(`INFO K-W3d (parry catch ON): Parry ${op.toFixed(2)} catches/fight, ${mean(onParry.map((r) => r.cocks)).toFixed(2)} cocks/fight; ${onParry.filter((r) => r.clear < 0).length} of 40 uncleared`)
+  console.log(`INFO K-W3d (parry catch ON): HP lost Parry ${oh.toFixed(2)} vs Cleaver ${hc.toFixed(2)}: Parry ${signed(1 - oh / hc)} less; time to clear ${ot.toFixed(2)} s vs ${tc.toFixed(2)} s: Parry ${signed(ot / tc - 1)} longer`)
+  console.log(`INFO K-W3d (parry catch ON): autos off, 20 s: ${mean(onSolo.map((r) => r.catches)).toFixed(2)} catches/fight of ${mean(onSolo.map((r) => r.cocks)).toFixed(2)} cocks (was ${sc.toFixed(2)} of ${sk.toFixed(2)} with it off)`)
   assert(cp >= 0.3, `dead: Parry catches ${cp.toFixed(2)} tells per fight, under 0.3`)
   assert(!(tp < tc && hp < hc), `too strong: Parry clears faster (${tp.toFixed(2)} s vs ${tc.toFixed(2)} s) and loses less HP (${hp.toFixed(2)} vs ${hc.toFixed(2)}) than Cleaver`)
+})
+
+// --- The parry-catch trial (design/parry/README.md: option B + grace 150), behind the pause switch `parry catch` ------------------
+/**
+ * In-page for K-W3e..h: a pressure hulk at (0, 1.6) that has begun its cock. `catchAt(on, pushed)`: the switch as given, Parry cast into it,
+ * one tick for the readying to land (main readies the button on the frame after the cast: the cast sets the cooldown after the snap).
+ */
+const PARRY_KIT = `
+  const cocking = (y = 1.6) => { const e = W.__spawn('chaser', 0, y, true); return until(() => e.tellIn() !== null, 3) < 0 ? null : e }
+  const stats = () => stat()
+  const ready = () => W.__hud.readyIn('arms')
+`
+
+check('K-W3e', ARENA, async ({ page }) => {
+  const one = (on, pushed) => inPage(page, `
+    ${PARRY_KIT}
+    const end = begin(1, 'parry-clamp')
+    try {
+      W.__parryCatch(arg.on)
+      if (arg.pushed) { C.breakRule = true; W.__fire('arms') } // a whiff first: only a cooling button takes a push
+      const e = cocking()
+      if (!e) return { bad: 'the hulk never cocked' }
+      const before = ready(), r0 = stats().parryReadies
+      W.__fire('arms', arg.pushed)
+      const afterCast = ready()
+      tick(1)
+      return { before, afterCast, afterTick: ready(), readies: stats().parryReadies - r0, caught: tellEvents().length, sw: stats().parryCatch, grace: W.__parryGrace() }
+    } finally { end() }`, { on, pushed })
+  for (const pushed of [false, true]) {
+    const yes = await one(true, pushed)
+    bad(yes)
+    assert(yes.caught === 1, `switch on${pushed ? ', pushed' : ''}: ${yes.caught} caught tell(s), not 1`)
+    assert(yes.afterCast > 3000 && yes.afterTick === 0, `switch on${pushed ? ', pushed' : ''}: readyIn ${yes.afterCast} right after the cast (want ~3600) and ${yes.afterTick} one tick later (want 0)`)
+    assert(yes.readies === 1 && yes.grace === 150, `switch on: parryReadies +${yes.readies}, grace ${yes.grace} (want +1, 150)`)
+  }
+  // a windup broken (a crowned leader's heavy, unpushed) readies too
+  const heavy = await inPage(page, `
+    ${PARRY_KIT}
+    const end = begin(1, 'parry-clamp')
+    try {
+      W.__parryCatch(true)
+      const e = W.__spawn('chaser', 0, 2.2, true, 'plated')
+      if (until(() => e.phase === 'windup', 4) < 0) return { bad: 'the heavy never wound up' }
+      const r0 = stats().parryReadies
+      W.__partLog.length = 0
+      W.__fire('arms')
+      const interrupts = W.__partLog.filter((x) => x.kind === 'interrupt' && x.parry === true && x.tell !== true).length
+      tick(1)
+      return { interrupts, afterTick: ready(), readies: stats().parryReadies - r0 }
+    } finally { end() }`)
+  bad(heavy)
+  assert(heavy.interrupts === 1 && heavy.afterTick === 0 && heavy.readies === 1, `a broken windup: ${JSON.stringify(heavy)}, want one parry interrupt, ready, +1`)
+  const dt = yes0(await one(true, false))
+  console.log(`INFO K-W3e: caught tell: readyIn ${dt.afterCast.toFixed(0)} ms at the cast, ${dt.afterTick} one tick later; a broken heavy windup readies too; stats.parryCatch ${dt.sw}`)
+})
+const yes0 = (x) => x
+
+check('K-W3f', ARENA, async ({ page }) => {
+  // two catches `wait` ticks apart (the button is readied by the first, so the second is Parry's again); wait 0 means as soon as hulk B cocks
+  const run = (waitS) => inPage(page, `
+    ${PARRY_KIT}
+    const end = begin(1, 'parry-clamp')
+    try {
+      W.__parryCatch(true)
+      const first = cocking()
+      if (!first) return { bad: 'hulk A never cocked' }
+      const base = stats().parryReadies
+      const t0 = C.time
+      W.__fire('arms')
+      tick(1)
+      const r1 = ready(), n1 = stats().parryReadies - base
+      tick(Math.round(arg * 60))
+      const second = cocking(1.6)
+      if (!second) return { bad: 'hulk B never cocked' }
+      const gap = C.time - t0
+      W.__fire('arms')
+      tick(1)
+      return { r1, n1, gap, r2: ready(), n2: stats().parryReadies - base, caught: tellEvents().length }
+    } finally { end() }`, waitS)
+  const tight = await run(0), late = await run(1.5)
+  bad(tight); bad(late)
+  assert(tight.n1 === 1 && tight.r1 === 0, `first catch: parryReadies ${tight.n1}, readyIn ${tight.r1} (want 1, 0)`)
+  assert(tight.gap < 1.5 && tight.caught === 2, `the second catch came ${tight.gap.toFixed(2)} s after the first (${tight.caught} caught tells): not inside 1.5 s, the check proves nothing`)
+  assert(tight.n2 === 1 && tight.r2 > 3000, `second catch ${tight.gap.toFixed(2)} s after the first: parryReadies ${tight.n2} (want 1), readyIn ${tight.r2} (want ~3600, no ready)`)
+  assert(late.gap >= 1.5 && late.caught === 2, `the late catch came ${late.gap.toFixed(2)} s after the first (${late.caught} caught tells)`)
+  assert(late.n2 === 2 && late.r2 === 0, `catch ${late.gap.toFixed(2)} s after the first: parryReadies ${late.n2} (want 2), readyIn ${late.r2} (want 0)`)
+  console.log(`INFO K-W3f: a second catch ${tight.gap.toFixed(2)} s after the first: no ready (parryReadies 1); one ${late.gap.toFixed(2)} s after: ready (parryReadies 2)`)
+})
+
+check('K-W3g', ARENA, async ({ page }) => {
+  const once = (on) => inPage(page, `
+    ${PARRY_KIT}
+    const end = begin(1, 'parry-clamp')
+    try {
+      W.__parryCatch(arg)
+      const e = W.__spawn('chaser', 0, 1.6, true)
+      if (until(() => e.tellIn() !== null, 3) < 0) return { bad: 'the hulk never cocked' }
+      if (until(() => e.tellIn() === null, 1) < 0) return { bad: 'its tell never ended' }
+      tick(5) // its tell ended 6 ticks (100 ms) before the cast lands
+      const before = e.phase
+      W.__partLog.length = 0
+      W.__fire('arms')
+      return { before, after: e.phase, caught: tellEvents().length, grace: W.__parryGrace() }
+    } finally { end() }`, on)
+  const on = await once(true), off = await once(false)
+  bad(on); bad(off)
+  assert(on.caught === 1 && on.after === 'recover', `switch on: a tell that ended 100 ms ago: ${JSON.stringify(on)}, want caught`)
+  assert(off.caught === 0 && off.before === off.after, `switch off: a tell that ended 100 ms ago: ${JSON.stringify(off)}, want not caught, phase unchanged`)
+  assert(on.grace === 150 && off.grace === 0, `grace ${on.grace} on and ${off.grace} off, want 150 and 0`)
+})
+
+check('K-W3h', ARENA, async ({ page }) => {
+  const got = await inPage(page, `
+    ${PARRY_KIT}
+    const end = begin(1, 'parry-clamp')
+    try {
+      W.__parryCatch(false)
+      const e = cocking()
+      if (!e) return { bad: 'the hulk never cocked' }
+      const r0 = stats().parryReadies
+      W.__fire('arms')
+      tick(3)
+      return { caught: tellEvents().length, ready: ready(), readies: stats().parryReadies - r0, sw: stats().parryCatch }
+    } finally { end() }`)
+  bad(got)
+  assert(got.caught === 1, `switch off: R3 still catches (${got.caught} caught tells, want 1)`)
+  assert(got.ready > 3000 && got.readies === 0, `switch off: readyIn ${got.ready} (want ~3600, no ready), parryReadies ${got.readies} (want 0)`)
+})
+
+check('K-W3i', ARENA + '&trial=switch', async ({ page }) => {
+  const KEY = 'still-action.parryCatch'
+  const read = () => evalJson(page, () => ({ on: window.__parryCatch(), grace: window.__parryGrace(), stat: window.__run.stats[window.__run.stats.length - 1] }))
+  const boot = await read()
+  assert(boot.on === true && boot.grace === 150, `default: switch ${boot.on}, grace ${boot.grace} (want on, 150)`)
+  assert(boot.stat.parryCatch === true && boot.stat.parryReadies === 0, `default DepthStats: ${JSON.stringify({ c: boot.stat.parryCatch, r: boot.stat.parryReadies })}`)
+  try {
+    await page.evaluate((k) => localStorage.setItem(k, '0'), KEY)
+    await page.reload()
+    await page.waitForFunction(() => typeof window.__enter === 'function' && window.__level && window.__level(), null, { timeout: 60000 })
+    const off = await read()
+    assert(off.on === false && off.grace === 0 && off.stat.parryCatch === false, `stored off: switch ${off.on}, grace ${off.grace}, stats ${off.stat.parryCatch} (want off, 0, false)`)
+    // and a new level applies whatever is stored: turn it back on in the store, the level in hand keeps its state until the next enter
+    await page.evaluate((k) => localStorage.setItem(k, '1'), KEY)
+    assert((await read()).on === false, 'the switch changed mid-level')
+  } finally {
+    await page.evaluate((k) => localStorage.removeItem(k), KEY)
+  }
 })
 
 // --- Whole game (B2): R8, the crouch books its lunge -----------------------------------------------------------------------
