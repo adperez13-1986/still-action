@@ -20,6 +20,7 @@ import type { HazardSpec } from './hazard'
 import { Line, LINE, type LineEvent, type Train } from './line'
 import { RANGED } from './ranged'
 import { LOBBER } from './lobber'
+import { Signal } from './signal'
 import { Thief, type ThiefEvent, type ThiefWorld } from './thief'
 import { Mender } from './mender'
 import { Charger, CHARGER, PLATE as RAM_PLATE } from './charger'
@@ -129,6 +130,7 @@ const ICE = new THREE.Color(0x9fb4c8)
 const HULK_C = debrisColor('hulk')
 const SENTINEL_C = debrisColor('sentinel')
 const LOBBER_C = debrisColor('lobber')
+const SIGNAL_C = debrisColor('signal')
 const RAM_C = debrisColor('ram')
 const RAM_JOINT_C = new THREE.Color(HIDES.ram.joint)
 const PLATE_C = new THREE.Color(RAM_PLATE)
@@ -137,7 +139,7 @@ const THIEF_C = debrisColor('thief')
 const MENDER_C = debrisColor('mender')
 function metalOf(e: Enemy | undefined): THREE.Color {
   if (!e) return HULK_C
-  if (e.kind === 'ranged') return (e as { variant?: string }).variant === 'lobber' ? LOBBER_C : SENTINEL_C
+  if (e.kind === 'ranged') return e.variant === 'lobber' ? LOBBER_C : e.variant === 'signal' ? SIGNAL_C : SENTINEL_C
   return e.kind === 'charger' ? RAM_C : e.kind === 'swarm' ? MITE_C : e.kind === 'thief' ? THIEF_C : e.kind === 'mender' ? MENDER_C : HULK_C
 }
 /** A sleeping ram's banked fire: a thin grey wisp, "asleep, not scrap". */
@@ -592,6 +594,11 @@ const combat = new Combat(world.scene, OPEN, {
       else if (cue.voice === 'lob') windups.set(e, sfx.asVoice(sfx.lobAim(ms, panOf(e.pos), windupGain())))
       return
     }
+    // the Signalman's call (B4): six ratchet clicks over a low lamp hum, not the sentinel's aim whistle
+    if (e.variant === 'signal') {
+      windups.set(e, sfx.asVoice(sfx.semaphore(ms, panOf(e.pos), windupGain())))
+      return
+    }
     if (e.kind === 'charger') {
       windups.set(e, sfx.rev(ms, CHARGER.lockAt, panOf(e.pos), windupGain()))
       return
@@ -741,6 +748,15 @@ function packEvent(ev: EnemyEvent) {
       break
     case 'counter':
       counterBeat(ev)
+      break
+    case 'call':
+      // the arm is down: the voice has run its course, and a spark leaves the lamp if the Line took the call
+      windups.delete(ev.e)
+      if (ev.called && ev.e instanceof Signal) {
+        const lamp = ev.e.lampPoint(new THREE.Vector3())
+        vfx.sparks(lamp, EMBER, 6, 3, new THREE.Vector3(0, 1, 0), 0.6)
+        vfx.flash(lamp, EMBER, 0.5)
+      }
       break
   }
 }
@@ -1220,6 +1236,11 @@ function tellBreak(e: Enemy, color = COLD) {
       const side = i % 2 ? e.hitHalf : -e.hitHalf
       vfx.sparks(new THREE.Vector3(e.lane.x + fx * d + fz * side, 0.2, e.lane.z + fz * d - fx * side), color, 1, 2)
     }
+  } else if (e instanceof Signal) {
+    // along its arm, from the pivot to the lamp
+    const from = e.pivotPoint(new THREE.Vector3())
+    const to = e.lampPoint(new THREE.Vector3())
+    for (let i = 0; i < 4; i++) vfx.sparks(from.clone().lerp(to, (i + 0.5) / 4), color, 1, 3)
   } else if (e.kind === 'ranged') {
     // along the aim line it was drawing
     const a = e.group.rotation.y
@@ -2604,7 +2625,12 @@ function enterLevel(depth: number, o: { seed?: number; bossFelled?: boolean; res
   combat.counters = combat.pressure && countersOn
   combat.curve = curveAt(depth, RUN_DEPTHS)
   for (const p of level.packs) {
-    const members = p.members.map((m) => ({ ...m, variant: m.variant === 'lobber' ? ('lobber' as const) : undefined }))
+    // the Lobber and the Signalman (B4); the Handcar and the Porter stay out until their steps; a lesson pack's Signalman calls once on waking (R10)
+    const members = p.members.map((m) => ({
+      ...m,
+      variant: m.variant === 'lobber' || m.variant === 'signal' ? m.variant : undefined,
+      lesson: p.lesson && m.variant === 'signal' ? (true as const) : undefined,
+    }))
     packOfSpec.set(p, combat.addPack(members, p.room.kind === 'side', p.elite, p.look === 'heap' ? 'heap' : undefined))
   }
   combat.breakables = level.breakables
@@ -4394,7 +4420,7 @@ if (import.meta.env.DEV) {
     /** The crowd's mix: live windup voices, the gain a new one would get, the hush. */
     __mix: { windups, windupGain, hush },
     /** A pack from members, like addPack (a member with `slag: true` carries a slag core). awake = true wakes it at once. */
-    __pack: (members: { kind: Archetype; variant?: 'lobber'; x: number; z: number; slag?: true }[], awake = true, elite?: EliteMod, look?: 'heap'): Pack => {
+    __pack: (members: { kind: Archetype; variant?: 'lobber' | 'signal'; x: number; z: number; slag?: true; lesson?: true }[], awake = true, elite?: EliteMod, look?: 'heap'): Pack => {
       const pack = combat.addPack(members, false, elite ? { mod: elite, name: 'Test' } : undefined, look)
       if (awake) combat.wake(pack)
       return pack
@@ -4467,7 +4493,7 @@ if (import.meta.env.DEV) {
     },
     __stick: (x: number, z: number) => hud.setStick(x, z),
     /** One enemy as its own pack of 1. awake = true wakes it at once. A boss is the variant's (default the Assembler). */
-    __spawn: (kind: Archetype, x: number, z: number, awake = true, elite?: EliteMod, variant?: BossKind | 'lobber'): Enemy => {
+    __spawn: (kind: Archetype, x: number, z: number, awake = true, elite?: EliteMod, variant?: BossKind | 'lobber' | 'signal', lesson?: true): Enemy => {
       // a thief nests where it's spawned: in __arena's floor, or the level's
       if (kind === 'thief') return (lastThief = combat.addThief(new Thief(x, z, new THREE.Vector3(x, 0, z), thiefWorld())))
       if (kind === 'boss') {
@@ -4477,7 +4503,7 @@ if (import.meta.env.DEV) {
         if (awake) combat.wake(combat.packs[combat.packs.length - 1]!)
         return b
       }
-      const pack = combat.addPack([{ kind, x, z, variant: variant === 'lobber' ? 'lobber' : undefined }], false, elite ? { mod: elite, name: 'Test' } : undefined)
+      const pack = combat.addPack([{ kind, x, z, variant: variant === 'lobber' || variant === 'signal' ? variant : undefined, lesson }], false, elite ? { mod: elite, name: 'Test' } : undefined)
       if (awake) combat.wake(pack)
       return pack.members[0]!
     },
@@ -4642,6 +4668,10 @@ if (import.meta.env.DEV) {
     },
     __snapshot: () => (save.run ? JSON.parse(JSON.stringify(save.run)) : null),
     __hold: (on: boolean) => { held = on },
+    /** B4: every body out of the level entered (its Line, terrain and breakables stay), for checks. */
+    __emptyLevel: () => combat.clearBodies(),
+    /** B4: every call of a stage-B sound, and of aim / rev, in order (a headless page's AudioContext never runs). */
+    __heard: sfx.heardLog,
     /** B3 (R4): whether a body counts as committed for the Line's step-off, as Combat reads it. */
     __isCommitted: (e: Enemy) => Combat.committed(e, combat['held'].has(e)),
     /** B1 (R3): Parry Clamp's grace after a pressure tell, ms. Sets it if given (150 is the dial to try); returns it. */

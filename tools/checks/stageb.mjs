@@ -682,4 +682,402 @@ check('K-T15', LINE, async ({ page }) => {
   console.log(`INFO K-T15: the hulk lost ${got.bodyLost.toFixed(2)} (20 x ${got.mul}), Still lost ${got.stillLost}; the lesson train 0 and 0`)
 })
 
+// --- The Signalman (B4): SPEC 6.1, R1, R2, R10 --------------------------------------------------------------------------------
+/**
+ * In-page kit for the Signalman's checks (STAGE-B.md section 4: "LINE4, __emptyLevel(), a room lane L with nextAt - t > 4").
+ * `rig(depth, seed, o)`: the flag-off Line at `depth`, every body out (`__emptyLevel`), a room lane L (not the lesson lane) whose schedule is
+ * pushed 30 s out, and where things go: `still` is o.stillOff from L's span (default 2), `sig` o.sigD from Still, at least o.sigSpan from L
+ * (R2 wants 2.65), `near` is Still 2 u off L on the same side. Still is never within 3.7 u of another lane (so L is the one it could call)
+ * unless o.anyLane. Null when this seed has no such placement. `withRig(o, fn)` tries seeds 1..16. `spawnSig` puts an awake Signalman
+ * (reload 0, no wake reload: the wake reload has its own check) where the rig says; `pin` holds Still (and a pinned Signalman) still.
+ */
+const SIG_KIT = `
+  const dspan = (x, z, l) => {
+    const dx = l.bx - l.ax, dz = l.bz - l.az, l2 = dx * dx + dz * dz
+    const t = l2 > 0 ? Math.max(0, Math.min(1, ((x - l.ax) * dx + (z - l.az) * dz) / l2)) : 0
+    return Math.hypot(x - (l.ax + dx * t), z - (l.az + dz * t))
+  }
+  const rig = (depth, seed, o = {}) => {
+    W.__hold(true)
+    W.__run.route = 'III'
+    W.__enter(depth, seed)
+    W.__emptyLevel()
+    C.autoAttack = false
+    C.counters = false
+    const lanes = W.__lanes()
+    const T = W.__level().terrain
+    for (const lane of lanes.filter((l) => l.kind === 'room' && !l.lesson && l.room !== null)) {
+      const len = Math.hypot(lane.bx - lane.ax, lane.bz - lane.az)
+      const ux = (lane.bx - lane.ax) / len, uz = (lane.bz - lane.az) / len, nx = -uz, nz = ux
+      const mx = (lane.ax + lane.bx) / 2, mz = (lane.az + lane.bz) / 2
+      for (const along of [0, 2, -2, 4, -4]) for (const s of [1, -1]) {
+        const at = (off) => ({ x: mx + ux * along + nx * s * off, z: mz + uz * along + nz * s * off })
+        const still = at(o.stillOff ?? 2), near = at(2)
+        if (T.blocked(still.x, still.z, 0.5) || T.blocked(near.x, near.z, 0.5)) continue
+        if (!o.anyLane && lanes.some((l) => l.id !== lane.id && (dspan(still.x, still.z, l) < 4.2 || dspan(near.x, near.z, l) < 4.2))) continue
+        for (let a = 0; a < 360; a += 10) {
+          const sig = { x: still.x + Math.cos(a * Math.PI / 180) * (o.sigD ?? 9), z: still.z + Math.sin(a * Math.PI / 180) * (o.sigD ?? 9) }
+          if (T.blocked(sig.x, sig.z, 0.7) || dspan(sig.x, sig.z, lane) < (o.sigSpan ?? 2.9)) continue
+          if (!T.lineClear(sig.x, sig.z, still.x, still.z, 0.2, true)) continue
+          C.line.runOf(C.line.lanes.find((l) => l.id === lane.id)).nextAt = C.line.t + 30
+          return { lane, still, near, sig, mx, mz, nx: nx * s, nz: nz * s, seed, T }
+        }
+      }
+    }
+    return null
+  }
+  const withRig = (o, fn) => {
+    for (let seed = 1; seed <= 16; seed++) { const r = rig(4, seed, o); if (r) return fn(r) }
+    return { bad: 'no seed 1..16 has a placement for ' + JSON.stringify(o) }
+  }
+  const spawnSig = (r, lesson) => {
+    W.__still.pos.set(r.still.x, 0, r.still.z)
+    W.__stick(0, 0)
+    const s = W.__spawn('ranged', r.sig.x, 0 + r.sig.z, true, undefined, 'signal', lesson)
+    s.reload = lesson ? s.reload : 0
+    return s
+  }
+  const calls = () => W.__enemyLog.filter((x) => x.ev.kind === 'call')
+  const laneOf = (id) => W.__lanes().find((l) => l.id === id)
+`
+check('K-E1', LINE4, async ({ page }) => {
+  const got = await inPage(page, `
+    ${SIG_KIT}
+    const end = begin(1)
+    try {
+      return withRig({ stillOff: 2, sigD: 9 }, (r) => {
+        const s = W.__spawn('ranged', r.sig.x, r.sig.z, true, undefined, 'signal')
+        W.__still.pos.set(r.still.x, 0, r.still.z)
+        const pin = () => W.__still.pos.set(r.still.x, 0, r.still.z)
+        const reload0 = s.reload
+        W.__enemyLog.length = 0
+        const w1 = until(() => s.phase === 'windup', 2.6, pin)
+        if (w1 < 0) return { bad: 'no windup in 2.6 s (reload ' + s.reload + ', dist ' + dist(s.pos, W.__still.pos).toFixed(2) + ')' }
+        const bookMine = C.book.entries.filter((b) => b.owner === s).map((b) => b.at - C.time)
+        const c1 = until(() => calls().length > 0, 1.2, pin)
+        if (c1 < 0) return { bad: 'no call within 1.2 s of the windup' }
+        const ev = calls()[0].ev
+        const lineT = W.__lineT()
+        const trains = W.__trains()
+        const tr = trains[trains.length - 1]
+        const lane = laneOf(r.lane.id)
+        // the next windup: a call restarts its reload at 7 s, after the 760 ms recover
+        const w2 = until(() => s.phase === 'windup', 12, pin)
+        return { w1, reload0, windup: c1, called: ev.called, lane: ev.lane, laneWant: r.lane.id, slip: tr ? tr.t0 - (lineT - 1 / 60) : null, ntrains: trains.length,
+          nextAt: lane.nextAt, t0: tr ? tr.t0 : null, period: lane.period, dSig: dist(s.pos, W.__still.pos), bookMine, w2, seed: r.seed }
+      })
+    } finally { end() }`)
+  bad(got)
+  assert(got.w1 >= 1.9 && got.w1 <= 2.6, `its first windup came ${got.w1.toFixed(2)} s after waking (wakeMs 2000, allowed 1.9-2.6)`)
+  assert(got.called === true && got.lane === got.laneWant, `the call event: called ${got.called}, lane ${got.lane}, wanted ${got.laneWant}`)
+  assert(got.ntrains === 1 && got.slip !== null && got.slip >= -1 / 60 && got.slip <= 0.6 + 2 / 60, `L's train t0 is ${got.slip === null ? 'missing' : got.slip.toFixed(3)} s after the call (want 0-0.6), ${got.ntrains} train(s)`)
+  assert(Math.abs(got.nextAt - (got.t0 + got.period)) < 1e-6, `L.nextAt ${got.nextAt} is not t0 + period (${got.t0 + got.period})`)
+  assert(got.bookMine.length === 1 && Math.abs(got.bookMine[0] - 0.9) <= 2 / 60, `its book entry is ${JSON.stringify(got.bookMine)} s ahead at the windup's start, not [0.9]`)
+  assert(got.w2 >= 7.0, `its next windup came ${got.w2.toFixed(2)} s after its call, under the 7 s reload`)
+  console.log(`INFO K-E1: seed ${got.seed}: windup ${got.w1.toFixed(2)} s after waking, call ${got.windup.toFixed(2)} s later, train t0 +${(got.slip * 1000).toFixed(0)} ms, next windup ${got.w2.toFixed(2)} s after the call`)
+})
+
+check('K-E2', LINE4, async ({ page }) => {
+  const got = await inPage(page, `
+    ${SIG_KIT}
+    const end = begin(1)
+    try {
+      const rows = []
+      const out = withRig({ stillOff: 6, sigD: 8, sigSpan: 3.5 }, (r) => {
+        const s = W.__spawn('ranged', r.sig.x, r.sig.z, true, undefined, 'signal')
+        const at = { still: { ...r.still }, sig: { ...r.sig } }
+        const pin = () => { W.__still.pos.set(at.still.x, 0, at.still.z); s.pos.set(at.sig.x, 0, at.sig.z) }
+        const L = C.line.lanes.find((l) => l.id === r.lane.id)
+        const run = C.line.runOf(L)
+        // one trial: reset it, apply the setup, step up to secs and say whether a windup began
+        const trial = (name, setup, secs, want) => {
+          if (s.phase === 'windup') s.interrupt(false)
+          C.book.clear()
+          s.phase = 'approach'; s.reload = 0
+          run.nextAt = C.line.t + 30
+          setup()
+          const t = until(() => s.phase === 'windup', secs, pin)
+          rows.push({ name, want, windup: t >= 0, at: t })
+        }
+        // R: a lane not lit, nextAt far, Still within 14 u and 2 u off L: the base (near), then each rule broken alone and mended
+        const goNear = () => { at.still = { ...r.near } }
+        goNear()
+        trial('control', () => {}, 1.5, true)
+        // (1) L lit: a train on it now (held from winding up until it is lit, so the trial starts at the lit moment)
+        if (s.phase === 'windup') s.interrupt(false)
+        C.book.clear(); s.phase = 'approach'
+        W.__train(L.id)
+        const lit = until(() => C.line.lit().some((l) => l.id === L.id), 3, () => { pin(); s.reload = 1e9 })
+        if (lit < 0) return { bad: 'L never lit after a call' }
+        s.reload = 0
+        const litT = until(() => s.phase === 'windup', 2.0, pin)
+        rows.push({ name: 'lit', want: false, windup: litT >= 0, at: litT })
+        // and mended: the train gone, it winds up again
+        if (s.phase === 'windup') s.interrupt(false)
+        const gone = until(() => C.line.lit().length === 0 && C.line.trains().every((t) => t.stage === 'gone'), 8, () => { pin(); s.reload = 1e9 })
+        if (gone < 0) return { bad: 'the train never left' }
+        trial('lit-mended', () => { run.nextAt = C.line.t + 30 }, 1.5, true)
+        // (2) nextAt - t <= 4
+        trial('quiet', () => { run.nextAt = C.line.t + 3.5 }, 1.0, false)
+        trial('quiet-mended', () => { run.nextAt = C.line.t + 30 }, 1.5, true)
+        // (3) Still > 14 u from it
+        const far = (() => { for (let a = 0; a < 360; a += 10) { const x = at.still.x + Math.cos(a * Math.PI / 180) * 16, z = at.still.z + Math.sin(a * Math.PI / 180) * 16; if (!r.T.blocked(x, z, 0.7) && Math.hypot(x - r.mx, z - r.mz) > 0) return { x, z } } return null })()
+        const sigWas = { ...at.sig }
+        if (far) at.sig = far
+        trial('far', () => {}, 1.0, false)
+        at.sig = sigWas
+        trial('far-mended', () => {}, 1.5, true)
+        // (4) Still > 3.7 u from every lane (6 u off L)
+        at.still = { ...r.still }
+        trial('reach', () => {}, 1.5, false)
+        goNear()
+        trial('reach-mended', () => {}, 1.5, true)
+        return { rows, hadFar: !!far, dFar: 16 }
+      })
+      return out
+    } finally { end() }`)
+  bad(got)
+  assert(got.hadFar, 'no spot 16 u from Still for the far case')
+  for (const row of got.rows) {
+    if (row.want === null) continue
+    assert(row.windup === row.want, `${row.name}: ${row.windup ? 'it wound up (at ' + row.at.toFixed(2) + ' s)' : 'it never wound up'}, expected ${row.want ? 'a windup' : 'none'}`)
+  }
+  console.log(`INFO K-E2: ${got.rows.map((r) => `${r.name} ${r.windup ? 'winds up' : 'no windup'}`).join('; ')}`)
+})
+
+check('K-E3', LINE4, async ({ page }) => {
+  const one = (label, breakRule, pushed) => inPage(page, `
+    ${SIG_KIT}
+    const end = begin(1, 'parry-clamp')
+    try {
+      return withRig({ stillOff: 2, sigD: 2.0, sigSpan: 3.0 }, (r) => {
+        C.breakRule = ${breakRule}
+        if (${pushed}) W.__fire('arms') // a whiff first: only a cooling button takes a push
+        const s = W.__spawn('ranged', r.sig.x, r.sig.z, true, undefined, 'signal')
+        s.reload = 0
+        s.hp = 200 // the cast (10) and the reeling hit (15) must not kill it: a dead body never winds up again
+        W.__still.pos.set(r.still.x, 0, r.still.z)
+        const pin = () => { W.__still.pos.set(r.still.x, 0, r.still.z); s.pos.set(r.sig.x, 0, r.sig.z) }
+        W.__enemyLog.length = 0
+        if (until(() => s.phase === 'windup', 2, pin) < 0) return { bad: 'no windup in 2 s' }
+        W.__partLog.length = 0
+        const hp0 = s.hp
+        W.__fire('arms', ${pushed})
+        const now = { phase: s.phase, reload: s.reload, interrupts: W.__partLog.filter((x) => x.kind === 'interrupt' && x.enemy === s).length, hurt: hp0 - s.hp }
+        const h1 = s.hp
+        if (${pushed}) s.hit(10)
+        const reelHit = h1 - s.hp
+        const again = until(() => s.phase === 'windup', 6, pin)
+        return { ...now, calls: calls().length, again, reelHit, trains: W.__trains().length }
+      })
+    } finally { end() }`)
+  for (const [label, rule, pushed] of [['break rule on, unpushed', true, false], ['break rule off (__breakRule(false))', false, false], ['break rule on, pushed', true, true]]) {
+    const got = await one(label, rule, pushed)
+    bad(got)
+    assert(got.interrupts === 1 && got.hurt > 0, `${label}: ${got.interrupts} interrupt event(s), hurt ${got.hurt}`)
+    assert(got.phase === (pushed ? 'recover' : 'approach'), `${label}: the Signalman is in ${got.phase} after the cast`)
+    assert(got.calls === 0 && got.trains === 0, `${label}: it called anyway (${got.calls} call event(s), ${got.trains} train(s))`)
+    assert(got.again >= 3.0 - 1 / 60 - 1e-9, `${label}: its next windup came ${got.again < 0 ? 'never' : got.again.toFixed(3) + ' s'} after the cast, under 3.0`)
+    if (pushed) assert(Math.abs(got.reelHit - 15) < 1e-9, `${label}: a hit of 10 on the reeling Signalman took ${got.reelHit}, not 15`)
+    console.log(`INFO K-E3: ${label}: back in ${got.phase}, next windup ${got.again.toFixed(2)} s later`)
+  }
+})
+
+check('K-E4', LINE4, async ({ page }) => {
+  const got = await inPage(page, `
+    ${SIG_KIT}
+    const end = begin(1)
+    try {
+      return withRig({ stillOff: 2, sigD: 9 }, (r) => {
+        const s = spawnSig(r)
+        const pin = () => W.__still.pos.set(r.still.x, 0, r.still.z)
+        W.__enemyLog.length = 0
+        if (until(() => s.phase === 'windup', 2, pin) < 0) return { bad: 'no windup in 2 s' }
+        tick(20, pin)
+        s.hit(1e6)
+        tick(120, pin)
+        return { dead: s.dead, calls: calls().length, trains: W.__trains().length, gone: !C.enemies.includes(s), booked: C.book.entries.filter((b) => b.owner === s).length }
+      })
+    } finally { end() }`)
+  bad(got)
+  assert(got.dead && got.gone, 'the Signalman is not dead and gone')
+  assert(got.calls === 0 && got.trains === 0, `killed in its windup, it still called (${got.calls} call event(s), ${got.trains} train(s))`)
+  assert(got.booked === 0, `${got.booked} book entries still owned by the dead Signalman`)
+})
+
+check('K-E13', LINE4, async ({ page }) => {
+  const rows = await inPage(page, `
+    ${SIG_KIT}
+    const rows = []
+    for (let seed = 1; seed <= 20; seed++) {
+      const end = begin(seed)
+      try {
+        W.__hold(true); W.__run.route = 'III'; W.__enter(4, seed)
+        C.autoAttack = false; C.counters = false
+        for (const e of C.enemies) e.counters = false
+        const lvl = W.__level(), T = lvl.terrain
+        const pi = lvl.packs.findIndex((pk) => pk.lesson && pk.members.some((m) => m.variant === 'signal'))
+        if (pi < 0) { rows.push({ seed, bad: 'no lesson pack with a Signalman' }); continue }
+        const pack = C.packs[pi]
+        const sig = pack.members.find((e) => e.variant === 'signal')
+        const home = { x: sig.pos.x, z: sig.pos.z }
+        const lanes = W.__lanes()
+        let still = null
+        for (let a = 0; a < 360 && !still; a += 5) {
+          const x = home.x + Math.cos(a * Math.PI / 180) * 12, z = home.z + Math.sin(a * Math.PI / 180) * 12
+          if (!T.blocked(x, z, 0.5) && lanes.every((l) => dspan(x, z, l) >= 6)) still = { x, z }
+        }
+        if (!still) { rows.push({ seed, skipped: true }); continue }
+        const pin = () => W.__still.pos.set(still.x, 0, still.z)
+        pin()
+        W.__stick(0, 0)
+        C.wake(pack)
+        W.__enemyLog.length = 0
+        let expect = null, first = -1, quiet = false
+        for (let i = 0; i < 6 * 60 && first < 0; i++) {
+          C.hp = 100
+          pin()
+          const was = sig.phase
+          W.__step(1 / 60)
+          if (was !== 'windup' && sig.phase === 'windup') {
+            const lit = C.line.lit(), st = C.line.lanes.filter((l) => !lit.includes(l) && dspan(sig.pos.x, sig.pos.z, l) > 1.2 + 0.45 + 1.0)
+            st.sort((a, b) => dspan(home.x, home.z, a) - dspan(home.x, home.z, b))
+            expect = st[0] ? st[0].id : null
+            quiet = st[0] ? W.__lanes().find((l) => l.id === st[0].id).nextAt - W.__lineT() <= 4 : false
+          }
+          if (calls().length) first = i / 60
+        }
+        if (first < 0) { rows.push({ seed, bad: 'no call in 6 s (phase ' + sig.phase + ', reload ' + sig.reload + ', dist ' + dist(sig.pos, W.__still.pos).toFixed(1) + ')' }); continue }
+        const ev = calls()[0].ev
+        const reach = Math.min(...lanes.map((l) => dspan(still.x, still.z, l)))
+        // then 15 s of the same geometry: an ordinary Signalman, and Still 6 u from every lane
+        W.__enemyLog.length = 0
+        for (let i = 0; i < 15 * 60; i++) { C.hp = 100; pin(); W.__step(1 / 60) }
+        const again = calls().length
+        rows.push({ seed, first, lane: ev.lane, expect, called: ev.called, quiet, reach, again, lessonLane: lanes.find((l) => l.id === ev.lane).lesson })
+      } finally { end() }
+    }
+    return rows`)
+  const ran = rows.filter((r) => !r.skipped && !r.bad)
+  const bads = rows.filter((r) => r.bad)
+  assert(bads.length === 0, bads.map((r) => `seed ${r.seed}: ${r.bad}`).join('; '))
+  assert(ran.length >= 5, `only ${ran.length} of 20 seeds had a placement 12 u from the Signalman and 6 u from every lane: the check proves too little`)
+  for (const r of ran) {
+    assert(r.reach >= 6 - 1e-9, `seed ${r.seed}: Still was ${r.reach.toFixed(2)} u from a lane (want >= 6): laneReach would have failed the ordinary rule`)
+    assert(r.lane === r.expect, `seed ${r.seed}: it called lane ${r.lane}, the one nearest its home is ${r.expect}`)
+    assert(r.again === 0, `seed ${r.seed}: it called ${r.again} more time(s) in 15 s of the same geometry`)
+  }
+  console.log(`INFO K-E13: ${ran.length} of 20 seeds tested (${rows.filter((r) => r.skipped).length} without a placement); first call ${Math.min(...ran.map((r) => r.first)).toFixed(2)}-${Math.max(...ran.map((r) => r.first)).toFixed(2)} s after waking; ${ran.filter((r) => r.called).length} taken by the Line, ${ran.filter((r) => !r.called).length} refused (a train already on it); signalQuietS skipped on ${ran.filter((r) => r.quiet).length} of them`)
+})
+
+check('K-E14', LINE4, async ({ page }) => {
+  // planted: 9 u off, the planted shot on (the hand can't reach), then the close strike on a Signalman 2 u away
+  const planted = await inPage(page, `
+    ${SIG_KIT}
+    const end = begin(1)
+    try {
+      return withRig({ stillOff: 2, sigD: 9 }, (r) => {
+        const s = spawnSig(r)
+        s.reload = 1e9
+        s.hp = 500
+        C.autoAttack = true
+        C.eye = true
+        const pin = () => W.__still.pos.set(r.still.x, 0, r.still.z)
+        if (until(() => C.inStance, 2, pin) < 0) return { bad: 'never planted' }
+        if (until(() => C.eyeTarget === s, 1, pin) < 0) return { bad: 'the eye never picked the Signalman (target ' + (C.eyeTarget ? C.eyeTarget.kind : 'none') + ')' }
+        s.reload = 0
+        const hp0 = s.hp
+        W.__partLog.length = 0; W.__enemyLog.length = 0
+        if (until(() => s.phase === 'windup', 1.5, pin) < 0) return { bad: 'no windup' }
+        const auto = C.breakable(s, true), part = C.breakable(s)
+        if (until(() => calls().length > 0, 1.2, pin) < 0) return { bad: 'no call: phase ' + s.phase }
+        return { auto, part, lost: hp0 - s.hp, called: calls()[0].ev.called, interrupts: W.__partLog.filter((x) => x.kind === 'interrupt' && x.enemy === s).length }
+      })
+    } finally { end() }`)
+  bad(planted)
+  const close = await inPage(page, `
+    ${SIG_KIT}
+    const end = begin(1)
+    try {
+      return withRig({ stillOff: 2, sigD: 2.0, sigSpan: 3.0 }, (r) => {
+        const s = spawnSig(r)
+        s.hp = 500
+        C.autoAttack = true
+        C.closeHand = true
+        const pin = () => { W.__still.pos.set(r.still.x, 0, r.still.z); s.pos.set(r.sig.x, 0, r.sig.z) }
+        const hp0 = s.hp
+        W.__partLog.length = 0; W.__enemyLog.length = 0
+        if (until(() => s.phase === 'windup', 2, pin) < 0) return { bad: 'no windup' }
+        const auto = C.breakable(s, true), part = C.breakable(s)
+        const hpAtWindup = s.hp
+        if (until(() => calls().length > 0, 1.2, pin) < 0) return { bad: 'no call: phase ' + s.phase }
+        return { auto, part, lost: hpAtWindup - s.hp, before: hp0 - hpAtWindup, called: calls()[0].ev.called, interrupts: W.__partLog.filter((x) => x.kind === 'interrupt' && x.enemy === s).length }
+      })
+    } finally { end() }`)
+  bad(close)
+  for (const [name, g] of [['planted shot', planted], ['close strike', close]]) {
+    assert(g.auto === false && g.part === true, `${name}: breakable(e, true) ${g.auto}, breakable(e) ${g.part} in its windup (want false, true)`)
+    assert(g.lost > 0, `${name}: the Signalman took no damage through its windup`)
+    assert(g.interrupts === 0 && g.called === true, `${name}: interrupts ${g.interrupts}, call taken ${g.called}: the autos broke the call`)
+  }
+  console.log(`INFO K-E14: planted shot cost it ${planted.lost.toFixed(1)} hp through the windup, close strike ${close.lost.toFixed(1)} hp; both calls stood`)
+})
+
+check('K-E15', LINE4, async ({ page }) => {
+  const got = await inPage(page, `
+    ${SIG_KIT}
+    const end = begin(1)
+    try {
+      return withRig({ stillOff: 2, sigD: 9 }, (r) => {
+        const s = spawnSig(r)
+        const L = C.line.lanes.find((l) => l.id === r.lane.id)
+        const pinStill = () => W.__still.pos.set(r.still.x, 0, r.still.z)
+        const onSide = (d) => ({ x: r.mx - r.nx * d, z: r.mz - r.nz * d })
+        const rows = []
+        const at = (label, d, secs) => {
+          if (s.phase === 'windup') s.interrupt(false)
+          C.book.clear(); s.phase = 'approach'; s.reload = 0
+          C.line.runOf(L).nextAt = C.line.t + 30
+          const p = onSide(d)
+          const t = until(() => s.phase === 'windup', secs, () => { pinStill(); s.pos.set(p.x, 0, p.z); s.reload = 0 })
+          rows.push({ label, d, windup: t >= 0, at: t, calls: calls().length })
+        }
+        W.__enemyLog.length = 0
+        at('on the lane', 0, 20)
+        at('inside, 1.0 short', 2.15, 3)
+        at('just inside the grown strip', 2.6, 3)
+        at('just outside it', 2.7, 3)
+        at('well clear', 4, 3)
+        return { rows, span: 1.2 + 0.45 + 1.0 }
+      })
+    } finally { end() }`)
+  bad(got)
+  const want = { 'on the lane': false, 'inside, 1.0 short': false, 'just inside the grown strip': false, 'just outside it': true, 'well clear': true }
+  for (const row of got.rows) assert(row.windup === want[row.label], `${row.label} (${row.d.toFixed(2)} u from the span, R2 line at ${got.span.toFixed(2)}): ${row.windup ? 'it wound up' : 'it never wound up'}, expected ${want[row.label] ? 'a windup' : 'none'}`)
+  console.log(`INFO K-E15: R2 at ${got.span.toFixed(2)} u; ${got.rows.map((r) => `${r.d.toFixed(2)} u ${r.windup ? 'calls' : 'never calls'}`).join(', ')}`)
+})
+
+check('K-S2', LINE4, async ({ page }) => {
+  const got = await inPage(page, `
+    ${SIG_KIT}
+    const end = begin(1)
+    try {
+      return withRig({ stillOff: 2, sigD: 9 }, (r) => {
+        const s = spawnSig(r)
+        const pin = () => W.__still.pos.set(r.still.x, 0, r.still.z)
+        W.__heard.length = 0
+        const before = W.__heard.map((h) => h.name)
+        if (until(() => s.phase === 'windup', 2, pin) < 0) return { bad: 'no windup in 2 s' }
+        const atWindup = W.__heard.map((h) => h.name)
+        tick(70, pin)
+        return { before, atWindup, after: W.__heard.map((h) => h.name), live: W.__heard.map((h) => h.live) }
+      })
+    } finally { end() }`)
+  bad(got)
+  assert(got.before.length === 0, `the heard log was not empty before the windup: ${got.before}`)
+  assert(got.atWindup.filter((n) => n === 'semaphore').length === 1, `at its windup start the heard log is [${got.atWindup}], not one semaphore`)
+  assert(!got.after.includes('aim'), `the heard log has aim: [${got.after}]`)
+  console.log(`INFO K-S2: heard at its windup start: [${got.atWindup}] (live ${got.live}); headless, so nothing was audible`)
+})
+
 process.exit(await run(process.argv.slice(2)))

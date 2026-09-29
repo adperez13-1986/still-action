@@ -11446,13 +11446,14 @@
       "rz": 1,
       "kinds": [
        "chaser",
-       "chaser"
+       "chaser",
+       "ranged"
       ],
       "elite": null,
       "name": null,
       "lesson": true,
       "budget": 3,
-      "template": "H+H"
+      "template": "H+H+G"
      },
      {
       "room": "main",
@@ -11484,7 +11485,7 @@
       "elite": null,
       "name": null,
       "lesson": true,
-      "budget": 3,
+      "budget": 4,
       "template": "H"
      },
      {
@@ -11560,13 +11561,14 @@
       "rz": 1,
       "kinds": [
        "chaser",
-       "chaser"
+       "chaser",
+       "ranged"
       ],
       "elite": null,
       "name": null,
       "lesson": true,
       "budget": 4,
-      "template": "H+H"
+      "template": "H+H+G"
      },
      {
       "room": "side",
@@ -11640,13 +11642,14 @@
       "rz": 2,
       "kinds": [
        "chaser",
-       "chaser"
+       "chaser",
+       "ranged"
       ],
       "elite": null,
       "name": null,
       "lesson": true,
       "budget": 4,
-      "template": "H+H"
+      "template": "H+H+G"
      },
      {
       "room": "side",
@@ -11668,7 +11671,6 @@
       "rx": 1,
       "rz": 1,
       "kinds": [
-       "ranged",
        "chaser",
        "chaser",
        "chaser"
@@ -11676,7 +11678,7 @@
       "elite": null,
       "name": null,
       "lesson": false,
-      "budget": 4,
+      "budget": 3,
       "template": null
      }
     ],
@@ -11720,13 +11722,14 @@
       "rz": 1,
       "kinds": [
        "chaser",
-       "chaser"
+       "chaser",
+       "ranged"
       ],
       "elite": null,
       "name": null,
       "lesson": true,
       "budget": 4,
-      "template": "H+H"
+      "template": "H+H+G"
      },
      {
       "room": "side",
@@ -11748,6 +11751,7 @@
       "rx": 1,
       "rz": 1,
       "kinds": [
+       "ranged",
        "chaser",
        "chaser",
        "chaser"
@@ -11755,7 +11759,7 @@
       "elite": null,
       "name": null,
       "lesson": false,
-      "budget": 3,
+      "budget": 4,
       "template": null
      }
     ],
@@ -11799,897 +11803,14 @@
       "rz": 2,
       "kinds": [
        "chaser",
-       "chaser"
+       "chaser",
+       "ranged"
       ],
       "elite": null,
       "name": null,
       "lesson": true,
       "budget": 3,
-      "template": "H+H"
-     },
-     {
-      "room": "side",
-      "rx": 1,
-      "rz": 1,
-      "kinds": [
-       "chaser",
-       "chaser",
-       "chaser",
-       "chaser"
-      ],
-      "elite": null,
-      "name": null,
-      "lesson": false,
-      "budget": 4,
-      "template": null
-     },
-     {
-      "room": "side",
-      "rx": 1,
-      "rz": 1,
-      "kinds": [
-       "ranged",
-       "chaser",
-       "chaser",
-       "chaser"
-      ],
-      "elite": null,
-      "name": null,
-      "lesson": false,
-      "budget": 4,
-      "template": null
-     }
-    ],
-    [
-     {
-      "room": "main",
-      "rx": 2,
-      "rz": 2,
-      "kinds": [
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm"
-      ],
-      "elite": null,
-      "name": null,
-      "lesson": true,
-      "budget": 3,
-      "template": "M8"
-     },
-     {
-      "room": "main",
-      "rx": 1,
-      "rz": 2,
-      "kinds": [
-       "chaser"
-      ],
-      "elite": null,
-      "name": null,
-      "lesson": true,
-      "budget": 3,
-      "template": "H"
-     },
-     {
-      "room": "main",
-      "rx": 2,
-      "rz": 1,
-      "kinds": [
-       "chaser",
-       "chaser"
-      ],
-      "elite": null,
-      "name": null,
-      "lesson": true,
-      "budget": 4,
-      "template": "H+H"
-     },
-     {
-      "room": "side",
-      "rx": 1,
-      "rz": 1,
-      "kinds": [
-       "ranged",
-       "chaser",
-       "chaser"
-      ],
-      "elite": null,
-      "name": null,
-      "lesson": false,
-      "budget": 3,
-      "template": null
-     },
-     {
-      "room": "side",
-      "rx": 1,
-      "rz": 1,
-      "kinds": [
-       "chaser",
-       "chaser",
-       "chaser",
-       "chaser"
-      ],
-      "elite": null,
-      "name": null,
-      "lesson": false,
-      "budget": 4,
-      "template": null
-     }
-    ],
-    [
-     {
-      "room": "main",
-      "rx": 2,
-      "rz": 2,
-      "kinds": [
-       "chaser"
-      ],
-      "elite": null,
-      "name": null,
-      "lesson": true,
-      "budget": 4,
-      "template": "H"
-     },
-     {
-      "room": "main",
-      "rx": 2,
-      "rz": 2,
-      "kinds": [
-       "chaser",
-       "chaser"
-      ],
-      "elite": null,
-      "name": null,
-      "lesson": true,
-      "budget": 4,
-      "template": "H+H"
-     },
-     {
-      "room": "main",
-      "rx": 2,
-      "rz": 2,
-      "kinds": [
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm"
-      ],
-      "elite": null,
-      "name": null,
-      "lesson": true,
-      "budget": 3,
-      "template": "M8"
-     },
-     {
-      "room": "side",
-      "rx": 1,
-      "rz": 1,
-      "kinds": [
-       "ranged",
-       "chaser",
-       "chaser",
-       "chaser"
-      ],
-      "elite": null,
-      "name": null,
-      "lesson": false,
-      "budget": 4,
-      "template": null
-     },
-     {
-      "room": "side",
-      "rx": 1,
-      "rz": 1,
-      "kinds": [
-       "ranged",
-       "chaser",
-       "chaser",
-       "chaser"
-      ],
-      "elite": null,
-      "name": null,
-      "lesson": false,
-      "budget": 4,
-      "template": null
-     }
-    ],
-    [
-     {
-      "room": "main",
-      "rx": 2,
-      "rz": 2,
-      "kinds": [
-       "chaser"
-      ],
-      "elite": null,
-      "name": null,
-      "lesson": true,
-      "budget": 3,
-      "template": "H"
-     },
-     {
-      "room": "main",
-      "rx": 2,
-      "rz": 2,
-      "kinds": [
-       "chaser",
-       "chaser"
-      ],
-      "elite": null,
-      "name": null,
-      "lesson": true,
-      "budget": 4,
-      "template": "H+H"
-     },
-     {
-      "room": "main",
-      "rx": 2,
-      "rz": 1,
-      "kinds": [
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm"
-      ],
-      "elite": null,
-      "name": null,
-      "lesson": true,
-      "budget": 3,
-      "template": "M8"
-     },
-     {
-      "room": "side",
-      "rx": 1,
-      "rz": 1,
-      "kinds": [
-       "ranged",
-       "chaser",
-       "chaser",
-       "chaser"
-      ],
-      "elite": null,
-      "name": null,
-      "lesson": false,
-      "budget": 4,
-      "template": null
-     },
-     {
-      "room": "side",
-      "rx": 1,
-      "rz": 1,
-      "kinds": [
-       "ranged",
-       "chaser",
-       "chaser",
-       "chaser"
-      ],
-      "elite": null,
-      "name": null,
-      "lesson": false,
-      "budget": 4,
-      "template": null
-     }
-    ],
-    [
-     {
-      "room": "main",
-      "rx": 2,
-      "rz": 2,
-      "kinds": [
-       "chaser",
-       "chaser"
-      ],
-      "elite": null,
-      "name": null,
-      "lesson": true,
-      "budget": 3,
-      "template": "H+H"
-     },
-     {
-      "room": "main",
-      "rx": 2,
-      "rz": 1,
-      "kinds": [
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm"
-      ],
-      "elite": null,
-      "name": null,
-      "lesson": true,
-      "budget": 3,
-      "template": "M8"
-     },
-     {
-      "room": "main",
-      "rx": 2,
-      "rz": 2,
-      "kinds": [
-       "chaser"
-      ],
-      "elite": null,
-      "name": null,
-      "lesson": true,
-      "budget": 3,
-      "template": "H"
-     },
-     {
-      "room": "side",
-      "rx": 1,
-      "rz": 1,
-      "kinds": [
-       "ranged",
-       "chaser",
-       "chaser",
-       "chaser"
-      ],
-      "elite": null,
-      "name": null,
-      "lesson": false,
-      "budget": 4,
-      "template": null
-     },
-     {
-      "room": "side",
-      "rx": 1,
-      "rz": 1,
-      "kinds": [
-       "ranged",
-       "chaser",
-       "chaser",
-       "chaser"
-      ],
-      "elite": null,
-      "name": null,
-      "lesson": false,
-      "budget": 4,
-      "template": null
-     }
-    ],
-    [
-     {
-      "room": "main",
-      "rx": 2,
-      "rz": 2,
-      "kinds": [
-       "chaser"
-      ],
-      "elite": null,
-      "name": null,
-      "lesson": true,
-      "budget": 4,
-      "template": "H"
-     },
-     {
-      "room": "main",
-      "rx": 2,
-      "rz": 1,
-      "kinds": [
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm"
-      ],
-      "elite": null,
-      "name": null,
-      "lesson": true,
-      "budget": 3,
-      "template": "M8"
-     },
-     {
-      "room": "main",
-      "rx": 2,
-      "rz": 1,
-      "kinds": [
-       "chaser",
-       "chaser"
-      ],
-      "elite": null,
-      "name": null,
-      "lesson": true,
-      "budget": 4,
-      "template": "H+H"
-     },
-     {
-      "room": "side",
-      "rx": 1,
-      "rz": 1,
-      "kinds": [
-       "ranged",
-       "chaser",
-       "chaser"
-      ],
-      "elite": null,
-      "name": null,
-      "lesson": false,
-      "budget": 3,
-      "template": null
-     },
-     {
-      "room": "side",
-      "rx": 1,
-      "rz": 1,
-      "kinds": [
-       "ranged",
-       "chaser",
-       "chaser",
-       "chaser"
-      ],
-      "elite": null,
-      "name": null,
-      "lesson": false,
-      "budget": 4,
-      "template": null
-     }
-    ],
-    [
-     {
-      "room": "main",
-      "rx": 2,
-      "rz": 2,
-      "kinds": [
-       "chaser",
-       "chaser"
-      ],
-      "elite": null,
-      "name": null,
-      "lesson": true,
-      "budget": 3,
-      "template": "H+H"
-     },
-     {
-      "room": "main",
-      "rx": 2,
-      "rz": 2,
-      "kinds": [
-       "chaser"
-      ],
-      "elite": null,
-      "name": null,
-      "lesson": true,
-      "budget": 3,
-      "template": "H"
-     },
-     {
-      "room": "main",
-      "rx": 2,
-      "rz": 2,
-      "kinds": [
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm"
-      ],
-      "elite": null,
-      "name": null,
-      "lesson": true,
-      "budget": 3,
-      "template": "M8"
-     },
-     {
-      "room": "side",
-      "rx": 1,
-      "rz": 1,
-      "kinds": [
-       "ranged",
-       "chaser",
-       "chaser",
-       "chaser"
-      ],
-      "elite": null,
-      "name": null,
-      "lesson": false,
-      "budget": 4,
-      "template": null
-     },
-     {
-      "room": "side",
-      "rx": 1,
-      "rz": 1,
-      "kinds": [
-       "chaser",
-       "chaser",
-       "chaser",
-       "chaser"
-      ],
-      "elite": null,
-      "name": null,
-      "lesson": false,
-      "budget": 4,
-      "template": null
-     }
-    ],
-    [
-     {
-      "room": "main",
-      "rx": 2,
-      "rz": 1,
-      "kinds": [
-       "chaser"
-      ],
-      "elite": null,
-      "name": null,
-      "lesson": true,
-      "budget": 3,
-      "template": "H"
-     },
-     {
-      "room": "main",
-      "rx": 1,
-      "rz": 2,
-      "kinds": [
-       "chaser",
-       "chaser"
-      ],
-      "elite": null,
-      "name": null,
-      "lesson": true,
-      "budget": 3,
-      "template": "H+H"
-     },
-     {
-      "room": "main",
-      "rx": 2,
-      "rz": 1,
-      "kinds": [
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm"
-      ],
-      "elite": null,
-      "name": null,
-      "lesson": true,
-      "budget": 4,
-      "template": "M8"
-     },
-     {
-      "room": "side",
-      "rx": 1,
-      "rz": 1,
-      "kinds": [
-       "ranged",
-       "chaser",
-       "chaser",
-       "chaser"
-      ],
-      "elite": null,
-      "name": null,
-      "lesson": false,
-      "budget": 4,
-      "template": null
-     },
-     {
-      "room": "side",
-      "rx": 1,
-      "rz": 1,
-      "kinds": [
-       "chaser",
-       "chaser",
-       "chaser"
-      ],
-      "elite": null,
-      "name": null,
-      "lesson": false,
-      "budget": 3,
-      "template": null
-     }
-    ],
-    [
-     {
-      "room": "main",
-      "rx": 2,
-      "rz": 2,
-      "kinds": [
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm"
-      ],
-      "elite": null,
-      "name": null,
-      "lesson": true,
-      "budget": 4,
-      "template": "M8"
-     },
-     {
-      "room": "main",
-      "rx": 2,
-      "rz": 2,
-      "kinds": [
-       "chaser",
-       "chaser"
-      ],
-      "elite": null,
-      "name": null,
-      "lesson": true,
-      "budget": 4,
-      "template": "H+H"
-     },
-     {
-      "room": "main",
-      "rx": 2,
-      "rz": 2,
-      "kinds": [
-       "chaser"
-      ],
-      "elite": null,
-      "name": null,
-      "lesson": true,
-      "budget": 3,
-      "template": "H"
-     },
-     {
-      "room": "side",
-      "rx": 1,
-      "rz": 1,
-      "kinds": [
-       "ranged",
-       "chaser",
-       "chaser"
-      ],
-      "elite": null,
-      "name": null,
-      "lesson": false,
-      "budget": 3,
-      "template": null
-     },
-     {
-      "room": "side",
-      "rx": 1,
-      "rz": 1,
-      "kinds": [
-       "ranged",
-       "chaser",
-       "chaser"
-      ],
-      "elite": null,
-      "name": null,
-      "lesson": false,
-      "budget": 3,
-      "template": null
-     }
-    ],
-    [
-     {
-      "room": "main",
-      "rx": 2,
-      "rz": 1,
-      "kinds": [
-       "chaser",
-       "chaser"
-      ],
-      "elite": null,
-      "name": null,
-      "lesson": true,
-      "budget": 3,
-      "template": "H+H"
-     },
-     {
-      "room": "main",
-      "rx": 2,
-      "rz": 2,
-      "kinds": [
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm"
-      ],
-      "elite": null,
-      "name": null,
-      "lesson": true,
-      "budget": 3,
-      "template": "M8"
-     },
-     {
-      "room": "main",
-      "rx": 2,
-      "rz": 2,
-      "kinds": [
-       "chaser"
-      ],
-      "elite": null,
-      "name": null,
-      "lesson": true,
-      "budget": 4,
-      "template": "H"
-     },
-     {
-      "room": "side",
-      "rx": 1,
-      "rz": 1,
-      "kinds": [
-       "chaser",
-       "chaser",
-       "chaser"
-      ],
-      "elite": null,
-      "name": null,
-      "lesson": false,
-      "budget": 3,
-      "template": null
-     },
-     {
-      "room": "side",
-      "rx": 1,
-      "rz": 1,
-      "kinds": [
-       "ranged",
-       "chaser",
-       "chaser"
-      ],
-      "elite": null,
-      "name": null,
-      "lesson": false,
-      "budget": 3,
-      "template": null
-     }
-    ],
-    [
-     {
-      "room": "main",
-      "rx": 2,
-      "rz": 2,
-      "kinds": [
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm"
-      ],
-      "elite": null,
-      "name": null,
-      "lesson": true,
-      "budget": 4,
-      "template": "M8"
-     },
-     {
-      "room": "main",
-      "rx": 1,
-      "rz": 2,
-      "kinds": [
-       "chaser"
-      ],
-      "elite": null,
-      "name": null,
-      "lesson": true,
-      "budget": 4,
-      "template": "H"
-     },
-     {
-      "room": "main",
-      "rx": 2,
-      "rz": 2,
-      "kinds": [
-       "chaser",
-       "chaser"
-      ],
-      "elite": null,
-      "name": null,
-      "lesson": true,
-      "budget": 3,
-      "template": "H+H"
-     },
-     {
-      "room": "side",
-      "rx": 1,
-      "rz": 1,
-      "kinds": [
-       "ranged",
-       "chaser",
-       "chaser",
-       "chaser"
-      ],
-      "elite": null,
-      "name": null,
-      "lesson": false,
-      "budget": 4,
-      "template": null
-     },
-     {
-      "room": "side",
-      "rx": 1,
-      "rz": 1,
-      "kinds": [
-       "ranged",
-       "chaser",
-       "chaser",
-       "chaser"
-      ],
-      "elite": null,
-      "name": null,
-      "lesson": false,
-      "budget": 4,
-      "template": null
-     }
-    ],
-    [
-     {
-      "room": "main",
-      "rx": 2,
-      "rz": 1,
-      "kinds": [
-       "chaser"
-      ],
-      "elite": null,
-      "name": null,
-      "lesson": true,
-      "budget": 3,
-      "template": "H"
-     },
-     {
-      "room": "main",
-      "rx": 2,
-      "rz": 2,
-      "kinds": [
-       "chaser",
-       "chaser"
-      ],
-      "elite": null,
-      "name": null,
-      "lesson": true,
-      "budget": 4,
-      "template": "H+H"
-     },
-     {
-      "room": "main",
-      "rx": 2,
-      "rz": 2,
-      "kinds": [
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm"
-      ],
-      "elite": null,
-      "name": null,
-      "lesson": true,
-      "budget": 4,
-      "template": "M8"
+      "template": "H+H+G"
      },
      {
       "room": "side",
@@ -12740,8 +11861,82 @@
       "elite": null,
       "name": null,
       "lesson": true,
-      "budget": 4,
+      "budget": 3,
       "template": "M8"
+     },
+     {
+      "room": "main",
+      "rx": 1,
+      "rz": 2,
+      "kinds": [
+       "chaser"
+      ],
+      "elite": null,
+      "name": null,
+      "lesson": true,
+      "budget": 3,
+      "template": "H"
+     },
+     {
+      "room": "main",
+      "rx": 2,
+      "rz": 1,
+      "kinds": [
+       "chaser",
+       "chaser",
+       "ranged"
+      ],
+      "elite": null,
+      "name": null,
+      "lesson": true,
+      "budget": 4,
+      "template": "H+H+G"
+     },
+     {
+      "room": "side",
+      "rx": 1,
+      "rz": 1,
+      "kinds": [
+       "chaser",
+       "chaser",
+       "chaser",
+       "chaser"
+      ],
+      "elite": null,
+      "name": null,
+      "lesson": false,
+      "budget": 4,
+      "template": null
+     },
+     {
+      "room": "side",
+      "rx": 1,
+      "rz": 1,
+      "kinds": [
+       "ranged",
+       "chaser",
+       "chaser"
+      ],
+      "elite": null,
+      "name": null,
+      "lesson": false,
+      "budget": 3,
+      "template": null
+     }
+    ],
+    [
+     {
+      "room": "main",
+      "rx": 2,
+      "rz": 2,
+      "kinds": [
+       "chaser"
+      ],
+      "elite": null,
+      "name": null,
+      "lesson": true,
+      "budget": 4,
+      "template": "H"
      },
      {
       "room": "main",
@@ -12749,13 +11944,183 @@
       "rz": 2,
       "kinds": [
        "chaser",
-       "chaser"
+       "chaser",
+       "ranged"
       ],
       "elite": null,
       "name": null,
       "lesson": true,
       "budget": 4,
-      "template": "H+H"
+      "template": "H+H+G"
+     },
+     {
+      "room": "main",
+      "rx": 2,
+      "rz": 2,
+      "kinds": [
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm"
+      ],
+      "elite": null,
+      "name": null,
+      "lesson": true,
+      "budget": 4,
+      "template": "M8"
+     },
+     {
+      "room": "side",
+      "rx": 1,
+      "rz": 1,
+      "kinds": [
+       "ranged",
+       "chaser",
+       "chaser"
+      ],
+      "elite": null,
+      "name": null,
+      "lesson": false,
+      "budget": 3,
+      "template": null
+     },
+     {
+      "room": "side",
+      "rx": 1,
+      "rz": 1,
+      "kinds": [
+       "ranged",
+       "chaser",
+       "chaser",
+       "chaser"
+      ],
+      "elite": null,
+      "name": null,
+      "lesson": false,
+      "budget": 4,
+      "template": null
+     }
+    ],
+    [
+     {
+      "room": "main",
+      "rx": 2,
+      "rz": 2,
+      "kinds": [
+       "chaser"
+      ],
+      "elite": null,
+      "name": null,
+      "lesson": true,
+      "budget": 3,
+      "template": "H"
+     },
+     {
+      "room": "main",
+      "rx": 2,
+      "rz": 2,
+      "kinds": [
+       "chaser",
+       "chaser",
+       "ranged"
+      ],
+      "elite": null,
+      "name": null,
+      "lesson": true,
+      "budget": 4,
+      "template": "H+H+G"
+     },
+     {
+      "room": "main",
+      "rx": 2,
+      "rz": 1,
+      "kinds": [
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm"
+      ],
+      "elite": null,
+      "name": null,
+      "lesson": true,
+      "budget": 3,
+      "template": "M8"
+     },
+     {
+      "room": "side",
+      "rx": 1,
+      "rz": 1,
+      "kinds": [
+       "ranged",
+       "chaser",
+       "chaser"
+      ],
+      "elite": null,
+      "name": null,
+      "lesson": false,
+      "budget": 3,
+      "template": null
+     },
+     {
+      "room": "side",
+      "rx": 1,
+      "rz": 1,
+      "kinds": [
+       "ranged",
+       "chaser",
+       "chaser",
+       "chaser"
+      ],
+      "elite": null,
+      "name": null,
+      "lesson": false,
+      "budget": 4,
+      "template": null
+     }
+    ],
+    [
+     {
+      "room": "main",
+      "rx": 2,
+      "rz": 2,
+      "kinds": [
+       "chaser",
+       "chaser",
+       "ranged"
+      ],
+      "elite": null,
+      "name": null,
+      "lesson": true,
+      "budget": 3,
+      "template": "H+H+G"
+     },
+     {
+      "room": "main",
+      "rx": 2,
+      "rz": 1,
+      "kinds": [
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm"
+      ],
+      "elite": null,
+      "name": null,
+      "lesson": true,
+      "budget": 3,
+      "template": "M8"
      },
      {
       "room": "main",
@@ -12775,6 +12140,104 @@
       "rx": 1,
       "rz": 1,
       "kinds": [
+       "ranged",
+       "chaser",
+       "chaser",
+       "chaser"
+      ],
+      "elite": null,
+      "name": null,
+      "lesson": false,
+      "budget": 4,
+      "template": null
+     },
+     {
+      "room": "side",
+      "rx": 1,
+      "rz": 1,
+      "kinds": [
+       "ranged",
+       "chaser",
+       "chaser",
+       "chaser"
+      ],
+      "elite": null,
+      "name": null,
+      "lesson": false,
+      "budget": 4,
+      "template": null
+     }
+    ],
+    [
+     {
+      "room": "main",
+      "rx": 2,
+      "rz": 2,
+      "kinds": [
+       "chaser"
+      ],
+      "elite": null,
+      "name": null,
+      "lesson": true,
+      "budget": 4,
+      "template": "H"
+     },
+     {
+      "room": "main",
+      "rx": 2,
+      "rz": 1,
+      "kinds": [
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm"
+      ],
+      "elite": null,
+      "name": null,
+      "lesson": true,
+      "budget": 3,
+      "template": "M8"
+     },
+     {
+      "room": "main",
+      "rx": 2,
+      "rz": 1,
+      "kinds": [
+       "chaser",
+       "chaser",
+       "ranged"
+      ],
+      "elite": null,
+      "name": null,
+      "lesson": true,
+      "budget": 4,
+      "template": "H+H+G"
+     },
+     {
+      "room": "side",
+      "rx": 1,
+      "rz": 1,
+      "kinds": [
+       "ranged",
+       "chaser",
+       "chaser",
+       "chaser"
+      ],
+      "elite": null,
+      "name": null,
+      "lesson": false,
+      "budget": 4,
+      "template": null
+     },
+     {
+      "room": "side",
+      "rx": 1,
+      "rz": 1,
+      "kinds": [
        "chaser",
        "chaser",
        "chaser",
@@ -12784,6 +12247,560 @@
       "name": null,
       "lesson": false,
       "budget": 4,
+      "template": null
+     }
+    ],
+    [
+     {
+      "room": "main",
+      "rx": 2,
+      "rz": 2,
+      "kinds": [
+       "chaser",
+       "chaser",
+       "ranged"
+      ],
+      "elite": null,
+      "name": null,
+      "lesson": true,
+      "budget": 3,
+      "template": "H+H+G"
+     },
+     {
+      "room": "main",
+      "rx": 2,
+      "rz": 2,
+      "kinds": [
+       "chaser"
+      ],
+      "elite": null,
+      "name": null,
+      "lesson": true,
+      "budget": 4,
+      "template": "H"
+     },
+     {
+      "room": "main",
+      "rx": 2,
+      "rz": 2,
+      "kinds": [
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm"
+      ],
+      "elite": null,
+      "name": null,
+      "lesson": true,
+      "budget": 4,
+      "template": "M8"
+     },
+     {
+      "room": "side",
+      "rx": 1,
+      "rz": 1,
+      "kinds": [
+       "ranged",
+       "chaser",
+       "chaser",
+       "chaser"
+      ],
+      "elite": null,
+      "name": null,
+      "lesson": false,
+      "budget": 4,
+      "template": null
+     },
+     {
+      "room": "side",
+      "rx": 1,
+      "rz": 1,
+      "kinds": [
+       "ranged",
+       "chaser",
+       "chaser"
+      ],
+      "elite": null,
+      "name": null,
+      "lesson": false,
+      "budget": 3,
+      "template": null
+     }
+    ],
+    [
+     {
+      "room": "main",
+      "rx": 2,
+      "rz": 1,
+      "kinds": [
+       "chaser"
+      ],
+      "elite": null,
+      "name": null,
+      "lesson": true,
+      "budget": 3,
+      "template": "H"
+     },
+     {
+      "room": "main",
+      "rx": 1,
+      "rz": 2,
+      "kinds": [
+       "chaser",
+       "chaser",
+       "ranged"
+      ],
+      "elite": null,
+      "name": null,
+      "lesson": true,
+      "budget": 3,
+      "template": "H+H+G"
+     },
+     {
+      "room": "main",
+      "rx": 2,
+      "rz": 1,
+      "kinds": [
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm"
+      ],
+      "elite": null,
+      "name": null,
+      "lesson": true,
+      "budget": 3,
+      "template": "M8"
+     },
+     {
+      "room": "side",
+      "rx": 1,
+      "rz": 1,
+      "kinds": [
+       "ranged",
+       "chaser",
+       "chaser",
+       "chaser"
+      ],
+      "elite": null,
+      "name": null,
+      "lesson": false,
+      "budget": 4,
+      "template": null
+     },
+     {
+      "room": "side",
+      "rx": 1,
+      "rz": 1,
+      "kinds": [
+       "ranged",
+       "chaser",
+       "chaser",
+       "chaser"
+      ],
+      "elite": null,
+      "name": null,
+      "lesson": false,
+      "budget": 4,
+      "template": null
+     }
+    ],
+    [
+     {
+      "room": "main",
+      "rx": 2,
+      "rz": 2,
+      "kinds": [
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm"
+      ],
+      "elite": null,
+      "name": null,
+      "lesson": true,
+      "budget": 4,
+      "template": "M8"
+     },
+     {
+      "room": "main",
+      "rx": 2,
+      "rz": 2,
+      "kinds": [
+       "chaser",
+       "chaser",
+       "ranged"
+      ],
+      "elite": null,
+      "name": null,
+      "lesson": true,
+      "budget": 4,
+      "template": "H+H+G"
+     },
+     {
+      "room": "main",
+      "rx": 2,
+      "rz": 2,
+      "kinds": [
+       "chaser"
+      ],
+      "elite": null,
+      "name": null,
+      "lesson": true,
+      "budget": 3,
+      "template": "H"
+     },
+     {
+      "room": "side",
+      "rx": 1,
+      "rz": 1,
+      "kinds": [
+       "ranged",
+       "chaser",
+       "chaser",
+       "chaser"
+      ],
+      "elite": null,
+      "name": null,
+      "lesson": false,
+      "budget": 4,
+      "template": null
+     },
+     {
+      "room": "side",
+      "rx": 1,
+      "rz": 1,
+      "kinds": [
+       "chaser",
+       "chaser",
+       "chaser",
+       "chaser"
+      ],
+      "elite": null,
+      "name": null,
+      "lesson": false,
+      "budget": 4,
+      "template": null
+     }
+    ],
+    [
+     {
+      "room": "main",
+      "rx": 2,
+      "rz": 1,
+      "kinds": [
+       "chaser",
+       "chaser",
+       "ranged"
+      ],
+      "elite": null,
+      "name": null,
+      "lesson": true,
+      "budget": 3,
+      "template": "H+H+G"
+     },
+     {
+      "room": "main",
+      "rx": 2,
+      "rz": 2,
+      "kinds": [
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm"
+      ],
+      "elite": null,
+      "name": null,
+      "lesson": true,
+      "budget": 3,
+      "template": "M8"
+     },
+     {
+      "room": "main",
+      "rx": 2,
+      "rz": 2,
+      "kinds": [
+       "chaser"
+      ],
+      "elite": null,
+      "name": null,
+      "lesson": true,
+      "budget": 3,
+      "template": "H"
+     },
+     {
+      "room": "side",
+      "rx": 1,
+      "rz": 1,
+      "kinds": [
+       "ranged",
+       "chaser",
+       "chaser",
+       "chaser"
+      ],
+      "elite": null,
+      "name": null,
+      "lesson": false,
+      "budget": 4,
+      "template": null
+     },
+     {
+      "room": "side",
+      "rx": 1,
+      "rz": 1,
+      "kinds": [
+       "ranged",
+       "chaser",
+       "chaser"
+      ],
+      "elite": null,
+      "name": null,
+      "lesson": false,
+      "budget": 3,
+      "template": null
+     }
+    ],
+    [
+     {
+      "room": "main",
+      "rx": 2,
+      "rz": 2,
+      "kinds": [
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm"
+      ],
+      "elite": null,
+      "name": null,
+      "lesson": true,
+      "budget": 4,
+      "template": "M8"
+     },
+     {
+      "room": "main",
+      "rx": 1,
+      "rz": 2,
+      "kinds": [
+       "chaser"
+      ],
+      "elite": null,
+      "name": null,
+      "lesson": true,
+      "budget": 4,
+      "template": "H"
+     },
+     {
+      "room": "main",
+      "rx": 2,
+      "rz": 2,
+      "kinds": [
+       "chaser",
+       "chaser",
+       "ranged"
+      ],
+      "elite": null,
+      "name": null,
+      "lesson": true,
+      "budget": 3,
+      "template": "H+H+G"
+     },
+     {
+      "room": "side",
+      "rx": 1,
+      "rz": 1,
+      "kinds": [
+       "ranged",
+       "chaser",
+       "chaser",
+       "chaser"
+      ],
+      "elite": null,
+      "name": null,
+      "lesson": false,
+      "budget": 4,
+      "template": null
+     },
+     {
+      "room": "side",
+      "rx": 1,
+      "rz": 1,
+      "kinds": [
+       "ranged",
+       "chaser",
+       "chaser",
+       "chaser"
+      ],
+      "elite": null,
+      "name": null,
+      "lesson": false,
+      "budget": 4,
+      "template": null
+     }
+    ],
+    [
+     {
+      "room": "main",
+      "rx": 2,
+      "rz": 1,
+      "kinds": [
+       "chaser"
+      ],
+      "elite": null,
+      "name": null,
+      "lesson": true,
+      "budget": 3,
+      "template": "H"
+     },
+     {
+      "room": "main",
+      "rx": 2,
+      "rz": 2,
+      "kinds": [
+       "chaser",
+       "chaser",
+       "ranged"
+      ],
+      "elite": null,
+      "name": null,
+      "lesson": true,
+      "budget": 4,
+      "template": "H+H+G"
+     },
+     {
+      "room": "main",
+      "rx": 2,
+      "rz": 2,
+      "kinds": [
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm"
+      ],
+      "elite": null,
+      "name": null,
+      "lesson": true,
+      "budget": 3,
+      "template": "M8"
+     },
+     {
+      "room": "side",
+      "rx": 1,
+      "rz": 1,
+      "kinds": [
+       "ranged",
+       "chaser",
+       "chaser"
+      ],
+      "elite": null,
+      "name": null,
+      "lesson": false,
+      "budget": 3,
+      "template": null
+     },
+     {
+      "room": "side",
+      "rx": 1,
+      "rz": 1,
+      "kinds": [
+       "chaser",
+       "chaser",
+       "chaser",
+       "chaser"
+      ],
+      "elite": null,
+      "name": null,
+      "lesson": false,
+      "budget": 4,
+      "template": null
+     }
+    ],
+    [
+     {
+      "room": "main",
+      "rx": 2,
+      "rz": 2,
+      "kinds": [
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm"
+      ],
+      "elite": null,
+      "name": null,
+      "lesson": true,
+      "budget": 4,
+      "template": "M8"
+     },
+     {
+      "room": "main",
+      "rx": 2,
+      "rz": 2,
+      "kinds": [
+       "chaser",
+       "chaser",
+       "ranged"
+      ],
+      "elite": null,
+      "name": null,
+      "lesson": true,
+      "budget": 4,
+      "template": "H+H+G"
+     },
+     {
+      "room": "main",
+      "rx": 2,
+      "rz": 2,
+      "kinds": [
+       "chaser"
+      ],
+      "elite": null,
+      "name": null,
+      "lesson": true,
+      "budget": 3,
+      "template": "H"
+     },
+     {
+      "room": "side",
+      "rx": 1,
+      "rz": 1,
+      "kinds": [
+       "ranged",
+       "chaser",
+       "chaser"
+      ],
+      "elite": null,
+      "name": null,
+      "lesson": false,
+      "budget": 3,
       "template": null
      },
      {
@@ -12843,13 +12860,14 @@
       "rz": 2,
       "kinds": [
        "chaser",
-       "chaser"
+       "chaser",
+       "ranged"
       ],
       "elite": null,
       "name": null,
       "lesson": true,
       "budget": 3,
-      "template": "H+H"
+      "template": "H+H+G"
      },
      {
       "room": "side",
@@ -12922,13 +12940,14 @@
       "rz": 2,
       "kinds": [
        "chaser",
-       "chaser"
+       "chaser",
+       "ranged"
       ],
       "elite": null,
       "name": null,
       "lesson": true,
       "budget": 3,
-      "template": "H+H"
+      "template": "H+H+G"
      },
      {
       "room": "side",
@@ -12989,13 +13008,14 @@
       "rz": 2,
       "kinds": [
        "chaser",
-       "chaser"
+       "chaser",
+       "ranged"
       ],
       "elite": null,
       "name": null,
       "lesson": true,
       "budget": 3,
-      "template": "H+H"
+      "template": "H+H+G"
      },
      {
       "room": "main",
@@ -13007,7 +13027,7 @@
       "elite": null,
       "name": null,
       "lesson": true,
-      "budget": 3,
+      "budget": 4,
       "template": "H"
      },
      {
@@ -13017,12 +13037,13 @@
       "kinds": [
        "ranged",
        "chaser",
+       "chaser",
        "chaser"
       ],
       "elite": null,
       "name": null,
       "lesson": false,
-      "budget": 3,
+      "budget": 4,
       "template": null
      },
      {
@@ -13072,6 +13093,7 @@
        "swarm",
        "swarm",
        "swarm",
+       "ranged",
        "chaser",
        "chaser"
       ],
@@ -13079,7 +13101,7 @@
       "name": "Mournhive the Warden",
       "lesson": false,
       "budget": 5,
-      "template": "M6+H+H"
+      "template": "M6+G+H+H"
      },
      {
       "room": "main",
@@ -13091,13 +13113,12 @@
        "chaser",
        "chaser",
        "chaser",
-       "chaser",
        "mender"
       ],
       "elite": null,
       "name": null,
       "lesson": false,
-      "budget": 6,
+      "budget": 5,
       "template": null
      },
      {
@@ -13105,17 +13126,17 @@
       "rx": 2,
       "rz": 1,
       "kinds": [
-       "chaser",
+       "ranged",
        "chaser",
        "chaser",
        "chaser",
        "chaser"
       ],
-      "elite": "plated",
-      "name": "Grimhook the Plated",
+      "elite": "swift",
+      "name": "Grimhook the Quick",
       "lesson": false,
-      "budget": 6,
-      "template": "H+H+H+H+H"
+      "budget": 5,
+      "template": null
      },
      {
       "room": "side",
@@ -13169,186 +13190,67 @@
        "swarm",
        "swarm",
        "swarm",
-       "chaser",
-       "chaser"
-      ],
-      "elite": "warding",
-      "name": "Hollownest the Warden",
-      "lesson": false,
-      "budget": 5,
-      "template": "M6+H+H"
-     },
-     {
-      "room": "main",
-      "rx": 2,
-      "rz": 1,
-      "kinds": [
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "chaser",
-       "chaser",
-       "chaser"
-      ],
-      "elite": null,
-      "name": null,
-      "lesson": false,
-      "budget": 6,
-      "template": "M6+H+H+H"
-     },
-     {
-      "room": "main",
-      "rx": 1,
-      "rz": 2,
-      "kinds": [
        "ranged",
        "chaser",
-       "chaser",
-       "chaser",
        "chaser"
-      ],
-      "elite": "plated",
-      "name": "Mournhook the Plated",
-      "lesson": false,
-      "budget": 6,
-      "template": null
-     },
-     {
-      "room": "main",
-      "rx": 2,
-      "rz": 1,
-      "kinds": [
-       "ranged",
-       "ranged",
-       "chaser",
-       "chaser",
-       "chaser",
-       "mender"
       ],
       "elite": "swift",
-      "name": "Cinderjaw the Quick",
+      "name": "Ashbrood the Quick",
       "lesson": false,
       "budget": 5,
-      "template": null
+      "template": "M6+G+H+H"
      },
-     {
-      "room": "side",
-      "rx": 1,
-      "rz": 1,
-      "kinds": [
-       "ranged",
-       "chaser",
-       "chaser",
-       "chaser"
-      ],
-      "elite": null,
-      "name": null,
-      "lesson": false,
-      "budget": 4,
-      "template": null
-     },
-     {
-      "room": "side",
-      "rx": 1,
-      "rz": 1,
-      "kinds": [
-       "ranged",
-       "chaser",
-       "chaser",
-       "chaser",
-       "chaser"
-      ],
-      "elite": null,
-      "name": null,
-      "lesson": false,
-      "budget": 5,
-      "template": null
-     }
-    ],
-    [
      {
       "room": "main",
-      "rx": 1,
-      "rz": 2,
+      "rx": 2,
+      "rz": 1,
       "kinds": [
-       "chaser",
+       "ranged",
+       "ranged",
        "chaser",
        "chaser",
        "chaser",
        "chaser"
       ],
       "elite": "plated",
-      "name": "Gutterhook the Plated",
+      "name": "Guttergrip the Plated",
       "lesson": false,
       "budget": 6,
-      "template": "H+H+H+H+H"
+      "template": null
      },
      {
       "room": "main",
-      "rx": 2,
+      "rx": 1,
       "rz": 2,
-      "kinds": [
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm"
-      ],
-      "elite": "warding",
-      "name": "Cindernest the Warden",
-      "lesson": false,
-      "budget": 6,
-      "template": "M6"
-     },
-     {
-      "room": "main",
-      "rx": 2,
-      "rz": 1,
       "kinds": [
        "charger",
        "chaser",
-       "chaser"
+       "chaser",
+       "ranged"
       ],
       "elite": null,
       "name": null,
       "lesson": false,
       "budget": 5,
-      "template": "C+H+H"
+      "template": "C+H+H+S"
      },
      {
       "room": "main",
       "rx": 2,
       "rz": 1,
       "kinds": [
-       "chaser",
-       "chaser",
-       "chaser",
-       "chaser"
-      ],
-      "elite": "splitting",
-      "name": "Hollowheart the Many",
-      "lesson": false,
-      "budget": 5,
-      "template": "H+H+H+H"
-     },
-     {
-      "room": "side",
-      "rx": 1,
-      "rz": 1,
-      "kinds": [
+       "ranged",
        "ranged",
        "chaser",
        "chaser",
-       "chaser"
+       "chaser",
+       "chaser",
+       "mender"
       ],
-      "elite": null,
-      "name": null,
+      "elite": "plated",
+      "name": "Guttergrip the Plated",
       "lesson": false,
-      "budget": 4,
+      "budget": 6,
       "template": null
      },
      {
@@ -13356,8 +13258,12 @@
       "rx": 1,
       "rz": 1,
       "kinds": [
-       "ranged",
-       "chaser",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
        "chaser",
        "chaser",
        "chaser"
@@ -13366,86 +13272,9 @@
       "name": null,
       "lesson": false,
       "budget": 5,
-      "template": null
-     }
-    ],
-    [
-     {
-      "room": "main",
-      "rx": 1,
-      "rz": 2,
-      "kinds": [
-       "chaser",
-       "chaser",
-       "chaser",
-       "chaser",
-       "chaser",
-       "mender"
-      ],
-      "elite": "warding",
-      "name": "Shardjaw the Warden",
-      "lesson": false,
-      "budget": 6,
-      "template": "H+H+H+H+H"
-     },
-     {
-      "room": "main",
-      "rx": 2,
-      "rz": 2,
-      "kinds": [
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "chaser",
-       "chaser",
-       "chaser",
-       "mender"
-      ],
-      "elite": "swift",
-      "name": "Grimnest the Quick",
-      "lesson": false,
-      "budget": 6,
       "template": "M6+H+H+H"
      },
      {
-      "room": "main",
-      "rx": 2,
-      "rz": 2,
-      "kinds": [
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm"
-      ],
-      "elite": null,
-      "name": null,
-      "lesson": false,
-      "budget": 5,
-      "template": "M6"
-     },
-     {
-      "room": "main",
-      "rx": 2,
-      "rz": 1,
-      "kinds": [
-       "chaser",
-       "chaser",
-       "chaser",
-       "chaser",
-       "chaser"
-      ],
-      "elite": "plated",
-      "name": "Mournjaw the Plated",
-      "lesson": false,
-      "budget": 6,
-      "template": "H+H+H+H+H"
-     },
-     {
       "room": "side",
       "rx": 1,
       "rz": 1,
@@ -13461,25 +13290,27 @@
       "lesson": false,
       "budget": 5,
       "template": null
-     },
+     }
+    ],
+    [
      {
-      "room": "side",
+      "room": "main",
       "rx": 1,
-      "rz": 1,
+      "rz": 2,
       "kinds": [
        "chaser",
+       "chaser",
+       "ranged",
        "chaser",
        "chaser",
        "chaser"
       ],
-      "elite": null,
-      "name": null,
+      "elite": "warding",
+      "name": "Ashjaw the Warden",
       "lesson": false,
-      "budget": 4,
-      "template": null
-     }
-    ],
-    [
+      "budget": 6,
+      "template": "H+H+G+H+H+H"
+     },
      {
       "room": "main",
       "rx": 2,
@@ -13488,10 +13319,10 @@
        "chaser",
        "chaser"
       ],
-      "elite": "splitting",
-      "name": "Mournheart the Many",
+      "elite": "warding",
+      "name": "Shardwake the Warden",
       "lesson": false,
-      "budget": 6,
+      "budget": 5,
       "template": "H+H"
      },
      {
@@ -13499,40 +13330,7 @@
       "rx": 2,
       "rz": 1,
       "kinds": [
-       "charger",
-       "chaser",
-       "chaser",
-       "chaser"
-      ],
-      "elite": "swift",
-      "name": "Shardheart the Quick",
-      "lesson": false,
-      "budget": 6,
-      "template": "C+H+H+H"
-     },
-     {
-      "room": "main",
-      "rx": 1,
-      "rz": 2,
-      "kinds": [
-       "chaser",
-       "chaser",
-       "chaser",
-       "chaser",
-       "chaser",
-       "mender"
-      ],
-      "elite": "swift",
-      "name": "Rusthook the Quick",
-      "lesson": false,
-      "budget": 6,
-      "template": "H+H+H+H+H"
-     },
-     {
-      "room": "main",
-      "rx": 1,
-      "rz": 2,
-      "kinds": [
+       "ranged",
        "chaser",
        "chaser",
        "chaser",
@@ -13541,70 +13339,6 @@
       ],
       "elite": null,
       "name": null,
-      "lesson": false,
-      "budget": 6,
-      "template": "H+H+H+H+H"
-     },
-     {
-      "room": "side",
-      "rx": 1,
-      "rz": 1,
-      "kinds": [
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "ranged",
-       "chaser"
-      ],
-      "elite": null,
-      "name": null,
-      "lesson": false,
-      "budget": 4,
-      "template": "M8+S+H"
-     },
-     {
-      "room": "side",
-      "rx": 1,
-      "rz": 1,
-      "kinds": [
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "ranged",
-       "chaser"
-      ],
-      "elite": null,
-      "name": null,
-      "lesson": false,
-      "budget": 4,
-      "template": "M8+S+H"
-     }
-    ],
-    [
-     {
-      "room": "main",
-      "rx": 2,
-      "rz": 1,
-      "kinds": [
-       "ranged",
-       "chaser",
-       "chaser",
-       "chaser",
-       "chaser",
-       "chaser"
-      ],
-      "elite": "plated",
-      "name": "Mourncoil the Plated",
       "lesson": false,
       "budget": 6,
       "template": null
@@ -13614,75 +13348,18 @@
       "rx": 2,
       "rz": 1,
       "kinds": [
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
+       "ranged",
+       "ranged",
        "chaser",
        "chaser",
        "chaser",
-       "chaser",
-       "mender"
+       "chaser"
       ],
-      "elite": null,
-      "name": null,
+      "elite": "swift",
+      "name": "Grimcoil the Quick",
       "lesson": false,
       "budget": 6,
-      "template": "M6+H+H+H+H"
-     },
-     {
-      "room": "main",
-      "rx": 1,
-      "rz": 2,
-      "kinds": [
-       "charger",
-       "chaser",
-       "chaser",
-       "chaser"
-      ],
-      "elite": "plated",
-      "name": "Shardbrow the Plated",
-      "lesson": false,
-      "budget": 6,
-      "template": "C+H+H+H"
-     },
-     {
-      "room": "main",
-      "rx": 2,
-      "rz": 1,
-      "kinds": [
-       "charger",
-       "chaser",
-       "chaser"
-      ],
-      "elite": "plated",
-      "name": "Cinderwake the Plated",
-      "lesson": false,
-      "budget": 5,
-      "template": "C+H+H"
-     },
-     {
-      "room": "side",
-      "rx": 1,
-      "rz": 1,
-      "kinds": [
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "chaser",
-       "chaser",
-       "chaser"
-      ],
-      "elite": null,
-      "name": null,
-      "lesson": false,
-      "budget": 5,
-      "template": "M6+H+H+H"
+      "template": null
      },
      {
       "room": "side",
@@ -13699,79 +13376,6 @@
       "lesson": false,
       "budget": 4,
       "template": null
-     }
-    ],
-    [
-     {
-      "room": "main",
-      "rx": 1,
-      "rz": 2,
-      "kinds": [
-       "ranged",
-       "chaser",
-       "chaser",
-       "chaser",
-       "chaser",
-       "mender"
-      ],
-      "elite": "warding",
-      "name": "Gutterwake the Warden",
-      "lesson": false,
-      "budget": 5,
-      "template": null
-     },
-     {
-      "room": "main",
-      "rx": 1,
-      "rz": 2,
-      "kinds": [
-       "ranged",
-       "ranged",
-       "chaser",
-       "chaser",
-       "chaser",
-       "mender"
-      ],
-      "elite": "plated",
-      "name": "Guttercoil the Plated",
-      "lesson": false,
-      "budget": 6,
-      "template": null
-     },
-     {
-      "room": "main",
-      "rx": 2,
-      "rz": 2,
-      "kinds": [
-       "chaser",
-       "chaser",
-       "chaser",
-       "chaser",
-       "chaser"
-      ],
-      "elite": null,
-      "name": null,
-      "lesson": false,
-      "budget": 6,
-      "template": "H+H+H+H+H"
-     },
-     {
-      "room": "main",
-      "rx": 2,
-      "rz": 2,
-      "kinds": [
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm"
-      ],
-      "elite": "swift",
-      "name": "Hollowhive the Quick",
-      "lesson": false,
-      "budget": 6,
-      "template": "M6"
      },
      {
       "room": "side",
@@ -13795,23 +13399,6 @@
       "lesson": false,
       "budget": 5,
       "template": "M8+S+H+H"
-     },
-     {
-      "room": "side",
-      "rx": 1,
-      "rz": 1,
-      "kinds": [
-       "chaser",
-       "chaser",
-       "chaser",
-       "chaser",
-       "chaser"
-      ],
-      "elite": null,
-      "name": null,
-      "lesson": false,
-      "budget": 5,
-      "template": null
      }
     ],
     [
@@ -13820,258 +13407,50 @@
       "rx": 1,
       "rz": 2,
       "kinds": [
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
        "chaser",
        "chaser",
-       "chaser"
-      ],
-      "elite": null,
-      "name": null,
-      "lesson": false,
-      "budget": 6,
-      "template": "M6+H+H+H"
-     },
-     {
-      "room": "main",
-      "rx": 2,
-      "rz": 2,
-      "kinds": [
-       "chaser",
-       "chaser"
-      ],
-      "elite": "plated",
-      "name": "Ironmaw the Plated",
-      "lesson": false,
-      "budget": 5,
-      "template": "H+H"
-     },
-     {
-      "room": "main",
-      "rx": 1,
-      "rz": 2,
-      "kinds": [
-       "chaser",
-       "chaser",
+       "ranged",
        "chaser",
        "chaser",
        "chaser",
        "mender"
       ],
       "elite": "swift",
-      "name": "Ironknell the Quick",
+      "name": "Ironheart the Quick",
       "lesson": false,
       "budget": 6,
-      "template": "H+H+H+H+H"
+      "template": "H+H+G+H+H+H"
      },
      {
       "room": "main",
       "rx": 2,
-      "rz": 1,
+      "rz": 2,
       "kinds": [
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
        "chaser",
+       "chaser",
+       "ranged",
        "chaser",
        "chaser",
        "mender"
       ],
       "elite": "warding",
-      "name": "Palewake the Warden",
+      "name": "Mournknell the Warden",
       "lesson": false,
-      "budget": 6,
-      "template": "M6+H+H+H"
-     },
-     {
-      "room": "side",
-      "rx": 1,
-      "rz": 1,
-      "kinds": [
-       "ranged",
-       "chaser",
-       "chaser",
-       "chaser"
-      ],
-      "elite": null,
-      "name": null,
-      "lesson": false,
-      "budget": 4,
-      "template": null
-     },
-     {
-      "room": "side",
-      "rx": 1,
-      "rz": 1,
-      "kinds": [
-       "ranged",
-       "chaser",
-       "chaser",
-       "chaser"
-      ],
-      "elite": null,
-      "name": null,
-      "lesson": false,
-      "budget": 4,
-      "template": null
-     }
-    ],
-    [
-     {
-      "room": "main",
-      "rx": 2,
-      "rz": 2,
-      "kinds": [
-       "charger",
-       "chaser",
-       "chaser",
-       "chaser",
-       "mender"
-      ],
-      "elite": null,
-      "name": null,
-      "lesson": false,
-      "budget": 6,
-      "template": "C+H+H+H"
+      "budget": 5,
+      "template": "H+H+G+H+H"
      },
      {
       "room": "main",
       "rx": 2,
       "rz": 2,
       "kinds": [
-       "chaser",
-       "chaser",
-       "chaser",
-       "chaser",
-       "chaser"
-      ],
-      "elite": "swift",
-      "name": "Guttermaw the Quick",
-      "lesson": false,
-      "budget": 6,
-      "template": "H+H+H+H+H"
-     },
-     {
-      "room": "main",
-      "rx": 2,
-      "rz": 1,
-      "kinds": [
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "chaser",
-       "chaser",
-       "mender"
-      ],
-      "elite": "swift",
-      "name": "Guttercoil the Quick",
-      "lesson": false,
-      "budget": 5,
-      "template": "M6+H+H"
-     },
-     {
-      "room": "main",
-      "rx": 2,
-      "rz": 2,
-      "kinds": [
-       "chaser",
-       "chaser"
-      ],
-      "elite": "plated",
-      "name": "Mournmaw the Plated",
-      "lesson": false,
-      "budget": 5,
-      "template": "H+H"
-     },
-     {
-      "room": "side",
-      "rx": 1,
-      "rz": 1,
-      "kinds": [
-       "ranged",
-       "chaser",
-       "chaser",
-       "chaser",
-       "chaser"
-      ],
-      "elite": null,
-      "name": null,
-      "lesson": false,
-      "budget": 5,
-      "template": null
-     },
-     {
-      "room": "side",
-      "rx": 1,
-      "rz": 1,
-      "kinds": [
-       "ranged",
-       "chaser",
-       "chaser",
-       "chaser"
-      ],
-      "elite": null,
-      "name": null,
-      "lesson": false,
-      "budget": 4,
-      "template": null
-     }
-    ],
-    [
-     {
-      "room": "main",
-      "rx": 2,
-      "rz": 1,
-      "kinds": [
-       "chaser",
-       "chaser",
        "chaser",
        "chaser"
       ],
       "elite": "splitting",
-      "name": "Ashhook the Many",
-      "lesson": false,
-      "budget": 5,
-      "template": "H+H+H+H"
-     },
-     {
-      "room": "main",
-      "rx": 2,
-      "rz": 1,
-      "kinds": [
-       "charger",
-       "chaser",
-       "chaser",
-       "chaser"
-      ],
-      "elite": "swift",
-      "name": "Hollowmaw the Quick",
+      "name": "Guttergrip the Many",
       "lesson": false,
       "budget": 6,
-      "template": "C+H+H+H"
-     },
-     {
-      "room": "main",
-      "rx": 2,
-      "rz": 2,
-      "kinds": [
-       "chaser",
-       "chaser"
-      ],
-      "elite": "swift",
-      "name": "Cinderhook the Quick",
-      "lesson": false,
-      "budget": 5,
       "template": "H+H"
      },
      {
@@ -14079,52 +13458,8 @@
       "rx": 2,
       "rz": 1,
       "kinds": [
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
        "chaser",
        "chaser",
-       "chaser",
-       "mender"
-      ],
-      "elite": null,
-      "name": null,
-      "lesson": false,
-      "budget": 6,
-      "template": "M6+H+H+H"
-     },
-     {
-      "room": "side",
-      "rx": 1,
-      "rz": 1,
-      "kinds": [
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "ranged",
-       "chaser",
-       "chaser"
-      ],
-      "elite": null,
-      "name": null,
-      "lesson": false,
-      "budget": 5,
-      "template": "M8+S+H+H"
-     },
-     {
-      "room": "side",
-      "rx": 1,
-      "rz": 1,
-      "kinds": [
-       "ranged",
        "chaser",
        "chaser",
        "chaser"
@@ -14134,74 +13469,23 @@
       "lesson": false,
       "budget": 5,
       "template": null
-     }
-    ],
-    [
-     {
-      "room": "main",
-      "rx": 1,
-      "rz": 2,
-      "kinds": [
-       "charger",
-       "chaser",
-       "chaser"
-      ],
-      "elite": "warding",
-      "name": "Shardknell the Warden",
-      "lesson": false,
-      "budget": 5,
-      "template": "C+H+H"
      },
      {
-      "room": "main",
+      "room": "side",
       "rx": 1,
-      "rz": 2,
+      "rz": 1,
       "kinds": [
-       "ranged",
-       "ranged",
        "chaser",
-       "chaser",
-       "chaser"
-      ],
-      "elite": "plated",
-      "name": "Rustwake the Plated",
-      "lesson": false,
-      "budget": 6,
-      "template": null
-     },
-     {
-      "room": "main",
-      "rx": 1,
-      "rz": 2,
-      "kinds": [
        "chaser",
        "chaser",
        "chaser",
        "chaser"
-      ],
-      "elite": "swift",
-      "name": "Shardknell the Quick",
-      "lesson": false,
-      "budget": 5,
-      "template": "H+H+H+H"
-     },
-     {
-      "room": "main",
-      "rx": 2,
-      "rz": 2,
-      "kinds": [
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm"
       ],
       "elite": null,
       "name": null,
       "lesson": false,
       "budget": 5,
-      "template": "M6"
+      "template": null
      },
      {
       "room": "side",
@@ -14224,189 +13508,9 @@
       "lesson": false,
       "budget": 4,
       "template": "M8+S+H"
-     },
-     {
-      "room": "side",
-      "rx": 1,
-      "rz": 1,
-      "kinds": [
-       "ranged",
-       "chaser",
-       "chaser",
-       "chaser",
-       "chaser"
-      ],
-      "elite": null,
-      "name": null,
-      "lesson": false,
-      "budget": 5,
-      "template": null
      }
     ],
     [
-     {
-      "room": "main",
-      "rx": 2,
-      "rz": 1,
-      "kinds": [
-       "chaser",
-       "chaser",
-       "chaser",
-       "chaser"
-      ],
-      "elite": null,
-      "name": null,
-      "lesson": false,
-      "budget": 5,
-      "template": "H+H+H+H"
-     },
-     {
-      "room": "main",
-      "rx": 2,
-      "rz": 2,
-      "kinds": [
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "chaser",
-       "chaser",
-       "chaser",
-       "mender"
-      ],
-      "elite": "warding",
-      "name": "Mourngrip the Warden",
-      "lesson": false,
-      "budget": 6,
-      "template": "M6+H+H+H"
-     },
-     {
-      "room": "main",
-      "rx": 1,
-      "rz": 2,
-      "kinds": [
-       "chaser",
-       "chaser",
-       "chaser",
-       "chaser"
-      ],
-      "elite": "swift",
-      "name": "Ashheart the Quick",
-      "lesson": false,
-      "budget": 5,
-      "template": "H+H+H+H"
-     },
-     {
-      "room": "main",
-      "rx": 2,
-      "rz": 1,
-      "kinds": [
-       "ranged",
-       "chaser",
-       "chaser",
-       "chaser",
-       "chaser",
-       "chaser",
-       "mender"
-      ],
-      "elite": "swift",
-      "name": "Grimjaw the Quick",
-      "lesson": false,
-      "budget": 6,
-      "template": null
-     },
-     {
-      "room": "side",
-      "rx": 1,
-      "rz": 1,
-      "kinds": [
-       "ranged",
-       "chaser",
-       "chaser",
-       "chaser",
-       "chaser"
-      ],
-      "elite": null,
-      "name": null,
-      "lesson": false,
-      "budget": 5,
-      "template": null
-     },
-     {
-      "room": "side",
-      "rx": 1,
-      "rz": 1,
-      "kinds": [
-       "ranged",
-       "chaser",
-       "chaser",
-       "chaser",
-       "chaser"
-      ],
-      "elite": null,
-      "name": null,
-      "lesson": false,
-      "budget": 5,
-      "template": null
-     }
-    ],
-    [
-     {
-      "room": "main",
-      "rx": 2,
-      "rz": 2,
-      "kinds": [
-       "chaser",
-       "chaser",
-       "chaser",
-       "chaser",
-       "chaser"
-      ],
-      "elite": null,
-      "name": null,
-      "lesson": false,
-      "budget": 6,
-      "template": "H+H+H+H+H"
-     },
-     {
-      "room": "main",
-      "rx": 2,
-      "rz": 2,
-      "kinds": [
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "chaser",
-       "chaser"
-      ],
-      "elite": "warding",
-      "name": "Shardhive the Warden",
-      "lesson": false,
-      "budget": 5,
-      "template": "M6+H+H"
-     },
-     {
-      "room": "main",
-      "rx": 2,
-      "rz": 2,
-      "kinds": [
-       "ranged",
-       "chaser",
-       "chaser",
-       "chaser",
-       "chaser"
-      ],
-      "elite": "plated",
-      "name": "Rustjaw the Plated",
-      "lesson": false,
-      "budget": 6,
-      "template": null
-     },
      {
       "room": "main",
       "rx": 2,
@@ -14422,12 +13526,68 @@
       "template": "H+H"
      },
      {
+      "room": "main",
+      "rx": 2,
+      "rz": 1,
+      "kinds": [
+       "charger",
+       "chaser",
+       "ranged",
+       "chaser",
+       "chaser"
+      ],
+      "elite": "warding",
+      "name": "Rustmaw the Warden",
+      "lesson": false,
+      "budget": 6,
+      "template": "C+H+G+H+H"
+     },
+     {
+      "room": "main",
+      "rx": 1,
+      "rz": 2,
+      "kinds": [
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "ranged",
+       "chaser",
+       "chaser",
+       "chaser",
+       "mender"
+      ],
+      "elite": "swift",
+      "name": "Grimknell the Quick",
+      "lesson": false,
+      "budget": 6,
+      "template": "M6+G+H+H+H"
+     },
+     {
+      "room": "main",
+      "rx": 1,
+      "rz": 2,
+      "kinds": [
+       "chaser",
+       "chaser",
+       "chaser",
+       "chaser",
+       "chaser"
+      ],
+      "elite": null,
+      "name": null,
+      "lesson": false,
+      "budget": 6,
+      "template": null
+     },
+     {
       "room": "side",
       "rx": 1,
       "rz": 1,
       "kinds": [
        "ranged",
-       "chaser",
        "chaser",
        "chaser"
       ],
@@ -14448,14 +13608,134 @@
        "swarm",
        "swarm",
        "swarm",
+       "swarm",
+       "swarm",
+       "ranged",
        "chaser",
        "chaser"
       ],
       "elite": null,
       "name": null,
       "lesson": false,
+      "budget": 5,
+      "template": "M8+S+H+H"
+     }
+    ],
+    [
+     {
+      "room": "main",
+      "rx": 2,
+      "rz": 1,
+      "kinds": [
+       "ranged",
+       "chaser",
+       "chaser",
+       "chaser",
+       "chaser",
+       "chaser"
+      ],
+      "elite": "swift",
+      "name": "Hollowwake the Quick",
+      "lesson": false,
+      "budget": 6,
+      "template": null
+     },
+     {
+      "room": "main",
+      "rx": 2,
+      "rz": 1,
+      "kinds": [
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "chaser",
+       "chaser",
+       "chaser",
+       "chaser",
+       "mender"
+      ],
+      "elite": "swift",
+      "name": "Ashhive the Quick",
+      "lesson": false,
+      "budget": 6,
+      "template": "M6+H+H+H+H"
+     },
+     {
+      "room": "main",
+      "rx": 1,
+      "rz": 2,
+      "kinds": [
+       "charger",
+       "chaser",
+       "ranged",
+       "chaser",
+       "chaser"
+      ],
+      "elite": null,
+      "name": null,
+      "lesson": false,
+      "budget": 6,
+      "template": "C+H+G+H+H"
+     },
+     {
+      "room": "main",
+      "rx": 2,
+      "rz": 1,
+      "kinds": [
+       "chaser",
+       "chaser",
+       "ranged",
+       "chaser",
+       "chaser",
+       "chaser"
+      ],
+      "elite": "swift",
+      "name": "Ironmaw the Quick",
+      "lesson": false,
+      "budget": 6,
+      "template": "H+H+G+H+H+H"
+     },
+     {
+      "room": "side",
+      "rx": 1,
+      "rz": 1,
+      "kinds": [
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "ranged",
+       "chaser"
+      ],
+      "elite": null,
+      "name": null,
+      "lesson": false,
       "budget": 4,
-      "template": "M6+H+H"
+      "template": "M8+S+H"
+     },
+     {
+      "room": "side",
+      "rx": 1,
+      "rz": 1,
+      "kinds": [
+       "ranged",
+       "chaser",
+       "chaser",
+       "chaser",
+       "chaser"
+      ],
+      "elite": null,
+      "name": null,
+      "lesson": false,
+      "budget": 5,
+      "template": null
      }
     ],
     [
@@ -14464,165 +13744,54 @@
       "rx": 1,
       "rz": 2,
       "kinds": [
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
+       "ranged",
        "chaser",
        "chaser",
-       "chaser"
+       "chaser",
+       "chaser",
+       "mender"
       ],
-      "elite": "swift",
-      "name": "Palegrip the Quick",
+      "elite": null,
+      "name": null,
+      "lesson": false,
+      "budget": 5,
+      "template": null
+     },
+     {
+      "room": "main",
+      "rx": 1,
+      "rz": 2,
+      "kinds": [
+       "ranged",
+       "ranged",
+       "chaser",
+       "chaser",
+       "chaser",
+       "mender"
+      ],
+      "elite": "plated",
+      "name": "Palegrip the Plated",
       "lesson": false,
       "budget": 6,
-      "template": "M6+H+H+H"
+      "template": null
      },
      {
       "room": "main",
       "rx": 2,
-      "rz": 1,
+      "rz": 2,
       "kinds": [
-       "charger",
+       "chaser",
+       "chaser",
+       "ranged",
+       "chaser",
        "chaser",
        "chaser"
       ],
       "elite": "plated",
-      "name": "Cinderhook the Plated",
-      "lesson": false,
-      "budget": 5,
-      "template": "C+H+H"
-     },
-     {
-      "room": "main",
-      "rx": 2,
-      "rz": 1,
-      "kinds": [
-       "ranged",
-       "chaser",
-       "chaser",
-       "chaser",
-       "chaser"
-      ],
-      "elite": "swift",
-      "name": "Mournhook the Quick",
-      "lesson": false,
-      "budget": 5,
-      "template": null
-     },
-     {
-      "room": "main",
-      "rx": 1,
-      "rz": 2,
-      "kinds": [
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "chaser",
-       "chaser",
-       "chaser",
-       "mender"
-      ],
-      "elite": null,
-      "name": null,
+      "name": "Ashheart the Plated",
       "lesson": false,
       "budget": 6,
-      "template": "M6+H+H+H"
-     },
-     {
-      "room": "side",
-      "rx": 1,
-      "rz": 1,
-      "kinds": [
-       "ranged",
-       "chaser",
-       "chaser",
-       "chaser",
-       "chaser"
-      ],
-      "elite": null,
-      "name": null,
-      "lesson": false,
-      "budget": 5,
-      "template": null
-     },
-     {
-      "room": "side",
-      "rx": 1,
-      "rz": 1,
-      "kinds": [
-       "chaser",
-       "chaser",
-       "chaser",
-       "chaser",
-       "chaser"
-      ],
-      "elite": null,
-      "name": null,
-      "lesson": false,
-      "budget": 5,
-      "template": null
-     }
-    ],
-    [
-     {
-      "room": "main",
-      "rx": 2,
-      "rz": 1,
-      "kinds": [
-       "ranged",
-       "ranged",
-       "chaser",
-       "chaser",
-       "chaser",
-       "mender"
-      ],
-      "elite": "warding",
-      "name": "Hollowknell the Warden",
-      "lesson": false,
-      "budget": 5,
-      "template": null
-     },
-     {
-      "room": "main",
-      "rx": 1,
-      "rz": 2,
-      "kinds": [
-       "charger",
-       "chaser",
-       "chaser"
-      ],
-      "elite": "splitting",
-      "name": "Cinderhoof the Many",
-      "lesson": false,
-      "budget": 5,
-      "template": "C+H+H"
-     },
-     {
-      "room": "main",
-      "rx": 1,
-      "rz": 2,
-      "kinds": [
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "chaser",
-       "chaser",
-       "mender"
-      ],
-      "elite": null,
-      "name": null,
-      "lesson": false,
-      "budget": 5,
-      "template": "M6+H+H"
+      "template": "H+H+G+H+H+H"
      },
      {
       "room": "main",
@@ -14633,9 +13802,9 @@
        "chaser"
       ],
       "elite": "splitting",
-      "name": "Rustjaw the Many",
+      "name": "Grimknell the Many",
       "lesson": false,
-      "budget": 5,
+      "budget": 6,
       "template": "H+H"
      },
      {
@@ -14643,12 +13812,113 @@
       "rx": 1,
       "rz": 1,
       "kinds": [
+       "ranged",
+       "chaser",
+       "chaser"
+      ],
+      "elite": null,
+      "name": null,
+      "lesson": false,
+      "budget": 4,
+      "template": null
+     },
+     {
+      "room": "side",
+      "rx": 1,
+      "rz": 1,
+      "kinds": [
+       "ranged",
+       "chaser",
+       "chaser",
+       "chaser"
+      ],
+      "elite": null,
+      "name": null,
+      "lesson": false,
+      "budget": 4,
+      "template": null
+     }
+    ],
+    [
+     {
+      "room": "main",
+      "rx": 1,
+      "rz": 2,
+      "kinds": [
        "swarm",
        "swarm",
        "swarm",
        "swarm",
        "swarm",
        "swarm",
+       "ranged",
+       "chaser",
+       "chaser",
+       "chaser"
+      ],
+      "elite": "warding",
+      "name": "Shardhive the Warden",
+      "lesson": false,
+      "budget": 6,
+      "template": "M6+G+H+H+H"
+     },
+     {
+      "room": "main",
+      "rx": 2,
+      "rz": 2,
+      "kinds": [
+       "chaser",
+       "chaser"
+      ],
+      "elite": "swift",
+      "name": "Ironheart the Quick",
+      "lesson": false,
+      "budget": 5,
+      "template": "H+H"
+     },
+     {
+      "room": "main",
+      "rx": 1,
+      "rz": 2,
+      "kinds": [
+       "chaser",
+       "chaser",
+       "ranged",
+       "chaser",
+       "chaser",
+       "chaser",
+       "mender"
+      ],
+      "elite": "warding",
+      "name": "Hollowwake the Warden",
+      "lesson": false,
+      "budget": 6,
+      "template": "H+H+G+H+H+H"
+     },
+     {
+      "room": "main",
+      "rx": 2,
+      "rz": 1,
+      "kinds": [
+       "ranged",
+       "chaser",
+       "chaser",
+       "chaser",
+       "mender"
+      ],
+      "elite": null,
+      "name": null,
+      "lesson": false,
+      "budget": 5,
+      "template": null
+     },
+     {
+      "room": "side",
+      "rx": 1,
+      "rz": 1,
+      "kinds": [
+       "ranged",
+       "chaser",
        "chaser",
        "chaser",
        "chaser"
@@ -14657,7 +13927,7 @@
       "name": null,
       "lesson": false,
       "budget": 5,
-      "template": "M6+H+H+H"
+      "template": null
      },
      {
       "room": "side",
@@ -14681,33 +13951,55 @@
      {
       "room": "main",
       "rx": 2,
-      "rz": 1,
-      "kinds": [
-       "charger",
-       "chaser",
-       "chaser",
-       "mender"
-      ],
-      "elite": "plated",
-      "name": "Shardbrow the Plated",
-      "lesson": false,
-      "budget": 5,
-      "template": "C+H+H"
-     },
-     {
-      "room": "main",
-      "rx": 1,
       "rz": 2,
       "kinds": [
        "charger",
        "chaser",
+       "ranged",
+       "chaser",
+       "chaser",
+       "mender"
+      ],
+      "elite": "warding",
+      "name": "Palehorn the Warden",
+      "lesson": false,
+      "budget": 6,
+      "template": "C+H+G+H+H"
+     },
+     {
+      "room": "main",
+      "rx": 2,
+      "rz": 2,
+      "kinds": [
+       "charger",
+       "chaser",
+       "ranged",
        "chaser"
       ],
-      "elite": "swift",
-      "name": "Mournjaw the Quick",
+      "elite": "splitting",
+      "name": "Shardhorn the Many",
       "lesson": false,
       "budget": 5,
-      "template": "C+H+H"
+      "template": "C+H+G+H"
+     },
+     {
+      "room": "main",
+      "rx": 2,
+      "rz": 1,
+      "kinds": [
+       "ranged",
+       "chaser",
+       "chaser",
+       "chaser",
+       "chaser",
+       "chaser",
+       "mender"
+      ],
+      "elite": "warding",
+      "name": "Cinderknell the Warden",
+      "lesson": false,
+      "budget": 6,
+      "template": null
      },
      {
       "room": "main",
@@ -14728,20 +14020,434 @@
       "template": "M6"
      },
      {
+      "room": "side",
+      "rx": 1,
+      "rz": 1,
+      "kinds": [
+       "ranged",
+       "chaser",
+       "chaser",
+       "chaser",
+       "chaser"
+      ],
+      "elite": null,
+      "name": null,
+      "lesson": false,
+      "budget": 5,
+      "template": null
+     },
+     {
+      "room": "side",
+      "rx": 1,
+      "rz": 1,
+      "kinds": [
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "chaser",
+       "chaser"
+      ],
+      "elite": null,
+      "name": null,
+      "lesson": false,
+      "budget": 4,
+      "template": "M6+H+H"
+     }
+    ],
+    [
+     {
       "room": "main",
       "rx": 2,
       "rz": 1,
       "kinds": [
+       "chaser",
+       "chaser",
+       "ranged",
+       "chaser",
+       "chaser"
+      ],
+      "elite": "splitting",
+      "name": "Cinderhook the Many",
+      "lesson": false,
+      "budget": 5,
+      "template": "H+H+G+H+H"
+     },
+     {
+      "room": "main",
+      "rx": 2,
+      "rz": 1,
+      "kinds": [
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "ranged",
+       "chaser",
+       "chaser",
+       "chaser"
+      ],
+      "elite": null,
+      "name": null,
+      "lesson": false,
+      "budget": 6,
+      "template": "M6+G+H+H+H"
+     },
+     {
+      "room": "main",
+      "rx": 2,
+      "rz": 2,
+      "kinds": [
+       "chaser",
+       "chaser"
+      ],
+      "elite": "warding",
+      "name": "Shardgrip the Warden",
+      "lesson": false,
+      "budget": 5,
+      "template": "H+H"
+     },
+     {
+      "room": "main",
+      "rx": 2,
+      "rz": 1,
+      "kinds": [
+       "ranged",
+       "ranged",
+       "chaser",
+       "mender"
+      ],
+      "elite": "plated",
+      "name": "Mourngrip the Plated",
+      "lesson": false,
+      "budget": 6,
+      "template": null
+     },
+     {
+      "room": "side",
+      "rx": 1,
+      "rz": 1,
+      "kinds": [
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "chaser",
+       "chaser"
+      ],
+      "elite": null,
+      "name": null,
+      "lesson": false,
+      "budget": 4,
+      "template": "M6+H+H"
+     },
+     {
+      "room": "side",
+      "rx": 1,
+      "rz": 1,
+      "kinds": [
+       "ranged",
+       "chaser",
+       "chaser",
+       "chaser"
+      ],
+      "elite": null,
+      "name": null,
+      "lesson": false,
+      "budget": 4,
+      "template": null
+     }
+    ],
+    [
+     {
+      "room": "main",
+      "rx": 1,
+      "rz": 2,
+      "kinds": [
        "charger",
+       "chaser",
+       "ranged",
+       "chaser"
+      ],
+      "elite": "warding",
+      "name": "Ironjaw the Warden",
+      "lesson": false,
+      "budget": 5,
+      "template": "C+H+G+H"
+     },
+     {
+      "room": "main",
+      "rx": 1,
+      "rz": 2,
+      "kinds": [
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "ranged",
+       "chaser",
+       "chaser",
+       "chaser"
+      ],
+      "elite": "warding",
+      "name": "Grimbrood the Warden",
+      "lesson": false,
+      "budget": 6,
+      "template": "M6+G+H+H+H"
+     },
+     {
+      "room": "main",
+      "rx": 1,
+      "rz": 2,
+      "kinds": [
+       "chaser",
+       "chaser",
+       "chaser",
+       "chaser"
+      ],
+      "elite": null,
+      "name": null,
+      "lesson": false,
+      "budget": 5,
+      "template": null
+     },
+     {
+      "room": "main",
+      "rx": 2,
+      "rz": 2,
+      "kinds": [
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm"
+      ],
+      "elite": "warding",
+      "name": "Palenest the Warden",
+      "lesson": false,
+      "budget": 5,
+      "template": "M6"
+     },
+     {
+      "room": "side",
+      "rx": 1,
+      "rz": 1,
+      "kinds": [
+       "ranged",
+       "chaser",
+       "chaser",
+       "chaser",
+       "chaser"
+      ],
+      "elite": null,
+      "name": null,
+      "lesson": false,
+      "budget": 5,
+      "template": null
+     },
+     {
+      "room": "side",
+      "rx": 1,
+      "rz": 1,
+      "kinds": [
+       "ranged",
+       "chaser",
+       "chaser",
+       "chaser"
+      ],
+      "elite": null,
+      "name": null,
+      "lesson": false,
+      "budget": 4,
+      "template": null
+     }
+    ],
+    [
+     {
+      "room": "main",
+      "rx": 2,
+      "rz": 1,
+      "kinds": [
+       "chaser",
+       "chaser",
+       "ranged",
+       "chaser",
+       "chaser"
+      ],
+      "elite": "plated",
+      "name": "Hollowcoil the Plated",
+      "lesson": false,
+      "budget": 5,
+      "template": "H+H+G+H+H"
+     },
+     {
+      "room": "main",
+      "rx": 2,
+      "rz": 2,
+      "kinds": [
+       "ranged",
+       "ranged",
+       "chaser",
        "chaser",
        "chaser",
        "mender"
       ],
       "elite": "swift",
-      "name": "Shardskull the Quick",
+      "name": "Irongrip the Quick",
       "lesson": false,
       "budget": 5,
-      "template": "C+H+H"
+      "template": null
+     },
+     {
+      "room": "main",
+      "rx": 1,
+      "rz": 2,
+      "kinds": [
+       "chaser",
+       "chaser",
+       "ranged",
+       "chaser",
+       "chaser"
+      ],
+      "elite": null,
+      "name": null,
+      "lesson": false,
+      "budget": 5,
+      "template": "H+H+G+H+H"
+     },
+     {
+      "room": "main",
+      "rx": 2,
+      "rz": 1,
+      "kinds": [
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "chaser",
+       "chaser",
+       "chaser",
+       "mender"
+      ],
+      "elite": "warding",
+      "name": "Gutterheart the Warden",
+      "lesson": false,
+      "budget": 5,
+      "template": "M6+H+H+H"
+     },
+     {
+      "room": "side",
+      "rx": 1,
+      "rz": 1,
+      "kinds": [
+       "ranged",
+       "chaser",
+       "chaser",
+       "chaser",
+       "chaser"
+      ],
+      "elite": null,
+      "name": null,
+      "lesson": false,
+      "budget": 5,
+      "template": null
+     },
+     {
+      "room": "side",
+      "rx": 1,
+      "rz": 1,
+      "kinds": [
+       "ranged",
+       "chaser",
+       "chaser",
+       "chaser",
+       "chaser"
+      ],
+      "elite": null,
+      "name": null,
+      "lesson": false,
+      "budget": 5,
+      "template": null
+     }
+    ],
+    [
+     {
+      "room": "main",
+      "rx": 2,
+      "rz": 2,
+      "kinds": [
+       "chaser",
+       "chaser",
+       "ranged",
+       "chaser",
+       "chaser",
+       "chaser"
+      ],
+      "elite": "splitting",
+      "name": "Hollowcoil the Many",
+      "lesson": false,
+      "budget": 6,
+      "template": "H+H+G+H+H+H"
+     },
+     {
+      "room": "main",
+      "rx": 2,
+      "rz": 2,
+      "kinds": [
+       "chaser",
+       "chaser",
+       "ranged",
+       "chaser",
+       "chaser",
+       "chaser"
+      ],
+      "elite": "splitting",
+      "name": "Ironwake the Many",
+      "lesson": false,
+      "budget": 6,
+      "template": "H+H+G+H+H+H"
+     },
+     {
+      "room": "main",
+      "rx": 2,
+      "rz": 2,
+      "kinds": [
+       "chaser",
+       "chaser",
+       "chaser",
+       "chaser",
+       "chaser"
+      ],
+      "elite": null,
+      "name": null,
+      "lesson": false,
+      "budget": 6,
+      "template": null
+     },
+     {
+      "room": "main",
+      "rx": 2,
+      "rz": 2,
+      "kinds": [
+       "chaser",
+       "chaser"
+      ],
+      "elite": "splitting",
+      "name": "Rustwake the Many",
+      "lesson": false,
+      "budget": 6,
+      "template": "H+H"
      },
      {
       "room": "side",
@@ -14764,7 +14470,341 @@
       "rx": 1,
       "rz": 1,
       "kinds": [
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "chaser",
+       "chaser"
+      ],
+      "elite": null,
+      "name": null,
+      "lesson": false,
+      "budget": 4,
+      "template": "M6+H+H"
+     }
+    ],
+    [
+     {
+      "room": "main",
+      "rx": 1,
+      "rz": 2,
+      "kinds": [
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
        "ranged",
+       "chaser",
+       "chaser",
+       "chaser"
+      ],
+      "elite": "swift",
+      "name": "Grimhive the Quick",
+      "lesson": false,
+      "budget": 6,
+      "template": "M6+G+H+H+H"
+     },
+     {
+      "room": "main",
+      "rx": 2,
+      "rz": 1,
+      "kinds": [
+       "ranged",
+       "ranged",
+       "chaser",
+       "chaser",
+       "chaser"
+      ],
+      "elite": "plated",
+      "name": "Palehook the Plated",
+      "lesson": false,
+      "budget": 5,
+      "template": null
+     },
+     {
+      "room": "main",
+      "rx": 2,
+      "rz": 1,
+      "kinds": [
+       "charger",
+       "charger",
+       "chaser",
+       "chaser"
+      ],
+      "elite": null,
+      "name": null,
+      "lesson": false,
+      "budget": 5,
+      "template": "C+C+H+H"
+     },
+     {
+      "room": "main",
+      "rx": 1,
+      "rz": 2,
+      "kinds": [
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "ranged",
+       "chaser",
+       "chaser",
+       "chaser",
+       "mender"
+      ],
+      "elite": "swift",
+      "name": "Mournhive the Quick",
+      "lesson": false,
+      "budget": 6,
+      "template": "M6+G+H+H+H"
+     },
+     {
+      "room": "side",
+      "rx": 1,
+      "rz": 1,
+      "kinds": [
+       "ranged",
+       "chaser",
+       "chaser",
+       "chaser",
+       "chaser"
+      ],
+      "elite": null,
+      "name": null,
+      "lesson": false,
+      "budget": 5,
+      "template": null
+     },
+     {
+      "room": "side",
+      "rx": 1,
+      "rz": 1,
+      "kinds": [
+       "chaser",
+       "chaser",
+       "chaser",
+       "chaser",
+       "chaser"
+      ],
+      "elite": null,
+      "name": null,
+      "lesson": false,
+      "budget": 5,
+      "template": null
+     }
+    ],
+    [
+     {
+      "room": "main",
+      "rx": 2,
+      "rz": 1,
+      "kinds": [
+       "ranged",
+       "ranged",
+       "chaser",
+       "chaser",
+       "chaser",
+       "mender"
+      ],
+      "elite": "warding",
+      "name": "Guttergrip the Warden",
+      "lesson": false,
+      "budget": 5,
+      "template": null
+     },
+     {
+      "room": "main",
+      "rx": 1,
+      "rz": 2,
+      "kinds": [
+       "charger",
+       "chaser",
+       "ranged",
+       "chaser"
+      ],
+      "elite": null,
+      "name": null,
+      "lesson": false,
+      "budget": 5,
+      "template": "C+H+G+H"
+     },
+     {
+      "room": "main",
+      "rx": 1,
+      "rz": 2,
+      "kinds": [
+       "charger",
+       "chaser",
+       "ranged",
+       "chaser",
+       "mender"
+      ],
+      "elite": "warding",
+      "name": "Gutterhorn the Warden",
+      "lesson": false,
+      "budget": 5,
+      "template": "C+H+G+H"
+     },
+     {
+      "room": "main",
+      "rx": 2,
+      "rz": 2,
+      "kinds": [
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm"
+      ],
+      "elite": "warding",
+      "name": "Hollowmother the Warden",
+      "lesson": false,
+      "budget": 6,
+      "template": "M6"
+     },
+     {
+      "room": "side",
+      "rx": 1,
+      "rz": 1,
+      "kinds": [
+       "ranged",
+       "chaser",
+       "chaser",
+       "chaser",
+       "chaser"
+      ],
+      "elite": null,
+      "name": null,
+      "lesson": false,
+      "budget": 5,
+      "template": null
+     },
+     {
+      "room": "side",
+      "rx": 1,
+      "rz": 1,
+      "kinds": [
+       "ranged",
+       "chaser",
+       "chaser",
+       "chaser"
+      ],
+      "elite": null,
+      "name": null,
+      "lesson": false,
+      "budget": 4,
+      "template": null
+     }
+    ],
+    [
+     {
+      "room": "main",
+      "rx": 2,
+      "rz": 1,
+      "kinds": [
+       "charger",
+       "chaser",
+       "ranged",
+       "chaser",
+       "mender"
+      ],
+      "elite": "warding",
+      "name": "Guttergrip the Warden",
+      "lesson": false,
+      "budget": 5,
+      "template": "C+H+G+H"
+     },
+     {
+      "room": "main",
+      "rx": 1,
+      "rz": 2,
+      "kinds": [
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "ranged",
+       "chaser",
+       "chaser",
+       "chaser"
+      ],
+      "elite": "swift",
+      "name": "Hollowmaw the Quick",
+      "lesson": false,
+      "budget": 6,
+      "template": "M6+G+H+H+H"
+     },
+     {
+      "room": "main",
+      "rx": 2,
+      "rz": 2,
+      "kinds": [
+       "chaser",
+       "chaser"
+      ],
+      "elite": "swift",
+      "name": "Gutterheart the Quick",
+      "lesson": false,
+      "budget": 5,
+      "template": "H+H"
+     },
+     {
+      "room": "main",
+      "rx": 2,
+      "rz": 1,
+      "kinds": [
+       "ranged",
+       "ranged",
+       "chaser",
+       "chaser",
+       "chaser",
+       "mender"
+      ],
+      "elite": null,
+      "name": null,
+      "lesson": false,
+      "budget": 5,
+      "template": null
+     },
+     {
+      "room": "side",
+      "rx": 1,
+      "rz": 1,
+      "kinds": [
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "ranged",
+       "chaser"
+      ],
+      "elite": null,
+      "name": null,
+      "lesson": false,
+      "budget": 4,
+      "template": "M8+S+H"
+     },
+     {
+      "room": "side",
+      "rx": 1,
+      "rz": 1,
+      "kinds": [
+       "chaser",
+       "chaser",
        "chaser",
        "chaser"
       ],
@@ -14793,7 +14833,7 @@
        "chaser"
       ],
       "elite": "warding",
-      "name": "Mournmother the Warden",
+      "name": "Mourngrip the Warden",
       "lesson": false,
       "budget": 6,
       "template": "M6+H+H+H+H"
@@ -14805,22 +14845,6 @@
       "kinds": [
        "chaser",
        "chaser",
-       "chaser",
-       "chaser",
-       "chaser"
-      ],
-      "elite": "splitting",
-      "name": "Shardheart the Many",
-      "lesson": false,
-      "budget": 6,
-      "template": "H+H+H+H+H"
-     },
-     {
-      "room": "main",
-      "rx": 1,
-      "rz": 2,
-      "kinds": [
-       "ranged",
        "ranged",
        "chaser",
        "chaser",
@@ -14830,7 +14854,23 @@
       "name": null,
       "lesson": false,
       "budget": 6,
-      "template": null
+      "template": "H+H+G+H+H+H"
+     },
+     {
+      "room": "main",
+      "rx": 1,
+      "rz": 2,
+      "kinds": [
+       "charger",
+       "chaser",
+       "ranged",
+       "chaser"
+      ],
+      "elite": "warding",
+      "name": "Paleskull the Warden",
+      "lesson": false,
+      "budget": 5,
+      "template": "C+H+G+H"
      },
      {
       "room": "main",
@@ -14838,13 +14878,14 @@
       "rz": 2,
       "kinds": [
        "ranged",
+       "ranged",
        "chaser",
        "chaser"
       ],
-      "elite": "swift",
-      "name": "Gutterknell the Quick",
+      "elite": "plated",
+      "name": "Gutterknell the Plated",
       "lesson": false,
-      "budget": 6,
+      "budget": 5,
       "template": null
      },
      {
@@ -14853,6 +14894,7 @@
       "rz": 1,
       "kinds": [
        "ranged",
+       "chaser",
        "chaser",
        "chaser",
        "chaser"
@@ -14868,7 +14910,12 @@
       "rx": 1,
       "rz": 1,
       "kinds": [
-       "ranged",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
        "chaser",
        "chaser",
        "chaser"
@@ -14876,8 +14923,8 @@
       "elite": null,
       "name": null,
       "lesson": false,
-      "budget": 4,
-      "template": null
+      "budget": 5,
+      "template": "M6+H+H+H"
      }
     ],
     [
@@ -14919,6 +14966,7 @@
       "kinds": [
        "chaser",
        "chaser",
+       "ranged",
        "chaser",
        "chaser",
        "mender"
@@ -14927,7 +14975,7 @@
       "name": "Grimgrip the Warden",
       "lesson": false,
       "budget": 5,
-      "template": "H+H+H+H"
+      "template": "H+H+G+H+H"
      },
      {
       "room": "main",
@@ -14940,15 +14988,15 @@
        "swarm",
        "swarm",
        "swarm",
-       "chaser",
+       "ranged",
        "chaser",
        "chaser"
       ],
       "elite": "warding",
       "name": "Hollowmother the Warden",
       "lesson": false,
-      "budget": 6,
-      "template": "M6+H+H+H"
+      "budget": 5,
+      "template": "M6+G+H+H"
      },
      {
       "room": "side",
@@ -15000,8 +15048,8 @@
        "chaser",
        "chaser"
       ],
-      "elite": "warding",
-      "name": "Ashmaw the Warden",
+      "elite": null,
+      "name": null,
       "lesson": false,
       "budget": 6,
       "template": null
@@ -15013,65 +15061,62 @@
       "kinds": [
        "charger",
        "chaser",
+       "ranged",
        "chaser",
        "mender"
       ],
-      "elite": null,
-      "name": null,
+      "elite": "plated",
+      "name": "Cinderhoof the Plated",
       "lesson": false,
       "budget": 5,
-      "template": "C+H+H"
+      "template": "C+H+G+H"
      },
      {
       "room": "main",
       "rx": 2,
       "rz": 2,
       "kinds": [
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
+       "ranged",
+       "chaser",
        "chaser",
        "chaser",
        "chaser",
        "mender"
       ],
       "elite": "warding",
-      "name": "Rustnest the Warden",
+      "name": "Gutterhook the Warden",
       "lesson": false,
       "budget": 6,
-      "template": "M6+H+H+H"
+      "template": null
      },
      {
       "room": "main",
       "rx": 2,
       "rz": 2,
       "kinds": [
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
+       "charger",
        "chaser",
+       "ranged",
        "chaser",
        "chaser"
       ],
-      "elite": "swift",
-      "name": "Hollowbrood the Quick",
+      "elite": "warding",
+      "name": "Rusthook the Warden",
       "lesson": false,
       "budget": 6,
-      "template": "M6+H+H+H"
+      "template": "C+H+G+H+H"
      },
      {
       "room": "side",
       "rx": 1,
       "rz": 1,
       "kinds": [
-       "ranged",
-       "chaser",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
        "chaser",
        "chaser",
        "chaser"
@@ -15080,14 +15125,19 @@
       "name": null,
       "lesson": false,
       "budget": 5,
-      "template": null
+      "template": "M6+H+H+H"
      },
      {
       "room": "side",
       "rx": 1,
       "rz": 1,
       "kinds": [
-       "chaser",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
+       "swarm",
        "chaser",
        "chaser",
        "chaser"
@@ -15095,8 +15145,8 @@
       "elite": null,
       "name": null,
       "lesson": false,
-      "budget": 4,
-      "template": null
+      "budget": 5,
+      "template": "M6+H+H+H"
      }
     ],
     [
@@ -15107,6 +15157,7 @@
       "kinds": [
        "chaser",
        "chaser",
+       "ranged",
        "chaser",
        "chaser",
        "chaser"
@@ -15115,7 +15166,7 @@
       "name": "Grimhook the Many",
       "lesson": false,
       "budget": 6,
-      "template": "H+H+H+H+H"
+      "template": "H+H+G+H+H+H"
      },
      {
       "room": "main",
@@ -15126,33 +15177,30 @@
        "chaser",
        "chaser",
        "ranged",
+       "chaser",
        "mender"
       ],
       "elite": "warding",
       "name": "Ironbrow the Warden",
       "lesson": false,
-      "budget": 5,
-      "template": "C+H+H+S"
+      "budget": 6,
+      "template": "C+H+H+S+H"
      },
      {
       "room": "main",
       "rx": 2,
       "rz": 1,
       "kinds": [
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
-       "swarm",
+       "charger",
        "chaser",
+       "ranged",
        "chaser"
       ],
-      "elite": "swift",
-      "name": "Grimheart the Quick",
+      "elite": "plated",
+      "name": "Grimheart the Plated",
       "lesson": false,
       "budget": 5,
-      "template": "M6+H+H"
+      "template": "C+H+G+H"
      },
      {
       "room": "main",
@@ -15343,28 +15391,28 @@
     "39f2bfff7b2cb6f593516b1645231033d6aaa408"
    ],
    "4": [
-    "ace3981ede550c20f83308a583d88e432c67b515",
-    "606b2c6bc993021e6a4cb33c073ca408c28f4c51",
-    "5ede5b3ece969850b706664217ad3622758ab002",
-    "e45a9d465d4623629a11c4a84d6d1ff5cdb6c485",
-    "1fb37882de545a2854953b95041a085f81f489e1",
-    "8744addca9fac65436544cb48f5080f42e1a572c",
-    "b90e618bfd6e2bc51a88ecef3b20c9c8937a27da",
-    "273ef4105019822c5efcc73c0ae69dcf526e45a2",
-    "9d18a03c7b5fc8c7d8394c93834d779136abae0a",
-    "75dd7f76816d159edb07526f832fb345a2227ab0"
+    "af006c4b62f4a8a4414e6002531ae2da2130e22d",
+    "64b3311562eee7456aa16f36aa37003ff1b2c7b3",
+    "09dde7beb3fd55f4bb44815cfe1ebaffd820c496",
+    "b91b592d975c1e3a29ca7fb90544d0aa43bbf712",
+    "7b45a61c19d0a9c44fe69691c2393ad3b1ca25c1",
+    "e1489016b8eb1b8c36ee0c6d07ef39cac63add6a",
+    "0734a8e8589da3f6eaa0a3d7033bbb9887767b44",
+    "c022b62fb067841c6f55cb85e320e07798ea6c57",
+    "e8a6e5dda7bc1a2883e455024a1274d230d306fc",
+    "f69afbb02a7629579dbef2963957f1fb7d030307"
    ],
    "5": [
-    "3769935ee7304ae644afb772ce1bb0ca4de63750",
-    "18ebad47c6dff49dc032411aacedd56f07cd3cab",
-    "f2aeedd54d1487e4c4b455b3b355b1cb55454a9a",
-    "b74162677e9840ac21a226eb72869d1105ce2d30",
-    "17288194d4d42a0d412c20515e9c43d7852f7b86",
-    "c76da553cb31fdec74b674967ec95660cef93b90",
-    "2adcca240350fe95818791e9f7e95fb86e4ab66d",
-    "1d274e8f7e0c631f5d7797b1211f42971a3e8a26",
-    "cc7faf2734b40525c2ab1ee3dfd4ff4b2337f71d",
-    "c96e3fbee480f60fba71ff3f258a45e7178d32a4"
+    "33e77b5d7a9ece094c2cd08c928e0072ed52e8ef",
+    "27cd73dba6a129a1c8c680073891789f89e45275",
+    "f3bca061acc5aedf385fd836b97ad345d6a57237",
+    "ba19b8eec38aa77c2f7b51751f9e0636ad9566a2",
+    "9c70a5e017da998e4e707d7ef1e7d38d65a275c4",
+    "79dc4db0b9b280c8481e33f9da1595b130e46489",
+    "e6e4900081ed6c62010f8fcff0df1a121041b278",
+    "805c37035b1031b5532444c4b71284f352328b53",
+    "167a04d1c9d33642c29604230b1d6702eb8cbde8",
+    "4aadb9c8a28225faf9f103ed1d62123cc1b4f272"
    ],
    "6": [
     "238a4bd67d41607b78115fdb2da0283ffef832dd",
@@ -15382,28 +15430,28 @@
  },
  "genLineHash": {
   "4": [
-   "502e61630b3cfbd30a05475d406606f258d4473a",
-   "85ee54e0bbba5292f0d734ecdf704f25df5984bd",
-   "bbf373c3c0b25c1cb9c60c3c706b4a65865011d0",
-   "d1ae094fb91e78c8f85203f31a1fb65bd71b8cf6",
-   "5d592c332dc27abd7ffac79e253062d28bc92990",
-   "d80752227cf987f3ffb334c5b1ea094bc237875a",
-   "edcbbc691d0757195b9913343a3a07e1734c1789",
-   "28b64583b5edaf1a5d5a54750388e6c850b43aea",
-   "bc5cd187be74e842cd27e0ba6099e55df28919e6",
-   "8133ef309a30740255c20b11c0c9f4c0aae9c1e0"
+   "37fb1b9ae20f980ce627bdc862e7383a085b7d47",
+   "508d498a7a73b7d8872ce118c4613ac0618f5654",
+   "aaf7415782961f41c6a1fead508eb28b4cf63d10",
+   "814de5f94d4bcf7ada9bc2c97071989e96bb1804",
+   "86a938eb9532e1f7f20d2c9c8edac76150ca2cf1",
+   "e902349628f5fbcd2a5af5a02385cc0a8391ba40",
+   "a5ae6d2733d6faffab90f290052b62178e6f8c25",
+   "50a6f35df6e386cbc5f1041bc2f52319d684f209",
+   "b2ea87c5574c360bcda90b1d0cb02049779db9b1",
+   "b6762500f3aea8954ada5ba2467dd6dd21292de2"
   ],
   "5": [
-   "cbee5ebbf750270b0c2237f3c75552f01dd8c4ee",
-   "0281990da36f962e4823fc50979f41bd37fd8bff",
-   "a18ddd0ac99ee461c3918046a2a39c4dde36bf19",
-   "4c7174246e02e4f7f0afb0dfea852281a4cb14ae",
-   "bd4c59fd5a0846052b15915db79699b2c8ac1275",
-   "46bde5ce7d1f0b36b471ed425b18b937742af589",
-   "ea56078df299ea81ec6c7c37f222f51e5f3e8fdd",
-   "a4b76d185d735c0539c4d987b84fca98d7f54eb3",
-   "9abb1f8da540ab40e909595e730b1567fdca5f58",
-   "046da834c46f9a2563a5dbe766361924827b67b0"
+   "e0b327a5e9efed725d2a8c9e33884271309793b1",
+   "00e59e5bfb09da5b223e382a5efa1862c30f4a26",
+   "a123a74119234054f3cdc00c462096c13430cebd",
+   "43515e158c94843ac4a4bf92db449e9622139d3e",
+   "e3acec24aaedd9de1242890d81511c02bc53d515",
+   "88fa3721467a9bbaeb911748751ab34901773abf",
+   "1484c2affc5cd919ee5c1a478c63fd07a8fb11a0",
+   "f482c7eb26fb72e924326fa7a32cd7d2177e70b5",
+   "76e02bdebfe018b337096ab3ad272f08dc175c01",
+   "defbc86d10aa924ab66eee9aad141da9399d6e4e"
   ]
  },
  "censusDepthsHash": "293efcf7c223cd1236b291013ef0dc1a289c5c48",

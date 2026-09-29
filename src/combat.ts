@@ -4,6 +4,7 @@ import { tellMaterial, releaseTell, TELL_CROWD, COLD, EMBER, type Vfx } from './
 import { Chaser, shoveVelocity, distToSegment, PLAYER_RADIUS, KNOCK_DECAY, type Enemy, type EnemyCtx, type EnemyEvent } from './enemy'
 import { Ranged } from './ranged'
 import { Lobber } from './lobber'
+import { Signal } from './signal'
 import { Thief, THIEF, type ThiefEvent } from './thief'
 import { Mender } from './mender'
 import { Charger, CHARGER } from './charger'
@@ -542,6 +543,8 @@ export class Combat {
     this.ctx.player = player
     this.ctx.now = this.time
     this.ctx.planted = this.inStance
+    // the Signalman's view of the Line (a Line is one structurally): absent on a level without lanes
+    this.ctx.line = this.line ?? undefined
     this.lastPlayer = player
     this.slidePlayer(player, dt)
     this.hurtCooldown = Math.max(0, this.hurtCooldown - dt)
@@ -940,11 +943,17 @@ export class Combat {
     this.hp = PLAYER_MAX_HP
   }
 
-  reset() {
-    this.hp = PLAYER_MAX_HP
+  /**
+   * B4: every body out, as reset() takes them (the enemies, nests, packs, broods and the mite batch), but the Line, the terrain
+   * and the breakables stay. For checks: a level with its lanes and none of its bodies. reset() calls it for those lines.
+   */
+  clearBodies() {
     for (const e of this.enemies) {
       e.dispose(this.scene)
       this.events.onGone(e)
+      this.book.unbook(e)
+      this.status.delete(e)
+      this.held.delete(e)
     }
     this.enemies.length = 0
     for (const t of this.nests) t.dispose(this.scene)
@@ -957,6 +966,20 @@ export class Combat {
     }
     this.packs.length = 0
     this.packOf.clear()
+    for (const b of this.broods) {
+      this.emitEnemy({ kind: 'broodGone', brood: b })
+      b.dispose()
+    }
+    this.broods.length = 0
+    this.broodIndex = 0
+    TELL_CROWD.locked = 0
+    this.miteBatch.clear()
+    this.boss = null
+  }
+
+  reset() {
+    this.hp = PLAYER_MAX_HP
+    this.clearBodies()
     for (const b of this.bolts) this.scene.remove(b.mesh)
     this.bolts.length = 0
     for (const w of this.waves) for (const m of w.segs) this.scene.remove(m)
@@ -974,14 +997,6 @@ export class Combat {
     for (const s of this.shots) this.scene.remove(s.mesh)
     this.shots.length = 0
     this.later.length = 0
-    for (const b of this.broods) {
-      this.emitEnemy({ kind: 'broodGone', brood: b })
-      b.dispose()
-    }
-    this.broods.length = 0
-    this.broodIndex = 0
-    TELL_CROWD.locked = 0
-    this.miteBatch.clear()
     this.book.clear()
     this.hasPrev = false
     this.hurtMax = 0
@@ -1173,6 +1188,9 @@ export class Combat {
    * ram's only while it tracks. After the lock the hit can't land in time to count.
    */
   breakable(e: Enemy, auto = false): boolean {
+    // B4 (LINE-RULES R1): a Line body's windup is a place tell. The autos never break it (the planted shot would cancel every call from
+    // 7-11 u, and the Handcar's tracking from anywhere on its rails); a push, a part or a kill does
+    if (auto && (e.variant === 'signal' || e.variant === 'handcar')) return false
     // a pressure body has no windup to break, but a counter's crouch is one: for a push or a part, never for the autos
     if (e.dead || e.phase !== 'windup' || isBoss(e) || e.kind === 'thief' || (e.pressure && (auto || !e.crouching))) return false
     return !(e instanceof Charger && e.locked)
@@ -2654,9 +2672,9 @@ export class Combat {
 
   /** Put a sleeping pack in the level. Packs are placed, not spawned from a rim. */
   /** One body of any archetype but the boss. */
-  private make(kind: Archetype, x: number, z: number, variant?: 'lobber'): Enemy {
+  private make(kind: Archetype, x: number, z: number, variant?: 'lobber' | 'signal', lesson?: true): Enemy {
     switch (kind) {
-      case 'ranged': return variant === 'lobber' ? new Lobber(x, z) : new Ranged(x, z)
+      case 'ranged': return variant === 'lobber' ? new Lobber(x, z) : variant === 'signal' ? new Signal(x, z, !!lesson) : new Ranged(x, z)
       case 'charger': return new Charger(x, z)
       case 'mender': return new Mender(x, z)
       case 'swarm': {
@@ -2674,7 +2692,7 @@ export class Combat {
    * `look: 'heap'`: its mites sleep under a slag heap (the Works).
    */
   addPack(
-    members: { kind: Archetype; variant?: 'lobber'; x: number; z: number; face?: { x: number; z: number }; slag?: true }[], side: boolean,
+    members: { kind: Archetype; variant?: 'lobber' | 'signal'; x: number; z: number; face?: { x: number; z: number }; slag?: true; lesson?: true }[], side: boolean,
     elite?: { mod: EliteMod; name: string }, look?: 'heap',
   ): Pack {
     const pack: Pack = {
@@ -2683,7 +2701,7 @@ export class Combat {
     }
     const gazeAt = Math.random() * Math.PI * 2
     for (const m of members) {
-      const e = this.make(m.kind, m.x, m.z, m.variant)
+      const e = this.make(m.kind, m.x, m.z, m.variant, m.lesson)
       // mites never carry one: eight puddles would be noise
       if (m.slag && e.kind !== 'swarm') {
         this.slagged.add(e)

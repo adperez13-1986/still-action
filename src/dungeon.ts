@@ -884,10 +884,10 @@ const VARIANT: Partial<Record<Member, Variant>> = { L: 'lobber', G: 'signal', K:
 const variantsOf = (ms: readonly Member[]): (Variant | undefined)[] =>
   ms.flatMap((m) => (m === 'M8' ? Array(8).fill(undefined) : m === 'M6' ? Array(6).fill(undefined) : [VARIANT[m]]))
 /**
- * The Line's own bodies, as they're built (stages B1, B2). Until then a row that names one is
+ * The Line's own bodies, as they're built (stage B: the Signalman at B4, the Handcar at B5). Until then a row that names one is
  * generated without it: the rest of the row, from the same draws.
  */
-export const LINE_BODIES = { signal: false, handcar: false }
+export const LINE_BODIES = { signal: true, handcar: false }
 const built = (m: Member) => (m !== 'G' || LINE_BODIES.signal) && (m !== 'K' || LINE_BODIES.handcar)
 /** A swarm too big for the room's budget comes as six. */
 const shrink = (ms: readonly Member[], budget: number): Member[] => (beOf(ms) > budget + 1 ? ms.map((m) => (m === 'M8' ? 'M6' : m)) : [...ms])

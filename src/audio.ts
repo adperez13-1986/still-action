@@ -274,6 +274,17 @@ function live(): AudioContext | null {
   return ctx && ctx.state === 'running' ? ctx : null
 }
 
+/**
+ * DEV only (STAGE-B.md §2.10): every call of a stage-B sound, and of aim / rev, in order. A headless page's AudioContext never
+ * runs (live() is null), so every sfx returns at once and nothing else proves a sound was asked for; only a phone proves it sounds right.
+ */
+export const heardLog: { name: string; live: boolean }[] = []
+function heard(name: string): void {
+  if (!import.meta.env.DEV) return
+  heardLog.push({ name, live: live() !== null })
+  if (heardLog.length > 2000) heardLog.shift()
+}
+
 function vary(v: number, amount: number) {
   return v * (1 + (Math.random() * 2 - 1) * amount)
 }
@@ -542,6 +553,7 @@ export function strike(pan: number) {
  * capacitor whine up to the shot. Returns a stop, like windup().
  */
 export function aim(ms: number, lockAt: number, pan: number, gain = 1): (hard?: boolean) => void {
+  heard('aim')
   const c = live()
   if (!c) return () => {}
   const t = c.currentTime
@@ -697,6 +709,7 @@ export function clang(pan: number) {
  * You can read a ram you aren't looking at.
  */
 export function rev(ms: number, lockAt: number, pan: number, gain = 1): Voice {
+  heard('rev')
   const c = live()
   if (!c) return asVoice(() => {})
   const t = c.currentTime
@@ -2080,6 +2093,44 @@ export function lensOut(pan: number) {
   const d = out(c, 'enemy', pan)
   tone(c, d, 'sine', c.currentTime, 900, 60, 1.5, 0.08, 0.01)
   sample(c, 'tin', d, 0.3, 3)
+}
+
+/**
+ * The Signalman's windup voice (STAGE-B.md §2.10; a first pass, his ear decides): six ratchet clicks over `ms`, each a short
+ * bandpassed tick a twentieth higher than the last (from 2.2 kHz), over a low lamp hum that swells with the arm. The clicks are the
+ * arm's steps (signal.ts). `stop(true)` cuts it dead, like the crouch: the silence is part of the parry.
+ */
+export function semaphore(ms: number, pan: number, gain = 1): (hard?: boolean) => void {
+  heard('semaphore')
+  const c = live()
+  if (!c) return () => {}
+  const t = c.currentTime
+  const dur = ms / 1000
+  const g = c.createGain()
+  g.gain.value = gain
+  g.connect(out(c, 'enemy', pan))
+  // the lamp: a low hum, a fifth up as it swells
+  for (const [f0, f1, peak] of [[92, 118, 0.11], [138, 177, 0.05]] as const) {
+    const o = c.createOscillator()
+    o.type = 'sine'
+    o.frequency.setValueAtTime(f0, t)
+    o.frequency.exponentialRampToValueAtTime(f1, t + dur)
+    const hum = c.createGain()
+    hum.gain.setValueAtTime(0.0001, t)
+    hum.gain.linearRampToValueAtTime(peak, t + dur * 0.9)
+    hum.gain.exponentialRampToValueAtTime(0.0001, t + dur + 0.03)
+    o.connect(hum).connect(g)
+    o.start(t)
+    o.stop(t + dur + 0.06)
+  }
+  // the ratchet: one click per arm step, at each sixth of the windup from its start
+  for (let k = 0; k < 6; k++) {
+    const at = t + (k * dur) / 6
+    const f = 2200 * Math.pow(1.05, k)
+    hiss(c, g, at, 0.024, 0.32, 'bandpass', f, f * 0.7, 4, 0.0008)
+    tone(c, g, 'square', at, f * 0.55, f * 0.32, 0.012, 0.07, 0.0008)
+  }
+  return gate(g, c, t + dur)
 }
 
 // --- the counter-moves (COUNTERS.md): the hulk's crouch and lunge, the sentinel's duck ---

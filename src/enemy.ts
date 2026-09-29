@@ -6,6 +6,7 @@ import type { Terrain } from './terrain'
 import type { EliteMod } from './combat'
 import type { Brood } from './swarm'
 import type { HazardSource, HazardSpec } from './hazard'
+import type { LaneDef } from './line'
 
 /**
  * Every archetype is the same machine: approach, windup, strike, recover.
@@ -102,6 +103,17 @@ export interface EnemyCtx {
   nearLit?(x: number, z: number): boolean
   /** B3 (R5): (x, z) is inside a lit lane's strip, grown by LINE.halfW + r + LINE.stepOff.pad. A body about to commit to a move does not start one there. */
   onLit?(x: number, z: number, r: number): boolean
+  /** B4: the Line, for the Signalman. Absent on a level without lanes. Its times are the Line's clock (`t`), NOT `now`. */
+  line?: SignalLine
+}
+
+/** What the Signalman may ask of the Line (line.ts's `Line` satisfies it): the lanes, which are lit, when each next runs, and a call. */
+export interface SignalLine {
+  readonly t: number
+  readonly lanes: readonly LaneDef[]
+  lit(): readonly LaneDef[]
+  nextAt(lane: LaneDef): number
+  call(lane: LaneDef): boolean
 }
 
 /** Instants the run dresses (sound, sparks, the log). Lasting state is polled instead. */
@@ -128,6 +140,8 @@ export type EnemyEvent =
    * the lunge landing on Still; a sentinel breaking off to cover (`duck`), backing away when there is none, and its peek.
    */
   | { kind: 'counter'; e: Enemy; what: 'crouch' | 'lunge' | 'lungeHit' | 'duck' | 'backaway' | 'peek'; ms?: number }
+  /** B4: the Signalman's arm came down and its lane was called (`called` false: the Line refused, a train was already on it). */
+  | { kind: 'call'; e: Enemy; lane: number; called: boolean }
   /** The 550 tick: the bite, on Still or on air. */
   | { kind: 'bite'; brood: Brood; at: THREE.Vector3; biters: number; hit: boolean }
   /** The biters touch down in the clump. */
@@ -155,7 +169,7 @@ export interface Enemy {
   /** 'thief': a body without a pack that never attacks (thief.ts). 'mender': a packmate that never attacks (mender.ts). */
   readonly kind: 'chaser' | 'ranged' | 'charger' | 'swarm' | 'boss' | 'thief' | 'mender'
   /** 'lobber' for the sentinel variant that lobs shells; loot, budget and treasure follow `kind`. */
-  readonly variant?: 'lobber'
+  readonly variant?: 'lobber' | 'signal' | 'handcar'
   /** Where an elite's name floats, before size. */
   readonly labelY: number
   /**
