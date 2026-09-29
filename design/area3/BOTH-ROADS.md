@@ -195,6 +195,12 @@ confirm them.
 
 ## 4. Decisions only Adrian can make
 
+**Decided 29 Sep: he took every recommendation below** (1a warm beam after boss 6; 2a Home at 6 is a
+dusk homecoming, no walk; 3a one day stretched, the last boss takes it to first dark; 4a no open field
+on the Line, the Works' first depth is open wherever it falls; 5a keep the gate, Works then Line with no
+room until the Line has opened; 6a the curve's finish moves to depth 9; 7 the crossroads room, the
+alternate as fallback). **8: every name and word stays PLACEHOLDER until he writes it.**
+
 1. **A warm beam after the boss at 6?**
    - (a) Yes: every boss but the last opens on + home.
    - (b) No: 6 opens cold only.
