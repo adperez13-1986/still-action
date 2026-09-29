@@ -4,7 +4,7 @@
  * parts, one per boot it needs. `ON` is the 9-depth page, `OFF` the flag-off one (§4.0).
  */
 import { readFileSync } from 'node:fs'
-import { REPO, assert, assertClose, assertEq, evalJson, suite } from './lib.mjs'
+import { REPO, assert, assertClose, assertEq, evalJson, hash, suite } from './lib.mjs'
 
 const BASELINE = JSON.parse(readFileSync(REPO + 'tools/checks/baseline/flagoff.json', 'utf8'))
 
@@ -128,6 +128,131 @@ check('K-9A', OFF, async ({ page }) => {
   for (let d = 1; d <= 6; d++) assertEq(`OFF __curveAt(${d}) vs baseline`, got.rows[d - 1], BASELINE.entered.II[d].curve)
   assertEq('OFF __curveAt(7) equals row 5', got.rows[6], got.rows[4])
   assertEq('OFF __bossFor(6).hp', got.boss6, 1170)
+})
+
+// --- K-92a: every depth has a plan (R4); the entered half (b) comes with R6 ---------------------
+// depth -> [place, boss as kind/adds/hp or null, area, step], for the Works-first (W) and Line-first (L) orders
+const PLAN = {
+  1: [['ruin', null, 'I', 1], ['ruin', null, 'I', 1]],
+  2: [['ruin', null, 'I', 2], ['ruin', null, 'I', 2]],
+  3: [['ruin', 'assembler/hulks/900', 'I', 3], ['ruin', 'assembler/hulks/900', 'I', 3]],
+  4: [['works', null, 'II', 4], ['sidings', null, 'III', 4]],
+  5: [['quarter', null, 'II', 5], ['station', null, 'III', 5]],
+  6: [['quarter', 'arbiter/none/1080', 'II', 6], ['station', 'assembler/rams-mites/1080', 'III', 6]],
+  7: [['sidings', null, 'III', 4], ['works', null, 'II', 4]],
+  8: [['station', null, 'III', 5], ['quarter', null, 'II', 5]],
+  9: [['station', 'assembler/rams-mites/1170', 'III', 6], ['quarter', 'arbiter/none/1170', 'II', 6]],
+}
+/** With the engine flag, the Line's last step (the stand-in) reads engine/none at the same HP. */
+const withEngine = (boss) => (boss?.startsWith('assembler/rams-mites') ? 'engine/none/' + boss.split('/')[2] : boss)
+async function planCheck(page, engine) {
+  const got = await evalJson(page, () => {
+    const out = {}
+    for (let d = 1; d <= 9; d++) out[d] = [window.__plan(d, 'II'), window.__plan(d, 'III')]
+    return out
+  })
+  const tag = engine ? 'ON&engine=1' : 'ON'
+  for (let d = 1; d <= 9; d++) {
+    ;['II', 'III'].forEach((o, i) => {
+      const p = got[d][i]
+      const [place, boss0, area, step] = PLAN[d][i]
+      const boss = engine && d > 3 ? withEngine(boss0) : boss0
+      const road = d <= 6 ? o : o === 'II' ? 'III' : 'II'
+      const what = `${tag} __plan(${d}, '${o}')`
+      assertEq(`${what}.place`, p.place, place)
+      assertEq(`${what}.boss`, p.boss && `${p.boss.kind}/${p.boss.adds}/${p.boss.hp}`, boss)
+      assertEq(`${what}.area`, p.area, area)
+      assertEq(`${what}.step`, p.step, step)
+      assertEq(`${what}.road`, p.road, road)
+    })
+  }
+}
+check('K-92a', ON, ({ page }) => planCheck(page, false))
+check('K-92a', ON + '&engine=1', ({ page }) => planCheck(page, true))
+check('K-92a', OFF, async ({ page }) => {
+  const got = await evalJson(page, () => ({
+    W: [1, 2, 3, 4, 5, 6].map((d) => window.__plan(d, 'II').place), L: [1, 2, 3, 4, 5, 6].map((d) => window.__plan(d, 'III').place),
+    boss: window.__bossFor(6, true, 'III', false).kind,
+  }))
+  assertEq("OFF __plan(1..6, 'II').place", got.W, ['ruin', 'ruin', 'ruin', 'works', 'quarter', 'quarter'])
+  assertEq("OFF __plan(1..6, 'III').place (the roads meet)", got.L, ['ruin', 'ruin', 'ruin', 'sidings', 'station', 'quarter'])
+  assertEq("OFF __bossFor(6, true, 'III', false).kind", got.boss, 'arbiter')
+})
+
+// --- K-91: the 9-depth run leaves the Works-first 1-6 alone (R5) --------------------------------
+check('K-91', ON, async ({ page }) => {
+  for (let d = 1; d <= 6; d++) {
+    const gen = await evalJson(page, ({ d }) => Array.from({ length: 20 }, (_, i) => window.__gen(d, i + 1, 'II')), { d })
+    assertEq(`ON __gen(${d}, 1..20, 'II') vs baseline`, gen, BASELINE.gen.II[d])
+    const looks = await evalJson(page, ({ d }) => Array.from({ length: 10 }, (_, i) => window.__genLook(d, i + 1, 'II')), { d })
+    assertEq(`ON hash(__genLook(${d}, 1..10, 'II')) vs baseline`, looks.map((l) => hash(l)), BASELINE.genLookHash.II[d])
+  }
+  // the Line at 1, 2, 3, 5 is the same level in both run lengths (4 loses its Sleepers; 6 is the stand-in's)
+  for (const d of [1, 2, 3, 5]) {
+    const gen = await evalJson(page, ({ d }) => Array.from({ length: 20 }, (_, i) => window.__gen(d, i + 1, 'III')), { d })
+    assertEq(`ON __gen(${d}, 1..20, 'III') vs baseline`, gen, BASELINE.gen.III[d])
+  }
+  // R11: no Sleepers (the ballast brood) on the Line at the run's depth 4
+  const ballast = await evalJson(page, () => {
+    const out = []
+    for (let s = 1; s <= 40; s++) if (window.__genLine(4, s, 'III').packs.some((p) => p.look === 'ballast')) out.push(s)
+    return out
+  })
+  assertEq("ON __genLine(4, 1..40, 'III') seeds with a ballast pack", ballast, [])
+})
+
+// --- K-98: the Line's lessons at its first step in both orders (R5; R9, R11) -------------------
+check('K-98', ON, async ({ page }) => {
+  const got = await evalJson(page, () => {
+    const seeds = (n) => Array.from({ length: n }, (_, i) => i + 1)
+    const isSwarmLesson = (p) => p.lesson && p.kinds.length === 8 && p.kinds.every((k) => k === 'swarm')
+    return {
+      first: [[4, 'III'], [7, 'II']].map(([d, o]) => seeds(20).map((s) => {
+        const l = window.__genLine(d, s, o)
+        const lessons = l.lanes.filter((ln) => ln.lesson)
+        return { place: l.place, lessons: lessons.length, packInLessonRoom: lessons.some((ln) => l.packs.some((p) => p.room === ln.room)),
+          siding0: l.sidings.length ? l.sidings[0].holds : null }
+      })),
+      second: [[5, 'III'], [8, 'II']].map(([d, o]) => seeds(20).map((s) => {
+        const l = window.__genLine(d, s, o)
+        return { place: l.place, lessons: l.lanes.filter((ln) => ln.lesson).length }
+      })),
+      swarm: {
+        w4: seeds(20).map((s) => window.__gen(4, s, 'II').some(isSwarmLesson)), l4: seeds(20).map((s) => window.__gen(4, s, 'III').some(isSwarmLesson)),
+        w7: seeds(20).map((s) => window.__gen(7, s, 'II').some(isSwarmLesson)), l7: seeds(20).map((s) => window.__gen(7, s, 'III').some(isSwarmLesson)),
+      },
+      ballast: [[4, 'III'], [7, 'II']].map(([d, o]) => seeds(40).filter((s) => window.__genLine(d, s, o).packs.some((p) => p.look === 'ballast')).length),
+      worksLineFirst: {
+        lobberLesson8: seeds(20).map((s) => window.__genLook(8, s, 'III').packs.some((p) => p.lesson && p.lobbers.some(Boolean))),
+        heap7: seeds(20).filter((s) => window.__genLook(7, s, 'III').packs.some((p) => p.look === 'heap')).length,
+        lobbersOnLine8: seeds(20).filter((s) => window.__genLook(8, s, 'II').packs.some((p) => p.lobbers.some(Boolean))).length,
+      },
+    }
+  })
+  const n = (a) => a.filter(Boolean).length
+  ;[['(4, III)', 0], ['(7, II)', 1]].forEach(([tag, i]) => {
+    const rows = got.first[i]
+    rows.forEach((r, s) => {
+      assertEq(`__genLine${tag} seed ${s + 1} place`, r.place, 'sidings')
+      assert(r.lessons <= 1, `__genLine${tag} seed ${s + 1}: ${r.lessons} lesson lanes`)
+      assert(!r.packInLessonRoom, `__genLine${tag} seed ${s + 1}: a pack in the lesson lane's room`)
+      assert(r.siding0 === null || r.siding0 === 'handcar', `__genLine${tag} seed ${s + 1}: sidings[0].holds is ${r.siding0}`)
+    })
+    assert(n(rows.map((r) => r.lessons === 1)) >= 18, `__genLine${tag}: exactly one lesson lane on only ${n(rows.map((r) => r.lessons === 1))} of 20 seeds`)
+  })
+  ;[['(5, III)', 0], ['(8, II)', 1]].forEach(([tag, i]) => got.second[i].forEach((r, s) => {
+    assertEq(`__genLine${tag} seed ${s + 1} place`, r.place, 'station')
+    assertEq(`__genLine${tag} seed ${s + 1} lesson lanes`, r.lessons, 0)
+  }))
+  assert(n(got.swarm.w4) >= 18, `swarm lesson in __gen(4, s, 'II') on only ${n(got.swarm.w4)} of 20 seeds`)
+  assert(n(got.swarm.l4) >= 18, `swarm lesson in __gen(4, s, 'III') on only ${n(got.swarm.l4)} of 20 seeds`)
+  assertEq("swarm lesson in __gen(7, s, 'II')", n(got.swarm.w7), 0)
+  assertEq("swarm lesson in __gen(7, s, 'III')", n(got.swarm.l7), 0)
+  assertEq("R11: seeds with a ballast pack in __genLine(4, s, 'III')", got.ballast[0], 0)
+  assert(got.ballast[1] >= 1, "R11: no ballast pack in __genLine(7, s, 'II') on any of 40 seeds")
+  assert(n(got.worksLineFirst.lobberLesson8) >= 18, `lobber lesson in __genLook(8, s, 'III') on only ${n(got.worksLineFirst.lobberLesson8)} of 20 seeds`)
+  assert(got.worksLineFirst.heap7 >= 1, "no heap in __genLook(7, s, 'III') on any of 20 seeds")
+  assertEq("seeds with a lobber in __genLook(8, s, 'II') (the Line)", got.worksLineFirst.lobbersOnLine8, 0)
 })
 
 process.exit(await run(process.argv.slice(2)))

@@ -5,7 +5,7 @@ import type { Terrain, WallFace } from './terrain'
 import type { BreachHole } from './parts'
 import { ELITE_MODS, type Archetype, type EliteMod } from './combat'
 import { BROOD, HEAP } from './swarm'
-import { RUN_DEPTHS, exitsAfterBoss, lookAt, type BossDef, type ExitKind, type KitPreset, type LinePreset, type MachineKind, type PlaceDef, type PlaceId, type RouteId } from './areas'
+import { RUN_DEPTHS, exitsAfterBoss, lookAt, stepOf, type BossDef, type ExitKind, type KitPreset, type LinePreset, type MachineKind, type PlaceDef, type PlaceId, type RouteId } from './areas'
 import { LINE, SIDING, buildLinePieces, distToSpan, type LaneDef, type SidingDef } from './line'
 import { buildMachines, machineTop, CHIMNEY_H, type MachinePlacement } from './machines'
 import { THIEF } from './thief'
@@ -912,7 +912,7 @@ const D5L_LANE: Row[] = [
 const D5L_HANDCAR: Row[] = [{ members: ['H', 'H', 'K'], weight: 1 }, { members: ['M6', 'K'], weight: 1 }]
 /** The Line's caps: at most this many packs with a Signalman. */
 const SIGNAL_PACKS = 2
-/** Sleepers (the ballast brood): the chance of a nest, by depth (depth 4's is the heap's). */
+/** Sleepers (the ballast brood): the chance of a nest, by step (step 4's is the heap's). */
 const SLEEPERS_CHANCE = { 4: HEAP.chance, 5: 0.4 } as Record<number, number>
 /** A sleepers' nest in a siding's room sits this far off the siding, toward the room's middle. */
 const SLEEPERS_OFF = 2.5
@@ -924,8 +924,8 @@ const D7: Row[] = [
   { today: true, weight: 2 },
 ]
 /**
- * Per level: how many packs may hold rams, mites or Lobbers, rams per pack, and distinct
- * archetypes per pack. Depth 4 has two broods: the open lesson, and the Works' slag heap
+ * Per level, by the road's step: how many packs may hold rams, mites or Lobbers, rams per pack, and distinct
+ * archetypes per pack. Step 4 has two broods: the open lesson, and the Works' slag heap
  * after it. Lobbers start at 5, where the quarter's cover gets dense enough to punish.
  */
 const CAPS = (d: number) => d <= 4
@@ -995,7 +995,7 @@ type LaneCand = { axis: 'x' | 'z'; off: 1 | -1 }
  * crossings over corridor cells, dead sidings in lane-free main rooms, then each lane's
  * timetable. The main rand() is never touched.
  */
-function layLine(layout: Layout, progressOf: (r: Room) => number, line: LinePreset, depth: number, seed: number): LineLayout {
+function layLine(layout: Layout, progressOf: (r: Room) => number, line: LinePreset, step: number, seed: number): LineLayout {
   const rs = stream(seed, SALT.rail)
   const floorAt = (i: number, j: number) => layout.floor.has(key(i, j))
   const inRoom = (r: Room, i: number, j: number) => Math.abs(i - r.ci) <= r.rx && Math.abs(j - r.cj) <= r.rz
@@ -1107,7 +1107,7 @@ function layLine(layout: Layout, progressOf: (r: Room) => number, line: LinePres
     const [ux, uz] = axis === 'x' ? [1, 0] : [0, 1]
     const cx = r.center.x + (axis === 'z' ? off * CELL : 0)
     const cz = r.center.z + (axis === 'x' ? off * CELL : 0)
-    const holds: SidingDef['holds'] = depth === 4 ? (sidings.length === 0 ? 'handcar' : 'wagon') : rs() < 0.8 ? 'handcar' : 'wagon'
+    const holds: SidingDef['holds'] = step === 4 ? (sidings.length === 0 ? 'handcar' : 'wagon') : rs() < 0.8 ? 'handcar' : 'wagon'
     sidings.push({
       id: sidings.length, room: r,
       ax: cx - ux * SIDING.half, az: cz - uz * SIDING.half, bx: cx + ux * SIDING.half, bz: cz + uz * SIDING.half,
@@ -1120,12 +1120,12 @@ function layLine(layout: Layout, progressOf: (r: Room) => number, line: LinePres
     sidingRooms.add(r)
   }
 
-  // G-L5: each lane's timetable; depth 4's first room lane (lowest progress) is the lesson
+  // G-L5: each lane's timetable; the road's first step's (4) first room lane (lowest progress) is the lesson
   for (const l of lanes) {
     l.period = LINE.period[0] + (LINE.period[1] - LINE.period[0]) * rs()
     l.phase = l.period * rs()
   }
-  if (depth === 4) {
+  if (step === 4) {
     let lesson: LaneDef | null = null
     for (const l of lanes) if (l.room && (!lesson || progressOf(l.room) < progressOf(lesson.room!))) lesson = l
     if (lesson) lesson.lesson = true
@@ -1145,6 +1145,9 @@ export function generateLevel(
   opts: { boss?: BossDef | null; place?: PlaceDef; bossFelled?: boolean; thiefFirst?: boolean; open?: boolean } = {},
 ): Level {
   const place = opts.place ?? lookAt(depth)
+  // R9 (design/area3/STAGE-R.md): place and road rules read the road's step (4-6, and 7-9 as 4-6 again); only the
+  // curve reads the depth. So does the swarm lesson (the run's depth 4 alone) and the ram lesson (depth 2).
+  const step: number = stepOf(depth)
   const kit = place.kit
   const gen = place.gen
   const rand = rng(seed)
@@ -1155,7 +1158,7 @@ export function generateLevel(
   const progress = progressMap(layout.rooms, opts.boss ? 2 : layout.spine ?? MAIN_ROOMS)
   const made: LevelMade = { props: [], tall: [], floors: [], edge: [], far: [] }
   // G-L2..G-L5: the Line's rails, from their own stream (a boss level has none: the roundhouse is stage C)
-  const line = gen.line && !opts.boss ? layLine(layout, progress.of, gen.line, depth, seed) : null
+  const line = gen.line && !opts.boss ? layLine(layout, progress.of, gen.line, step, seed) : null
   if (line) made.gaps = [...line.gaps]
   /** G-L6: a prop, shrine or sleeper stands clear of every room lane by `lanePad` and every siding by `sidingPad`. */
   const offLine = (x: number, z: number, lanePad: number, sidingPad: number) => !line
@@ -1414,22 +1417,22 @@ export function generateLevel(
   const swarmLesson = depth === 4
     ? pickLessonRoom(line ? lineLessonPool(packRooms, line.laneRooms, line.sidings) : packRooms, rand)
     : null
-  // §6.5, depth 4 on the Line: the first handcar siding's room meets the Handcar; the lane room second
+  // §6.5, the Line's first step (4 or 7): the first handcar siding's room meets the Handcar; the lane room second
   // along meets the Signalman (the first is the lesson lane's, and empty)
-  const handcarLesson = line && depth === 4 ? line.sidings.find((sd) => sd.holds === 'handcar' && sd.room !== swarmLesson)?.room ?? null : null
-  const signalLesson = line && depth === 4
+  const handcarLesson = line && step === 4 ? line.sidings.find((sd) => sd.holds === 'handcar' && sd.room !== swarmLesson)?.room ?? null : null
+  const signalLesson = line && step === 4
     ? ([...line.laneRooms].filter((r) => r !== lessonLaneRoom).sort((a, b) => progress.of(a) - progress.of(b))[0] ?? null)
     : null
   // and one or two other main rooms get a ram template; the rest are today's packs
   const d4Rooms = new Set<Room>()
-  if (depth === 4) {
+  if (step === 4) {
     const mains = packRooms.filter((r) => r.kind === 'main' && r !== swarmLesson && r !== handcarLesson && r !== signalLesson)
     const n = 1 + (rand() < 0.5 ? 1 : 0)
     while (d4Rooms.size < Math.min(n, mains.length)) d4Rooms.add(mains.splice(Math.floor(rand() * mains.length), 1)[0]!)
   }
   // the Works' slag heap: a second brood after the lesson, asleep as a mound (its own stream)
   let heapRoom: Room | null = null
-  if (depth === 4 && place.id === 'works') {
+  if (step === 4 && place.id === 'works') {
     const hs = stream(seed, SALT.heap)
     const after = (r: Room) => r !== swarmLesson && progress.of(r) > (swarmLesson ? progress.of(swarmLesson) : -1)
     // a main room first: one without the rams, else one of two ram rooms (the level keeps its other), else a side
@@ -1442,25 +1445,27 @@ export function generateLevel(
   }
   // §6.5 Sleepers: the Line's second brood, asleep under the ballast (the heap's stream and chance at 4)
   let sleepersRoom: Room | null = null
-  if (line && SLEEPERS_CHANCE[depth] !== undefined) {
+  // R11: none on the Line at the run's depth 4 of a 9-depth run (the Line-first opening); a Works-first 7 keeps them
+  const sleepersChance = RUN_DEPTHS === 9 && depth === 4 ? undefined : SLEEPERS_CHANCE[step]
+  if (line && sleepersChance !== undefined) {
     const hs = stream(seed, SALT.heap)
     const lessons = new Set([swarmLesson, handcarLesson, signalLesson])
     const pool = packRooms.filter((r) => r.kind === 'main' && !line.laneRooms.has(r) && !lessons.has(r)
-      && sidingOf(r)?.holds !== 'handcar' && (depth !== 4 || progress.of(r) > (swarmLesson ? progress.of(swarmLesson) : -1)))
+      && sidingOf(r)?.holds !== 'handcar' && (step !== 4 || progress.of(r) > (swarmLesson ? progress.of(swarmLesson) : -1)))
     const onSiding = pool.filter((r) => { const h = sidingOf(r)?.holds; return h === 'wagon' || h === 'empty' })
     const from = onSiding.length ? onSiding : pool
-    if (hs() < SLEEPERS_CHANCE[depth]! && from.length) sleepersRoom = from[Math.floor(hs() * from.length)]!
+    if (hs() < sleepersChance && from.length) sleepersRoom = from[Math.floor(hs() * from.length)]!
   }
   // depth 5 meets the Lobber: in the densest room, the main room furthest along (a full one, else a hall)
   let lobberLesson: Room | null = null
-  if (depth === 5 && !line) {
+  if (step === 5 && !line) {
     const mains = packRooms.filter((r) => r.kind === 'main')
     const full = mains.filter((r) => r.rx === 2 && r.rz === 2)
     const pool = full.length ? full : mains.filter((r) => r.rx >= 2 || r.rz >= 2)
     for (const r of pool) if (!lobberLesson || progress.of(r) > progress.of(lobberLesson)) lobberLesson = r
   }
   // the Line: no Lobbers at all
-  const caps = line ? { ...CAPS(depth), lobberPacks: 0 } : CAPS(depth)
+  const caps = line ? { ...CAPS(step), lobberPacks: 0 } : CAPS(step)
   let chargerPacks = 0
   let swarmPacks = 0
   let signalPacks = 0
@@ -1506,9 +1511,10 @@ export function generateLevel(
     else if (room === signalLesson) tpl = ['H', 'H', 'G']
     else if (room === heapRoom || room === sleepersRoom) tpl = fill(['M6', 'H'], size, caps.kinds)
     else if (d4Rooms.has(room)) tpl = fill(pickWeighted(D4, rand).members ?? [], size, Infinity)
-    else if (line && depth >= 5 && sidingOf(room)?.holds === 'handcar') tpl = shrink(pickWeighted(D5L_HANDCAR, rand).members ?? [], size)
-    else if (depth >= 5) {
-      const table = line ? (laneOf(room) ? D5L_LANE : D5L) : depth >= 7 ? D7 : D5
+    else if (line && step >= 5 && sidingOf(room)?.holds === 'handcar') tpl = shrink(pickWeighted(D5L_HANDCAR, rand).members ?? [], size)
+    else if (step >= 5) {
+      // D7 is kept for stage T (a step is never 7): the 9-depth curve's 7-8 have their own row already
+      const table = line ? (laneOf(room) ? D5L_LANE : D5L) : step >= 7 ? D7 : D5
       const rows = table.map((row) => (row.today ? row : { ...row, members: shrink(row.members, size) })).filter((row) => {
         if (row.today) return true
         const kinds = bodies(row.members)
@@ -1632,7 +1638,7 @@ export function generateLevel(
   const ts = stream(seed, SALT.thief)
   const roll = ts()
   // certain the first time (its notebook page unmet) from depth 2; the roll is drawn either way, so the stream never shifts
-  if (THIEF.depths.includes(depth) && !opts.boss && lairs.length && ((opts.thiefFirst && depth >= 2) || roll < THIEF.chance)) {
+  if (THIEF.depths.includes(step) && !opts.boss && lairs.length && ((opts.thiefFirst && depth >= 2) || roll < THIEF.chance)) {
     // the first meeting takes the elite nearest the entrance, the one he's surest to fight; otherwise any
     const pack = opts.thiefFirst
       ? lairs.reduce((a, b) => (progress.of(b.room) < progress.of(a.room) ? b : a))
@@ -1668,7 +1674,7 @@ export function generateLevel(
 
   // --- the mender: its own stream too, joined to a main pack of 3+ from depth 2 (never a lesson, a side room or a boss's) ---
   // Added last, so no pack is crowned with it at its head, and nothing placed before it moves.
-  const mendChance = MENDER.chance[depth]
+  const mendChance = MENDER.chance[step]
   if (mendChance && !opts.boss) {
     const ms = stream(seed, SALT.mender)
     let menders = 0
@@ -2024,8 +2030,8 @@ export function generateWalkHome(seed: number, place: PlaceDef): Level {
     },
   }
 }
-/** The walk home is past the last depth; nothing reads its number but the banner, and it shows none. */
-const RUN_DEPTHS_WALK = 7
+/** The walk home is past the last depth; nothing reads its number but the banner, and it shows none. INV-W1: 7 in a 6-depth run, 10 in a 9-depth one. */
+const RUN_DEPTHS_WALK = RUN_DEPTHS + 1
 
 /**
  * A wall (the kit's barrier) on every floor edge facing nothing, and a column wherever

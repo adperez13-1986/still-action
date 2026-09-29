@@ -393,24 +393,32 @@ const station: PlaceDef = {
 
 export const PLACES: Record<PlaceId, PlaceDef> = { ruin, works, quarter, sidings, station }
 export const PLACE_OF: Record<number, PlaceId> = { 1: 'ruin', 2: 'ruin', 3: 'ruin', 4: 'works', 5: 'quarter', 6: 'quarter' }
-/** INV: depths 1-3 are 'ruin' on every route. INV: ROUTES.II equals PLACE_OF for 4-6. */
+/**
+ * INV: depths 1-3 are 'ruin' on every route. INV: ROUTES.II equals PLACE_OF for 4-6. A road's steps 4/5/6 are
+ * its first, second and last depth (stepOf). In a 6-depth run III's 6 reads ENGINE_ON_LINE (lookAt): until the
+ * Engine, the roads meet in the square. In a 9-depth run they never meet: each road's last step is its own
+ * place (the Line's is the station, for the stand-in and a future roundhouse alike).
+ */
 export const ROUTES: Record<RouteId, Record<4 | 5 | 6, PlaceId>> = {
   II: { 4: 'works', 5: 'quarter', 6: 'quarter' },
-  // 6 reads ENGINE_ON_LINE (lookAt): until the Engine, the roads meet in the square
   III: { 4: 'sidings', 5: 'station', 6: 'station' },
 }
 /** The walk home is the last of the quarter, at night (both roads). */
 export const WALK_PLACE: PlaceId = 'quarter'
 /**
  * INV: the only way anything picks a look. The route defaults to 'II' (every call site that
- * predates the Line). areaOf(depth, route) stays for bosses, the hour and the banner.
+ * predates the Line) and is the ORDER, the road taken at the crossroads: roadOf is applied once, in here
+ * (INV-O2), so a caller never passes a road in. areaOf(depth, route) stays for bosses, the hour and the banner.
+ * INV-L1: 9-depth, both orders: the road's steps 4/5/6 read ROUTES[road] (Works: works/quarter/quarter; Line:
+ *         sidings/station/station, the stand-in and a future roundhouse both in the station kit).
  */
 export function lookAt(depth: number, route: RouteId = 'II', engineOnLine = ENGINE_ON_LINE): PlaceDef {
   const d = Math.max(1, Math.min(RUN_DEPTHS, depth))
   if (d <= 3) return PLACES.ruin
-  // the roads meet in the square
-  if (route === 'III' && d === 6 && !engineOnLine) return PLACES.quarter
-  return PLACES[ROUTES[route][d as 4 | 5 | 6]]
+  const road = roadOf(d, route), step = stepOf(d)
+  // the roads meet in the square (a 6-depth run only)
+  if (RUN_DEPTHS === 6 && road === 'III' && step === 6 && !engineOnLine) return PLACES.quarter
+  return PLACES[ROUTES[road][step as 4 | 5 | 6]]
 }
 
 /** An area: its depths, and a look for what still asks by area (I the ruin's; II the quarter's, where it ends). */
@@ -420,13 +428,18 @@ export interface AreaDef extends Omit<PlaceDef, 'id'> {
 }
 const areaI: AreaDef = { ...PLACES.ruin, id: 'I', depths: [1, 2, 3] }
 const areaII: AreaDef = { ...PLACES.quarter, id: 'II', depths: [4, 5, 6] }
-/** INV: AREAS stays the run's two areas in order; area III is the Line's alternative to II, reached by route. */
+/** INV: AREAS stays two defs: I the ruin, II the Works; area III is the Line's, reached by road. */
 export const AREAS: readonly AreaDef[] = [areaI, areaII]
 /** Area III for bosses, the hour and the banner (its hours are area II's: DAY_SPAN is by depth). */
 const areaIII: AreaDef = { ...PLACES.station, id: 'III', depths: [4, 5, 6] }
+/**
+ * INV-A1: AreaDef.id names the ROAD (II the Works, III the Line), not the ordinal; the ordinal is
+ * ceil(depth / BOSS_EVERY) (the banner's). `route` is the ORDER (INV-O2): depths 7-9 of a 9-depth run are the other road's.
+ */
 export const areaOf = (depth: number, route: RouteId = 'II'): AreaDef => {
-  const a = AREAS[Math.min(AREAS.length, Math.ceil(Math.max(1, Math.min(depth, RUN_DEPTHS)) / BOSS_EVERY)) - 1]!
-  return route === 'III' && a.id === 'II' ? areaIII : a
+  const d = Math.max(1, Math.min(RUN_DEPTHS, depth))
+  if (d <= 3) return areaI
+  return roadOf(d, route) === 'III' ? areaIII : areaII
 }
 
 // --- bosses -----------------------------------------------------------------------
@@ -456,29 +469,44 @@ export const ARBITER_DEF: BossDef = {
   // PLACEHOLDER name (Adrian's)
   kind: 'arbiter', name: 'The Arbiter', hp: 900, adds: 'none', roster: 'the-thermal-arbiter', arena: 'square', openWord: 'venting',
 }
-/** The Line's boss at 6 (design/area3/SPEC.md §7), from stage C; until then ENGINE_ON_LINE keeps the Arbiter. */
+/**
+ * The Line's last boss (design/area3/SPEC.md §7), from stage C; until then ENGINE_ON_LINE keeps the Line's end
+ * the Arbiter in a 6-depth run and the stand-in Assembler (bossFor) in a 9-depth one.
+ */
 export const ENGINE_DEF: BossDef = {
   // PLACEHOLDER name (Adrian's)
   kind: 'engine', name: 'The Engine', hp: 900, adds: 'none', roster: 'raging-hull', arena: 'roundhouse', openWord: 'derailed',
 }
 /**
- * false restores Home's second Assembler at depth 6, with rams and mites for adds: the
- * one-evening fallback if the Arbiter doesn't land.
+ * The Arbiter is the Works' last boss (6 of a 6-depth run; 6 or 9 of a 9-depth one, by the order). False
+ * restores Home's second Assembler there, with rams and mites for adds: the one-evening fallback if the
+ * Arbiter doesn't land.
  */
 export const ARBITER_AT_6 = true
 
 /**
  * The only place a depth is decided to have a boss. `arbiterAt6` is the switch above
  * (dev checks flip it to test the fallback); the route is third, so C's checks still call
- * bossFor(6, false). The Engine ends the Line only with `engineOnLine`.
+ * bossFor(6, false). The route is the ORDER (INV-O2); the boss of a road's last step is that road's.
+ * The Engine ends the Line only with `engineOnLine`; in a 9-depth run without it, the Line ends in a STAND_IN:
+ * Home's second Assembler with rams and mites, until stage C.
+ * INV-B1: 6-depth: identical to before for every (depth, arbiterAt6, route, engineOnLine), including d 7-9
+ *         (a depth past RUN_DEPTHS is never `last`: 9 is an Assembler with hulks).
+ * INV-B2: 9-depth: exactly one Arbiter per full run, at the Works' last step; the Line's last step is the Engine
+ *         (engine flag) or the stand-in.
  */
 export function bossFor(depth: number, arbiterAt6 = ARBITER_AT_6, route: RouteId = 'II', engineOnLine = ENGINE_ON_LINE): BossDef | null {
   if (depth % BOSS_EVERY !== 0) return null
   // its HP by the depth curve, never by what he carries
   const hp = (d: BossDef) => Math.round(d.hp * curveAt(depth, RUN_DEPTHS).bossHp)
-  if (depth === RUN_DEPTHS && route === 'III' && engineOnLine) return { ...ENGINE_DEF, hp: hp(ENGINE_DEF) }
-  if (depth === RUN_DEPTHS && arbiterAt6) return { ...ARBITER_DEF, hp: hp(ARBITER_DEF) }
-  return { ...ASSEMBLER_DEF, hp: hp(ASSEMBLER_DEF), adds: depth === RUN_DEPTHS ? 'rams-mites' : 'hulks' }
+  // a road's last boss: 6, and 9 in a 9-depth run
+  const last = stepOf(depth) === 6 && depth <= RUN_DEPTHS
+  const road = roadOf(depth, route)
+  if (last && road === 'III' && engineOnLine) return { ...ENGINE_DEF, hp: hp(ENGINE_DEF) }
+  // STAND_IN: the Line's end until stage C
+  if (last && road === 'III' && RUN_DEPTHS === 9) return { ...ASSEMBLER_DEF, hp: hp(ASSEMBLER_DEF), adds: 'rams-mites' }
+  if (last && arbiterAt6) return { ...ARBITER_DEF, hp: hp(ARBITER_DEF) }
+  return { ...ASSEMBLER_DEF, hp: hp(ASSEMBLER_DEF), adds: last ? 'rams-mites' : 'hulks' }
 }
 
 // --- the one day -----------------------------------------------------------------------

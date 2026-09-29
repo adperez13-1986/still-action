@@ -2292,7 +2292,10 @@ const BOSS_COPY: Record<BossKind, { phase2: string; open: (pan: number) => void 
 let devPosts: { posts: Post[]; group: THREE.Group } | null = null
 /** A dev check's override of ARBITER_AT_6 (null: the switch as shipped). */
 let devArbiterAt6: boolean | null = null
-/** The road this run is on for looks and bosses: not chosen yet reads as the Works'. */
+/**
+ * The ORDER (INV-O2): the road taken at the crossroads, area 2's road; not chosen yet reads as the Works'. lookAt,
+ * bossFor and areaOf apply roadOf inside, so a 9-depth run's 7-9 are the other road's without this changing.
+ */
 const routeNow = (): RouteId => run.route ?? 'II'
 /** This depth's boss, through the one switch, on this run's road. */
 const bossHere = (depth: number) => bossFor(depth, devArbiterAt6 ?? ARBITER_AT_6, routeNow(), flag('engine'))
@@ -4400,7 +4403,8 @@ if (import.meta.env.DEV) {
     /**
      * tools/dropsim.ts's levels: per depth, n generated levels as what drops from them (each
      * pack as "main|side[*=elite]: kinds", its crates and barrels, a Plenty shrine or not).
-     * Returns the file's text, one level a line: refresh with copy(__census()) into tools/levels.json.
+     * Returns the file's text, one level a line: refresh with copy(__census()) into tools/levels.json. `route` is the order (INV-O2);
+     * the header says how many depths the run had.
      */
     __census: (n = 40, route: RouteId = 'II') => {
       const depths: Record<number, { boss: boolean; levels: { packs: string[]; crates: number; plenty: boolean }[] }> = {}
@@ -4420,7 +4424,7 @@ if (import.meta.env.DEV) {
       }
       const body = Object.entries(depths).map(([d, v]) =>
         `  "${d}": { "boss": ${v.boss}, "levels": [${v.levels.map((l) => '\n    ' + JSON.stringify(l)).join(',')}${v.levels.length ? '\n  ' : ''}] }`)
-      return `{\n "build": "${__BUILD__}", "route": "${route}", "n": ${n},\n "depths": {\n${body.join(',\n')}\n }\n}\n`
+      return `{\n "build": "${__BUILD__}", "route": "${route}", "n": ${n}, "runDepths": ${RUN_DEPTHS},\n "depths": {\n${body.join(',\n')}\n }\n}\n`
     },
     /** The same path a tap (false) or push (true) takes after the gesture: HUD cooldown, cast, strain. */
     __fire: (slot: SlotName, pushed = false) => hud.fireSlot(slot, pushed),
@@ -4665,6 +4669,20 @@ if (import.meta.env.DEV) {
     __stepOf: stepOf, __roadOf: roadOf, __openAt: openAt,
     /** The depth curve's row for this run's length (curve.ts). */
     __curveAt: (d: number) => curveAt(d, RUN_DEPTHS),
+    /**
+     * What a depth is, for the ORDER `order` (INV-O2: the road taken at the crossroads): step, road, place id, area id, its boss
+     * as bossHere would make it (the Arbiter switch and the engine flag as they stand), open field or not, the beams a felled
+     * boss opens (null where there is no boss), the day's span and the curve row.
+     */
+    __plan: (depth: number, order: RouteId = 'II') => {
+      const d = Math.max(1, Math.min(RUN_DEPTHS, depth))
+      const boss = bossFor(d, devArbiterAt6 ?? ARBITER_AT_6, order, flag('engine'))
+      return {
+        depth: d, step: stepOf(d), road: roadOf(d, order), place: lookAt(d, order, flag('engine')).id, area: areaOf(d, order).id,
+        boss: boss && { kind: boss.kind, hp: boss.hp, adds: boss.adds, arena: boss.arena },
+        open: openAt(d, order), exits: boss ? exitsAfterBoss(d) : null, span: { ...DAY_SPAN[d]! }, curve: curveAt(d, RUN_DEPTHS),
+      }
+    },
     /** Override area III's switches for this page (design/area3/SPEC.md §12.2); null restores one. Returns what they read now. */
     __flags: (o: { line?: boolean | null; engine?: boolean | null; porter?: boolean | null; roadChoice?: 'crossroads' | 'alternate' | null } = {}) => {
       setFlags(o)
@@ -4691,9 +4709,12 @@ if (import.meta.env.DEV) {
       for (let i = 0; i < 600 && !(run.phase === 'crawl' && run.depth === 4); i++) devTick()
       return run.route
     },
-    /** The Line as a level is generated (design/area3/SPEC.md §12.2), thrown away. */
-    __genLine: (depth: number, seed: number) => {
-      const l = genFor(depth, seed, 'III')
+    /**
+     * The Line as a level is generated (design/area3/SPEC.md §12.2), thrown away. `order` is the road taken at the crossroads
+     * (INV-O2): the default is the one that puts the Line at this depth, III for 1-6 and II for 7-9 (they are the same level in a 6-depth run).
+     */
+    __genLine: (depth: number, seed: number, order: RouteId = depth >= 7 ? 'II' : 'III') => {
+      const l = genFor(depth, seed, order)
       const r2 = (v: number) => Math.round(v * 1e4) / 1e4
       const out = {
         place: l.place,
