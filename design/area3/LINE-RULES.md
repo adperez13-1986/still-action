@@ -11,6 +11,9 @@ the crouch start at 614), `ranged.ts`, `swarm.ts` (`nips`, where the pressure br
 `nearLit`), `line.ts` (`LINE`), `dungeon.ts` (`layLine` 1110/1128, lessons 1405-1460,
 `SLEEPERS_CHANCE` 916), `curve.ts`, and `abilities.ts` (Parry Clamp 307).
 
+**29 Sep: his calls.** R3 and R8 accepted as written (whole game, so both change the live 6-depth game too).
+The rest stand as recommended in BOTH-ROADS §4. The 150 ms Parry grace (§ open questions, 2) stays a dial, off.
+
 ## The rules at a glance
 
 | id | rule | scope |
