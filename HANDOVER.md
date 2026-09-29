@@ -1,9 +1,65 @@
-# Handover — 28 Sep 2026 (night)
+# Handover — 29 Sep 2026 (morning)
 
 For the next session. Read this, then `DESIGN.md` (the settled decisions), then the design
 folder for whatever you're touching. Don't re-derive any of them.
 
-## Start here (28 Sep, night: end of a long session)
+## Start here (29 Sep, morning: he left for the office mid-decision)
+
+**Two commits on `main`, NOT pushed** (31797bb, f087035 on top of 1c7d182). Live is still a4c11dd. Push
+only on his word. The dev server was stopped: start it (`npx vite --host`, give him the LAN address).
+
+**First thing: his two open calls on the counter-moves (below), then how his runs felt.** He hasn't played
+anything from this session yet, and still hasn't reported on the 28 Sep night build.
+
+**Done this session:**
+- **Swap fix (31797bb, his report: "I cannot do a no melt run anymore").** Synergy trial 1's "a swap lands at
+  II" fired from any rank, so a swap from a rank I part auto-melted. Now a swap from a part at I is a plain
+  swap (new part at I, the old one drops at his feet, melting it in is his choice); from II or III it still
+  lands at II and uses the old one up (`swapsIn` in main.ts, `TEMPER.swapRank`). Typechecked, not played.
+  Note for the curve: "never-melt" runs logged between 3529052 and 31797bb that swapped were quietly tempered.
+- **Rams and Lobbers keep their telegraphs: confirmed by him.**
+- **Counter-moves (f087035), brief `design/enemies/COUNTERS.md`**, built by a Sonnet 5.5 engineer agent (his
+  ask: use Sonnet 5.5 as subagent where it makes sense; he asked that its work be verified, and it was: diff
+  read in full, checks rerun, screenshots looked at, the hulk timing test rerun). Pause switch **"counters"**,
+  per device, on by default, from the next depth; ordinary (pressure) hulks and sentinels only.
+  - Hulk (`COUNTER_HULK`, enemy.ts): 1.5 s in its band (outside its swipe, inside the close strike's reach) ->
+    350 ms body-only crouch (core flares, own scrape sound) -> 3.5 u lunge in 180 ms, 8 dmg + 1.2 u shove,
+    direction locked (a sidestep dodges), 900 ms open recover, 4 s cooldown, one hulk at a time. A push or
+    a breaking part breaks the crouch; the autos never do (`breakable(e, auto)` in combat.ts).
+  - Sentinel (`COUNTER_SENTINEL`, ranged.ts): planted in its sight 1.5 s -> lens dims, head turns away, servo
+    whirr -> walks to cover within 5 u, hides 1.2-2 s, peeks and bursts; unplanting ends it; no cover ->
+    backs away 2 u; at most half a pack's sentinels hide at once; 4 s cooldown.
+  - Log per depth: `counters`, `lunges { started, hit, broken }`, `ducks { started, peeked, backed }`.
+
+**The finding (why he has a decision to make): as briefed, neither counter bites.**
+- **Hulk:** with a free-walking hulk and the close strike on, the band timer peaks at 0.3-0.48 s and never
+  reaches 1.5 s (I reran this myself): the strike shoves it out, it walks back in and swipes every ~1.2 s.
+  Pressure already made the band unsafe; the brief's premise ("the band is safe forever") predates pressure.
+  The lunge only fires on a hulk that can't close, or a Still backing off in small steps.
+- **Sentinel:** planted vs 2 sentinels, 20 s: HP lost 88.7 -> 79 (walls) / 90 -> 85.3 (open), Still's damage
+  unchanged (~245): the other sentinel stays visible and the planted shot retargets. It eases fire, it doesn't
+  punish. Cover within 5 u exists for ~43-60% of positions. On a real depth 2 level the hidden sentinel sits
+  in the dark and is nearly invisible (legibility on the phone).
+
+**His to decide (asked, not answered):**
+1. **Hulk trigger. A (my recommendation):** time in contact counts toward the lunge too, so close play gets
+   a beat: every ~5 s one hulk crouches, sidestep, punish its 900 ms opening. Symmetric with the sentinel
+   punishing the planted shot. **B:** the lunge closes the gap on a Still holding 3-6 u, punishing range;
+   with the duck, everything tilts to close.
+2. **Sentinel:** make the peek meaner (peek from a new angle, or a longer burst) so hiding time costs him,
+   or leave it and judge it on the phone first.
+
+**Verification gaps left:** the agent's sentinel screenshots are weak (a stand-in orange box, and two it
+listed, `sentinel-normal` / `sentinel-turning`, were never saved); the three new sounds (`crouch`, `lunge`,
+`turnAway` in audio.ts) were never heard; the hulk's crouch core reads pale peach in screenshots (check on
+the phone against his no-flat-white/salmon rule). Headless scripts from this session are in that session's
+scratchpad (`lib.mjs`, `h1`-`h4`, `s1`-`s5`), not the repo.
+
+**Still open from 28 Sep (unchanged):** next after counters is synergy step 2 (slammed); Parry Clamp needs a
+new job; run length (both roads, 9 depths, Line stages B and C); his words (the mender's name and line, the
+Home ending, `src/ending.ts`, the Wandering Drone's line, "hold · pay it").
+
+## Previous start-here (28 Sep, night)
 
 **Everything is on `main`, pushed and live** (last a4c11dd). No branches in flight; the old `pedestals` /
 `leanings` branches and the `still-action-pedestals/` worktree are fully merged (safe to remove). The dev
