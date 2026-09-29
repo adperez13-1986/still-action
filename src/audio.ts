@@ -702,6 +702,60 @@ export function clang(pan: number) {
 
 // --- the ram ---
 
+/** The latch at a lock: a square's click, a low thud and a heavy metal knock, at `when` (context time). The ram's, and the Handcar's. */
+function latchAt(c: AudioContext, dest: AudioNode, when: number) {
+  tone(c, dest, 'square', when, 700, 380, 0.03, 0.2, 0.0008)
+  tone(c, dest, 'sine', when, 110, 70, 0.08, 0.5)
+  sample(c, 'metalHeavy', dest, 0.7, 1.25, when - c.currentTime)
+}
+
+/**
+ * The lock, heard from the lock itself (STAGE-B.md 2.10, K-S3): the Handcar's pump is scheduled to the lock, but its latch rings
+ * from the game's own lock event, so it lands with the lane setting whatever the clock did between (a hitstop), and a headless
+ * run can prove it fired at the lock and not at the windup's start.
+ */
+export function latch(pan: number, gain = 1) {
+  heard('latch')
+  const c = live()
+  if (!c) return
+  const d = out(c, 'enemy', pan)
+  const g = c.createGain()
+  g.gain.value = gain
+  g.connect(d)
+  latchAt(c, g, c.currentTime)
+}
+
+/**
+ * The Handcar's tell, heard (STAGE-B.md 2.10; a first pass, his ear decides): a hand pump clanking at 3 Hz through the tracking,
+ * a lowpassed square (180 Hz, 40 ms) with a metal knock under each stroke, until the lock; the latch is `latch`, from the lock event.
+ * Nothing of the ram's engine or valve: it is a cart, not a boiler. `stop(true)` cuts it dead.
+ */
+export function pump(ms: number, lockAt: number, pan: number, gain = 1): Voice {
+  heard('pump')
+  const c = live()
+  if (!c) return asVoice(() => {})
+  const t = c.currentTime
+  const dur = ms / 1000
+  const lock = t + dur * lockAt
+  const p = livePan(c, 'enemy', pan)
+  const g = c.createGain()
+  g.gain.value = gain
+  g.connect(p)
+  const lp = c.createBiquadFilter()
+  lp.type = 'lowpass'
+  lp.frequency.value = 520
+  lp.Q.value = 2
+  lp.connect(g)
+  // a stroke every third of a second, the down-stroke a little lower than the up
+  for (let k = 0; t + k / 3 < lock - 0.04; k++) {
+    const at = t + k / 3
+    const f = k % 2 ? 200 : 165
+    tone(c, lp, 'square', at, f, f * 0.7, 0.04, 0.22, 0.002)
+    sample(c, 'metalLight', g, 0.3, k % 2 ? 0.85 : 0.65, at - t)
+  }
+  return { stop: gate(g, c, lock), pan: (v) => p.pan.setTargetAtTime(clampPan(v), c.currentTime, 0.03) }
+}
+
 /**
  * The ram's tell, heard: an engine revving up to the lock, a ratchet tick per seam
  * segment as its spine fills, two hoof scrapes, a heavy latch at the lock (the
@@ -762,9 +816,7 @@ export function rev(ms: number, lockAt: number, pan: number, gain = 1): Voice {
     sample(c, 'step', g, 0.4, 0.55, at)
   }
   // the latch: the lane is set
-  tone(c, g, 'square', lock, 700, 380, 0.03, 0.2, 0.0008)
-  tone(c, g, 'sine', lock, 110, 70, 0.08, 0.5)
-  sample(c, 'metalHeavy', g, 0.7, 1.25, lock - t)
+  latchAt(c, g, lock)
   // the valve: a hiss opening from the lock to the rush
   const s = c.createBufferSource()
   s.buffer = noise

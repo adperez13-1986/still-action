@@ -1236,4 +1236,373 @@ check('K-S2', LINE4, async ({ page }) => {
   console.log(`INFO K-S2: heard at its windup start: [${got.atWindup}] (live ${got.live}); headless, so nothing was audible`)
 })
 
+// --- The Handcar (B5): SPEC 6.2, R1 -------------------------------------------------------------------------------------------
+/**
+ * In-page kit for the Handcar's checks (STAGE-B.md section 4: "LINE4 s with a handcar siding; __emptyLevel(), h = __handcar(i)").
+ * `hrig(seed)`: the flag-off Line at depth 4, every body out, a Handcar on the first handcar siding (awake), and the siding's geometry:
+ * `alongOf(r, p)` is how far along the siding (a to b) a point stands, `latOf` how far off its line. `P(r, along, side)` is a point
+ * `along` u ahead of the Handcar (toward the far end it faces, from where it stands NOW) and `side` u off the rails. `inv(r)` reads INV-H1
+ * for this tick: [off the line, along] (the along must stay between the rail ends). Null when the seed has no handcar siding.
+ */
+const HC_KIT = `
+  const hrig = (seed, depth = 4) => {
+    W.__hold(true)
+    W.__run.route = 'III'
+    W.__enter(depth, seed)
+    W.__emptyLevel()
+    C.autoAttack = false
+    C.counters = false
+    const lv = W.__level()
+    const sidx = lv.sidings ? lv.sidings.findIndex((s) => s.holds === 'handcar') : -1
+    if (sidx < 0) return null
+    const sd = lv.sidings[sidx]
+    const len = Math.hypot(sd.bx - sd.ax, sd.bz - sd.az)
+    const h = W.__handcar(sidx)
+    return { h, sd, len, ux: (sd.bx - sd.ax) / len, uz: (sd.bz - sd.az) / len, seed, sidx }
+  }
+  const alongOf = (r, p) => (p.x - r.sd.ax) * r.ux + (p.z - r.sd.az) * r.uz
+  const latOf = (r, p) => (p.x - r.sd.ax) * r.uz - (p.z - r.sd.az) * r.ux
+  const dirNow = (r) => (alongOf(r, r.h.pos) < r.len / 2 ? 1 : -1)
+  const P = (r, along, side) => {
+    const d = dirNow(r)
+    return { x: r.h.pos.x + r.ux * d * along - r.uz * side, z: r.h.pos.z + r.uz * d * along + r.ux * side }
+  }
+  const inv = (r) => [Math.abs(latOf(r, r.h.pos)), alongOf(r, r.h.pos)]
+  const withHrig = (fn) => {
+    for (let seed = 1; seed <= 16; seed++) { const r = hrig(seed); if (r) return fn(r) }
+    return { bad: 'no seed 1..16 has a handcar siding at step 4' }
+  }
+  const pinAt = (p) => () => W.__still.pos.set(p.x, 0, p.z)
+`
+
+/** The 100 rushes of K-E5, which K-E6 reads for INV-H1 (one page, so it runs once: the second asker gets the first's rows). */
+const rushRuns = new WeakMap()
+const rush100 = (page) => {
+  if (!rushRuns.has(page)) rushRuns.set(page, inPage(page, `
+    ${HC_KIT}
+    const end = begin(1)
+    try {
+      return withHrig((r) => {
+        const h = r.h
+        const rows = { n: 100, stuns: 0, ends: [], hitsOn: 0, hitsOff: 0, wantOn: 0, wantOff: 0, flips: 0, maxLat: 0, minA: 1e9, maxA: -1e9, ticks: 0, seed: r.seed,
+          lockT: null, stunTicks: null, stunHit: null, reloadAfter: null, windupToStrike: null, facingBack: null, standEnd: null, laneEnd: null, laneLen: null, bad: null }
+        const sample = () => {
+          const [lat, a] = inv(r)
+          rows.maxLat = Math.max(rows.maxLat, lat); rows.minA = Math.min(rows.minA, a); rows.maxA = Math.max(rows.maxA, a); rows.ticks++
+        }
+        const step = (pin) => { const lost = tick(1, pin); sample(); return lost }
+        let dirPrev = dirNow(r)
+        for (let i = 0; i < 100; i++) {
+          h.hp = 1e6
+          h.reload = 0
+          const stay = i % 2 === 0
+          const on = P(r, 4 + (i % 5) * 1.2, 0)
+          const off = P(r, 5, 3.5)
+          let pin = pinAt(on)
+          const d0 = dirNow(r)
+          // tracking: Still on the rails ahead of it
+          let n = 0
+          while (h.phase !== 'windup' && n++ < 240) step(pin)
+          if (h.phase !== 'windup') { rows.bad = 'rush ' + i + ': no windup in 4 s (phase ' + h.phase + ')'; return rows }
+          let lockT = null
+          n = 0
+          while (h.phase === 'windup' && n++ < 120) {
+            step(pin)
+            if (h.locked && lockT === null) lockT = h.t
+          }
+          if (h.phase !== 'strike') { rows.bad = 'rush ' + i + ': no strike (phase ' + h.phase + ')'; return rows }
+          const laneEnd = h.lane.end, laneLen = h.lane.len
+          if (i === 0) { rows.lockT = lockT; rows.laneEnd = laneEnd; rows.laneLen = laneLen }
+          if (!stay) pin = pinAt(off)
+          let lost = 0
+          n = 0
+          while (h.phase === 'strike' && n++ < 120) lost += step(pin)
+          if (stay) { rows.wantOn++; if (lost > 0) rows.hitsOn++ } else { rows.wantOff++; if (lost > 0) rows.hitsOff++ }
+          if (h.phase === 'recover' && h.stunned && laneEnd === 'prop') rows.stuns++
+          else if (!rows.bad) rows.bad = 'rush ' + i + ': after the rush phase ' + h.phase + ', stunned ' + h.stunned + ', lane end ' + laneEnd
+          if (i === 0) {
+            // taking x1.5 while stunned, and the stun's length: 1200 ms, then 400
+            const hp0 = h.hp
+            h.hit(10)
+            rows.stunHit = hp0 - h.hp
+            h.hp = 1e6
+            let k = 0
+            while (h.stunned && k++ < 200) step(pin)
+            rows.stunTicks = k
+          }
+          pin = pinAt(off)
+          n = 0
+          while (h.phase !== 'approach' && n++ < 200) step(pin)
+          if (i === 0) rows.reloadAfter = h.reload
+          const dirNew = dirNow(r)
+          if (dirNew === -d0) rows.flips++
+          if (i === 0) {
+            // the stand: at the other end, facing back (given a second to turn)
+            for (let k = 0; k < 60; k++) step(pin)
+            const want = Math.atan2(r.ux * dirNow(r), r.uz * dirNow(r))
+            let df = h.facing - want
+            while (df > Math.PI) df -= 2 * Math.PI
+            while (df < -Math.PI) df += 2 * Math.PI
+            rows.facingBack = Math.abs(df)
+            rows.standEnd = Math.min(alongOf(r, h.pos), r.len - alongOf(r, h.pos))
+          }
+          dirPrev = dirNew
+        }
+        return rows
+      })
+    } finally { end() }`))
+  return rushRuns.get(page)
+}
+
+check('K-E5', LINE4, async ({ page }) => {
+  const g = await rush100(page)
+  bad(g)
+  assert(!g.bad, g.bad)
+  assert(g.lockT !== null && Math.abs(g.lockT - 495) <= 1000 / 60 + 1e-6, `the lock came at t = ${g.lockT} ms into the windup, not 495 +- 1 tick`)
+  assert(g.laneEnd === 'prop', `its lane ends '${g.laneEnd}', not 'prop': the far buffer's circle`)
+  assert(g.stuns === g.n, `${g.stuns} of ${g.n} rushes ended stunned against the far buffer`)
+  assert(Math.abs(g.stunTicks - 72) <= 2, `the stun lasted ${g.stunTicks} ticks (1200 ms = 72), not that`)
+  assert(Math.abs(g.stunHit - 15) < 1e-9, `a hit of 10 on the stunned Handcar took ${g.stunHit}, not 15 (x1.5)`)
+  assert(Math.abs(g.reloadAfter - 1500) <= 1000 / 60 * 1.5 + 1e-6, `its reload after the rush is ${g.reloadAfter} ms, not 1500`)
+  assert(g.flips === g.n, `${g.flips} of ${g.n} rushes ended at the other end`)
+  assert(g.standEnd <= 0.7, `after the rush it stands ${g.standEnd.toFixed(2)} u from a rail end, not against the buffer`)
+  assert(g.facingBack <= 0.05, `it faces ${g.facingBack.toFixed(3)} rad off the far end a second after the stun`)
+  assert(g.hitsOn === g.wantOn && g.hitsOff === 0, `Still standing on the lane was hit in ${g.hitsOn} of ${g.wantOn} rushes, and hit ${g.hitsOff} of ${g.wantOff} times when he stepped off`)
+  console.log(`INFO K-E5: seed ${g.seed}: lock at ${g.lockT.toFixed(0)} ms, lane ${g.laneEnd} ${g.laneLen.toFixed(2)} u, ${g.stuns}/${g.n} stunned (${(g.stunTicks / 60 * 1000).toFixed(0)} ms, x1.5), reload ${g.reloadAfter.toFixed(0)} ms, ${g.flips}/${g.n} ended at the other end facing back`)
+})
+
+check('K-E6', LINE4, async ({ page }) => {
+  // (1) INV-H1 at every tick over the 100 rushes
+  const g = await rush100(page)
+  bad(g)
+  assert(g.maxLat <= 0.05, `over ${g.ticks} ticks of 100 rushes it strayed ${g.maxLat.toFixed(4)} u off its rails (0.05)`)
+  assert(g.minA >= -1e-9 && g.maxA <= g.n * 0 + 12 + 1e-9, `over ${g.ticks} ticks its along ran ${g.minA.toFixed(3)}..${g.maxA.toFixed(3)}, outside the rail ends 0..12`)
+  // (2) shoved by Piston, Rusted Hook, Clamp Toss and Parry Clamp, cast at it from every side, pushed and not; (3) a pressure hulk pressed against it
+  const got = await inPage(page, `
+    ${HC_KIT}
+    const end = begin(1)
+    try {
+      return withHrig((r) => {
+        const h = r.h
+        h.hp = 1e9
+        h.reload = 1e9
+        const rows = []
+        let worst = 0, lo = 1e9, hi = -1e9, ticks = 0
+        const sample = () => { const [lat, a] = inv(r); worst = Math.max(worst, lat); lo = Math.min(lo, a); hi = Math.max(hi, a); ticks++ }
+        const home = { x: h.pos.x, z: h.pos.z }
+        // a push is strain (it climbs and refuses a push at the top): the throw goes first, while there is room
+        for (const part of ['clamp-toss', 'rusted-hook', 'piston', 'parry-clamp']) {
+          for (const pushed of [true, false]) {
+            W.__strain(-1000)
+            let moved = 0, throws = 0
+            for (let k = 0; k < 8; k++) {
+              const a = (k / 8) * Math.PI * 2
+              W.__equip(part)
+              h.pos.set(home.x, 0, home.z); h.knock.set(0, 0, 0); h.phase = 'approach'; h.reload = 1e9
+              const from = { x: h.pos.x, z: h.pos.z }
+              const s = { x: h.pos.x + Math.cos(a) * 1.8, z: h.pos.z + Math.sin(a) * 1.8 }
+              W.__still.pos.set(s.x, 0, s.z)
+              W.__stick(0, 0)
+              W.__partLog.length = 0
+              W.__fire('arms', pushed)
+              for (let i = 0; i < 120; i++) { tick(1, pinAt(s)); sample(); moved = Math.max(moved, dist(h.pos, from)) }
+              throws += W.__partLog.filter((x) => x.kind === 'throw').length
+            }
+            rows.push({ part, pushed, moved, throws })
+          }
+        }
+        // a pressure hulk pressed against its flank: Still 8 u ahead on the rails (its reload is held, so it never winds up), the hulk beside
+        // its deck with the whole cart between it and where it wants to go, walking into it
+        h.pos.set(home.x, 0, home.z); h.knock.set(0, 0, 0); h.phase = 'approach'
+        const ahead = P(r, 8, 0)
+        const flank = P(r, -0.1, 0.9)
+        C.pressure = true
+        const hulk = W.__spawn('chaser', flank.x, flank.z, true)
+        hulk.hp = 1e9
+        let press = -1e9
+        for (let i = 0; i < 240; i++) { tick(1, pinAt(ahead)); sample(); press = Math.max(press, 0.6 + hulk.radius + 0.1 - dist(h.pos, hulk.pos)) }
+        const still = dist(h.pos, home)
+        return { rows, worst, lo, hi, ticks, press, still, len: r.len, seed: r.seed }
+      })
+    } finally { end() }`)
+  bad(got)
+  assert(got.worst <= 0.05, `shoved and pressed it strayed ${got.worst.toFixed(4)} u off its line over ${got.ticks} ticks (0.05)`)
+  assert(got.lo >= -1e-9 && got.hi <= got.len + 1e-9, `shoved it ran ${got.lo.toFixed(3)}..${got.hi.toFixed(3)} along the siding, outside 0..${got.len}`)
+  const shoved = Math.max(...got.rows.filter((x) => x.part === 'piston' || x.part === 'clamp-toss').map((x) => x.moved))
+  assert(shoved >= 0.5, `no cast moved it as much as 0.5 u (${shoved.toFixed(2)}): the check would prove nothing`)
+  assert(got.rows.filter((x) => x.part === 'clamp-toss').reduce((n, x) => n + x.throws, 0) >= 1, `no Clamp Toss cast threw it: the held path was never tried`)
+  assert(got.press > 0, `the hulk never came up against it (${(-got.press).toFixed(3)} u short of touching, within 0.1)`)
+  assert(got.still < 0.05, `the pressed Handcar was pushed ${got.still.toFixed(3)} u by the hulk (separation must leave it)`)
+  console.log(`INFO K-E6: 100 rushes (${g.ticks} ticks) worst ${g.maxLat.toFixed(4)} u off the line; casts: ${got.rows.map((x) => `${x.part}${x.pushed ? '+' : ''} ${x.moved.toFixed(1)}`).join(', ')}; hulk pressed ${got.press.toFixed(2)} u deep, Handcar moved ${got.still.toFixed(4)} u`)
+})
+
+check('K-E7', LINE4, async ({ page }) => {
+  const got = await inPage(page, `
+    ${HC_KIT}
+    const end = begin(1)
+    try {
+      return withHrig((r) => {
+        const h = r.h
+        h.hp = 1e6
+        h.reload = 0
+        const tell = h.laneTell
+        const on = P(r, 6, 0), off = P(r, 5, 3.5)
+        let pin = pinAt(on)
+        const seen = { rail: 0, railVisible: false, tracking: 0, locked: 0, rush: 0, trackWash: tell.trackWash, coreTracking: 0, seamL: 0, seamCoreL: 0 }
+        const col = h.seamColorNow()
+        const L = (c) => c.getHSL({}).l
+        const coreL = L(new col.constructor(0xff5a3c))
+        for (let i = 0; i < 60 * 8; i++) {
+          if (h.phase === 'strike') pin = pinAt(off)
+          tick(1, pin)
+          seen.rail = Math.max(seen.rail, tell.railMat.opacity)
+          if (tell.rails.mesh.visible) seen.railVisible = true
+          seen.seamL = Math.max(seen.seamL, L(col) - coreL)
+          if (h.phase === 'windup' && !h.locked) seen.coreTracking = Math.max(seen.coreTracking, tell.coreMat.opacity)
+          if (h.phase === 'windup' && h.locked) seen.locked = Math.max(seen.locked, tell.washMat.opacity)
+          if (h.phase === 'strike') seen.rush = Math.max(seen.rush, tell.washMat.opacity)
+          if (h.phase === 'recover' && h.stunned) seen.stunned = true
+          if (seen.stunned && h.phase === 'approach') break
+        }
+        // the siding's rails carry no tell: a dead material with no shader; a lit lane's tell never overlaps a siding
+        const lv = W.__level()
+        const mesh = lv.group.getObjectByName('rail:siding')
+        const mat = mesh && mesh.material
+        for (const l of W.__lanes()) W.__train(l.id)
+        for (let i = 0; i < 90; i++) W.__step(1 / 60)
+        const overlaps = []
+        C.line.group.traverse((o) => {
+          if (!o.isMesh || !o.visible || !o.material || !o.material.isShaderMaterial) return
+          o.geometry.computeBoundingBox()
+          const b = o.geometry.boundingBox
+          for (const s of lv.sidings) {
+            const lo = { x: Math.min(s.ax, s.bx) - 1, z: Math.min(s.az, s.bz) - 1 }, hi = { x: Math.max(s.ax, s.bx) + 1, z: Math.max(s.az, s.bz) + 1 }
+            const p = o.getWorldPosition(new o.position.constructor())
+            if (b.max.x + p.x >= lo.x && b.min.x + p.x <= hi.x && b.max.z + p.z >= lo.z && b.min.z + p.z <= hi.z) overlaps.push(o.name || o.type)
+          }
+        })
+        return { ...seen, sidingMat: mat ? { type: mat.type, shader: !!mat.isShaderMaterial, uniforms: !!mat.uniforms } : null, overlaps, sidings: lv.sidings.length, seed: r.seed }
+      })
+    } finally { end() }`)
+  bad(got)
+  assert(got.trackWash === true, "its LaneTell's trackWash is not set")
+  assert(got.rail === 0 && !got.railVisible, `its rail quads showed: opacity ${got.rail}, visible ${got.railVisible} (INV-H2)`)
+  assert(got.coreTracking > 0 && got.locked > 0 && got.rush > 0 && got.stunned, `the tell was never drawn (tracking core ${got.coreTracking}, locked wash ${got.locked}, rush wash ${got.rush}, stunned ${got.stunned}): the rails check proves nothing`)
+  assert(got.seamL <= 1e-6, `INV-C1: its seam's lightness went ${got.seamL.toFixed(6)} over CORE's`)
+  assert(got.sidingMat && got.sidingMat.type === 'MeshStandardMaterial' && !got.sidingMat.shader && !got.sidingMat.uniforms, `the siding's rails are ${JSON.stringify(got.sidingMat)}, not a plain dead material`)
+  assert(got.overlaps.length === 0, `a lit lane's tell lies over a siding: ${got.overlaps}`)
+  // no room holds a lane and a siding, s 1..20 at both depths
+  const rooms = []
+  for (const depth of [4, 5]) {
+    const rs = await inPage(page, `
+      const out = []
+      for (let s = 1; s <= 20; s++) {
+        const g = W.__genLine(${depth}, s)
+        out.push(g.rooms.filter((rm) => rm.lane && rm.siding).length)
+      }
+      return out`)
+    rooms.push(...rs.map((n, i) => ({ depth, seed: i + 1, n })))
+  }
+  const both = rooms.filter((x) => x.n > 0)
+  assert(both.length === 0, `rooms with a lane and a siding: ${JSON.stringify(both)}`)
+  console.log(`INFO K-E7: rail opacity 0 through tracking (core ${got.coreTracking.toFixed(2)}), locked (wash ${got.locked}), rush and stun; seam over CORE by ${got.seamL.toExponential(1)}; no lane and siding share a room in ${rooms.length} levels`)
+})
+
+check('K-E16', LINE4, async ({ page }) => {
+  // the autos never break its tracking: from the planted shot's range, and inside the close strike's reach
+  const autos = (name, o) => inPage(page, `
+    ${HC_KIT}
+    const end = begin(1)
+    try {
+      return withHrig((r) => {
+        const h = r.h
+        h.hp = 1e6
+        h.reload = 0
+        C.autoAttack = true
+        ${o.plant ? 'C.eye = true' : 'C.closeHand = true'}
+        const s = P(r, ${o.along}, 0)
+        const pin = pinAt(s)
+        pin()
+        if (${o.plant}) { if (until(() => C.inStance, 2.5, () => { pin(); h.reload = 1e9 }) < 0) return { bad: 'never planted' } ; h.reload = 0 }
+        W.__partLog.length = 0
+        const hp0 = h.hp
+        let n = 0
+        while (h.phase !== 'windup' && n++ < 240) tick(1, pin)
+        if (h.phase !== 'windup') return { bad: 'no windup: phase ' + h.phase + ' dist ' + dist(h.pos, W.__still.pos).toFixed(2) }
+        let allFalse = true, part = null, tracked = 0
+        while (h.phase === 'windup') {
+          if (!h.locked) { tracked++; if (C.breakable(h, true)) allFalse = false; part = C.breakable(h) }
+          tick(1, pin)
+        }
+        return { allFalse, part, tracked, phase: h.phase, interrupts: W.__partLog.filter((x) => x.kind === 'interrupt' && x.enemy === h).length, autoDamage: hp0 - h.hp, along: ${o.along} }
+      })
+    } finally { end() }`)
+  const planted = await autos('planted', { plant: true, along: 9 })
+  bad(planted)
+  const close = await autos('close', { plant: false, along: 2.0 })
+  bad(close)
+  for (const [name, g] of [['planted shot at 9 u', planted], ['close strike at 2 u', close]]) {
+    assert(g.tracked >= 25, `${name}: only ${g.tracked} tracking ticks seen`)
+    assert(g.allFalse === true && g.part === true, `${name}: breakable(h, true) was true during tracking, or breakable(h) false (${g.allFalse}, ${g.part})`)
+    assert(g.interrupts === 0 && g.phase === 'strike', `${name}: ${g.interrupts} interrupt(s), then phase ${g.phase}: the autos broke it`)
+    assert(g.autoDamage > 0, `${name}: the autos never touched it (${g.autoDamage}): the check proves nothing`)
+  }
+  // Parry Clamp cast into the tracking breaks it
+  const parry = await inPage(page, `
+    ${HC_KIT}
+    const end = begin(1, 'parry-clamp')
+    try {
+      return withHrig((r) => {
+        const h = r.h
+        h.hp = 1e6
+        h.reload = 0
+        const s = P(r, 1.8, 0)
+        const pin = pinAt(s)
+        pin()
+        let n = 0
+        while (h.phase !== 'windup' && n++ < 240) tick(1, pin)
+        if (h.phase !== 'windup') return { bad: 'no windup: phase ' + h.phase }
+        tick(6, pin)
+        W.__partLog.length = 0
+        const wasLocked = h.locked
+        W.__fire('arms')
+        return { wasLocked, phase: h.phase, interrupts: W.__partLog.filter((x) => x.kind === 'interrupt' && x.enemy === h).length, rails: h.laneTell.railMat.opacity, core: h.laneTell.coreMat.opacity }
+      })
+    } finally { end() }`)
+  bad(parry)
+  assert(!parry.wasLocked && parry.interrupts === 1 && parry.phase === 'approach', `Parry Clamp into its tracking: locked ${parry.wasLocked}, ${parry.interrupts} interrupt event(s), phase ${parry.phase} (want unlocked, 1, approach)`)
+  assert(parry.core === 0 && parry.rails === 0, `its tell survived the break (core ${parry.core}, rails ${parry.rails})`)
+  console.log(`INFO K-E16: planted shot cost it ${planted.autoDamage.toFixed(1)} hp through ${planted.tracked} tracking ticks, close strike ${close.autoDamage.toFixed(1)} hp through ${close.tracked}; neither broke it; Parry Clamp did`)
+})
+
+check('K-S3', LINE4, async ({ page }) => {
+  const got = await inPage(page, `
+    ${HC_KIT}
+    const end = begin(1)
+    try {
+      return withHrig((r) => {
+        const h = r.h
+        h.hp = 1e6
+        h.reload = 0
+        const s = P(r, 6, 0)
+        const pin = pinAt(s)
+        pin()
+        W.__heard.length = 0
+        let n = 0
+        while (h.phase !== 'windup' && n++ < 240) tick(1, pin)
+        if (h.phase !== 'windup') return { bad: 'no windup' }
+        const atWindup = W.__heard.map((x) => x.name)
+        while (!h.locked) tick(1, pin)
+        const atLock = W.__heard.map((x) => x.name)
+        tick(75, () => { W.__still.pos.set(P(r, 5, 3.5).x, 0, P(r, 5, 3.5).z) })
+        return { atWindup, atLock, after: W.__heard.map((x) => x.name), live: W.__heard.map((x) => x.live) }
+      })
+    } finally { end() }`)
+  bad(got)
+  assert(got.atWindup.length === 1 && got.atWindup[0] === 'pump', `at its windup start the heard log is [${got.atWindup}], not [pump]`)
+  assert(got.atLock.filter((n) => n === 'latch').length === 1 && got.atLock.length === 2, `at its lock the heard log is [${got.atLock}], not [pump, latch]`)
+  assert(!got.after.includes('rev'), `the heard log has rev: [${got.after}]`)
+  console.log(`INFO K-S3: heard at the windup start [${got.atWindup}], at the lock [${got.atLock}], over the whole rush [${got.after}] (live ${got.live}); headless, so nothing was audible`)
+})
+
 process.exit(await run(process.argv.slice(2)))

@@ -7,6 +7,7 @@ import { ELITE_MODS, type Archetype, type EliteMod } from './combat'
 import { BROOD, HEAP } from './swarm'
 import { RUN_DEPTHS, exitsAfterBoss, lookAt, stepOf, type BossDef, type ExitKind, type KitPreset, type LinePreset, type MachineKind, type PlaceDef, type PlaceId, type RouteId } from './areas'
 import { LINE, SIDING, buildLinePieces, distToSpan, type LaneDef, type SidingDef } from './line'
+import { handcarSpot } from './handcar'
 import { buildMachines, machineTop, CHIMNEY_H, type MachinePlacement } from './machines'
 import { THIEF } from './thief'
 import { MENDER } from './mender'
@@ -884,10 +885,10 @@ const VARIANT: Partial<Record<Member, Variant>> = { L: 'lobber', G: 'signal', K:
 const variantsOf = (ms: readonly Member[]): (Variant | undefined)[] =>
   ms.flatMap((m) => (m === 'M8' ? Array(8).fill(undefined) : m === 'M6' ? Array(6).fill(undefined) : [VARIANT[m]]))
 /**
- * The Line's own bodies, as they're built (stage B: the Signalman at B4, the Handcar at B5). Until then a row that names one is
+ * The Line's own bodies, as they're built (stage B: the Signalman at B4, the Handcar at B5). A row that names one that isn't is
  * generated without it: the rest of the row, from the same draws.
  */
-export const LINE_BODIES = { signal: true, handcar: false }
+export const LINE_BODIES = { signal: true, handcar: true }
 const built = (m: Member) => (m !== 'G' || LINE_BODIES.signal) && (m !== 'K' || LINE_BODIES.handcar)
 /** A swarm too big for the room's budget comes as six. */
 const shrink = (ms: readonly Member[], budget: number): Member[] => (beOf(ms) > budget + 1 ? ms.map((m) => (m === 'M8' ? 'M6' : m)) : [...ms])
@@ -1546,10 +1547,17 @@ export function generateLevel(
       // mites first, as a nest round the spot; then everyone else a little out from it, so a
       // ram has room to stand and show its lane. The first listed member still leads.
       const order = [...want.keys()].sort((a, b) => Number(want[b] === 'swarm') - Number(want[a] === 'swarm'))
+      // B5: a Handcar stands on its siding, at the rail end farther from the entrance room's centre, and takes no rand() draws;
+      // the others place round it (its spot is in `spots` first)
+      const handcarSiding = sidingOf(room)
+      const entranceAt = layout.rooms.find((r) => r.kind === 'entrance')!.center
+      const handcarAt = new Map<number, ReturnType<typeof handcarSpot>>()
+      if (handcarSiding) want.forEach((_k, i) => { if (vars[i] === 'handcar') { const sp = handcarSpot(handcarSiding, entranceAt); handcarAt.set(i, sp); spots[i] = { x: sp.x, z: sp.z } } })
       const heap = room === heapRoom
       const nestR = heap ? HEAP.nestR : BROOD.nestR
       const nestGap = heap ? HEAP.nestGap : BROOD.nestGap
       for (const i of order) {
+        if (vars[i] === 'handcar') continue
         const kind = want[i]!
         const mite = kind === 'swarm'
         // 12 tries in the ring, then more a little wider: a big template in a hall, or a nest by a
@@ -1577,8 +1585,9 @@ export function generateLevel(
         const at = spots[i]
         if (!at) return
         // the lesson ram sleeps facing into the room: you walk in on its side, not its face
-        const face = room === lessonRoom && kind === 'charger' ? { x: room.center.x, z: room.center.z } : undefined
-        members.push({ kind, variant: vars[i], x: at.x, z: at.z, face })
+        const hc = handcarAt.get(i)
+        const face = hc ? hc.face : room === lessonRoom && kind === 'charger' ? { x: room.center.x, z: room.center.z } : undefined
+        members.push({ kind, variant: vars[i], x: at.x, z: at.z, face, ...(hc && handcarSiding ? { siding: line!.sidings.indexOf(handcarSiding) } : {}) })
       })
       if (members.some((m) => m.kind === 'charger')) chargerPacks++
       if (members.some((m) => m.kind === 'swarm')) swarmPacks++

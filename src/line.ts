@@ -299,7 +299,7 @@ const TELL = {
   halo: 1.3, haloOpacity: [0.45, 0.85] as const,
   duckMs: 150,
 }
-const RAIL_TOP = BED + RAIL.sleeper.h + RAIL.h
+export const RAIL_TOP = BED + RAIL.sleeper.h + RAIL.h
 /** The wash lies over the sleepers, so they don't cut it. */
 const WASH_Y = BED + RAIL.sleeper.h + 0.006
 

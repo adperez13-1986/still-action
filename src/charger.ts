@@ -223,12 +223,12 @@ export class Charger implements Enemy {
   readonly trampled = new Set<Enemy>()
   mode: 'walk' | 'back' | 'hold' = 'hold'
   private pawed = 0
-  private staggered = false
-  private flash = 0
+  protected staggered = false
+  protected flash = 0
   private bob = Math.random() * 10
   /** Seconds alive: breathing and pulses. */
   private life = Math.random() * 10
-  private asleep = true
+  protected asleep = true
   /** Seconds left of the unfold on waking. */
   private wakeT = 0
   /** It woke since the run last asked (a smoke puff from the stack). */
@@ -258,7 +258,7 @@ export class Charger implements Enemy {
     map: haloTexture(), color: GLOW, blending: THREE.AdditiveBlending, transparent: true, depthWrite: false, opacity: 0, fog: false,
   })
   /** Visual offsets live here, in the facing frame, never in pos. */
-  private readonly grp = new THREE.Group()
+  protected readonly grp = new THREE.Group()
   private readonly body = new THREE.Group()
   private readonly prow = new THREE.Group()
   private readonly hatchL = new THREE.Group()
@@ -440,7 +440,8 @@ export class Charger implements Enemy {
     return out.set(this.lane.x + Math.sin(this.aim) * this.lane.len, 0, this.lane.z + Math.cos(this.aim) * this.lane.len)
   }
 
-  update(dt: number, target: THREE.Vector3, terrain: Terrain, ctx: EnemyCtx): EnemyAction | null {
+  /** The clocks every update starts with (the Handcar's own update calls it too). */
+  protected tick(dt: number) {
     const ms = dt * 1000
     this.t += ms
     this.reload -= ms
@@ -450,6 +451,11 @@ export class Charger implements Enemy {
     this.wakeT = Math.max(0, this.wakeT - dt)
     this.unsealT = Math.max(0, this.unsealT - dt)
     this.sweep = null
+  }
+
+  update(dt: number, target: THREE.Vector3, terrain: Terrain, ctx: EnemyCtx): EnemyAction | null {
+    const ms = dt * 1000
+    this.tick(dt)
     const dx = target.x - this.pos.x
     const dz = target.z - this.pos.z
     const dist = Math.max(0.001, Math.hypot(dx, dz))
@@ -569,7 +575,7 @@ export class Charger implements Enemy {
    * the first solid a body this size would meet. One step past the contact, the
    * body's circle says what it met: a Box or the void is a wall, a Circle (crate, column) a prop.
    */
-  private cut(terrain: Terrain) {
+  protected cut(terrain: Terrain) {
     const fx = Math.sin(this.aim)
     const fz = Math.cos(this.aim)
     const want = this.lane.nominal
@@ -585,7 +591,7 @@ export class Charger implements Enemy {
     }
   }
 
-  private startRush() {
+  protected startRush() {
     this.phase = 'strike'
     this.rushing = true
     this.t = 0
@@ -601,7 +607,7 @@ export class Charger implements Enemy {
     this.skidEase = this.lane.end === 'open'
   }
 
-  private rushTick(dt: number, terrain: Terrain, ctx: EnemyCtx): EnemyAction | null {
+  protected rushTick(dt: number, terrain: Terrain, ctx: EnemyCtx): EnemyAction | null {
     const fx = Math.sin(this.aim)
     const fz = Math.cos(this.aim)
     // the last 1.5 u of an open rush ease down to 6 u/s: long enough to see it skid.
@@ -654,7 +660,7 @@ export class Charger implements Enemy {
     return action
   }
 
-  private endRush(recoverMs: number) {
+  protected endRush(recoverMs: number) {
     this.rushing = false
     this.skidding = false
     this.phase = 'recover'
@@ -766,7 +772,7 @@ export class Charger implements Enemy {
 
   // --- presentation ---
 
-  private present(dt: number) {
+  protected present(dt: number) {
     const s = this.t / 1000
     const tw = this.t
     const p = this.pose

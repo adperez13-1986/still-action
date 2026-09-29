@@ -17,13 +17,14 @@ import { isBoss, Assembler } from './boss'
 import { Arbiter, ARBITER, arbiterHusk } from './arbiter'
 import { DayTracker } from './day'
 import type { HazardSpec } from './hazard'
-import { Line, LINE, type LineEvent, type Train } from './line'
+import { Line, LINE, type LineEvent, type SidingDef, type Train } from './line'
 import { RANGED } from './ranged'
 import { LOBBER } from './lobber'
 import { Signal } from './signal'
 import { Thief, type ThiefEvent, type ThiefWorld } from './thief'
 import { Mender } from './mender'
 import { Charger, CHARGER, PLATE as RAM_PLATE } from './charger'
+import { Handcar, HANDCAR, handcarSpot } from './handcar'
 import { HIDES, debrisColor } from './hide'
 import { Mite, BROOD, type Brood } from './swarm'
 import * as sfx from './audio'
@@ -131,6 +132,7 @@ const HULK_C = debrisColor('hulk')
 const SENTINEL_C = debrisColor('sentinel')
 const LOBBER_C = debrisColor('lobber')
 const SIGNAL_C = debrisColor('signal')
+const HANDCAR_C = debrisColor('handcar')
 const RAM_C = debrisColor('ram')
 const RAM_JOINT_C = new THREE.Color(HIDES.ram.joint)
 const PLATE_C = new THREE.Color(RAM_PLATE)
@@ -140,7 +142,7 @@ const MENDER_C = debrisColor('mender')
 function metalOf(e: Enemy | undefined): THREE.Color {
   if (!e) return HULK_C
   if (e.kind === 'ranged') return e.variant === 'lobber' ? LOBBER_C : e.variant === 'signal' ? SIGNAL_C : SENTINEL_C
-  return e.kind === 'charger' ? RAM_C : e.kind === 'swarm' ? MITE_C : e.kind === 'thief' ? THIEF_C : e.kind === 'mender' ? MENDER_C : HULK_C
+  return e.kind === 'charger' ? (e.variant === 'handcar' ? HANDCAR_C : RAM_C) : e.kind === 'swarm' ? MITE_C : e.kind === 'thief' ? THIEF_C : e.kind === 'mender' ? MENDER_C : HULK_C
 }
 /** A sleeping ram's banked fire: a thin grey wisp, "asleep, not scrap". */
 const BANKED = new THREE.Color(0x4a4744)
@@ -605,6 +607,11 @@ const combat = new Combat(world.scene, OPEN, {
       windups.set(e, sfx.asVoice(sfx.semaphore(ms, panOf(e.pos), windupGain())))
       return
     }
+    // the Handcar's tracking is the pump's clank at 3 Hz (B5), and its lock is heard from the lock event: never the ram's engine
+    if (e instanceof Handcar) {
+      windups.set(e, sfx.pump(ms, HANDCAR.lockAt, panOf(e.pos), windupGain()))
+      return
+    }
     if (e.kind === 'charger') {
       windups.set(e, sfx.rev(ms, CHARGER.lockAt, panOf(e.pos), windupGain()))
       return
@@ -931,7 +938,13 @@ function ramEvent(c: Charger, ev: EnemyEvent) {
   const pan = panOf(c.pos)
   switch (ev.kind) {
     case 'lock': {
-      // the stack spits as the lane sets
+      // the stack spits as the lane sets; a Handcar has no stack: the pump latches and its seam spits (and no smoke)
+      if (c instanceof Handcar) {
+        sfx.latch(pan, windupGain())
+        vfx.embers(c.seamPoint(new THREE.Vector3()), 4, 0.15)
+        rig.punch(0.01)
+        break
+      }
       const m = c.stackMouth(new THREE.Vector3())
       vfx.embers(m, 4, 0.15)
       vfx.smokePuff(m, 1)
@@ -1007,7 +1020,8 @@ function arbiterFx() {
 const tmpGaze = new THREE.Vector3()
 
 function ramFx(dt: number) {
-  const rams = combat.enemies.filter((e): e is Charger => e instanceof Charger)
+  // a Handcar has no stack, no hooves and no fire to bank: none of a ram's smoke, embers or grit
+  const rams = combat.enemies.filter((e): e is Charger => e instanceof Charger && !(e instanceof Handcar))
   if (!rams.length) return
   const awake = new Set(combat.awake)
   for (const c of rams) {
@@ -1081,7 +1095,7 @@ function ramImpact(c: Charger, at: THREE.Vector3, wall: boolean) {
   vfx.sparks(p, EMBER, 22, 8, back, 1.3)
   vfx.flash(p, EMBER, 1.3)
   vfx.dust(at, 14, 1.0, undefined, 5)
-  vfx.smokePuff(c.stackMouth(new THREE.Vector3()), 2)
+  if (!(c instanceof Handcar)) vfx.smokePuff(c.stackMouth(new THREE.Vector3()), 2)
   shake = Math.max(shake, 0.4)
   // the first stun of the run holds a beat longer: it teaches the hatch once
   const first = !run.ramStunSeen
@@ -2675,12 +2689,14 @@ function enterLevel(depth: number, o: { seed?: number; bossFelled?: boolean; res
   combat.counters = combat.pressure && countersOn
   applyParryCatch(parryCatchOn)
   combat.curve = curveAt(depth, RUN_DEPTHS)
+  const sidings = level.sidings
   for (const p of level.packs) {
-    // the Lobber and the Signalman (B4); the Handcar and the Porter stay out until their steps; a lesson pack's Signalman calls once on waking (R10)
+    // the Lobber, the Signalman (B4) and the Handcar (B5); the Porter stays out until its step; a lesson pack's Signalman calls once on waking (R10)
     const members = p.members.map((m) => ({
       ...m,
-      variant: m.variant === 'lobber' || m.variant === 'signal' ? m.variant : undefined,
+      variant: m.variant === 'lobber' || m.variant === 'signal' || m.variant === 'handcar' ? m.variant : undefined,
       lesson: p.lesson && m.variant === 'signal' ? (true as const) : undefined,
+      siding: m.siding !== undefined ? sidings![m.siding] : undefined,
     }))
     packOfSpec.set(p, combat.addPack(members, p.room.kind === 'side', p.elite, p.look === 'heap' ? 'heap' : undefined))
   }
@@ -4473,7 +4489,7 @@ if (import.meta.env.DEV) {
     /** The crowd's mix: live windup voices, the gain a new one would get, the hush. */
     __mix: { windups, windupGain, hush },
     /** A pack from members, like addPack (a member with `slag: true` carries a slag core). awake = true wakes it at once. */
-    __pack: (members: { kind: Archetype; variant?: 'lobber' | 'signal'; x: number; z: number; slag?: true; lesson?: true }[], awake = true, elite?: EliteMod, look?: 'heap'): Pack => {
+    __pack: (members: { kind: Archetype; variant?: 'lobber' | 'signal' | 'handcar'; x: number; z: number; slag?: true; lesson?: true; siding?: SidingDef }[], awake = true, elite?: EliteMod, look?: 'heap'): Pack => {
       const pack = combat.addPack(members, false, elite ? { mod: elite, name: 'Test' } : undefined, look)
       if (awake) combat.wake(pack)
       return pack
@@ -4557,6 +4573,19 @@ if (import.meta.env.DEV) {
         return b
       }
       const pack = combat.addPack([{ kind, x, z, variant: variant === 'lobber' || variant === 'signal' ? variant : undefined, lesson }], false, elite ? { mod: elite, name: 'Test' } : undefined)
+      if (awake) combat.wake(pack)
+      return pack.members[0]!
+    },
+    /**
+     * B5: a Handcar on siding i of this level, as its own pack of 1, at rail end `end` (default: the one farther from the entrance room's
+     * centre, where a generated one stands); awake = true wakes it at once.
+     */
+    __handcar: (i = 0, end?: 'a' | 'b', awake = true): Enemy => {
+      const sd = level!.sidings![i]!
+      // the far one of two points is the end it stands at: pass the other rail end to pick it
+      const from = end === 'a' ? { x: sd.bx, z: sd.bz } : end === 'b' ? { x: sd.ax, z: sd.az } : level!.rooms.find((r) => r.kind === 'entrance')!.center
+      const sp = handcarSpot(sd, from)
+      const pack = combat.addPack([{ kind: 'charger', variant: 'handcar', x: sp.x, z: sp.z, face: sp.face, siding: sd }], false)
       if (awake) combat.wake(pack)
       return pack.members[0]!
     },

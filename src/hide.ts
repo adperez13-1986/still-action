@@ -146,6 +146,12 @@ export const HIDES = {
     finish: { scale: [2.2, 2.2, 2.2], grain: 0.06, roughVar: 0.1, tone: [3.2, 3.2, 3.3], mask: 0.8, toneRough: 0.35, toneMetal: 0.7, bump: 0.1 },
     jointFinish: GRAIN_ONLY,
   },
+  /** The Handcar (area III): lead, matte, soft, a warm grey with a brown cast: lighter than the hulk's soot, duller than the sentinel. Fallback: body 0x3d3936. */
+  handcar: {
+    body: 0x44403d, joint: 0x232120, rough: 0.7, metal: 0.55, jointRough: 0.6, jointMetal: 0.5,
+    finish: { scale: [3, 3, 3], grain: 0.1, roughVar: 0.15, tone: [0.85, 0.83, 0.8], mask: 0.62, toneRough: 0.1, toneMetal: -0.1, bump: 0.15 },
+    jointFinish: GRAIN_ONLY,
+  },
 } satisfies Record<string, Hide>
 export type HideKind = keyof typeof HIDES
 

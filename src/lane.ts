@@ -136,6 +136,12 @@ export class LaneTell {
   private readonly star: THREE.Mesh
 
   private stage: LaneState['stage'] = 'off'
+  /**
+   * The Handcar's (STAGE-B.md 2.5, INV-H2): no rail quads at any stage, so it can never be taken for a train's rail tell (plain rails
+   * on the Line). Tracking draws the core alone at 0.25, its chevrons running to the end; locked and rush draw the ram's wash, core, cap
+   * and star. A plain field, set by the Handcar's constructor; a ram never sets it, and every ram's tell is what it was.
+   */
+  trackWash = false
   private readonly look: LaneLook
   /** Seconds since the lock stamped its end mark. */
   private stampT = 0
@@ -181,7 +187,9 @@ export class LaneTell {
     this.rails.set(0, -rx, 0, -rx, railLen, 0.04, 0.006, u)
     this.rails.set(1, rx, 0, rx, railLen, 0.04, 0.006, u)
     this.wash.set(0, 0, 0, 0, len, s.hitHalf, 0.002, u)
-    this.core.set(0, 0, 0, 0, Math.max(0.001, len * Math.min(1, Math.max(0, s.fill))), s.coreHalf, 0.004, u)
+    // trackWash tracking: the whole core, faint (the chevrons show where it will run); otherwise it fills with the lock
+    const fill = tracking && this.trackWash ? 1 : s.fill
+    this.core.set(0, 0, 0, 0, Math.max(0.001, len * Math.min(1, Math.max(0, fill))), s.coreHalf, 0.004, u)
     this.cap.position.set(0, 0.002, len)
     this.cap.scale.setScalar(s.hitHalf)
 
@@ -206,14 +214,15 @@ export class LaneTell {
 
     let mark = 0
     if (tracking) {
-      this.railMat.opacity = 0.3 * (s.dim ?? 1)
-      this.washMat.opacity = this.coreMat.opacity = this.capMat.opacity = 0
+      this.railMat.opacity = this.trackWash ? 0 : 0.3 * (s.dim ?? 1)
+      this.washMat.opacity = this.capMat.opacity = 0
+      this.coreMat.opacity = this.trackWash ? 0.25 * (s.dim ?? 1) : 0
     } else {
       // the lock frame: everything snaps at once, and the end mark stamps
       if (was === 'tracking' || was === 'off') this.stampT = 0
       else this.stampT += dt
       const rush = s.stage === 'rush'
-      this.railMat.opacity = 0.7
+      this.railMat.opacity = this.trackWash ? 0 : 0.7
       const at = rush ? 1 : 0
       this.washMat.opacity = this.look.wash[at]
       this.coreMat.opacity = this.look.core[at]

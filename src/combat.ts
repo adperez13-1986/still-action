@@ -5,6 +5,7 @@ import { Chaser, shoveVelocity, distToSegment, PLAYER_RADIUS, KNOCK_DECAY, type 
 import { Ranged } from './ranged'
 import { Lobber } from './lobber'
 import { Signal } from './signal'
+import { Handcar, handcarEnd } from './handcar'
 import { Thief, THIEF, type ThiefEvent } from './thief'
 import { Mender } from './mender'
 import { Charger, CHARGER } from './charger'
@@ -13,7 +14,7 @@ import { KILL_WEIGHT } from './loot'
 import { BOSS, isBoss, makeBoss, type Boss } from './boss'
 import type { BossDef } from './areas'
 import { LiveHazard, SLAG, inShape, slagArm, threatPoint, type Hazard, type HazardShape, type HazardSpec } from './hazard'
-import { LINE, type Line } from './line'
+import { LINE, type Line, type SidingDef } from './line'
 import type { Room } from './dungeon'
 
 /** §4.24: the second Assembler's adds. Live add HP never passes today's four hulks' worth (4 x 18). */
@@ -31,8 +32,8 @@ import { STATE, STATE_IDS, masterySets, stateMul, type Payer, type StateBy, type
 import { curveAt, type DepthCurve } from './curve'
 import { PART, History, bankShot, type EnemyStatus, type Flip, type Held, type PartEvent, type PartRuntime, type StillMove, type Zone } from './parts'
 
-/** A boss that never walks: spacing leaves it where it stands. */
-const anchored = (e: Enemy) => isBoss(e) && e.anchored !== null
+/** A boss that never walks, or a Handcar (it never leaves its rails: B5): spacing leaves it where it stands. */
+const anchored = (e: Enemy) => (isBoss(e) && e.anchored !== null) || e instanceof Handcar
 
 const AUTO_RANGE = 7.6
 const AUTO_INTERVAL = 0.62
@@ -2678,10 +2679,10 @@ export class Combat {
 
   /** Put a sleeping pack in the level. Packs are placed, not spawned from a rim. */
   /** One body of any archetype but the boss. */
-  private make(kind: Archetype, x: number, z: number, variant?: 'lobber' | 'signal', lesson?: true): Enemy {
+  private make(kind: Archetype, x: number, z: number, variant?: 'lobber' | 'signal' | 'handcar', lesson?: true, siding?: SidingDef): Enemy {
     switch (kind) {
       case 'ranged': return variant === 'lobber' ? new Lobber(x, z) : variant === 'signal' ? new Signal(x, z, !!lesson) : new Ranged(x, z)
-      case 'charger': return new Charger(x, z)
+      case 'charger': return variant === 'handcar' && siding ? new Handcar(siding, handcarEnd(siding, x, z)) : new Charger(x, z)
       case 'mender': return new Mender(x, z)
       case 'swarm': {
         const m = new Mite(x, z)
@@ -2698,7 +2699,7 @@ export class Combat {
    * `look: 'heap'`: its mites sleep under a slag heap (the Works).
    */
   addPack(
-    members: { kind: Archetype; variant?: 'lobber' | 'signal'; x: number; z: number; face?: { x: number; z: number }; slag?: true; lesson?: true }[], side: boolean,
+    members: { kind: Archetype; variant?: 'lobber' | 'signal' | 'handcar'; x: number; z: number; face?: { x: number; z: number }; slag?: true; lesson?: true; siding?: SidingDef }[], side: boolean,
     elite?: { mod: EliteMod; name: string }, look?: 'heap',
   ): Pack {
     const pack: Pack = {
@@ -2707,7 +2708,7 @@ export class Combat {
     }
     const gazeAt = Math.random() * Math.PI * 2
     for (const m of members) {
-      const e = this.make(m.kind, m.x, m.z, m.variant, m.lesson)
+      const e = this.make(m.kind, m.x, m.z, m.variant, m.lesson, m.siding)
       // mites never carry one: eight puddles would be noise
       if (m.slag && e.kind !== 'swarm') {
         this.slagged.add(e)
@@ -3031,9 +3032,13 @@ export class Combat {
         }
       }
     }
+    // INV-H1, whatever moved it this tick (a shove, a hook, the clamp's throw): a Handcar stays on its rails
+    for (const e of this.enemies) if (e instanceof Handcar) e.clampToSiding()
   }
 
   private walkHome(e: Enemy, pack: Pack, dt: number) {
+    // a Handcar never leaves its rails: it stands where its last rush left it
+    if (e instanceof Handcar) return
     const home = pack.homes.get(e)!
     const d = e.pos.distanceTo(home)
     if (d < 0.05) return

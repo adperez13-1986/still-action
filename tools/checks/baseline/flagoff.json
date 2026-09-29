@@ -11480,13 +11480,14 @@
       "rx": 2,
       "rz": 2,
       "kinds": [
-       "chaser"
+       "chaser",
+       "charger"
       ],
       "elite": null,
       "name": null,
       "lesson": true,
       "budget": 4,
-      "template": "H"
+      "template": "H+K"
      },
      {
       "room": "side",
@@ -11527,13 +11528,14 @@
       "rx": 2,
       "rz": 2,
       "kinds": [
-       "chaser"
+       "chaser",
+       "charger"
       ],
       "elite": null,
       "name": null,
       "lesson": true,
       "budget": 4,
-      "template": "H"
+      "template": "H+K"
      },
      {
       "room": "main",
@@ -11628,13 +11630,14 @@
       "rx": 2,
       "rz": 2,
       "kinds": [
-       "chaser"
+       "chaser",
+       "charger"
       ],
       "elite": null,
       "name": null,
       "lesson": true,
       "budget": 4,
-      "template": "H"
+      "template": "H+K"
      },
      {
       "room": "main",
@@ -11688,13 +11691,14 @@
       "rx": 1,
       "rz": 2,
       "kinds": [
-       "chaser"
+       "chaser",
+       "charger"
       ],
       "elite": null,
       "name": null,
       "lesson": true,
       "budget": 4,
-      "template": "H"
+      "template": "H+K"
      },
      {
       "room": "main",
@@ -11769,13 +11773,14 @@
       "rx": 2,
       "rz": 2,
       "kinds": [
-       "chaser"
+       "chaser",
+       "charger"
       ],
       "elite": null,
       "name": null,
       "lesson": true,
       "budget": 3,
-      "template": "H"
+      "template": "H+K"
      },
      {
       "room": "main",
@@ -11869,13 +11874,14 @@
       "rx": 1,
       "rz": 2,
       "kinds": [
-       "chaser"
+       "chaser",
+       "charger"
       ],
       "elite": null,
       "name": null,
       "lesson": true,
       "budget": 3,
-      "template": "H"
+      "template": "H+K"
      },
      {
       "room": "main",
@@ -11930,13 +11936,14 @@
       "rx": 2,
       "rz": 2,
       "kinds": [
-       "chaser"
+       "chaser",
+       "charger"
       ],
       "elite": null,
       "name": null,
       "lesson": true,
       "budget": 4,
-      "template": "H"
+      "template": "H+K"
      },
      {
       "room": "main",
@@ -12011,13 +12018,14 @@
       "rx": 2,
       "rz": 2,
       "kinds": [
-       "chaser"
+       "chaser",
+       "charger"
       ],
       "elite": null,
       "name": null,
       "lesson": true,
       "budget": 3,
-      "template": "H"
+      "template": "H+K"
      },
      {
       "room": "main",
@@ -12127,13 +12135,14 @@
       "rx": 2,
       "rz": 2,
       "kinds": [
-       "chaser"
+       "chaser",
+       "charger"
       ],
       "elite": null,
       "name": null,
       "lesson": true,
       "budget": 3,
-      "template": "H"
+      "template": "H+K"
      },
      {
       "room": "side",
@@ -12174,13 +12183,14 @@
       "rx": 2,
       "rz": 2,
       "kinds": [
-       "chaser"
+       "chaser",
+       "charger"
       ],
       "elite": null,
       "name": null,
       "lesson": true,
       "budget": 4,
-      "template": "H"
+      "template": "H+K"
      },
      {
       "room": "main",
@@ -12271,13 +12281,14 @@
       "rx": 2,
       "rz": 2,
       "kinds": [
-       "chaser"
+       "chaser",
+       "charger"
       ],
       "elite": null,
       "name": null,
       "lesson": true,
       "budget": 4,
-      "template": "H"
+      "template": "H+K"
      },
      {
       "room": "main",
@@ -12337,13 +12348,14 @@
       "rx": 2,
       "rz": 1,
       "kinds": [
-       "chaser"
+       "chaser",
+       "charger"
       ],
       "elite": null,
       "name": null,
       "lesson": true,
       "budget": 3,
-      "template": "H"
+      "template": "H+K"
      },
      {
       "room": "main",
@@ -12454,13 +12466,14 @@
       "rx": 2,
       "rz": 2,
       "kinds": [
-       "chaser"
+       "chaser",
+       "charger"
       ],
       "elite": null,
       "name": null,
       "lesson": true,
       "budget": 3,
-      "template": "H"
+      "template": "H+K"
      },
      {
       "room": "side",
@@ -12536,13 +12549,14 @@
       "rx": 2,
       "rz": 2,
       "kinds": [
-       "chaser"
+       "chaser",
+       "charger"
       ],
       "elite": null,
       "name": null,
       "lesson": true,
       "budget": 3,
-      "template": "H"
+      "template": "H+K"
      },
      {
       "room": "side",
@@ -12602,13 +12616,14 @@
       "rx": 1,
       "rz": 2,
       "kinds": [
-       "chaser"
+       "chaser",
+       "charger"
       ],
       "elite": null,
       "name": null,
       "lesson": true,
       "budget": 4,
-      "template": "H"
+      "template": "H+K"
      },
      {
       "room": "main",
@@ -12664,13 +12679,14 @@
       "rx": 2,
       "rz": 1,
       "kinds": [
-       "chaser"
+       "chaser",
+       "charger"
       ],
       "elite": null,
       "name": null,
       "lesson": true,
       "budget": 3,
-      "template": "H"
+      "template": "H+K"
      },
      {
       "room": "main",
@@ -12780,13 +12796,14 @@
       "rx": 2,
       "rz": 2,
       "kinds": [
-       "chaser"
+       "chaser",
+       "charger"
       ],
       "elite": null,
       "name": null,
       "lesson": true,
       "budget": 3,
-      "template": "H"
+      "template": "H+K"
      },
      {
       "room": "side",
@@ -12826,13 +12843,14 @@
       "rx": 2,
       "rz": 2,
       "kinds": [
-       "chaser"
+       "chaser",
+       "charger"
       ],
       "elite": null,
       "name": null,
       "lesson": true,
       "budget": 4,
-      "template": "H"
+      "template": "H+K"
      },
      {
       "room": "main",
@@ -12906,13 +12924,14 @@
       "rx": 1,
       "rz": 2,
       "kinds": [
-       "chaser"
+       "chaser",
+       "charger"
       ],
       "elite": null,
       "name": null,
       "lesson": true,
       "budget": 4,
-      "template": "H"
+      "template": "H+K"
      },
      {
       "room": "main",
@@ -13022,13 +13041,14 @@
       "rx": 2,
       "rz": 2,
       "kinds": [
-       "chaser"
+       "chaser",
+       "charger"
       ],
       "elite": null,
       "name": null,
       "lesson": true,
       "budget": 4,
-      "template": "H"
+      "template": "H+K"
      },
      {
       "room": "side",
@@ -13317,13 +13337,14 @@
       "rz": 2,
       "kinds": [
        "chaser",
-       "chaser"
+       "chaser",
+       "charger"
       ],
       "elite": "warding",
       "name": "Shardwake the Warden",
       "lesson": false,
       "budget": 5,
-      "template": "H+H"
+      "template": "H+H+K"
      },
      {
       "room": "main",
@@ -13445,13 +13466,14 @@
       "rz": 2,
       "kinds": [
        "chaser",
-       "chaser"
+       "chaser",
+       "charger"
       ],
       "elite": "splitting",
       "name": "Guttergrip the Many",
       "lesson": false,
       "budget": 6,
-      "template": "H+H"
+      "template": "H+H+K"
      },
      {
       "room": "main",
@@ -13517,13 +13539,14 @@
       "rz": 2,
       "kinds": [
        "chaser",
-       "chaser"
+       "chaser",
+       "charger"
       ],
       "elite": "splitting",
       "name": "Shardmaw the Many",
       "lesson": false,
       "budget": 6,
-      "template": "H+H"
+      "template": "H+H+K"
      },
      {
       "room": "main",
@@ -13799,13 +13822,14 @@
       "rz": 2,
       "kinds": [
        "chaser",
-       "chaser"
+       "chaser",
+       "charger"
       ],
       "elite": "splitting",
       "name": "Grimknell the Many",
       "lesson": false,
       "budget": 6,
-      "template": "H+H"
+      "template": "H+H+K"
      },
      {
       "room": "side",
@@ -13868,13 +13892,14 @@
       "rz": 2,
       "kinds": [
        "chaser",
-       "chaser"
+       "chaser",
+       "charger"
       ],
       "elite": "swift",
       "name": "Ironheart the Quick",
       "lesson": false,
       "budget": 5,
-      "template": "H+H"
+      "template": "H+H+K"
      },
      {
       "room": "main",
@@ -14011,13 +14036,14 @@
        "swarm",
        "swarm",
        "swarm",
-       "swarm"
+       "swarm",
+       "charger"
       ],
       "elite": null,
       "name": null,
       "lesson": false,
       "budget": 6,
-      "template": "M6"
+      "template": "M6+K"
      },
      {
       "room": "side",
@@ -14103,13 +14129,15 @@
       "rz": 2,
       "kinds": [
        "chaser",
-       "chaser"
+       "chaser",
+       "charger",
+       "mender"
       ],
       "elite": "warding",
       "name": "Shardgrip the Warden",
       "lesson": false,
       "budget": 5,
-      "template": "H+H"
+      "template": "H+H+K"
      },
      {
       "room": "main",
@@ -14229,13 +14257,14 @@
        "swarm",
        "swarm",
        "swarm",
-       "swarm"
+       "swarm",
+       "charger"
       ],
       "elite": "warding",
       "name": "Palenest the Warden",
       "lesson": false,
       "budget": 5,
-      "template": "M6"
+      "template": "M6+K"
      },
      {
       "room": "side",
@@ -14441,13 +14470,14 @@
       "rz": 2,
       "kinds": [
        "chaser",
-       "chaser"
+       "chaser",
+       "charger"
       ],
       "elite": "splitting",
       "name": "Rustwake the Many",
       "lesson": false,
       "budget": 6,
-      "template": "H+H"
+      "template": "H+H+K"
      },
      {
       "room": "side",
@@ -14662,13 +14692,14 @@
        "swarm",
        "swarm",
        "swarm",
-       "swarm"
+       "swarm",
+       "charger"
       ],
       "elite": "warding",
       "name": "Hollowmother the Warden",
       "lesson": false,
       "budget": 6,
-      "template": "M6"
+      "template": "M6+K"
      },
      {
       "room": "side",
@@ -14750,13 +14781,14 @@
       "rz": 2,
       "kinds": [
        "chaser",
-       "chaser"
+       "chaser",
+       "charger"
       ],
       "elite": "swift",
       "name": "Gutterheart the Quick",
       "lesson": false,
       "budget": 5,
-      "template": "H+H"
+      "template": "H+H+K"
      },
      {
       "room": "main",
@@ -14951,13 +14983,15 @@
       "rz": 2,
       "kinds": [
        "chaser",
-       "chaser"
+       "chaser",
+       "charger",
+       "mender"
       ],
       "elite": "splitting",
       "name": "Mournjaw the Many",
       "lesson": false,
       "budget": 6,
-      "template": "H+H"
+      "template": "H+H+K"
      },
      {
       "room": "main",
@@ -14968,8 +15002,7 @@
        "chaser",
        "ranged",
        "chaser",
-       "chaser",
-       "mender"
+       "chaser"
       ],
       "elite": "warding",
       "name": "Grimgrip the Warden",
@@ -15391,28 +15424,28 @@
     "39f2bfff7b2cb6f593516b1645231033d6aaa408"
    ],
    "4": [
-    "af006c4b62f4a8a4414e6002531ae2da2130e22d",
-    "64b3311562eee7456aa16f36aa37003ff1b2c7b3",
-    "09dde7beb3fd55f4bb44815cfe1ebaffd820c496",
-    "b91b592d975c1e3a29ca7fb90544d0aa43bbf712",
-    "7b45a61c19d0a9c44fe69691c2393ad3b1ca25c1",
-    "e1489016b8eb1b8c36ee0c6d07ef39cac63add6a",
-    "0734a8e8589da3f6eaa0a3d7033bbb9887767b44",
-    "c022b62fb067841c6f55cb85e320e07798ea6c57",
-    "e8a6e5dda7bc1a2883e455024a1274d230d306fc",
-    "f69afbb02a7629579dbef2963957f1fb7d030307"
+    "b7543fbe3dada696276d9d2bf91b13c33d3de416",
+    "882d1238e72f41c782c6de16977eabe90ede165a",
+    "05b19d309f6679c7e5ea83ee1898aaef5c046640",
+    "c265e86551f71ec98ef6884e831a53e2cf20469a",
+    "d93cb1aee7bccd2265b5d9f16f52a540724fc0d3",
+    "17f037858f818fe826cf61885bf218538807916d",
+    "7d9854738fe2a71e17ceca1adbcaea6dc68af9fc",
+    "ed27533d40d38804ce1e0038ffda1bad4ef6807e",
+    "eb0394bed2489d037413de0870dff0a3a5c3532d",
+    "a8979346beca316ba36345f9c539ee24875749ab"
    ],
    "5": [
     "33e77b5d7a9ece094c2cd08c928e0072ed52e8ef",
     "27cd73dba6a129a1c8c680073891789f89e45275",
-    "f3bca061acc5aedf385fd836b97ad345d6a57237",
-    "ba19b8eec38aa77c2f7b51751f9e0636ad9566a2",
-    "9c70a5e017da998e4e707d7ef1e7d38d65a275c4",
+    "6cd19bcb8109152d0adc14f1baf08cd794460829",
+    "92d87fdcb0ebfe81ec5edb6e26f8e9012b912736",
+    "84b3878117431a3d7a4935c7f21d7ea147900a3f",
     "79dc4db0b9b280c8481e33f9da1595b130e46489",
-    "e6e4900081ed6c62010f8fcff0df1a121041b278",
-    "805c37035b1031b5532444c4b71284f352328b53",
-    "167a04d1c9d33642c29604230b1d6702eb8cbde8",
-    "4aadb9c8a28225faf9f103ed1d62123cc1b4f272"
+    "a0784868bcb07d80c2cb973d766987113769724f",
+    "c02382e9b65d39e16585a080f5dc0030b565e0aa",
+    "8fbc0c815dfe7045dc0693b779196aca4a6d8cb2",
+    "383fc3374a8f1ac91164acecb008068eb5597bea"
    ],
    "6": [
     "238a4bd67d41607b78115fdb2da0283ffef832dd",
@@ -15430,28 +15463,28 @@
  },
  "genLineHash": {
   "4": [
-   "37fb1b9ae20f980ce627bdc862e7383a085b7d47",
-   "508d498a7a73b7d8872ce118c4613ac0618f5654",
-   "aaf7415782961f41c6a1fead508eb28b4cf63d10",
-   "814de5f94d4bcf7ada9bc2c97071989e96bb1804",
-   "86a938eb9532e1f7f20d2c9c8edac76150ca2cf1",
-   "e902349628f5fbcd2a5af5a02385cc0a8391ba40",
-   "a5ae6d2733d6faffab90f290052b62178e6f8c25",
-   "50a6f35df6e386cbc5f1041bc2f52319d684f209",
-   "b2ea87c5574c360bcda90b1d0cb02049779db9b1",
-   "b6762500f3aea8954ada5ba2467dd6dd21292de2"
+   "5beb0990e9a8dec5a8c53a56e33d71b7e21c24fd",
+   "651ccca1580f01f86d9f141bcd4a1295c1056f50",
+   "850dbff7ee2fd69dc3dd211c42cccb754a27740e",
+   "6ba686fc80a5d7d495026a443de30a6d3f5de577",
+   "8f929cf96ca8dd5f6ec7f2cbd96f17b3f6a86eab",
+   "10665400b7323522b32ee92cd71f3aba89bf420e",
+   "7f32f3954a82e0586f73eab381e56d33095198ad",
+   "d6b99e1f022e8c5ad49ac3692b3c3563abbe672f",
+   "0ccf87d1f78ce4a350cd1f8dbb039c5b6106e905",
+   "c1eb91cf59c5c2edf025ed4acf3c5c1b6f8b8391"
   ],
   "5": [
    "e0b327a5e9efed725d2a8c9e33884271309793b1",
    "00e59e5bfb09da5b223e382a5efa1862c30f4a26",
-   "a123a74119234054f3cdc00c462096c13430cebd",
-   "43515e158c94843ac4a4bf92db449e9622139d3e",
-   "e3acec24aaedd9de1242890d81511c02bc53d515",
+   "8615eb2ee1237ebf312e5c531851f20e6e612395",
+   "384ef2c06bde90aeb2386eda74b5a8039fbcb3d9",
+   "8655209c3c3ccf99cff3989ea2932044419df815",
    "88fa3721467a9bbaeb911748751ab34901773abf",
-   "1484c2affc5cd919ee5c1a478c63fd07a8fb11a0",
-   "f482c7eb26fb72e924326fa7a32cd7d2177e70b5",
-   "76e02bdebfe018b337096ab3ad272f08dc175c01",
-   "defbc86d10aa924ab66eee9aad141da9399d6e4e"
+   "0a13add0d73da25af0ff8cbe51cb4b26a8be4cfc",
+   "39906d6382ec7da8e483094e1291a55f24c7847c",
+   "0381195237ca5444b4a7aa2b869e8033825e332f",
+   "e813bcbb5add634e4f8dc1dbb7b966358434dd0e"
   ]
  },
  "censusDepthsHash": "293efcf7c223cd1236b291013ef0dc1a289c5c48",
