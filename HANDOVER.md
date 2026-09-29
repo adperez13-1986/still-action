@@ -5,6 +5,11 @@ folder for whatever you're touching. Don't re-derive any of them.
 
 ## Start here (29 Sep, afternoon: stage R done, dark)
 
+**29 Sep, 14:00: pickup card fix (his screenshot).** On a landscape phone a long-named part (history + melt) grew the
+card off the top and put take under the "full" chip. Now: capped to the screen, wider on short screens (<=520 px tall),
+sits over the chips, tighter buttons, the words scroll before the buttons move (style.css `#offer`). Checked headless
+from a static file at 915x412 / 800x360 / portrait. Ask if it reads on the Poco.
+
 **Both roads in one run: stage R is built, pushed, and dark** (`BOTH_ROADS = false`; DEV `?roads=1`, add
 `&line=1` for the crossroads room). Live is unchanged: `node tools/checks/baseline.mjs compare` (K-90) proves
 flag-off equals the pre-change game. Read `design/area3/BOTH-ROADS.md` (§4: his 8 decisions, all my
