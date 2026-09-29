@@ -366,6 +366,7 @@ export const PRESSURE_HULK = { contact: 1.5, reach: 1.9, cockMs: 180, damage: 5,
  * crouches or lunges. A push or a part breaks the crouch as a heavy's windup; the autos never do.
  * It stops where it lands on him. `hitReach` is the body's own reach (his radius, its radius and a hand),
  * not the swipe's 2.45: a lunge that reached as far as the swipe could not be sidestepped in 350 ms.
+ * The crouch books its lunge (LINE-RULES R8), so it never lands within BOOK_GAP of a ram's, a sentinel's or a train's lock.
  */
 export const COUNTER_HULK = {
   bandS: 1.5, drain: 2, crouchMs: 350, lungeDist: 3.5, lungeMs: 180, damage: 8, shove: 1.2, hitReach: 1.3, recoverMs: 900, cooldownMs: 4000,
@@ -644,8 +645,10 @@ export class Chaser implements Enemy {
           this.cock = -1
           break
         }
-        if (counters && this.cock < 0 && this.bandT >= COUNTER_HULK.bandS && ctx.lungeFree(this)) {
-          // it has been held long enough: crouch back, direction locked, and give the lunge its slot
+        if (counters && this.cock < 0 && this.bandT >= COUNTER_HULK.bandS && ctx.lungeFree(this) && ctx.canLock(COUNTER_HULK.crouchMs)) {
+          // it has been held long enough: crouch back, direction locked, and give the lunge its slot;
+          // the lunge is booked like any lock (LINE-RULES R8): no canLock, no crouch, and bandT stays full to try again next tick
+          ctx.book(this, COUNTER_HULK.crouchMs)
           this.phase = 'windup'
           this.crouch = true
           this.timer = COUNTER_HULK.crouchMs

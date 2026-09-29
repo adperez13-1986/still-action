@@ -285,4 +285,58 @@ check('K-W3d', ARENA, async ({ page }) => {
   assert(!(tp < tc && hp < hc), `too strong: Parry clears faster (${tp.toFixed(2)} s vs ${tc.toFixed(2)} s) and loses less HP (${hp.toFixed(2)} vs ${hc.toFixed(2)}) than Cleaver`)
 })
 
+// --- Whole game (B2): R8, the crouch books its lunge -----------------------------------------------------------------------
+check('K-W8a', ARENA, async ({ page }) => {
+  const got = await inPage(page, `
+    const end = begin(1)
+    try {
+      C.counters = true
+      const e = W.__spawn('chaser', 0, 2.2, true)
+      // dummy locks every 100 ms from +0 to +3000 ms: no 0.3 s window is free of a booked moment
+      for (let ms = 0; ms <= 3000; ms += 100) C.book.book({}, ms)
+      W.__enemyLog.length = 0
+      tick(180)
+      const crouchedBooked = W.__enemyLog.filter((x) => x.ev.kind === 'counter' && x.ev.what === 'crouch').length
+      C.book.clear()
+      const t0 = C.time
+      let entry = null
+      const s = until(() => W.__enemyLog.some((x) => x.ev.kind === 'counter' && x.ev.what === 'crouch'), 3)
+      if (s < 0) return { crouchedBooked, bad: 'no crouch within 3 s once the book was cleared' }
+      const mine = C.book.entries.filter((b) => b.owner === e)
+      return { crouchedBooked, owners: mine.length, at: mine[0] ? mine[0].at - C.time : null, now: C.time, s }
+    } finally { end() }`)
+  bad(got)
+  assert(got.crouchedBooked === 0, `${got.crouchedBooked} crouch event(s) while every 0.3 s window was booked`)
+  assert(got.owners === 1, `${got.owners} book entries owned by the hulk at the crouch, not 1`)
+  assert(Math.abs(got.at - 0.35) <= 1 / 60 + 1e-9, `the hulk's booked lunge is ${got.at.toFixed(4)} s after the crouch tick, not 0.35 (+-1/60)`)
+  console.log(`INFO K-W8a: the crouch began ${got.s.toFixed(2)} s after the book cleared; its lunge booked ${got.at.toFixed(3)} s ahead`)
+})
+
+check('K-W8b', ARENA, async ({ page }) => {
+  const got = await inPage(page, `
+    const rows = []
+    for (let seed = 1; seed <= 10; seed++) {
+      const end = begin(seed)
+      try {
+        C.counters = true
+        W.__spawn('chaser', 0, 2.2, true)
+        W.__spawn('charger', 0, 6, true)
+        W.__enemyLog.length = 0
+        tick(3600)
+        const log = W.__enemyLog
+        const lunges = log.filter((x) => x.ev.kind === 'counter' && x.ev.what === 'lunge').map((x) => x.t)
+        const locks = log.filter((x) => x.ev.kind === 'lock' && x.ev.e.kind === 'charger').map((x) => x.t)
+        let gap = Infinity
+        for (const a of lunges) for (const b of locks) gap = Math.min(gap, Math.abs(a - b))
+        rows.push({ seed, lunges: lunges.length, locks: locks.length, gap })
+      } finally { end() }
+    }
+    return rows`)
+  const lunges = got.reduce((n, r) => n + r.lunges, 0), locks = got.reduce((n, r) => n + r.locks, 0)
+  const gap = Math.min(...got.map((r) => r.gap === null ? Infinity : r.gap))
+  assert(lunges >= 3, `only ${lunges} lunge(s) over the 10 seeds: the check proves nothing`)
+  assert(gap >= 0.3 - 1 / 60 - 1e-9, `a lunge came ${gap.toFixed(4)} s from a ram's lock (BOOK_GAP 0.3)`)
+  console.log(`INFO K-W8b: ${lunges} lunges and ${locks} ram locks over 10 x 60 s; the closest lunge to a ram lock was ${Number.isFinite(gap) ? gap.toFixed(3) + ' s' : 'n/a'}`)
+})
+
 process.exit(await run(process.argv.slice(2)))
