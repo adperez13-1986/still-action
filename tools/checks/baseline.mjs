@@ -8,6 +8,14 @@
  * depths, today's curve, day and generator output on both routes. `capture` was run on the untouched src/
  * before any stage R change; every later step must still `compare` PASS. The file is deterministic, so a
  * second capture is byte-identical to the first.
+ *
+ * design/area3/STAGE-B.md B0 splits the flag-off Line's paths (route III at depths 4-5: `LINE_PATHS`) out as K-90L: the
+ * shipped game never generates the Line, and stage B's steps B4-B6 change its rows on purpose. `compare` prints PASS|FAIL
+ * K-90 over every other path and PASS|FAIL K-90L over those; a K-90L fail exits 1 unless `--line-changed`. `capture-line`
+ * rewrites only `LINE_PATHS` in the file (the rest stays byte-identical).
+ *
+ *   node tools/checks/baseline.mjs compare [--line-changed]
+ *   node tools/checks/baseline.mjs capture-line
  */
 import { readFileSync, writeFileSync } from 'node:fs'
 import { REPO, evalJson, firstDiff, hash, openPage, startVite } from './lib.mjs'
@@ -16,6 +24,8 @@ const FILE = REPO + 'tools/checks/baseline/flagoff.json'
 const LEVELS = REPO + 'tools/levels.json'
 const QUERY = '?depth=1&save=memory'
 const ROUTES = ['II', 'III']
+/** The flag-off Line: route III's generated depths 4 (sidings) and 5 (station). K-90L's, not K-90's (STAGE-B.md B0). */
+const LINE_PATHS = ['gen.III.4', 'gen.III.5', 'genLookHash.III.4', 'genLookHash.III.5', 'genLineHash']
 
 /** Everything the baseline records, from one flag-off page. */
 async function collect(page) {
@@ -109,23 +119,55 @@ function levelsInfo(censusDepths) {
   console.log(d ? `INFO levels.json: census differs from tools/levels.json depths (first difference ${d})` : 'INFO levels.json: census equals tools/levels.json depths')
 }
 
+/** A deep copy of `rec` without the `paths` (dotted, from the root). */
+function without(rec, paths) {
+  const out = JSON.parse(JSON.stringify(rec))
+  for (const p of paths) {
+    const keys = p.split('.')
+    const last = keys.pop()
+    let o = out
+    for (const k of keys) o = o?.[k]
+    if (o) delete o[last]
+  }
+  return out
+}
+
+/** Only the `paths` of `rec`, keyed by their dotted names. */
+function pick(rec, paths) {
+  const out = {}
+  for (const p of paths) out[p] = p.split('.').reduce((o, k) => o?.[k], rec) ?? null
+  return out
+}
+
 const mode = process.argv[2]
+const lineChanged = process.argv.includes('--line-changed')
 if (mode === 'capture') {
   const { record, censusDepths } = await withPage(collect)
   writeFileSync(FILE, JSON.stringify(record, null, 1) + '\n')
   console.log(`captured ${FILE}`)
   levelsInfo(censusDepths)
+} else if (mode === 'capture-line') {
+  const { record } = await withPage(collect)
+  const file = JSON.parse(readFileSync(FILE, 'utf8'))
+  for (const p of LINE_PATHS) {
+    const keys = p.split('.')
+    const last = keys.pop()
+    const from = keys.reduce((o, k) => o[k], JSON.parse(JSON.stringify(record)))
+    keys.reduce((o, k) => o[k], file)[last] = from[last]
+  }
+  writeFileSync(FILE, JSON.stringify(file, null, 1) + '\n')
+  console.log(`captured ${LINE_PATHS.length} line paths into ${FILE} (${LINE_PATHS.join(', ')})`)
 } else if (mode === 'compare') {
   const { record, censusDepths } = await withPage(collect)
   const want = JSON.parse(readFileSync(FILE, 'utf8'))
-  const d = firstDiff(JSON.parse(JSON.stringify(record)), want)
+  const now = JSON.parse(JSON.stringify(record))
   levelsInfo(censusDepths)
-  if (d) {
-    console.log(`FAIL K-90: ${d}`)
-    process.exit(1)
-  }
-  console.log('PASS K-90')
+  const d = firstDiff(without(now, LINE_PATHS), without(want, LINE_PATHS))
+  const dl = firstDiff(pick(now, LINE_PATHS), pick(want, LINE_PATHS))
+  console.log(d ? `FAIL K-90: ${d}` : 'PASS K-90')
+  console.log(dl ? `FAIL K-90L: ${dl}${lineChanged ? ' (allowed: --line-changed)' : ''}` : 'PASS K-90L')
+  if (d || (dl && !lineChanged)) process.exit(1)
 } else {
-  console.log('usage: node tools/checks/baseline.mjs capture|compare')
+  console.log('usage: node tools/checks/baseline.mjs capture|capture-line|compare [--line-changed]')
   process.exit(2)
 }
