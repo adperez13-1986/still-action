@@ -13,7 +13,8 @@ bodies, B4 Signalman, B5 Handcar, B6 Sleepers, B7 dressing, B8 whole stage). B0 
 K-90N, K-90L). **B1 (R3) committed d7382aa, NOT pushed: local main is ahead of origin, and a push deploys R3 live. Push only on
 his word.** B1's K-W3d FAILS its dead rule: with the autos on, Parry catches 0.03 tells/fight at depth 1 (hulks die in ~1.3 s,
 one Parry cast per fight); 2.02 with autos off. Code is right; whether Parry earns its slot is with the balancer (measuring
-d2/d4/d5/d8 + dials, report to scratchpad, not repo). Sonnet engineer on B2 (R8), uncommitted work in src/.
+d2/d4/d5/d8 + dials, report to scratchpad, not repo). **B2 (R8) committed 736488e, also NOT pushed** (whole game). Sonnet
+engineer on B3 (R4-R6, dark), uncommitted work in src/.
 If this session dies: rerun B0's "Done when" checks on whatever is in tools/, then continue at the next step. His open items are
 STAGE-B §9 (Parry card line, Iron Crawler page for the Handcar, re-roling met pages, all the words).
 
