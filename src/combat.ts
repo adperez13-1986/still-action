@@ -506,6 +506,7 @@ export class Combat {
     },
     emit: (ev) => this.emitEnemy(ev),
     nearLit: (x, z) => !!this.line?.nearLit(x, z, LINE.halfW + LINE.broodPad),
+    onLit: (x, z, r) => !!this.line?.nearLit(x, z, LINE.halfW + r + LINE.stepOff.pad),
   }
 
   // Still's bolts are cold light; enemy shots are embers. Both leave trails.
@@ -1552,9 +1553,14 @@ export class Combat {
   /**
    * §5.8: committed bodies don't step off a lit lane. Anything past its approach, sliding,
    * held in the clamp, a ram rushing or stunned, a mite biting in a live surge, a boss, a thief.
+   * LINE-RULES R4: a pressure body has no windup, so its phase says nothing: it is committed only while it is
+   * moved (held, or knocked) or in a counter-move (a crouch, a lunge, the recover after it). Its cock, its
+   * jab and its recover are a beat too short to be a commitment; the bodies with telegraphs (a crowned leader,
+   * a ram, a Lobber) keep the phase test.
    */
   static committed(e: Enemy, held: boolean): boolean {
     if (e.kind === 'boss' || e.kind === 'thief') return true
+    if (e.pressure) return held || e.knock.lengthSq() > 1.5 * 1.5 || (e instanceof Chaser && e.countering)
     if (e.phase !== 'approach' || held) return true
     if (e.knock.lengthSq() > 1.5 * 1.5) return true
     if (e instanceof Charger && (e.rushing || e.stunned)) return true
@@ -2586,8 +2592,10 @@ export class Combat {
       if (s.shove) e.knock.add(this.stripShove(sh, s.shove, e.pos.x, e.pos.z).multiplyScalar(e.knockMul))
       // not a part: it never pays a state. A sleeper hit this way wakes its pack (hpSeen).
       // The harmless lesson train (damage 0) passes through without a flash.
-      if (s.damage > 0) {
-        if (e.hit(s.damage)) this.hazardKilled.add(e)
+      // a train hits a body harder than Still (LINE-RULES R6): `bodyDamage`, else the one `damage`
+      const dmg = s.bodyDamage ?? s.damage
+      if (dmg > 0) {
+        if (e.hit(dmg)) this.hazardKilled.add(e)
         this.events.onHit(e.pos, e)
       }
       this.events.onHazard({ kind: 'hit', h, who: e, at: e.pos.clone() })

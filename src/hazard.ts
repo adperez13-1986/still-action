@@ -31,6 +31,8 @@ export interface HazardSpec {
   liveMs: number
   /** INV: ≤ 22 */
   damage: number
+  /** On an enemy, this instead of `damage` (LINE-RULES R6: a train hits a body for LINE.damage x the depth curve's hp). INV <= 22 is `damage`'s, on Still. */
+  bodyDamage?: number
   /** 'none': the floor itself. 'fromCentre': a clear solid-mode line from the circle's centre to the body (scald). A strip is pre-cut. */
   cover: 'none' | 'fromCentre'
   /** How Still is hurt: Anvil catches 'melee' only; Brace converts either; Ward and Mirror see only `warded`. */

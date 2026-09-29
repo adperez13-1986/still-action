@@ -15,6 +15,7 @@ const ARENA = '?depth=1&save=memory'
 const LINE = '?depth=1&save=memory&line=1'
 const ON = '?depth=1&save=memory&roads=1'
 const OFF = '?depth=1&save=memory'
+const LINE4 = LINE
 
 const { check, run } = suite()
 
@@ -337,6 +338,348 @@ check('K-W8b', ARENA, async ({ page }) => {
   assert(lunges >= 3, `only ${lunges} lunge(s) over the 10 seeds: the check proves nothing`)
   assert(gap >= 0.3 - 1 / 60 - 1e-9, `a lunge came ${gap.toFixed(4)} s from a ram's lock (BOOK_GAP 0.3)`)
   console.log(`INFO K-W8b: ${lunges} lunges and ${locks} ram locks over 10 x 60 s; the closest lunge to a ram lock was ${Number.isFinite(gap) ? gap.toFixed(3) + ' s' : 'n/a'}`)
+})
+
+// --- Trains and pressure bodies (B3): R4, R5, R6 (dark: the Line only) ---------------------------------------------------
+const SEEDS = Number(process.env.SEEDS) || 40
+const TRAINS = process.env.TRAINS === undefined ? 100 : Number(process.env.TRAINS)
+
+/**
+ * K-T13's trial, in the page (STAGE-B.md §4): every room lane of one generated level, one fight per lane. `arg`:
+ * { depth, seed, bot: 'A' | 'B' | 'C' }. Still on the lane's centre at its room's middle, that room's pack woken, the close strike
+ * and the planted shot on, 30 s cap (it ends early once nothing awake is left to kill). A kill is the train's when the body dies on a
+ * tick a train group hit it and the hazard's own damage killed it; it is FREE when, for the whole second before, the body's knock speed
+ * stayed <= 1.5, it wasn't held, it wasn't countering, and it was a pressure body. Also the longest a pressure body stood uncommitted
+ * (`__isCommitted`, when the hook exists) inside a lit strip grown by its radius + 0.3 (K-T5).
+ * Bot A never moves. Bot B, when a lane lights, steers perpendicular to the nearer edge until clear of halfW + 0.62.
+ * Bot C (Clamp Toss): after the horn, sticks toward the lane and casts when a body is in reach.
+ */
+const T13_BODY = `
+  const P = W.__LINE
+  // the floor strip as Combat.stepOff reads it: across within \`half\`, along the span grown by \`pad\`
+  const inStrip = (x, z, l, half, pad = 0) => {
+    const len = Math.hypot(l.bx - l.ax, l.bz - l.az), ux = (l.bx - l.ax) / len, uz = (l.bz - l.az) / len
+    const across = (x - l.ax) * uz - (z - l.az) * ux, along = (x - l.ax) * ux + (z - l.az) * uz
+    return { in: along >= -pad && along <= len + pad && Math.abs(across) <= half, across, ux, uz, len }
+  }
+  const out = { trainsRun: 0, lanes: 0, kills: 0, trainKills: 0, freeKills: 0, byTrain: [], stillHits: 0, maxUncommitted: 0, noHook: typeof W.__isCommitted !== 'function', ticks: 0 }
+  W.__hold(true)
+  W.__run.route = arg.depth === 4 ? 'III' : 'II'
+  W.__enter(arg.depth, arg.seed)
+  const all = W.__lanes().filter((l) => l.kind === 'room' && l.room !== null).map((l) => l.id)
+  for (let li = 0; li < all.length; li++) {
+    const endRandom = (() => {
+      W.__hold(true)
+      const SLOTS = ['head', 'torso', 'arms', 'legs']
+      for (const slot of SLOTS) C.clearSlot(slot)
+      W.__hud.resetLoadout([])
+      for (const slot of SLOTS) W.__still.wear(slot, null)
+      W.__equip('scrap-cleaver')
+      const original = Math.random
+      Math.random = mulberry32(arg.seed * 131 + li)
+      return () => { Math.random = original }
+    })()
+    try {
+      W.__run.route = arg.depth === 4 ? 'III' : 'II'
+      W.__enter(arg.depth, arg.seed)
+      if (arg.bot === 'C') W.__equip('clamp-toss')
+      C.autoAttack = true
+      C.autoTimer = 0
+      C.mastery = new Set()
+      W.__stick(0, 0)
+      const lane = W.__lanes().find((l) => l.id === all[li])
+      const lvl = W.__level()
+      const pi = lvl.packs.findIndex((pk) => lvl.rooms.indexOf(pk.room) === lane.room)
+      if (pi < 0 || lane.lesson) continue
+      out.lanes++
+      C.wake(C.packs[pi])
+      W.__still.pos.set((lane.ax + lane.bx) / 2, 0, (lane.az + lane.bz) / 2)
+      const streak = new Map(), uncommitted = new Map()
+      const hitStill = new Set()
+      const line = C.line
+      for (let i = 0; i < 1800; i++) {
+        C.hp = 100
+        const lit = line.lit()
+        const sp = W.__still.pos
+        if (arg.bot === 'B') {
+          let sx = 0, sz = 0
+          for (const l of lit) {
+            const g = inStrip(sp.x, sp.z, l, P.halfW + 0.62 + 0.05)
+            if (g.in) {
+              const side = Math.sign(g.across) || 1
+              sx += g.uz * side
+              sz += -g.ux * side
+            }
+          }
+          const n = Math.hypot(sx, sz)
+          W.__stick(n ? sx / n : 0, n ? sz / n : 0)
+        } else if (arg.bot === 'C') {
+          const horned = W.__trains().some((t) => t.stage === 'committed' || t.stage === 'passing')
+          if (horned && lit.length) {
+            const l = lit[0], g = inStrip(sp.x, sp.z, l, 1e9)
+            const side = -Math.sign(g.across) || 1
+            const n = Math.abs(g.across) > 0.3 ? 1 : 0
+            W.__stick(n * g.uz * side, n * -g.ux * side)
+            if (C.enemies.some((e) => !e.dead && Math.hypot(e.pos.x - sp.x, e.pos.z - sp.z) <= 2.9)) W.__fire('arms')
+          } else W.__stick(0, 0)
+        }
+        const before = C.enemies.slice()
+        const ok0 = new Map(before.map((e) => [e, streak.get(e) ?? 0]))
+        W.__step(1 / 60)
+        out.ticks++
+        for (const e of before) {
+          if (!e.dead) continue
+          out.kills++
+          const tr = line.trains().find((t) => C.groupHitsOf(t).has(e))
+          if (tr && C.hazardKilled.has(e)) {
+            out.trainKills++
+            const k = out.byTrain.find((b) => b.tr === tr)
+            if (k) k.n++; else out.byTrain.push({ tr, n: 1 })
+            if (e.pressure && (ok0.get(e) ?? 0) >= 60) out.freeKills++
+          }
+        }
+        for (const t of line.trains()) if (C.groupHitsOf(t).has('still')) hitStill.add(t)
+        const litNow = line.lit()
+        for (const e of C.enemies) {
+          if (e.dead) continue
+          const counter = e.countering ?? (e.crouch || e.lunge !== null || e.spent || false)
+          const okNow = !!e.pressure && Math.hypot(e.knock.x, e.knock.z) <= 1.5 && !C.held.has(e) && !counter
+          streak.set(e, okNow ? (streak.get(e) ?? 0) + 1 : 0)
+          if (e.pressure && !out.noHook) {
+            const inside = litNow.some((l) => inStrip(e.pos.x, e.pos.z, l, P.halfW + e.radius + 0.3, e.radius).in)
+            const u = inside && !W.__isCommitted(e) ? (uncommitted.get(e) ?? 0) + 1 / 60 : 0
+            uncommitted.set(e, u)
+            if (u > out.maxUncommitted) out.maxUncommitted = u
+          }
+        }
+        if (i > 120 && !C.enemies.some((e) => !e.dead && C.packs.some((pk) => pk.state === 'awake' && pk.members.includes(e)))) break
+      }
+      out.stillHits += hitStill.size
+      out.trainsRun += line.trains().filter((t) => t.stage === 'passing' || t.stage === 'gone').length
+    } finally { endRandom() }
+  }
+  out.byTrain = out.byTrain.map((b) => b.n)
+  return out`
+
+/** K-T13's whole sweep for a bot, cached per page (K-T5 reads bot A's). */
+const t13Cache = new Map()
+const t13 = (page, bot) => {
+  if (!t13Cache.has(bot)) {
+    t13Cache.set(bot, (async () => {
+      const rows = []
+      for (const depth of [4, 7]) {
+        const row = { depth, seeds: 0, trainsRun: 0, lanes: 0, kills: 0, trainKills: 0, freeKills: 0, byTrain: [], stillHits: 0, maxUncommitted: 0, noHook: false }
+        // at least SEEDS levels, and on until TRAINS trains have run (a lane fight ends when its bodies die: about 1 train in 4)
+        for (let seed = 1; seed <= SEEDS || (row.trainsRun < TRAINS && seed <= 4000); seed++) {
+          row.seeds = seed
+          const r = await inPage(page, T13_BODY, { depth, seed, bot })
+          for (const k of ['trainsRun', 'lanes', 'kills', 'trainKills', 'freeKills', 'stillHits']) row[k] += r[k]
+          row.byTrain.push(...r.byTrain)
+          row.maxUncommitted = Math.max(row.maxUncommitted, r.maxUncommitted)
+          row.noHook ||= r.noHook
+        }
+        rows.push(row)
+      }
+      return rows
+    })())
+  }
+  return t13Cache.get(bot)
+}
+
+check('K-T13', ON, async ({ page }) => {
+  const pct = (a, b) => (b ? (100 * a) / b : 0)
+  const fails = []
+  for (const bot of ['A', 'B', 'C']) {
+    for (const r of await t13(page, bot)) {
+      const share = pct(r.trainKills, r.kills), free = pct(r.freeKills, r.kills)
+      const multi = pct(r.byTrain.filter((n) => n >= 2).length, r.trainsRun)
+      const step = r.depth === 4 ? 'step 4' : 'step 7'
+      const line = `bot ${bot}, ${step}: ${r.seeds} seeds, ${r.lanes} lane fights, ${r.kills} kills; trains ${r.trainKills} (${share.toFixed(1)}%), free ${r.freeKills} (${free.toFixed(1)}%), earned ${pct(r.trainKills - r.freeKills, r.kills).toFixed(1)}%; ${r.byTrain.filter((n) => n >= 2).length} of ${r.trainsRun} trains that ran killed 2+ (${multi.toFixed(0)}%); hits on Still ${r.stillHits}`
+      if (bot === 'A') {
+        console.log(`INFO K-T13: ${line} (train share ${share <= 25 ? 'ok' : share <= 35 ? 'over 25' : 'OVER 35'}, free ${free <= 5 ? 'ok' : free <= 10 ? 'over 5' : 'OVER 10'})`)
+        if (share > 35) fails.push(`bot A ${step}: trains took ${share.toFixed(1)}% of kills, over 35%`)
+        if (free > 10) fails.push(`bot A ${step}: free train kills are ${free.toFixed(1)}% of kills, over 10%`)
+        if (multi > 20) fails.push(`bot A ${step}: ${multi.toFixed(0)}% of the trains that ran killed 2+ bodies, over 20%`)
+      } else if (bot === 'B') {
+        console.log(`INFO K-T13: ${line}`)
+        if (r.stillHits > 0) fails.push(`bot B ${step}: a train hit Still ${r.stillHits} time(s)`)
+      } else console.log(`INFO K-T13: ${line} (earned ${pct(r.trainKills - r.freeKills, r.kills) >= 15 ? 'ok' : pct(r.trainKills - r.freeKills, r.kills) < 10 ? 'under 10: names the 3.0 step-off dial (stage T)' : 'low'})`)
+    }
+  }
+  assert((await t13(page, 'A')).every((r) => r.lanes > 0), 'no lane fights ran: the check proves nothing')
+  assert(fails.length === 0, fails.join('; '))
+})
+
+// K-T5's discriminating case: a pressure hulk in its jab (strike) or recover on a lit strip is committed by the OLD rule (phase != approach)
+// and stays on; by R4 it has no windup, so it steps off. A crowned leader (an elite hulk) and a ram in a windup are telegraphs and stay.
+check('K-T5', LINE, async ({ page }) => {
+  const got = await inPage(page, `
+    ${LINE_LEVEL}
+    const end = begin(1)
+    try {
+      const lane = line(4, 1)
+      if (!lane) return { bad: 'no room lane on this seed' }
+      const P = W.__LINE
+      const vertical = Math.abs(lane.ax - lane.bx) < 0.01
+      const mx = (lane.ax + lane.bx) / 2, mz = (lane.az + lane.bz) / 2
+      const along = (d) => vertical ? [mx, mz + d] : [mx + d, mz]
+      // Still well clear of the lane (and of the sleepers' wake), the bodies spread along the strip
+      W.__still.pos.set(vertical ? mx + 9 : mx, 0, vertical ? mz : mz + 9)
+      C.pressure = true
+      C.counters = false
+      const spawn = (kind, d, elite) => { const [x, z] = along(d); return W.__spawn(kind, x, z, true, elite) }
+      const jab = spawn('chaser', -6), rec = spawn('chaser', -2), leader = spawn('chaser', 2, 'plated'), ram = spawn('charger', 6)
+      jab.phase = 'strike'; jab.timer = 60000
+      rec.phase = 'recover'; rec.timer = 60000
+      leader.phase = 'windup'; leader.timer = 60000
+      ram.phase = 'windup'; ram.timer = 60000
+      const across = (e) => Math.abs(vertical ? e.pos.x - mx : e.pos.z - mz)
+      const start = [jab, rec, leader, ram].map((e) => [e.pos.x, e.pos.z])
+      const committed = () => [jab, rec, leader, ram].map((e) => W.__isCommitted(e))
+      W.__train(lane.id)
+      if (until(() => C.line.lit().length > 0, 1) < 0) return { bad: 'the lane never lit' }
+      const c0 = committed()
+      // the ram may end its own windup (no clear lane to its target): what matters is that the step-off never moved it while it was one
+      let ramWindupMoved = 0
+      for (let i = 0; i < 60; i++) {
+        const wasWinding = ram.phase === 'windup', p0 = [ram.pos.x, ram.pos.z]
+        tick(1)
+        if (wasWinding && ram.phase === 'windup') ramWindupMoved = Math.max(ramWindupMoved, Math.hypot(ram.pos.x - p0[0], ram.pos.z - p0[1]))
+      }
+      const grown = (e) => P.halfW + e.radius + 0.3
+      return {
+        c0, c1: committed(), grown: [jab, rec, leader, ram].map(grown),
+        across: [jab, rec, leader, ram].map(across),
+        moved: [jab, rec, leader, ram].map((e, i) => Math.hypot(e.pos.x - start[i][0], e.pos.z - start[i][1])),
+        phases: [jab, rec, leader, ram].map((e) => e.phase), ramWindupMoved,
+      }
+    } finally { end() }`)
+  bad(got)
+  const names = ['pressure hulk in its jab', 'pressure hulk in its recover', 'crowned leader in a windup', 'ram in a windup']
+  assert(got.c0[0] === false && got.c0[1] === false, `R4: ${names.filter((_, i) => i < 2 && got.c0[i]).join(', ')} counts as committed (__isCommitted)`)
+  assert(got.c0[2] === true && got.c0[3] === true, `a telegraph is not committed: ${names.filter((_, i) => i > 1 && !got.c0[i]).join(', ')}`)
+  for (const i of [0, 1]) assert(got.across[i] > got.grown[i], `the ${names[i]} is still on the lit strip after 1 s (${got.across[i].toFixed(2)} u off the centre line, strip ${got.grown[i].toFixed(2)})`)
+  assert(got.moved[2] < 0.05 && got.across[2] < got.grown[2], `the ${names[2]} left the lit strip (moved ${got.moved[2].toFixed(2)} u)`)
+  assert(got.ramWindupMoved < 0.05, `the step-off moved the ${names[3]} by ${got.ramWindupMoved.toFixed(2)} u in a tick`)
+  console.log(`INFO K-T5: after 1 s of a lit lane: the jab stepped ${got.moved[0].toFixed(2)} u and the recover ${got.moved[1].toFixed(2)} u off the strip; the leader (${got.moved[2].toFixed(2)} u) and the ram never moved in its windup (${got.ramWindupMoved.toFixed(2)} u) stayed`)
+})
+
+check('K-T5', ON, async ({ page }) => {
+  const rows = await t13(page, 'A')
+  assert(!rows.some((r) => r.noHook), 'no __isCommitted hook')
+  const worst = Math.max(...rows.map((r) => r.maxUncommitted))
+  console.log(`INFO K-T5: the longest a pressure body stood uncommitted inside a lit strip, over bot A's runs: ${worst.toFixed(3)} s`)
+  assert(worst <= 0.6 + 1e-9, `a pressure body stood uncommitted in a lit strip for ${worst.toFixed(3)} s, over 0.6`)
+})
+
+/** In the page: the flag-off Line at `depth`, a room lane with nothing on it, the level's bodies killed (B4's `__emptyLevel` does not exist yet). */
+const LINE_LEVEL = `
+  const line = (depth, seed) => {
+    W.__hold(true)
+    W.__run.route = 'III'
+    W.__enter(depth, seed)
+    C.autoAttack = false
+    C.counters = true
+    for (const e of [...C.enemies]) e.hit(1e9)
+    W.__step(0.2)
+    const lane = W.__lanes().find((l) => l.kind === 'room' && !l.lesson && l.nextAt - W.__lineT() > 4)
+    return lane
+  }`
+
+check('K-T14', LINE, async ({ page }) => {
+  const got = await inPage(page, `
+    ${LINE_LEVEL}
+    const end = begin(1)
+    try {
+      const lane = line(4, 1)
+      if (!lane) return { bad: 'no room lane on this seed' }
+      const P = W.__LINE
+      const vertical = Math.abs(lane.ax - lane.bx) < 0.01
+      const mx = (lane.ax + lane.bx) / 2, mz = (lane.az + lane.bz) / 2
+      // Still 3.6 u off the strip's edge (the brief's 2.0 puts him inside the hulk's swipe when it leaves, and it cocks, then recovers 0.55 s
+      // before it can crouch); the hulk on the lane, a step toward him so it leaves by the near edge, 2.4 u from him: in his band, not touching
+      const off = P.halfW + 3.6
+      W.__still.pos.set(vertical ? mx + off : mx, 0, vertical ? mz : mz + off)
+      C.pressure = true
+      C.counters = true
+      const h = W.__spawn('chaser', vertical ? mx + 0.3 : mx, vertical ? mz : mz + 0.3, true)
+      W.__train(lane.id)
+      if (until(() => C.line.lit().length > 0, 1) < 0) return { bad: 'the lane never lit' }
+      h.bandT = 2
+      // the train's own booked locks (R8) would hold a crouch off too, and this check is about the strip: clear the book
+      C.book.clear()
+      const near = () => C.line.nearLit(h.pos.x, h.pos.z, P.halfW + h.radius + 0.3)
+      W.__enemyLog.length = 0
+      let crouchWhileNear = 0, tNear = 0, crouchAt = -1, clearAt = -1
+      for (let i = 0; i < 180; i++) {
+        C.hp = 100
+        const nearBefore = near()
+        if (nearBefore) h.bandT = Math.max(h.bandT, 2) // the band is built the whole time it stands on the strip
+        if (!nearBefore && clearAt < 0) clearAt = i
+        W.__step(1 / 60)
+        const crouched = W.__enemyLog.some((x) => x.ev.kind === 'counter' && x.ev.what === 'crouch')
+        if (nearBefore) tNear++
+        if (crouched) { if (nearBefore) crouchWhileNear++; crouchAt = i; break }
+      }
+      return { crouchWhileNear, tNear, crouchAt, clearAt, crouchDelay: crouchAt >= 0 && clearAt >= 0 ? (crouchAt - clearAt + 1) / 60 : null }
+    } finally { end() }`)
+  bad(got)
+  assert(got.crouchWhileNear === 0, `the hulk started a crouch on a lit strip (after ${got.tNear} ticks near it)`)
+  assert(got.crouchAt >= 0 && got.clearAt >= 0, `the hulk never crouched once clear (${JSON.stringify(got)})`)
+  assert(got.crouchDelay <= 0.5 + 1 / 60, `the hulk crouched ${got.crouchDelay.toFixed(3)} s after it cleared the strip, over 0.5`)
+  console.log(`INFO K-T14: it stayed off the crouch for ${got.tNear} ticks on the strip, stepped clear at tick ${got.clearAt}, crouched ${got.crouchDelay.toFixed(3)} s after`)
+})
+
+check('K-T15', LINE, async ({ page }) => {
+  const got = await inPage(page, `
+    ${LINE_LEVEL}
+    const end = begin(1)
+    try {
+      const lane = line(4, 1)
+      if (!lane) return { bad: 'no room lane on this seed' }
+      const mx = (lane.ax + lane.bx) / 2, mz = (lane.az + lane.bz) / 2
+      // Still on the same lane, 2 u in from its end and 8 u along it from the sleeper: closer, it wakes, and an awake body steps off the strip
+      W.__still.pos.set(lane.ax + (lane.bx - lane.ax) * 0.1, 0, lane.az + (lane.bz - lane.az) * 0.1)
+      C.pressure = true
+      C.counters = false
+      C.eye = false // planted, every hit on him is halved (EYE.brace): not the flat 20 the rule is about
+      const h = W.__spawn('chaser', mx, mz, false)
+      const hp0 = h.hp, c0 = C.hp, mul = C.curve.hp
+      W.__train(lane.id)
+      let stillLost = 0
+      for (let i = 0; i < 240; i++) { const before = C.hp; W.__step(1 / 60); stillLost += before - C.hp; C.hp = 100 }
+      return { bodyLost: hp0 - h.hp, stillLost, mul, hp0 }
+    } finally { C.eye = true; end() }`)
+  bad(got)
+  assert(Math.abs(got.bodyLost - 20 * got.mul) <= 1e-6, `the hulk lost ${got.bodyLost}, not 20 x curve.hp (${20 * got.mul})`)
+  assert(Math.abs(got.stillLost - 20) <= 1e-6, `Still lost ${got.stillLost}, not a flat 20`)
+  // the lesson lane's train does 0 to both
+  const lesson = await inPage(page, `
+    ${LINE_LEVEL}
+    const end = begin(1)
+    try {
+      W.__hold(true)
+      W.__run.route = 'III'
+      W.__enter(4, 1)
+      C.autoAttack = false
+      for (const e of [...C.enemies]) e.hit(1e9)
+      W.__step(0.2)
+      const lane = W.__lanes().find((l) => l.lesson)
+      if (!lane) return { bad: 'no lesson lane on seed 1' }
+      const mx = (lane.ax + lane.bx) / 2, mz = (lane.az + lane.bz) / 2
+      W.__still.pos.set(lane.ax + (lane.bx - lane.ax) * 0.1, 0, lane.az + (lane.bz - lane.az) * 0.1)
+      C.pressure = true
+      C.eye = false
+      const h = W.__spawn('chaser', mx, mz, false)
+      const hp0 = h.hp
+      W.__train(lane.id)
+      let stillLost = 0
+      for (let i = 0; i < 240; i++) { const before = C.hp; W.__step(1 / 60); stillLost += before - C.hp; C.hp = 100 }
+      return { bodyLost: hp0 - h.hp, stillLost, lesson: W.__trains()[0]?.lesson }
+    } finally { C.eye = true; end() }`)
+  bad(lesson)
+  assert(lesson.lesson === true && lesson.bodyLost === 0 && lesson.stillLost === 0, `the lesson train did ${JSON.stringify(lesson)}, not 0 to both`)
+  console.log(`INFO K-T15: the hulk lost ${got.bodyLost.toFixed(2)} (20 x ${got.mul}), Still lost ${got.stillLost}; the lesson train 0 and 0`)
 })
 
 process.exit(await run(process.argv.slice(2)))

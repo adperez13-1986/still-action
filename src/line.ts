@@ -280,6 +280,8 @@ export type LineEvent =
 export interface LineHost {
   readonly time: number
   readonly book: LockBook
+  /** The depth curve's hp for this level's bodies (combat.curve.hp): a train hits a body for LINE.damage x it (LINE-RULES R6). */
+  readonly bodyMul: number
   addHazard(spec: HazardSpec): Hazard
   /** A room's pack is awake. */
   roomAwake(room: Room): boolean
@@ -599,7 +601,7 @@ export class Line {
         shape: { kind: 'strip', ax: ex + dx * s0, az: ez + dz * s0, bx: ex + dx * s1, bz: ez + dz * s1, halfW: LINE.halfW },
         armMs: 1000 * (armS - e0 + dt),
         liveMs: (1000 * (LINE.segment + LINE.rakeLen)) / LINE.speed,
-        damage: tr.lesson ? 0 : LINE.damage, cover: 'none', hurt: 'hazard', quiet: true, group: tr,
+        damage: tr.lesson ? 0 : LINE.damage, bodyDamage: tr.lesson ? 0 : LINE.damage * this.host.bodyMul, cover: 'none', hurt: 'hazard', quiet: true, group: tr,
         shove: tr.lesson || (sh.along === 0 && sh.across === 0) ? undefined : { dx, dz, along: sh.along, across: sh.across },
       }
       tr.hazards.push(this.host.addHazard(spec))

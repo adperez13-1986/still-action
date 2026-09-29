@@ -2510,6 +2510,7 @@ const CLACK = { every: 0.18, hear: 30 }
 const lineHost = {
   get time() { return combat.time },
   get book() { return combat.book },
+  get bodyMul() { return combat.curve.hp },
   addHazard: (spec: HazardSpec) => combat.addHazard(spec),
   roomAwake: (room: Room) => combat.roomAwake(room),
   smashIn: (shape: Parameters<Combat['smashIn']>[0], grow: number) => combat.smashIn(shape, grow),
@@ -4641,6 +4642,8 @@ if (import.meta.env.DEV) {
     },
     __snapshot: () => (save.run ? JSON.parse(JSON.stringify(save.run)) : null),
     __hold: (on: boolean) => { held = on },
+    /** B3 (R4): whether a body counts as committed for the Line's step-off, as Combat reads it. */
+    __isCommitted: (e: Enemy) => Combat.committed(e, combat['held'].has(e)),
     /** B1 (R3): Parry Clamp's grace after a pressure tell, ms. Sets it if given (150 is the dial to try); returns it. */
     __parryGrace: (ms?: number) => {
       if (ms !== undefined) PARRY.graceMs = ms

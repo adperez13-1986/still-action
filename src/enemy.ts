@@ -100,6 +100,8 @@ export interface EnemyCtx {
   emit(ev: EnemyEvent): void
   /** The Line's brood rule (design/area3/SPEC.md §5.8): (x, z) is within halfW + broodPad of a lit lane's floor span. */
   nearLit?(x: number, z: number): boolean
+  /** B3 (R5): (x, z) is inside a lit lane's strip, grown by LINE.halfW + r + LINE.stepOff.pad. A body about to commit to a move does not start one there. */
+  onLit?(x: number, z: number, r: number): boolean
 }
 
 /** Instants the run dresses (sound, sparks, the log). Lasting state is polled instead. */
@@ -441,6 +443,8 @@ export class Chaser implements Enemy {
   get crouching() { return this.crouch }
   /** In the crouch or the dash: the one slot the whole combat gives a lunge. */
   get lunging() { return this.crouch || this.lunge !== null }
+  /** B3 (R4): in a counter's crouch, its lunge, or the open recover after it: committed to it, so it never steps off a lit lane. */
+  get countering() { return this.crouch || this.lunge !== null || this.spent }
 
   private timer = 0
   /** A broken windup: the core blinks dark for a moment. */
@@ -645,9 +649,11 @@ export class Chaser implements Enemy {
           this.cock = -1
           break
         }
-        if (counters && this.cock < 0 && this.bandT >= COUNTER_HULK.bandS && ctx.lungeFree(this) && ctx.canLock(COUNTER_HULK.crouchMs)) {
+        if (counters && this.cock < 0 && this.bandT >= COUNTER_HULK.bandS && ctx.lungeFree(this) && ctx.canLock(COUNTER_HULK.crouchMs)
+          && !ctx.onLit?.(this.pos.x, this.pos.z, this.radius)) {
           // it has been held long enough: crouch back, direction locked, and give the lunge its slot;
-          // the lunge is booked like any lock (LINE-RULES R8): no canLock, no crouch, and bandT stays full to try again next tick
+          // the lunge is booked like any lock (LINE-RULES R8): no canLock, no crouch, and bandT stays full to try again next tick.
+          // Never on a lit strip (R5): it steps off first, and crouches from there
           ctx.book(this, COUNTER_HULK.crouchMs)
           this.phase = 'windup'
           this.crouch = true
