@@ -219,6 +219,19 @@ export interface Enemy {
   interrupt: (reel?: boolean) => boolean
   /** ms until the windup running now lands (its strike, shot, launch or rush); null when none is. */
   landsIn: () => number | null
+  /**
+   * B1 (LINE-RULES R3). A pressure body's own tell, the one thing nothing else may break: ms until its attack lands
+   * (the hulk's cock, the sentinel's lens glow, the mite's rear), else null. Absent on bodies without one.
+   * INV-T1: non-null only while `pressure` is true and the body is not in a counter's crouch.
+   */
+  tellIn?: () => number | null
+  /**
+   * B1 (R3). Parry Clamp caught its tell: the attack is spent, and its own clock restarts. `now` is Combat's
+   * time; `graceMs` the dial (PARRY.graceMs); `reel`: pushed under the break rule. True if it caught one.
+   * INV-T2: never true while tellIn() is null, unless graceMs > 0 and its tell ended <= graceMs ago.
+   * INV-T3: never consumes Math.random (the K-90F traces of every other scenario must not shift).
+   */
+  catchTell?: (now: number, graceMs: number, reel: boolean) => boolean
   update: (dt: number, target: THREE.Vector3, terrain: Terrain, ctx: EnemyCtx) => EnemyAction | null
   /** Presentation only, no thinking: while asleep, or walking home. `face` is where to look. */
   idle: (dt: number, face: THREE.Vector3) => void
@@ -399,6 +412,8 @@ export class Chaser implements Enemy {
   counters = false
   /** Pressure: ms the fist has been cocked, or -1. */
   private cock = -1
+  /** Combat's time at the tick the cock became a strike (PARRY's grace reads it). */
+  private tellEnd = -Infinity
   /** Counter-move (COUNTER_HULK): seconds Still has stood in its band; ms left of the cooldown; the crouch, and the lunge under way. */
   private bandT = 0
   private cd = 0
@@ -568,6 +583,24 @@ export class Chaser implements Enemy {
     return this.phase === 'windup' ? Math.max(0, this.timer) : null
   }
 
+  /** The fist's cock (a pressure hulk's own tell), never a counter's crouch: that is a windup, and `interrupt` breaks it. */
+  tellIn() {
+    return this.pressure && this.cock >= 0 && !this.crouch ? Math.max(0, PRESSURE_HULK.cockMs - this.cock) : null
+  }
+
+  catchTell(now: number, graceMs: number, reel: boolean) {
+    const inGrace = graceMs > 0 && now - this.tellEnd <= graceMs / 1000 && (this.phase === 'strike' || this.phase === 'recover') && !this.lunging
+    if (this.tellIn() === null && !inGrace) return false
+    this.cock = -1
+    this.tellEnd = -Infinity
+    this.phase = 'recover'
+    this.timer = reel ? CHASER.recoverMs : PRESSURE_HULK.recoverMs
+    if (reel) this.reel = 0
+    this.blink = 0.2
+    this.coreMat.color.setHex(this.coreOff)
+    return true
+  }
+
   hit(damage: number): boolean {
     this.hp -= damage * this.armor * (this.reel >= 0 ? REEL.mul : 1)
     this.flash = 1
@@ -628,6 +661,7 @@ export class Chaser implements Enemy {
             this.cock = Math.max(0, this.cock) + dt * 1000
             if (this.cock >= PRESSURE_HULK.cockMs) {
               this.cock = -1
+              this.tellEnd = ctx.now
               this.phase = 'strike'
               this.timer = 90
               if (dist <= PRESSURE_HULK.reach + this.radius) action = { kind: 'melee', damage: PRESSURE_HULK.damage, reach: PRESSURE_HULK.reach + this.radius }

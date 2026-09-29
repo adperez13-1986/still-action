@@ -5,7 +5,7 @@ import { Still } from './still'
 import { createHud, type Press } from './hud'
 import { createGradePanel, apply as applyGrade } from './grade'
 import { createPacer, createQuality, createReadout, FRAME_S, BEHIND_CARD_S, IDLE_ROOM_S } from './perf'
-import { Combat, eliteLine, HAND, HAND_REACH, EYE, type Archetype, type AutoForm, type CastResult, type EliteMod, type Pack } from './combat'
+import { Combat, eliteLine, PARRY, HAND, HAND_REACH, EYE, type Archetype, type AutoForm, type CastResult, type EliteMod, type Pack } from './combat'
 import { STARTING, PARTS, byId, type AbilityDef, type AbilityShape, type BeatKey, type Lean } from './abilities'
 import { SLOT_NAMES, type SlotName } from './still'
 import { TEMPER, ROMAN, tempered } from './temper'
@@ -430,8 +430,11 @@ const combat = new Combat(world.scene, OPEN, {
       // its heat broken by his cold: the tell shatters, the tone cuts dead, and the moment holds
       windups.get(ev.enemy)?.stop(true)
       windups.delete(ev.enemy)
-      // a pressure hulk has no windup but a counter's crouch: this broke one
-      if (ev.enemy.kind === 'chaser' && ev.enemy.pressure) {
+      // a pressure hulk has no windup but a counter's crouch: this broke one. A caught tell (Parry, R3) is not that, and is counted apart
+      if (ev.tell) {
+        const c = run.stats[run.stats.length - 1]?.catches
+        if (c) c[ev.enemy.kind === 'chaser' ? 'hulk' : ev.enemy.kind === 'ranged' ? 'sentinel' : 'mite']++
+      } else if (ev.enemy.kind === 'chaser' && ev.enemy.pressure) {
         const lg = run.stats[run.stats.length - 1]?.lunges
         if (lg) lg.broken++
       }
@@ -1419,6 +1422,8 @@ interface DepthStats {
    */
   counters?: boolean
   lunges?: { started: number; hit: number; broken: number }
+  /** Parry Clamp's caught tells (LINE-RULES R3): a pressure hulk's cock, sentinel's lens glow, mite's rear. Not `lunges.broken`. */
+  catches?: { hulk: number; sentinel: number; mite: number }
   ducks?: { started: number; peeked: number; backed: number }
   /** Temper on at this depth, and parts melted into a worn one here; mastery learned here. */
   temper?: boolean; melts?: number; mastered?: string[]
@@ -2644,7 +2649,7 @@ function enterLevel(depth: number, o: { seed?: number; bossFelled?: boolean; res
   run.depth = depth
   closeStats()
   run.stats.push({ depth, fights: 0, pushes: 0, breaks: 0, deadTaps: 0, quiets: 0, strainIn: run.strain, strainOut: null, hand: 0, shots: 0, eye: 0, eyeCasts: 0, handBreaks: 0, braced: 0, playS: 0, eyeBreaks: 0, openings: 0, plantedS: 0, autoDmg: { hand: 0, eye: 0 }, riders: {}, pressure: combat.pressure, hpLost: 0, temper: temperOn, melts: 0,
-    counters: combat.counters, lunges: { started: 0, hit: 0, broken: 0 }, ducks: { started: 0, peeked: 0, backed: 0 },
+    counters: combat.counters, lunges: { started: 0, hit: 0, broken: 0 }, catches: { hulk: 0, sentinel: 0, mite: 0 }, ducks: { started: 0, peeked: 0, backed: 0 },
     states: Object.fromEntries(STATE_IDS.map((id) => [id, { set: 0, paid: 0, expired: 0 }])) as DepthStats['states'],
     stateBonus: Object.fromEntries(STATE_IDS.map((id) => [id, 0])) as DepthStats['stateBonus'],
     paidBy: { head: 0, torso: 0, arms: 0, legs: 0, hand: 0, eye: 0 }, pushedIntoState: 0, shatter: { n: 0, dmg: 0 }, maxMul: 1,
@@ -4636,6 +4641,11 @@ if (import.meta.env.DEV) {
     },
     __snapshot: () => (save.run ? JSON.parse(JSON.stringify(save.run)) : null),
     __hold: (on: boolean) => { held = on },
+    /** B1 (R3): Parry Clamp's grace after a pressure tell, ms. Sets it if given (150 is the dial to try); returns it. */
+    __parryGrace: (ms?: number) => {
+      if (ms !== undefined) PARRY.graceMs = ms
+      return PARRY.graceMs
+    },
     __drawings: () => ({ available: drawings.available, pending: drawings.pending }),
     __idbKeys: () => drawings.keys(),
     __idbBlob: (id: string) => drawings.get(id).then((b) => (b ? { size: b.size, type: b.type } : null)),

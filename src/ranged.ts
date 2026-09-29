@@ -90,6 +90,8 @@ export class Ranged implements Enemy {
   /** Pressure: ms the lens has glowed before a burst, or -1; shots left in the burst. */
   private cock = -1
   private burst = 0
+  /** Combat's time at the tick the glow became a burst (PARRY's grace reads it). */
+  private tellEnd = -Infinity
   /**
    * Counter-move (COUNTER_SENTINEL): seconds Still has been planted in its sight; ms left of the cooldown;
    * the duck under way (`t` ms in this mode, `stay` how long it hides); how far its lens is turned away, 0..1.
@@ -307,6 +309,7 @@ export class Ranged implements Enemy {
             this.cock += dt * 1000
             if (this.cock >= PRESSURE_SENTINEL.cockMs) {
               this.cock = -1
+              this.tellEnd = ctx.now
               this.phase = 'strike'
               this.burst = PRESSURE_SENTINEL.shots
               this.timer = 0
@@ -655,6 +658,28 @@ export class Ranged implements Enemy {
 
   landsIn() {
     return this.phase === 'windup' ? Math.max(0, this.timer) : null
+  }
+
+  /** The lens glow (a pressure sentinel's own tell). */
+  tellIn() {
+    return this.pressure && this.cock >= 0 ? Math.max(0, PRESSURE_SENTINEL.cockMs - this.cock) : null
+  }
+
+  catchTell(now: number, graceMs: number, reel: boolean) {
+    const inGrace = graceMs > 0 && now - this.tellEnd <= graceMs / 1000 && this.phase === 'strike' && this.burst > 0
+    if (this.tellIn() === null && !inGrace) return false
+    this.cock = -1
+    this.burst = 0
+    this.tellEnd = -Infinity
+    if (reel) {
+      this.phase = 'recover'
+      this.timer = RANGED.recoverMs
+      this.reel = 0
+    } else {
+      // otherwise it glows again on the same tick
+      this.reload = PRESSURE_SENTINEL.reloadMs
+    }
+    return true
   }
 
   setAsleep(asleep: boolean) {

@@ -53,6 +53,11 @@ export const MELEE_PAD = 0.6
  */
 export const HAND = { range: 2.9, damage: 10, shove: 0.5, moveMin: 1, retreat: -0.5 }
 /**
+ * B1 (LINE-RULES R3): Parry Clamp's grace after a pressure tell ends (LINE-RULES open question 2). The dial, OFF:
+ * 150 is the value to try if the phone says catching a 120-260 ms tell is a lucky tap. Mutable only for the DEV hook.
+ */
+export const PARRY = { graceMs: 0 }
+/**
  * A boss takes this share of the autos' damage (the close strike, the planted shot, its split shots);
  * parts and pushes hit it in full. His call, 28 Sep: at the Arbiter the free close strike alone did up to
  * 770 of 1170 while he stood at its feet. A boss is where the parts and the push have to do the work.
@@ -1225,6 +1230,23 @@ export class Combat {
     return best
   }
 
+  /**
+   * B1 (R3): the body in reach whose tell lands soonest: a windup a part may break, or a pressure body's own tell.
+   * No break-rule test: it is Parry's snap, pushed or not. Null: none.
+   */
+  private tellAim(o: THREE.Vector3, def: AbilityDef): Enemy | null {
+    let best: Enemy | null = null
+    let soon = Infinity
+    for (const e of this.enemies) {
+      if (e.dead || !targetable(e) || this.held.has(e) || !this.awakeNow(e) || !this.inReach(o, e, def.range) || this.shaded(o, e)) continue
+      const t = this.breakable(e) ? e.landsIn() : (e.tellIn?.() ?? null)
+      if (t === null || t >= soon) continue
+      best = e
+      soon = t
+    }
+    return best
+  }
+
   /** A thrown enemy comes down: the landing hurts it, a wall hurts it more, and the splash shoves what's near. */
   private landThrow(e: Enemy, h: Held) {
     const mod = h.def.mod?.kind === 'toss' ? h.def.mod : null
@@ -1992,7 +2014,9 @@ export class Combat {
         }
         // pushed: the windup that lands soonest, if the blade reaches it; else a payer swings at its state
         const threat = ctx.pushed ? this.threat(o, def) : null
-        snap = threat ?? this.prefer(o, def, snap)
+        // Parry (R3): the body whose tell lands soonest, a windup or a pressure body's own, pushed or not
+        const tell = parry ? this.tellAim(o, def) : null
+        snap = tell ?? threat ?? this.prefer(o, def, snap)
         const face = snap ?? this.nearest(o, 9.5)
         const aimed = face ? Math.atan2(face.pos.x - o.x, face.pos.z - o.z) : ctx.facing
         r.aim = aimed
@@ -2007,11 +2031,20 @@ export class Combat {
           const winding = e.phase === 'windup'
           this.hitPart(e, def.damage, ctx.pushed && !parry, def)
           if (parry) {
-            // Parry Clamp: caught mid-windup, the attack breaks and it stumbles back (pushed, it reels)
-            const reel = ctx.pushed && this.breakRule && this.breakable(e)
-            if (!e.dead && winding && e.interrupt(reel)) {
-              this.shoveFrom(e, o.x, o.z, parry.shove)
-              this.interrupted(e, reel)
+            // Parry Clamp: caught mid-windup, the attack breaks and it stumbles back (pushed, it reels).
+            // A pressure body has no windup but its own tell (a cock, a glow, a rear): caught there, the attack is spent (R3)
+            if (!e.dead) {
+              const reel = ctx.pushed && this.breakRule
+              if (winding) {
+                const brk = reel && this.breakable(e)
+                if (e.interrupt(brk)) {
+                  this.shoveFrom(e, o.x, o.z, parry.shove)
+                  this.interrupted(e, brk)
+                }
+              } else if (e.catchTell?.(this.time, PARRY.graceMs, reel)) {
+                this.shoveFrom(e, o.x, o.z, parry.shove)
+                this.interrupted(e, reel, undefined, true)
+              }
             }
           } else if (hook) {
             // Rusted Hook: yanked to a point just in front of Still, not onto him
@@ -2405,11 +2438,12 @@ export class Combat {
 
   /**
    * A broken windup: its booked lock goes with it, and the run hears of it (`push`: the break rule's;
-   * `by`: the hand or the eye broke it, not a part).
+   * `by`: the hand or the eye broke it, not a part; `tell`: Parry caught a pressure body's own tell, not a windup).
    */
-  private interrupted(e: Enemy, push = false, by?: AutoForm) {
+  private interrupted(e: Enemy, push = false, by?: AutoForm, tell = false) {
     this.book.unbook(e)
-    this.events.onPart(push ? { kind: 'interrupt', enemy: e, push } : by ? { kind: 'interrupt', enemy: e, by } : { kind: 'interrupt', enemy: e })
+    const ev = push ? { kind: 'interrupt' as const, enemy: e, push } : by ? { kind: 'interrupt' as const, enemy: e, by } : { kind: 'interrupt' as const, enemy: e }
+    this.events.onPart(tell ? { ...ev, tell: true } : ev)
   }
 
   /** Every enemy instant passes here: Combat does its own part first (a rush into a crate breaks it), then the run's. */

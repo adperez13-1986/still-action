@@ -283,6 +283,8 @@ export class Mite implements Enemy {
   nip = -1
   /** Pressure: ms until it may nip again. */
   rest = 0
+  /** Combat's time at the tick its rear became a dart (PARRY's grace reads it). */
+  tellEnd = -Infinity
   queen = false
   /** A Quick queen: her whole brood is fast (speedMul), and she scuttles faster. */
   quick = false
@@ -416,6 +418,22 @@ export class Mite implements Enemy {
     this.role = 'inner'
     this.t = 0
     this.blinkT = 0.2
+    return true
+  }
+
+  /** A pressure mite's rear (its own tell). */
+  tellIn() {
+    return this.pressure && this.nip >= 0 ? Math.max(0, PRESSURE_MITE.tellMs - this.nip) : null
+  }
+
+  /** Caught in the rear: no nip, and its clock starts over (no jitter: it draws no Math.random). A mite has no reel. */
+  catchTell(now: number, graceMs: number) {
+    // inside the grace the dart is already in the air: it is not undone, only the next one is put off
+    const inGrace = graceMs > 0 && now - this.tellEnd <= graceMs / 1000 && this.phase === 'strike'
+    if (this.tellIn() === null && !inGrace) return false
+    this.nip = -1
+    this.rest = PRESSURE_MITE.cycleMs
+    this.tellEnd = -Infinity
     return true
   }
 
@@ -1184,6 +1202,7 @@ export class Brood {
         m.nip += ms
         if (m.nip < PRESSURE_MITE.tellMs) continue
         m.nip = -1
+        m.tellEnd = ctx.now
         // decided now, on the real Still: a nip at the decoy bites him only if he's in reach of it too
         const hit = dist(m.pos, ctx.player) <= PRESSURE_MITE.reach && terrain.lineClear(m.pos.x, m.pos.z, ctx.player.x, ctx.player.z, 0.2)
         ctx.emit({ kind: 'bite', brood: this, at: m.pos.clone(), biters: 1, hit })

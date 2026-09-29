@@ -305,6 +305,7 @@ export const PARTS: AbilityDef[] = [
   }),
   part({
     id: 'parry-clamp', slot: 'arms', name: 'Parry Clamp', tier: 'blue', beat: 'parry', lean: 'close',
+    // PLACEHOLDER (LINE-RULES R3): his words; this one no longer says what it does
     line: 'A quick snap. Catch an enemy winding up and it breaks the attack. On a marked enemy: lands twice.',
     shape: 'arc', mod: { kind: 'parry', shove: 2.5 }, pays: ['marked'], cooldownMs: 3600, damage: 10, range: 2.6, radius: 0, cone: 90,
     icon: '<path d="M3 6c4.5 0 7.5 2 8.5 6M3 18c4.5 0 7.5-2 8.5-6"/><path d="M15 8.5l6 7M21 8.5l-6 7"/>',
