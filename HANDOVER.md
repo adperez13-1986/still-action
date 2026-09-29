@@ -15,6 +15,8 @@ his word.** B1's K-W3d FAILS its dead rule: with the autos on, Parry catches 0.0
 one Parry cast per fight); 2.02 with autos off. Code is right; whether Parry earns its slot is with the balancer (measuring
 d2/d4/d5/d8 + dials, report to scratchpad, not repo). **B2 (R8) committed 736488e, also NOT pushed** (whole game). Sonnet
 B3 (R4-R6, dark) committed. A fresh Sonnet engineer on B4 (the Signalman), uncommitted work in src/.
+**15:08: on his word B1 + B2 pushed and live (with B3 dark, through 3b0a27b).** He plays them at home tonight: ask how Parry
+and the lunge felt; `catches` per depth is in the playtest log.
 **Parry verdict (design/parry/README.md, 8c8b1f4):** dead slot from d4 even with R3 and perfect timing. Options A (cooldown
 2200), B (a catch readies Parry, cap 1/1.5 s), C (caught body waits 1 s); balancer recommends B + grace 150. **His call, asked.**
 Also: the Cleaver beats Piston from d4 (arms slot has a Cleaver problem).
