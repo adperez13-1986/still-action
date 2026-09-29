@@ -14,7 +14,7 @@ K-90N, K-90L). **B1 (R3) committed d7382aa, NOT pushed: local main is ahead of o
 his word.** B1's K-W3d FAILS its dead rule: with the autos on, Parry catches 0.03 tells/fight at depth 1 (hulks die in ~1.3 s,
 one Parry cast per fight); 2.02 with autos off. Code is right; whether Parry earns its slot is with the balancer (measuring
 d2/d4/d5/d8 + dials, report to scratchpad, not repo). **B2 (R8) committed 736488e, also NOT pushed** (whole game). Sonnet
-engineer on B3 (R4-R6, dark), uncommitted work in src/ (src accepted; fixing checks K-T5 + K-T13 sample).
+B3 (R4-R6, dark) committed. A fresh Sonnet engineer on B4 (the Signalman), uncommitted work in src/.
 **Parry verdict (design/parry/README.md, 8c8b1f4):** dead slot from d4 even with R3 and perfect timing. Options A (cooldown
 2200), B (a catch readies Parry, cap 1/1.5 s), C (caught body waits 1 s); balancer recommends B + grace 150. **His call, asked.**
 Also: the Cleaver beats Piston from d4 (arms slot has a Cleaver problem).
