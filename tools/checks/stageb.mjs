@@ -579,7 +579,7 @@ const T13_BODY = `
             if (C.enemies.some((e) => !e.dead && Math.hypot(e.pos.x - sp.x, e.pos.z - sp.z) <= 2.9)) W.__fire('arms')
           } else W.__stick(0, 0)
         }
-        const before = C.enemies.slice()
+        const before = C.enemies.filter((e) => !e.dead) // a body dead since last tick is still listed for a tick: counted once, not twice
         const ok0 = new Map(before.map((e) => [e, streak.get(e) ?? 0]))
         W.__step(1 / 60)
         out.ticks++
