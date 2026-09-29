@@ -1687,14 +1687,38 @@ const SHRINE_TEXT = {
 }
 let atShrine: Shrine | null = null
 
+/**
+ * The warm beam beside a cold one (more of the day ahead) asks before it takes him: a brush
+ * of the light on the way to the cold beam isn't a choice. The last boss's, alone, doesn't ask.
+ */
+const HOME_TEXT = { title: 'The warm light', line: 'go home now. the run ends here; everything is kept.', action: 'go home' }
+let atHome = false
+
+function homeAsks(): boolean {
+  if (!level?.home || !level.homeOpen || !level.exitOpen || !beamArmed.home) return false
+  return Math.hypot(still.pos.x - level.home.x, still.pos.z - level.home.z) < EXIT_RADIUS
+}
+
+/** The warm light's prompt, tapped: into it. */
+function confirmHome() {
+  if (!atHome || run.phase !== 'crawl' || !level?.home) return
+  sfx.uiClick()
+  atHome = false
+  hud.prompt(null)
+  beginHoming(level.home)
+}
+
 function updateShrinePrompt() {
   let near: Shrine | null = null
+  let home = false
   if (run.phase === 'crawl' && level && !offered) {
     near = level.shrines.find((sh) => !sh.used && Math.hypot(sh.x - still.pos.x, sh.z - still.pos.z) < SHRINE_RADIUS) ?? null
+    home = !near && homeAsks()
   }
-  if (near !== atShrine) {
+  if (near !== atShrine || home !== atHome) {
     atShrine = near
-    hud.prompt(near ? SHRINE_TEXT[near.kind] : null)
+    atHome = home
+    hud.prompt(near ? SHRINE_TEXT[near.kind] : home ? HOME_TEXT : null)
   }
 }
 
@@ -1708,6 +1732,10 @@ hud.onPrompt(() => {
   if (run.phase === 'workshop' && workshop.near === 'notebook') {
     sfx.uiClick()
     openNotebook()
+    return
+  }
+  if (atHome) {
+    confirmHome()
     return
   }
   const sh = atShrine
@@ -3266,6 +3294,7 @@ function enterRoom(arrival: ArrivalKind, hour: HomeHour, worn: (string | null)[]
   setSurfaces(PLACES.ruin.surfaces)
   offered = null
   atShrine = null
+  atHome = false
   hud.offer(null)
   hud.prompt(null)
   hud.bossBar(null)
@@ -3962,10 +3991,10 @@ function simulate(realDt: number) {
     descend()
     return
   }
-  // and so is home, the same way
+  // and so is home, the same way; beside a cold beam it asks first (updateShrinePrompt, the prompt's tap)
   const toHome = level?.home ? Math.hypot(still.pos.x - level.home.x, still.pos.z - level.home.z) : Infinity
   if (toHome > BEAM_REARM) beamArmed.home = true
-  if (run.phase === 'crawl' && level?.home && level.homeOpen && beamArmed.home && toHome < EXIT_RADIUS) {
+  if (run.phase === 'crawl' && level?.home && level.homeOpen && !level.exitOpen && beamArmed.home && toHome < EXIT_RADIUS) {
     beginHoming(level.home)
     return
   }
@@ -5101,7 +5130,8 @@ if (import.meta.env.DEV) {
      * An ending, the game's way, and one step so its trigger has fired on return:
      * HP to 0; strain to full; into the warm beam. Without a warm beam to walk
      * into (a crawl depth, or __arena's floor), he homes where he stands: a
-     * shortcut for checks that aren't about the beam.
+     * shortcut for checks that aren't about the beam. Beside a cold beam it answers
+     * the warm light's prompt too.
      */
     __end: (kind: EndingKind) => {
       if (run.phase !== 'crawl') return false
@@ -5114,6 +5144,8 @@ if (import.meta.env.DEV) {
         level.openHome()
         still.pos.set(level.home.x, 0, level.home.z)
         devTick()
+        // beside a cold beam the light asks first: say yes
+        if (atHome) confirmHome()
       } else {
         beginHoming(still.pos)
       }

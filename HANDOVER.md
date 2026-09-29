@@ -5,6 +5,11 @@ folder for whatever you're touching. Don't re-derive any of them.
 
 ## Start here (29 Sep, 16:30: stage B through B6, two whole-game changes live)
 
+**29 Sep, 22:30 (his ask, pushed):** the warm beam now asks when a cold beam stands beside it (after a boss that isn't the
+last): stepping in shows the shrine-style card "The warm light / go home"; only its tap goes home, stepping out cancels.
+After the last boss it takes him as before. `__end('home')` answers the card. Check: `node tools/checks/home.mjs` (K-H1-4).
+Card copy is mine, his to rewrite. The dev server was started at home this session (stop it at session end).
+
 **Nothing is running and nothing is uncommitted.** Main = origin, all pushed. He leaves the office ~17:00 and plays at home.
 
 **First, at home:** start the dev server (`npx vite --host`, give him the LAN address), then ask how these felt *before*
