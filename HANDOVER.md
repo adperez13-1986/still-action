@@ -16,6 +16,9 @@ d2/d4/d5/d8 + dials, report to scratchpad, not repo). **B2 (R8) 736488e (live si
 B3 (R4-R6, dark) committed. A fresh Sonnet engineer on B4 (the Signalman), uncommitted work in src/.
 **15:08: on his word B1 + B2 pushed and live (with B3 dark, through 3b0a27b).** He plays them at home tonight: ask how Parry
 and the lunge felt; `catches` per depth is in the playtest log.
+**B4 (the Signalman, dark) committed 6568f0c.** K-T13's multi-kill rule fails with it (49% of trains kill 2+; share 24.5%, free 0):
+the translator is ruling on it. **His Parry call: B + grace 150 behind a pause switch** (`parry catch`, on by default, off = today);
+the B4 engineer is building it as its own commit, uncommitted work in src/. Ask him before pushing it. Then B5 (the Handcar).
 **Parry verdict (design/parry/README.md, 8c8b1f4):** dead slot from d4 even with R3 and perfect timing. Options A (cooldown
 2200), B (a catch readies Parry, cap 1/1.5 s), C (caught body waits 1 s); balancer recommends B + grace 150. **His call, asked.**
 Also: the Cleaver beats Piston from d4 (arms slot has a Cleaver problem).
