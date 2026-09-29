@@ -255,4 +255,210 @@ check('K-98', ON, async ({ page }) => {
   assertEq("seeds with a lobber in __genLook(8, s, 'II') (the Line)", got.worksLineFirst.lobbersOnLine8, 0)
 })
 
+// --- K-99: the open fields (R6) --------------------------------------------------------------
+async function openDepths(page) {
+  return evalJson(page, () => {
+    const out = {}
+    for (const o of ['II', 'III']) {
+      out[o] = []
+      for (let d = 1; d <= window.__runDepths; d++) {
+        for (let s = 1; s <= 3; s++) {
+          window.__run.route = o
+          window.__enter(d, s)
+          if (!!window.__level().open !== window.__openAt(d, o)) out[o].push(`d${d} s${s}: open ${!!window.__level().open}, __openAt ${window.__openAt(d, o)}`)
+          if (s === 1 && window.__level().open) out[o + 'set'] = [...(out[o + 'set'] ?? []), d]
+        }
+      }
+    }
+    return out
+  })
+}
+check('K-99', ON, async ({ page }) => {
+  const got = await openDepths(page)
+  assertEq("ON: entered open flag vs __openAt, order 'II'", got.II, [])
+  assertEq("ON: entered open flag vs __openAt, order 'III'", got.III, [])
+  assertEq("ON: open depths, Works first", got.IIset, [1, 4])
+  assertEq("ON: open depths, Line first", got.IIIset, [1, 7])
+})
+check('K-99', OFF, async ({ page }) => {
+  const got = await openDepths(page)
+  assertEq("OFF: entered open flag vs __openAt, order 'II'", got.II, [])
+  assertEq("OFF: entered open flag vs __openAt, order 'III'", got.III, [])
+  assertEq("OFF: open depths, Works first", got.IIset, [1, 4])
+  assertEq("OFF: open depths, Line first", got.IIIset, [1])
+})
+
+// --- K-97b: the day over 9, entered (R6) ------------------------------------------------------
+check('K-97b', ON, async ({ page }) => {
+  const got = await evalJson(page, () => {
+    const out = {}
+    for (const o of ['II', 'III']) {
+      window.__run.route = o
+      window.__enter(6, 1)
+      window.__killBoss()
+      window.__step(0.2)
+      const six = window.__day()
+      window.__enter(9, 1)
+      window.__combat.boss.hp = window.__combat.boss.maxHp / 2
+      window.__step(4)
+      const half = window.__day()
+      window.__killBoss()
+      window.__step(0.2)
+      const dark = window.__day()
+      out[o] = { six: { progress: six.progress, from: six.from }, halfTarget: half.target, dark: { progress: dark.progress, to: dark.to } }
+    }
+    return out
+  })
+  for (const o of ['II', 'III']) {
+    assertEq(`ON ${o}: depth 6 after the kill, progress`, got[o].six.progress, 0)
+    assertEq(`ON ${o}: depth 6 after the kill, from`, got[o].six.from, 'late-afternoon')
+    assert(Math.abs(got[o].halfTarget - 0.5) <= 0.02, `ON ${o}: depth 9 at half HP, day target ${got[o].halfTarget} is not within 0.02 of 0.5`)
+    assertEq(`ON ${o}: depth 9 after the kill, progress`, got[o].dark.progress, 1)
+    assertEq(`ON ${o}: depth 9 after the kill, to`, got[o].dark.to, 'first-dark')
+  }
+})
+check('K-97b', OFF, async ({ page }) => {
+  const got = await evalJson(page, () => {
+    window.__run.route = 'II'
+    window.__enter(6, 1)
+    window.__killBoss()
+    window.__step(0.2)
+    return window.__day().progress
+  })
+  assertEq('OFF: depth 6 after the kill, progress', got, 1)
+})
+
+// --- K-96b: Home at 6 is a dusk homecoming with no walk (R6) ----------------------------------
+check('K-96b', ON, async ({ page }) => {
+  const got = await evalJson(page, () => {
+    window.__run.route = 'II'
+    window.__enter(6, 1)
+    window.__killBoss()
+    window.__step(0.2)
+    window.__end('home')
+    const hour = window.__run.ending?.hour ?? null
+    const modes = new Set()
+    let reached = -1
+    for (let i = 0; i <= 8 * 60; i++) {
+      modes.add(window.__mode())
+      if (window.__mode() === 'ending') { reached = i / 60; break }
+      window.__step(1 / 60)
+    }
+    return { hour, reached, walked: modes.has('toWalk') || modes.has('walkHome'), modes: [...modes] }
+  })
+  assertEq('ON: __run.ending.hour after __end(home) at 6', got.hour, 'dusk')
+  assert(got.reached >= 0, `ON: never reached 'ending' within 8 s (modes seen: ${got.modes})`)
+  assert(!got.walked, `ON: a walk at 6 (modes seen: ${got.modes})`)
+})
+
+// --- K-95a: the beams by boss (R6) -------------------------------------------------------------
+check('K-95a', ON, async ({ page }) => {
+  const got = await evalJson(page, () => {
+    const out = { exits: [3, 6, 9].map((d) => window.__exitsAfterBoss(d)) }
+    for (const o of ['II', 'III']) {
+      window.__run.route = o
+      window.__enter(6, 1)
+      window.__killBoss()
+      window.__step(0.2)
+      const e6 = window.__exits()
+      out['six' + o] = { cold: e6.cold, warm: e6.warm, yard: window.__yardRoad() }
+      window.__enter(9, 1)
+      window.__killBoss()
+      window.__step(0.2)
+      const e9 = window.__exits()
+      out['nine' + o] = { cold: e9.cold, warm: e9.warm, yard: window.__yardRoad() }
+    }
+    // at 3, the road not chosen yet (the save's roads are ['II']: no room, no alternate)
+    window.__run.route = null
+    window.__enter(3, 1)
+    window.__killBoss()
+    window.__step(0.2)
+    out.three = window.__yardRoad()
+    return out
+  })
+  assertEq('ON __exitsAfterBoss(3|6|9)', got.exits, [['cold', 'warm'], ['cold', 'warm'], ['warm']])
+  for (const [o, other] of [['II', 'III'], ['III', 'II']]) {
+    const six = got['six' + o], nine = got['nine' + o]
+    assert(six.cold?.open === true && six.warm?.open === true, `ON ${o}: after the kill at 6 the beams are cold=${JSON.stringify(six.cold)} warm=${JSON.stringify(six.warm)}`)
+    assertEq(`ON ${o}: __yardRoad().route after the kill at 6`, six.yard?.route ?? null, other)
+    assertEq(`ON ${o}: cold beam at 9`, nine.cold, null)
+    assert(nine.warm?.open === true, `ON ${o}: warm beam at 9 is ${JSON.stringify(nine.warm)}`)
+    assertEq(`ON ${o}: __yardRoad() at 9`, nine.yard, null)
+  }
+  assertEq('ON: __yardRoad() at 3 with the road unchosen', got.three, null)
+})
+check('K-95a', OFF, async ({ page }) => {
+  const got = await evalJson(page, () => {
+    window.__run.route = 'II'
+    window.__enter(6, 1)
+    window.__killBoss()
+    window.__step(0.2)
+    return window.__yardRoad()
+  })
+  assertEq('OFF: __yardRoad() at 6 after the kill', got, null)
+})
+
+// --- K-94: the square's cold beam (R7) ---------------------------------------------------------
+check('K-94', ON, async ({ page }) => {
+  const got = await evalJson(page, () => {
+    const BODY = 0.42, EXIT_R = 1.4, STEP = 0.25
+    const bad = []
+    for (let s = 1; s <= 20; s++) {
+      window.__run.route = 'II'
+      window.__enter(6, s)
+      window.__killBoss()
+      window.__step(0.2)
+      const lv = window.__level(), ex = window.__exits(), fp = lv.footprint, terrain = window.__combat.terrain
+      const why = (m) => bad.push(`seed ${s}: ${m}`)
+      if (!ex.cold || !ex.cold.open) { why(`cold beam is ${JSON.stringify(ex.cold)}`); continue }
+      if (!ex.warm) { why('no warm beam'); continue }
+      if (fp.dead !== false) why(`footprint.dead is ${fp.dead}`)
+      const dFoot = Math.hypot(ex.cold.x - fp.x, ex.cold.z - fp.z)
+      if (dFoot < fp.r + EXIT_R + BODY) why(`cold is ${dFoot.toFixed(2)} from the footprint, needs ${(fp.r + EXIT_R + BODY).toFixed(2)}`)
+      if (terrain.blocked(ex.cold.x, ex.cold.z, BODY)) why('cold stands on something blocked')
+      const dWarm = Math.hypot(ex.cold.x - ex.warm.x, ex.cold.z - ex.warm.z)
+      if (dWarm < 3.3) why(`cold is ${dWarm.toFixed(2)} from warm, needs 3.3`)
+      // a 0.25 u grid over the floor's bounding box: can he walk from the entrance to within 1.0 of each beam?
+      const cells = [...lv.floor].map((k) => k.split(',').map(Number))
+      const xs = cells.map((c) => c[0] * 4), zs = cells.map((c) => c[1] * 4)
+      const x0 = Math.min(...xs) - 2, x1 = Math.max(...xs) + 2, z0 = Math.min(...zs) - 2, z1 = Math.max(...zs) + 2
+      const nx = Math.round((x1 - x0) / STEP) + 1, nz = Math.round((z1 - z0) / STEP) + 1
+      const seen = new Uint8Array(nx * nz)
+      const at = (i, j) => [x0 + i * STEP, z0 + j * STEP]
+      const si = Math.round((lv.entrance.x - x0) / STEP), sj = Math.round((lv.entrance.z - z0) / STEP)
+      const queue = [si + sj * nx]
+      seen[si + sj * nx] = 1
+      let cold = false, warm = false
+      for (let q = 0; q < queue.length; q++) {
+        const i = queue[q] % nx, j = (queue[q] - i) / nx
+        const [x, z] = at(i, j)
+        if (Math.hypot(x - ex.cold.x, z - ex.cold.z) <= 1.0) cold = true
+        if (Math.hypot(x - ex.warm.x, z - ex.warm.z) <= 1.0) warm = true
+        if (cold && warm) break
+        for (const [di, dj] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const ni = i + di, nj = j + dj
+          if (ni < 0 || nj < 0 || ni >= nx || nj >= nz || seen[ni + nj * nx]) continue
+          seen[ni + nj * nx] = 1
+          const [px, pz] = at(ni, nj)
+          if (!terrain.blocked(px, pz, BODY)) queue.push(ni + nj * nx)
+        }
+      }
+      if (!cold) why('the cold beam cannot be reached from the entrance')
+      if (!warm) why('the warm beam cannot be reached from the entrance')
+    }
+    return bad
+  })
+  assertEq("ON: the square's beams over seeds 1..20 (first failures)", got.slice(0, 5), [])
+})
+check('K-94', OFF, async ({ page }) => {
+  const got = await evalJson(page, () => {
+    window.__run.route = 'II'
+    window.__enter(6, 1)
+    window.__killBoss()
+    window.__step(0.2)
+    return window.__exits().cold
+  })
+  assertEq('OFF: the cold beam at 6 after the kill', got, null)
+})
+
 process.exit(await run(process.argv.slice(2)))

@@ -47,7 +47,7 @@ import type { NotebookPage } from './pause'
 import {
   RUN_DEPTHS, BOSS_EVERY, LEAN_HOME, FIRST_RUN_IN_MAZE, DAY, exitsAfterBoss, hourAtEnd, bossFor, areaOf,
   applyDay, dayNow, currentSat, currentGrace, fogAt, dayAt, AREAS, PLACES, WALK_PLACE, ASSEMBLER_DEF, ARBITER_DEF, ENGINE_DEF, ARBITER_AT_6, lookAt, applyDayAt,
-  DAY_SPAN, DAY_FX, flag, setFlags, flagsNow, roadChoice, stepOf, roadOf, openAt,
+  DAY_SPAN, DAY_FX, flag, setFlags, flagsNow, roadChoice, stepOf, roadOf, openAt, otherRoad,
   type BossDef, type BossKind, type HomeHour, type PlaceDef, type RouteId,
 } from './areas'
 import { createWorkshop, MARKS_MAX, type ArrivalKind, type InteractId, type Workshop } from './workshop'
@@ -80,8 +80,6 @@ const devParam = (k: string): string | null => (import.meta.env.DEV ? params.get
 const ROUTE_PARAM: RouteId | null = devParam('route') === 'III' ? 'III' : devParam('route') === 'II' ? 'II' : null
 /** `?crossroads=1` (DEV): the crossroads after the Assembler, whatever the switch and the save say. */
 const CROSSROADS_PARAM = devParam('crossroads') === '1'
-/** Depths 1 and 4 are open fields instead of rooms (never the Line's); on for everyone since 28 Sep. */
-const OPEN_DEPTHS: readonly number[] = [1, 4]
 
 /**
  * The save. A dev run (?depth=) reads it and never writes, so tuning at the boss
@@ -2350,14 +2348,18 @@ function bossDown(at: THREE.Vector3) {
     // the lens goes out; the tower stands as a husk, solid; the square is at first dark
     sfx.lensOut(panOf(at))
     raiseHusk(at.x, at.z, felled.aim)
-    day.snap(1)
-    dayApplied = 1
-    applyDayAt(world, run.depth, 1)
     // its drops land outside the footprint, toward him
     const dx = still.pos.x - at.x
     const dz = still.pos.z - at.z
     const d = Math.hypot(dx, dz) || 1
     at = new THREE.Vector3(at.x + (dx / d) * 1.9, 0, at.z + (dz / d) * 1.9)
+  }
+  // the day goes to first dark on the same tick: a 6-depth run's Arbiter at 6, a 9-depth run's last boss at 9 (the Arbiter at 6 holds its light)
+  const toDark = DAY_SPAN[run.depth]?.by === 'boss' && (RUN_DEPTHS === 9 || arbiter)
+  if (toDark) {
+    day.snap(1)
+    dayApplied = 1
+    applyDayAt(world, run.depth, 1)
   }
   for (const kind of exitsAfterBoss(run.depth)) {
     if (kind === 'cold') level?.openExit()
@@ -2583,7 +2585,7 @@ function enterLevel(depth: number, o: { seed?: number; bossFelled?: boolean; res
   run.bossLoot = []
   const place = lookAt(depth, routeNow(), flag('engine'))
   // the thief's first meeting is certain (G8): its page unmet
-  level = generateLevel(depth, run.seed, { boss: bossHere(depth), place, thiefFirst: !save.notebook[THIEF_PAGE], open: OPEN_DEPTHS.includes(depth) })
+  level = generateLevel(depth, run.seed, { boss: bossHere(depth), place, thiefFirst: !save.notebook[THIEF_PAGE], open: openAt(depth, routeNow()) })
   world.scene.add(level.group)
   combat.terrain = level.terrain
   loot.terrain = level.terrain
@@ -2629,8 +2631,8 @@ function enterLevel(depth: number, o: { seed?: number; bossFelled?: boolean; res
   namedLabels.length = 0
   // the place's look (every place wears the ruin's today; setSurfaces is a no-op until they don't)
   setSurfaces(place.surfaces)
-  // the day starts where this depth's span does; the square once its tower is down is at first dark
-  day.enter(depth, run.bossFelled && boss?.kind === 'arbiter')
+  // the day starts where this depth's span does; the last depth's boss, once down, is at first dark (a 6-depth run's is the Arbiter's square)
+  day.enter(depth, run.bossFelled && (RUN_DEPTHS === 9 || boss?.kind === 'arbiter'))
   dayApplied = day.shown
   applyDayAt(world, depth, day.shown)
   run.fought = false
@@ -2718,7 +2720,7 @@ function savePlaytest() {
   if (!playKey || navigator.webdriver || (!import.meta.env.DEV && !owner)) return
   const body = {
     key: playKey, id: run.id, build: __BUILD__, startedAt: run.startedAt, savedAt: new Date().toISOString(),
-    dev: run.dev, end: run.ending?.kind ?? null, depth: run.depth, breakRule: run.breakRule, hand: run.hand, eye: run.eye,
+    dev: run.dev, end: run.ending?.kind ?? null, depth: run.depth, runDepths: RUN_DEPTHS, route: run.route, breakRule: run.breakRule, hand: run.hand, eye: run.eye,
     stats: statsOut(),
     walkS: Math.round(run.walkS),
     taps: run.taps,
@@ -2816,14 +2818,26 @@ function clearYardDressing() {
 }
 
 /**
+ * The cold beam's dressing: the road it leads to, or null. After boss 6 of a 9-depth run it is always the other road,
+ * with no room. Otherwise it is §3.6's fallback: only at depth 3, while the road isn't chosen, the alternate is on and
+ * the Line is open, the road the alternate would give him.
+ */
+function yardRoad(): RouteId | null {
+  if (RUN_DEPTHS === 9 && run.depth === 6) return otherRoad(run.route ?? 'II')
+  if (run.depth !== 3 || run.route) return null
+  if (roadChoice() !== 'alternate' || !flag('line') || !save.roads.includes('III')) return null
+  return routeForAlternate()
+}
+
+/**
  * §3.6, the fallback: with no room, the Assembler's cold beam is dressed as the road it leads
- * to, with its name. Only once it's open, only at depth 3, only while the alternate is on.
+ * to, with its name (the alternate's, at depth 3; and after boss 6 of a 9-depth run, always the other road). Only once it's open.
  */
 function dressYardBeam() {
   clearYardDressing()
-  if (!level || run.depth !== 3 || !level.exitOpen || run.route) return
-  if (roadChoice() !== 'alternate' || !flag('line') || !save.roads.includes('III')) return
-  const route = routeForAlternate()
+  if (!level || !level.exitOpen) return
+  const route = yardRoad()
+  if (!route) return
   const at = level.exit.clone()
   // the Line's rails run in from past the floor's far-right edge (−z), into the beam's foot
   let z = at.z

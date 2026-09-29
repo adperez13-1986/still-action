@@ -1764,9 +1764,17 @@ export function generateLevel(
   // exitsAfterBoss says it can open, and keeps it dark until the boss is down
   const exits: ExitKind[] = opts.boss ? exitsAfterBoss(depth) : ['cold']
   const cold = exits.includes('cold') ? makeBeam(COLD_BEAM, BEAM_H) : null
+  // the side away from the camera, for the warm beam; the square's cold beam mirrors it (no rand())
+  const c = exitRoom.center
+  const away = new THREE.Vector3(c.x - entranceRoom.center.x, 0, c.z - entranceRoom.center.z).normalize()
+  const a = new THREE.Vector3(away.z, 0, -away.x)
+  const side = a.x + a.z <= -a.x - a.z ? a : a.negate()
+  // the square's tower stands in the room's middle, so a cold beam there (the middle boss of a 9-depth run) mirrors
+  // the warm one across it, WARM_OFFSET off the centre, inside the posts' ring; every other cold beam stands at the room's centre
+  const coldAt = cold && square ? c.clone().addScaledVector(side, -WARM_OFFSET) : exitRoom.center.clone()
   if (cold) {
     cold.group.name = 'beam:cold'
-    cold.group.position.set(exitRoom.center.x, 0, exitRoom.center.z)
+    cold.group.position.set(coldAt.x, 0, coldAt.z)
     cold.group.visible = !opts.boss
     group.add(cold.group)
   }
@@ -1774,10 +1782,6 @@ export function generateLevel(
   let warm: Beam | null = null
   if (opts.boss && exits.includes('warm')) {
     // beside the cold one, on the side away from the camera, so its stripe falls on the void
-    const c = exitRoom.center
-    const away = new THREE.Vector3(c.x - entranceRoom.center.x, 0, c.z - entranceRoom.center.z).normalize()
-    const a = new THREE.Vector3(away.z, 0, -away.x)
-    const side = a.x + a.z <= -a.x - a.z ? a : a.negate()
     home = c.clone().addScaledVector(side, WARM_OFFSET)
     warm = makeHomeBeam(BEAM_H)
     warm.group.name = 'beam:warm'
@@ -1829,7 +1833,7 @@ export function generateLevel(
     },
     rooms: layout.rooms,
     entrance: entranceRoom.center.clone(),
-    exit: exitRoom.center.clone(),
+    exit: coldAt.clone(),
     update(t) {
       for (const o of shrineParts) if (o.name === 'glyph') o.rotation.y = t * 0.8
       cold?.update(t)
