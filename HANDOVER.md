@@ -1,41 +1,53 @@
-# Handover — 29 Sep 2026 (afternoon)
+# Handover — 29 Sep 2026 (16:30)
 
 For the next session. Read this, then `DESIGN.md` (the settled decisions), then the design
 folder for whatever you're touching. Don't re-derive any of them.
 
-## Start here (29 Sep, afternoon: stage R done, dark)
+## Start here (29 Sep, 16:30: stage B through B6, two whole-game changes live)
 
-**29 Sep, 14:10: his calls: R3 and R8 yes (my recs), bossDmg dial left alone** (ba443ce, LINE-RULES). Stage B started:
-the verifier is writing `design/area3/STAGE-B.md` (the build brief, shaped like STAGE-R). R3 and R8 go first as their own
-commits, because they change the live game (push only on his word). Then a Sonnet 5.5 engineer builds B step by step, reviewed.
-Brief done and committed (34cd1e5, `design/area3/STAGE-B.md`: B0 fight baseline tools, B1 R3, B2 R8, B3 trains vs pressure
-bodies, B4 Signalman, B5 Handcar, B6 Sleepers, B7 dressing, B8 whole stage). B0 done (5538313: `tools/checks/fights.mjs` K-90F,
-K-90N, K-90L). **B1 (R3) d7382aa (live since 15:08).** B1's K-W3d FAILS its dead rule: with the autos on, Parry catches 0.03 tells/fight at depth 1 (hulks die in ~1.3 s,
-one Parry cast per fight); 2.02 with autos off. Code is right; whether Parry earns its slot is with the balancer (measuring
-d2/d4/d5/d8 + dials, report to scratchpad, not repo). **B2 (R8) 736488e (live since 15:08).** Sonnet
-B3 (R4-R6, dark) committed. A fresh Sonnet engineer on B4 (the Signalman), uncommitted work in src/.
-**15:08: on his word B1 + B2 pushed and live (with B3 dark, through 3b0a27b).** He plays them at home tonight: ask how Parry
-and the lunge felt; `catches` per depth is in the playtest log.
-**B4 (the Signalman, dark) committed 6568f0c.** K-T13's multi-kill rule fails with it (49% of trains kill 2+; share 24.5%, free 0):
-the translator is ruling on it. **His Parry call: B + grace 150 behind a pause switch** (`parry catch`, on by default, off = today);
-built and committed 75bbe9e, **pushed + live 16:00 on his word.** K-T13 was a harness double-count (fixed): with the Signalman
-trains are ~20% of kills, 8-10% multi-kill, 0 free: PASS; translator: working as designed (hulks lunge through Still onto the
-called lane). Two held options if the phone says "the train did it": no crouch across a lit strip; the recover not committed.
-**B5 (the Handcar, dark) committed.** Phone questions: its tracking tell is faint at phone size; locked it shares the train's
-red wash (the cart, no lamps, no rail outlines set it apart; lanes and sidings never share a room).
-**B6 (Sleepers, dark) committed.** Phone question: is the ballast patch's shiver visible (a 0.02 u, 300 ms lift; a still can't
-show it). Next: B7 (ambience, card, notebook, hides). **B7's notebook re-roles wait on his two answers** (Handcar's own page vs
-Iron Crawler; only unmet pages move?); my recs: own page, unmet only.
-**Parry verdict (design/parry/README.md, 8c8b1f4):** dead slot from d4 even with R3 and perfect timing. Options A (cooldown
-2200), B (a catch readies Parry, cap 1/1.5 s), C (caught body waits 1 s); balancer recommends B + grace 150. **His call, asked.**
-Also: the Cleaver beats Piston from d4 (arms slot has a Cleaver problem).
-If this session dies: rerun B0's "Done when" checks on whatever is in tools/, then continue at the next step. His open items are
-STAGE-B §9 (Parry card line, Iron Crawler page for the Handcar, re-roling met pages, all the words).
+**Nothing is running and nothing is uncommitted.** Main = origin, all pushed. He leaves the office ~17:00 and plays at home.
 
-**29 Sep, 14:00: pickup card fix (his screenshot).** On a landscape phone a long-named part (history + melt) grew the
-card off the top and put take under the "full" chip. Now: capped to the screen, wider on short screens (<=520 px tall),
-sits over the chips, tighter buttons, the words scroll before the buttons move (style.css `#offer`). Checked headless
-from a static file at 915x412 / 800x360 / portrait. Ask if it reads on the Poco.
+**First, at home:** start the dev server (`npx vite --host`, give him the LAN address), then ask how these felt *before*
+reading numbers. Live since today:
+- **R3** (d7382aa): Parry Clamp catches a pressure body's own tell (hulk cock 180 ms, sentinel glow 260 ms, mite rear 120 ms).
+- **R8** (736488e): a counter hulk's crouch books its lunge (never within 0.3 s of a ram/sentinel/train lock).
+- **Parry-catch trial** (75bbe9e, his call): pause switch `parry catch`, on by default. On: 150 ms grace after a tell, and a
+  Parry snap that catches a tell or breaks a windup readies Parry (once per 1.5 s). Off = R3 alone. Why: the balancer found
+  Parry a dead slot from depth 4 even with R3 and perfect timing (`design/parry/README.md`: options A/B/C, B + grace 150 picked).
+  Log fields per depth: `catches {hulk,sentinel,mite}`, `parryCatch`, `parryReadies`, `lunges`. Ask: does the free ready feel
+  like skill or like a free cast (he cut the riders on 28 Sep for a similar free ready)?
+- Pickup card fix (98e4121): card no longer runs off the top on a landscape phone. Ask if it reads on the Poco.
+
+**Stage B (the Line's bodies), all dark behind the flags** (`?roads=1&line=1`). Brief: `design/area3/STAGE-B.md`. Done:
+- B0 checks (`tools/checks/fights.mjs`: K-90F = 14 scripted fights x 5 seeds, the combat baseline; K-90N names; K-90L split).
+- B1 R3, B2 R8 (live, above). B3 R4-R6: pressure bodies step off lit rails unless moved/countering; no crouch on a lit strip;
+  trains hit bodies for 20 x curve hp.
+- B4 the Signalman (`src/signal.ts`), B5 the Handcar (`src/handcar.ts`, Charger subclass on a siding), B6 Sleepers (ballast
+  mites, `swarm.ts`). Phone questions: the Signalman is a thin dark post, the lamp does the reading; the Handcar's tracking tell
+  is faint at phone size and its lock shares the train's red wash; the Sleepers' shiver may be invisible on a dark tile.
+- K-T13 (trains' kill share) had a double-count bug, fixed: trains ~20% of kills, 8-10% multi-kill, 0 free. Translator: the
+  Signalman works as designed. Held options if the phone says "the train did it": no crouch across a lit strip; recover not committed.
+- Checks: `node tools/checks/{baseline,fights,k9,area3,stageb}.mjs`. All PASS except **K-W3d** (Parry's dead rule, a design
+  finding; its thresholds were for R3 alone). When a step legitimately changes the Line, `baseline.mjs capture-line` re-captures
+  K-90L (K-91 reads the same file). Never re-capture K-90F without reviewing the diff.
+
+**Next: B7** (the `line` ambience, the card's route caption, notebook re-roles + `pageOf`, the hides), then **B8** (whole stage,
+headless), then stage C (the Engine). **B7's notebook re-roles wait on his two answers:** (1) the Handcar's own page, or Iron
+Crawler's (that leaves every ram at 1-3 named "Overload Core")? (2) may pages he has already met move, or only unmet ones?
+My recs: own page; unmet only. The rest of B7 doesn't need him.
+
+**His to write (all PLACEHOLDER):** Parry Clamp's card line (it no longer says what it does); the Signalman / Handcar /
+Sleepers names, WHAT words and notebook lines; the card's route word (`ROUTE_WORD.III`).
+
+**How it was built today:** verifier wrote the brief; a Sonnet 5.5 engineer per step (fresh one at B4 when context grew), stepped
+with SendMessage; balancer (Parry) and translator (K-T13) on the design questions. I read every diff, reran every suite and
+looked at every screenshot before each commit. Review caught: the Handcar's stun lever was flat peach (now deep red + flicker);
+engineers' reports were accurate this time, but keep verifying.
+
+**Side findings, not acted on:** the Scrap Cleaver beats Piston from depth 4 (the arms slot has a Cleaver problem, not only
+Parry); `Combat.autoTimer` survives `reset()` (harmless so far).
+
+## Earlier start-here (29 Sep, afternoon: stage R done, dark)
 
 **Both roads in one run: stage R is built, pushed, and dark** (`BOTH_ROADS = false`; DEV `?roads=1`, add
 `&line=1` for the crossroads room). Live is unchanged: `node tools/checks/baseline.mjs compare` (K-90) proves
