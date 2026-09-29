@@ -38,7 +38,7 @@ no pedestals. Inside a run Still gets stronger (between runs, never).
   dark floor?
 
 **Open, his to decide:**
-1. Rams and Lobbers keep their telegraphs (my recommendation, not confirmed).
+1. ~~Rams and Lobbers keep their telegraphs~~: **confirmed by him 29 Sep.**
 2. Next after his runs, in my suggested order: synergy step 2 (slammed: a part's shove into a wall pins, some
    parts pay x2) or the counter-moves (the hulk lunges at a Still who holds the band ~1.5 s; the sentinel steps
    behind cover from a planted Still), depending on what the runs show. Then hauled (step 3), named champions

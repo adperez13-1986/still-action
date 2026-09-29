@@ -432,6 +432,11 @@ const combat = new Combat(world.scene, OPEN, {
       // its heat broken by his cold: the tell shatters, the tone cuts dead, and the moment holds
       windups.get(ev.enemy)?.stop(true)
       windups.delete(ev.enemy)
+      // a pressure hulk has no windup but a counter's crouch: this broke one
+      if (ev.enemy.kind === 'chaser' && ev.enemy.pressure) {
+        const lg = run.stats[run.stats.length - 1]?.lunges
+        if (lg) lg.broken++
+      }
       if (ev.push) {
         const st = run.stats[run.stats.length - 1]
         if (st) st.breaks++
@@ -574,6 +579,8 @@ const combat = new Combat(world.scene, OPEN, {
     // the thief never winds up: it has no voice here
     if (e.kind === 'thief') return
     breakHint(e)
+    // a pressure hulk's crouch has its own voice (the counter event), not the heavy's ratchet
+    if (e.pressure) return
     if (isBoss(e)) {
       // the Assembler shifts its weight into every move: pressure let into its rams
       if (e instanceof Assembler) sfx.hydraulic('lift', panOf(e.pos), hush())
@@ -595,6 +602,14 @@ const combat = new Combat(world.scene, OPEN, {
   },
   onStrike: (e) => {
     windups.delete(e)
+    // a counter's lunge leaving: air and a push off the floor, dust kicked up behind it, not the swipe's slam
+    if (lunging.delete(e)) {
+      sfx.lunge(panOf(e.pos))
+      const back = new THREE.Vector3(still.pos.x - e.pos.x, 0, still.pos.z - e.pos.z).normalize().negate()
+      vfx.dust(at3(e.pos, 0), 10, 0.9, undefined, 4)
+      vfx.sparks(at3(e.pos, 0.15), EMBER, 5, 3, back, 0.5)
+      return
+    }
     // the rush roars on and follows the ram across the screen
     if (e.kind === 'charger') {
       if (run.phase === 'crawl') loops.set(e, sfx.rush(panOf(e.pos)))
@@ -722,6 +737,41 @@ function packEvent(ev: EnemyEvent) {
       break
     case 'mend':
       if (ev.what === 'cut') cableCut(ev)
+      break
+    case 'counter':
+      counterBeat(ev)
+      break
+  }
+}
+
+/** Hulks whose lunge has just begun: the strike that follows this tick is the lunge, not a swipe. */
+const lunging = new WeakSet<Enemy>()
+
+/** The counter-moves' instants (COUNTERS.md): the sound, the log. The tells are the bodies' own. */
+function counterBeat(ev: Extract<EnemyEvent, { kind: 'counter' }>) {
+  const st = run.stats[run.stats.length - 1]
+  const pan = panOf(ev.e.pos)
+  switch (ev.what) {
+    case 'crouch':
+      if (st?.lunges) st.lunges.started++
+      if (run.phase === 'crawl') windups.set(ev.e, sfx.asVoice(sfx.crouch(ev.ms ?? 350, pan, windupGain())))
+      break
+    case 'lunge':
+      lunging.add(ev.e)
+      break
+    case 'lungeHit':
+      if (st?.lunges) st.lunges.hit++
+      break
+    case 'duck':
+      if (st?.ducks) st.ducks.started++
+      sfx.turnAway(pan)
+      break
+    case 'backaway':
+      if (st?.ducks) st.ducks.backed++
+      sfx.turnAway(pan)
+      break
+    case 'peek':
+      if (st?.ducks) st.ducks.peeked++
       break
   }
 }
@@ -1365,6 +1415,13 @@ interface DepthStats {
   playS?: number
   /** The pressure prototype on at this depth (its ordinary packs), and integrity lost here, all sources. */
   pressure?: boolean; hpLost?: number
+  /**
+   * The counter-moves on at this depth (COUNTERS.md), and what they did: hulk lunges begun, landed on Still and
+   * broken in the crouch; sentinel ducks to cover, peeks that followed, and back-aways where there was no cover.
+   */
+  counters?: boolean
+  lunges?: { started: number; hit: number; broken: number }
+  ducks?: { started: number; peeked: number; backed: number }
   /** Temper on at this depth, and parts melted into a worn one here; mastery learned here. */
   temper?: boolean; melts?: number; mastered?: string[]
   /** Parts' damage through hitPart (nominal, after a state's pay), beside `autoDmg`: the auto/part split. */
@@ -1934,6 +1991,28 @@ pause.setSwitch('temper', () => temperOn, (on) => {
   temperOn = on
   try {
     localStorage.setItem(TEMPER_KEY, on ? '1' : '0')
+  } catch {
+    // private window: it holds for this session
+  }
+})
+
+/**
+ * The counter-moves (COUNTERS.md): a pressure hulk lunges at a Still who holds its band, a pressure sentinel
+ * ducks to cover from a planted one. A pause switch, kept per device, on by default; it takes effect from
+ * the next depth, as pressure did. Off is today's behaviour exactly.
+ */
+const COUNTERS_KEY = 'still-action.counters'
+let countersOn = (() => {
+  try {
+    return localStorage.getItem(COUNTERS_KEY) !== '0'
+  } catch {
+    return true
+  }
+})()
+pause.setSwitch('counters', () => countersOn, (on) => {
+  countersOn = on
+  try {
+    localStorage.setItem(COUNTERS_KEY, on ? '1' : '0')
   } catch {
     // private window: it holds for this session
   }
@@ -2511,6 +2590,7 @@ function enterLevel(depth: number, o: { seed?: number; bossFelled?: boolean; res
   // and mites are pressure bodies (a short cock and a jab, a short glow and a burst, a rear and a nip;
   // their hits stack); the elite pack keeps the big telegraphs as the level's heavies, and bosses keep theirs
   combat.pressure = !level.boss
+  combat.counters = combat.pressure && countersOn
   combat.curve = curveAt(depth)
   for (const p of level.packs) {
     const members = p.members.map((m) => ({ ...m, variant: m.variant === 'lobber' ? ('lobber' as const) : undefined }))
@@ -2559,6 +2639,7 @@ function enterLevel(depth: number, o: { seed?: number; bossFelled?: boolean; res
   run.depth = depth
   closeStats()
   run.stats.push({ depth, fights: 0, pushes: 0, breaks: 0, deadTaps: 0, quiets: 0, strainIn: run.strain, strainOut: null, hand: 0, shots: 0, eye: 0, eyeCasts: 0, handBreaks: 0, braced: 0, playS: 0, eyeBreaks: 0, openings: 0, plantedS: 0, autoDmg: { hand: 0, eye: 0 }, riders: {}, pressure: combat.pressure, hpLost: 0, temper: temperOn, melts: 0,
+    counters: combat.counters, lunges: { started: 0, hit: 0, broken: 0 }, ducks: { started: 0, peeked: 0, backed: 0 },
     states: Object.fromEntries(STATE_IDS.map((id) => [id, { set: 0, paid: 0, expired: 0 }])) as DepthStats['states'],
     stateBonus: Object.fromEntries(STATE_IDS.map((id) => [id, 0])) as DepthStats['stateBonus'],
     paidBy: { head: 0, torso: 0, arms: 0, legs: 0, hand: 0, eye: 0 }, pushedIntoState: 0, shatter: { n: 0, dmg: 0 }, maxMul: 1,

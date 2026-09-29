@@ -441,6 +441,11 @@ export class Combat {
    * and broods pressure bodies (no big windup, their hits stack); an elite pack keeps its telegraphs, the heavies.
    */
   pressure = false
+  /**
+   * Counter-moves (COUNTERS.md): packs added while this is on give their pressure hulks and sentinels a
+   * second tell that punishes the answer that beats the first (the lunge, the duck). Off is today's behaviour.
+   */
+  counters = false
   /** ms until any brood's next nip may start: the gap holds over every brood, as the inner cap does. */
   private nipWait = 0
   /** Mastery (mastery.ts): what the hand and the eye have learned this run. Main owns the set; reset() leaves it. */
@@ -476,6 +481,23 @@ export class Combat {
       if (p) p.token = e
     },
     held: (e) => this.held.has(e),
+    handReach: HAND_REACH,
+    planted: false,
+    // counter-moves: one hulk crouches or lunges at a time, whatever the pack
+    lungeFree: (e) => !this.enemies.some((o) => o !== e && !o.dead && o instanceof Chaser && o.lunging && this.awakeNow(o)),
+    // counter-moves: at most half a pack's sentinels hide at once, and at least one may
+    duckFree: (e) => {
+      const pack = this.packOf.get(e)
+      if (!pack) return true
+      let n = 0
+      let hiding = 0
+      for (const m of pack.members) {
+        if (!(m instanceof Ranged) || !m.counters) continue
+        n++
+        if (m.hiding) hiding++
+      }
+      return hiding < Math.max(1, Math.floor(n / 2))
+    },
     emit: (ev) => this.emitEnemy(ev),
     nearLit: (x, z) => !!this.line?.nearLit(x, z, LINE.halfW + LINE.broodPad),
   }
@@ -512,6 +534,7 @@ export class Combat {
     this.hasPrev = true
     this.ctx.player = player
     this.ctx.now = this.time
+    this.ctx.planted = this.inStance
     this.lastPlayer = player
     this.slidePlayer(player, dt)
     this.hurtCooldown = Math.max(0, this.hurtCooldown - dt)
@@ -573,7 +596,10 @@ export class Combat {
       // lane was already tested against the real Still
       if (action?.kind === 'melee') {
         const reaches = action.tested || target === player || Math.hypot(e.pos.x - player.x, e.pos.z - player.z) <= (action.reach ?? 0)
-        if (reaches) this.hurtPlayer(action.damage * (e.dmgMul ?? 1), 'melee', action.source ?? e, !!e.pressure)
+        if (reaches) {
+          this.hurtPlayer(action.damage * (e.dmgMul ?? 1), 'melee', action.source ?? e, !!e.pressure)
+          if (action.shove) this.playerKnock.add(shoveVelocity(action.shove.dx, action.shove.dz, action.shove.distance))
+        }
       }
       if (action?.kind === 'shot') this.fireShot(e.pos, action.dir, action.damage * (e.dmgMul ?? 1), e, action.bounces ?? 0)
       if (action?.kind === 'shots') {
@@ -614,7 +640,7 @@ export class Combat {
         // no flight, no break of a push's kind: the same beat as the shot, twice the weight, one body.
         // A windup it can break goes back to closing in, and the body slides off half a step
         this.autoTimer = AUTO_INTERVAL
-        const broke = this.breakable(close) && close.interrupt(false)
+        const broke = this.breakable(close, true) && close.interrupt(false)
         if (broke) this.interrupted(close, false, 'hand')
         close.hit(autoOn(close, HAND.damage))
         if (!isBoss(close)) this.shoveFrom(close, player.x, player.z, HAND.shove)
@@ -1139,8 +1165,9 @@ export class Combat {
    * A windup a push could break right now: never a boss's (they only take the hit), and a
    * ram's only while it tracks. After the lock the hit can't land in time to count.
    */
-  breakable(e: Enemy): boolean {
-    if (e.dead || e.phase !== 'windup' || isBoss(e) || e.kind === 'thief' || e.pressure) return false
+  breakable(e: Enemy, auto = false): boolean {
+    // a pressure body has no windup to break, but a counter's crouch is one: for a push or a part, never for the autos
+    if (e.dead || e.phase !== 'windup' || isBoss(e) || e.kind === 'thief' || (e.pressure && (auto || !e.crouching))) return false
     return !(e instanceof Charger && e.locked)
   }
 
@@ -1659,7 +1686,7 @@ export class Combat {
 
   /** The eye break: a planted shot landing in a windup the hand could break breaks it the same way. */
   private eyeHit(e: Enemy, damage: number) {
-    const broke = this.breakable(e) && e.interrupt(false)
+    const broke = this.breakable(e, true) && e.interrupt(false)
     if (broke) this.interrupted(e, false, 'eye')
     e.hit(autoOn(e, damage))
     this.events.onHit(e.pos, e)
@@ -2290,7 +2317,7 @@ export class Combat {
    * or runs off with a part, then the rest.
    */
   private eyeRank(e: Enemy): number {
-    if (this.breakable(e)) return 3
+    if (this.breakable(e, true)) return 3
     if (this.packOf.get(e)?.elite?.leader === e) return 2
     return e.kind === 'ranged' || e instanceof Thief ? 1 : 0
   }
@@ -2649,6 +2676,7 @@ export class Combat {
     if (this.pressure) {
       for (const e of pack.members) {
         if ((!elite || e !== pack.members[0]) && (e.kind === 'chaser' || (e.kind === 'ranged' && !e.variant) || (e.kind === 'swarm' && !elite))) e.pressure = true
+        if (e.pressure && this.counters && (e.kind === 'chaser' || e.kind === 'ranged')) e.counters = true
       }
     }
     for (const e of pack.members) this.fullHp.set(e, e.hp)

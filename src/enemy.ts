@@ -31,6 +31,8 @@ export type EnemyAction =
        * its own test. A lane aimed at the decoy still hits him if his feet are in it.
        */
       tested?: boolean
+      /** A shove on Still along (dx, dz), `distance` u of slide, when it lands (the hulk's lunge). */
+      shove?: { dx: number; dz: number; distance: number }
     }
   /** `bounces`: an answer shot reflects off walls this many times, retracing a banked bolt. */
   | { kind: 'shot'; dir: THREE.Vector3; damage: number; bounces?: number }
@@ -87,6 +89,14 @@ export interface EnemyCtx {
   takeToken(e: Enemy): void
   /** In the clamp's throw. */
   held(e: Enemy): boolean
+  /** How far from Still's centre a body's edge may be for the close strike to reach it (combat's HAND_REACH): a hulk's band is measured against it. */
+  readonly handReach: number
+  /** Planted: the stick has rested and the planted shot is on. A sentinel's duck watches it. */
+  planted: boolean
+  /** Counter-moves: no other hulk is in a crouch or a lunge (or e is the one), so e may start its own. */
+  lungeFree(e: Enemy): boolean
+  /** Counter-moves: fewer than half of e's pack's sentinels (at least one may) are hiding, so e may duck. */
+  duckFree(e: Enemy): boolean
   emit(ev: EnemyEvent): void
   /** The Line's brood rule (design/area3/SPEC.md §5.8): (x, z) is within halfW + broodPad of a lit lane's floor span. */
   nearLit?(x: number, z: number): boolean
@@ -111,6 +121,11 @@ export type EnemyEvent =
   | { kind: 'surge'; brood: Brood; at: THREE.Vector3; ms: number; biters: number }
   /** A biter left the surge: killed, Parried, or flung (grabbed, or shoved out of reach). `arc` is its piece of the ring. */
   | { kind: 'biterLost'; brood: Brood; mite: Enemy; why: 'dead' | 'parry' | 'flung'; arc: THREE.Vector3 }
+  /**
+   * A counter-move's instants (COUNTER_HULK, COUNTER_SENTINEL): a hulk's crouch (`ms` long), its lunge and
+   * the lunge landing on Still; a sentinel breaking off to cover (`duck`), backing away when there is none, and its peek.
+   */
+  | { kind: 'counter'; e: Enemy; what: 'crouch' | 'lunge' | 'lungeHit' | 'duck' | 'backaway' | 'peek'; ms?: number }
   /** The 550 tick: the bite, on Still or on air. */
   | { kind: 'bite'; brood: Brood; at: THREE.Vector3; biters: number; hit: boolean }
   /** The biters touch down in the clump. */
@@ -160,6 +175,13 @@ export interface Enemy {
    * an ordinary hulk, sentinel or mite with no big windup, pressure instead. Set by Combat on a non-elite pack.
    */
   pressure?: boolean
+  /**
+   * Counter-moves (COUNTERS.md): set by Combat on a pressure hulk or sentinel while the pause switch is on.
+   * Off (or absent) is today's behaviour exactly.
+   */
+  counters?: boolean
+  /** A pressure hulk in its crouch: the one windup it has, which a push or a part breaks and the autos never do. */
+  readonly crouching?: boolean
   dead: boolean
   /** Damage taken is multiplied by this. Elites and their wards change it. */
   armor: number
@@ -318,6 +340,42 @@ export const CHASER = {
  */
 export const PRESSURE_HULK = { contact: 1.5, reach: 1.9, cockMs: 180, damage: 5, recoverMs: 550 }
 
+/**
+ * The hulk's lunge (29 Sep, his call: "do the counter moves next"; design/enemies/COUNTERS.md, the
+ * rules round's M2: every archetype has a second tell that punishes the answer that beats its first).
+ * Holding the close strike's band on a pressure hulk was safe forever: outside its swipe (`reach`) and
+ * inside the strike's reach, for `bandS` seconds (drained `drain` times as fast outside it), and it
+ * crouches back for `crouchMs` (a body tell only: no ring, its core flaring, its own scrape), locks
+ * its direction, and lunges `lungeDist` u in `lungeMs`. `damage` (the depth curve's `dmg` applies) and a
+ * `shove` on Still if the lunge passes within `hitReach` of him: a step to the side in the crouch dodges it.
+ * Then it stands open for `recoverMs` and can't build again for `cooldownMs`. One hulk at a time
+ * crouches or lunges. A push or a part breaks the crouch as a heavy's windup; the autos never do.
+ * It stops where it lands on him. `hitReach` is the body's own reach (his radius, its radius and a hand),
+ * not the swipe's 2.45: a lunge that reached as far as the swipe could not be sidestepped in 350 ms.
+ */
+export const COUNTER_HULK = {
+  bandS: 1.5, drain: 2, crouchMs: 350, lungeDist: 3.5, lungeMs: 180, damage: 8, shove: 1.2, hitReach: 1.3, recoverMs: 900, cooldownMs: 4000,
+}
+/** The core at the top of the crouch: hotter and more orange than its ember, never pale (no white on a tell). */
+const CROUCH_HOT = new THREE.Color(0xff7a2e)
+
+/** The heat round a flaring core: one soft radial glow, shared by every hulk (the sentinel's lens halo, in ember). */
+let flareMap: THREE.CanvasTexture | null = null
+function flareTexture() {
+  if (flareMap) return flareMap
+  const c = document.createElement('canvas')
+  c.width = c.height = 64
+  const g = c.getContext('2d')!
+  const grad = g.createRadialGradient(32, 32, 0, 32, 32, 32)
+  grad.addColorStop(0, 'rgba(255,120,50,0.7)')
+  grad.addColorStop(0.25, 'rgba(255,90,40,0.22)')
+  grad.addColorStop(1, 'rgba(255,60,30,0)')
+  g.fillStyle = grad
+  g.fillRect(0, 0, 64, 64)
+  flareMap = new THREE.CanvasTexture(c)
+  return flareMap
+}
+
 /** Closes, telegraphs a ring, strikes where the ring is. */
 export class Chaser implements Enemy {
   readonly kind = 'chaser'
@@ -330,8 +388,20 @@ export class Chaser implements Enemy {
   hp = CHASER.hp
   phase: EnemyPhase = 'approach'
   pressure = false
+  counters = false
   /** Pressure: ms the fist has been cocked, or -1. */
   private cock = -1
+  /** Counter-move (COUNTER_HULK): seconds Still has stood in its band; ms left of the cooldown; the crouch, and the lunge under way. */
+  private bandT = 0
+  private cd = 0
+  private crouch = false
+  private lunge: { left: number; hit: boolean; dx: number; dz: number } | null = null
+  /** The crouch or the lunge ended (or was broken): the cooldown starts. */
+  private spent = false
+  /** The core is lit for a counter (it's put back once). */
+  private flared = false
+  /** The direction locked at the start of the crouch, radians. */
+  private lock = 0
   dead = false
   armor = 1
   speedMul = 1
@@ -342,6 +412,9 @@ export class Chaser implements Enemy {
   air = 0
   walking = false
   get gait() { return this.bob * 1.6 }
+  get crouching() { return this.crouch }
+  /** In the crouch or the dash: the one slot the whole combat gives a lunge. */
+  get lunging() { return this.crouch || this.lunge !== null }
 
   private timer = 0
   /** A broken windup: the core blinks dark for a moment. */
@@ -354,6 +427,8 @@ export class Chaser implements Enemy {
   private readonly jointMat: THREE.MeshStandardMaterial
   private readonly core: THREE.Mesh
   private readonly coreMat: THREE.MeshBasicMaterial
+  /** The glow round the core in a counter's crouch and lunge, off otherwise. */
+  private readonly flare: THREE.Sprite
   /** Its core's colours, lit and asleep: a slag core swaps them. */
   private coreOn = CORE
   private coreOff = CORE_ASLEEP
@@ -401,7 +476,10 @@ export class Chaser implements Enemy {
     this.coreMat = new THREE.MeshBasicMaterial({ color: CORE, fog: false })
     this.core = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.2, 0.12), this.coreMat)
     this.core.position.set(0, 0.5, 0.4)
-    this.torso.add(chest, band, yoke, this.core)
+    this.flare = new THREE.Sprite(new THREE.SpriteMaterial({ map: flareTexture(), blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, fog: false, opacity: 0 }))
+    this.flare.position.set(0, 0.5, 0.46)
+    this.flare.visible = false
+    this.torso.add(chest, band, yoke, this.core, this.flare)
 
     for (const [arm, side] of [[this.armL, -1], [this.armR, 1]] as const) {
       const shoulder = new THREE.Mesh(new THREE.SphereGeometry(0.25, 10, 8), this.mat)
@@ -460,6 +538,12 @@ export class Chaser implements Enemy {
     this.phase = reel ? 'recover' : 'approach'
     this.timer = reel ? CHASER.recoverMs : 0
     if (reel) this.reel = 0
+    // a broken crouch: no lunge, and the band has to be built again after the cooldown
+    if (this.crouch) {
+      this.crouch = false
+      this.bandT = 0
+      this.cd = COUNTER_HULK.cooldownMs
+    }
     // the ring goes at once: no fade, its heat broken
     this.ringMat.opacity = 0
     this.discMat.opacity = 0
@@ -484,7 +568,7 @@ export class Chaser implements Enemy {
     return false
   }
 
-  update(dt: number, target: THREE.Vector3, terrain: Terrain): EnemyAction | null {
+  update(dt: number, target: THREE.Vector3, terrain: Terrain, ctx: EnemyCtx): EnemyAction | null {
     this.timer -= dt * 1000
     this.bob += dt * 5
     if (this.blink > 0 && (this.blink -= dt) <= 0) this.coreMat.color.setHex(this.coreOn)
@@ -495,11 +579,34 @@ export class Chaser implements Enemy {
     const dist = Math.hypot(dx, dz)
     let action: EnemyAction | null = null
     const staggered = slide(this.pos, this.knock, dt)
+    const counters = this.pressure && this.counters
+
+    // counter-move: how long Still has held the band (outside the swipe, inside the close strike, a clear line)
+    if (counters && !this.lunging) {
+      if (this.cd > 0) {
+        this.cd -= dt * 1000
+        this.bandT = 0
+      } else {
+        const inBand = target === ctx.player && dist > PRESSURE_HULK.reach + this.radius && dist <= ctx.handReach + this.radius
+          && terrain.lineClear(this.pos.x, this.pos.z, target.x, target.z, 0.2)
+        this.bandT = inBand ? this.bandT + dt : Math.max(0, this.bandT - dt * COUNTER_HULK.drain)
+      }
+    }
 
     switch (this.phase) {
       case 'approach': {
         if (staggered) {
           this.cock = -1
+          break
+        }
+        if (counters && this.cock < 0 && this.bandT >= COUNTER_HULK.bandS && ctx.lungeFree(this)) {
+          // it has been held long enough: crouch back, direction locked, and give the lunge its slot
+          this.phase = 'windup'
+          this.crouch = true
+          this.timer = COUNTER_HULK.crouchMs
+          this.lock = Math.atan2(dx, dz)
+          this.bandT = 0
+          ctx.emit({ kind: 'counter', e: this, what: 'crouch', ms: COUNTER_HULK.crouchMs })
           break
         }
         if (this.pressure) {
@@ -531,6 +638,17 @@ export class Chaser implements Enemy {
         break
       }
       case 'windup': {
+        if (this.crouch) {
+          // the direction was locked at the start: a step to the side in the crouch is the dodge
+          if (this.timer <= 0) {
+            this.crouch = false
+            this.phase = 'strike'
+            this.lunge = { left: COUNTER_HULK.lungeMs, hit: false, dx: Math.sin(this.lock), dz: Math.cos(this.lock) }
+            this.timer = COUNTER_HULK.lungeMs
+            ctx.emit({ kind: 'counter', e: this, what: 'lunge' })
+          }
+          break
+        }
         if (this.timer <= 0) {
           this.phase = 'strike'
           // committed: the strike lands where the ring is, whether you left or not
@@ -540,6 +658,37 @@ export class Chaser implements Enemy {
         break
       }
       case 'strike': {
+        const lunge = this.lunge
+        if (lunge) {
+          // committed along the locked direction, stopped by terrain; it hits once if it passes within reach of Still
+          const ms = Math.min(dt * 1000, lunge.left)
+          const step = (COUNTER_HULK.lungeDist * ms) / COUNTER_HULK.lungeMs
+          const ax = this.pos.x
+          const az = this.pos.z
+          const to = terrain.clampMove(ax, az, ax + lunge.dx * step, az + lunge.dz * step, this.radius)
+          this.pos.x = to.x
+          this.pos.z = to.z
+          lunge.left -= ms
+          if (Math.hypot(to.x - ax - lunge.dx * step, to.z - az - lunge.dz * step) > 0.02) lunge.left = 0
+          if (!lunge.hit && distToSegment(ctx.player.x, ctx.player.z, ax, az, to.x, to.z) <= COUNTER_HULK.hitReach
+            && terrain.lineClear(to.x, to.z, ctx.player.x, ctx.player.z, 0.1)) {
+            lunge.hit = true
+            ctx.emit({ kind: 'counter', e: this, what: 'lungeHit' })
+            action = {
+              kind: 'melee', damage: COUNTER_HULK.damage, reach: COUNTER_HULK.hitReach, tested: true, source: this,
+              shove: { dx: lunge.dx, dz: lunge.dz, distance: COUNTER_HULK.shove },
+            }
+          }
+          // it lands on him and stops there, not through him
+          if (lunge.hit && Math.hypot(ctx.player.x - to.x, ctx.player.z - to.z) <= this.radius + PLAYER_RADIUS + 0.15) lunge.left = 0
+          if (lunge.left <= 0) {
+            this.lunge = null
+            this.phase = 'recover'
+            this.timer = COUNTER_HULK.recoverMs
+            this.spent = true
+          }
+          break
+        }
         if (this.timer <= 0) {
           this.phase = 'recover'
           this.timer = this.pressure ? PRESSURE_HULK.recoverMs : CHASER.recoverMs
@@ -549,6 +698,11 @@ export class Chaser implements Enemy {
       case 'recover': {
         if (this.timer <= 0) {
           this.phase = 'approach'
+          if (this.spent) {
+            this.spent = false
+            this.cd = COUNTER_HULK.cooldownMs
+            this.bandT = 0
+          }
           if (this.reel >= 0) this.coreMat.color.setHex(this.coreOn)
           this.reel = -1
         }
@@ -559,8 +713,10 @@ export class Chaser implements Enemy {
     terrain.pushOut(this.pos, this.radius)
 
     // --- presentation ---
-    const winding = this.phase === 'windup'
+    // a counter's crouch is the body alone: no ring on the floor
+    const winding = this.phase === 'windup' && !this.crouch
     const t = winding ? Math.min(1, Math.max(0, 1 - this.timer / CHASER.windupMs)) : 0
+    const crouchT = this.crouch ? Math.min(1, Math.max(0, 1 - this.timer / COUNTER_HULK.crouchMs)) : 0
 
     if (winding) {
       this.ringMat.opacity = 0.42
@@ -583,6 +739,10 @@ export class Chaser implements Enemy {
 
     // winding: rear back and raise both fists. strike: slam them into the floor.
     if (winding) this.strikePose(dt, { lean: -0.32 * t, arms: -2.5 * t, squash: 1 + 0.06 * t })
+    // the crouch: sunk and rearing back, fists swung low behind it, well past the swipe's cock
+    else if (this.crouch) this.strikePose(dt, { lean: -0.55, arms: 0.7, squash: 1 - 0.26 * crouchT })
+    // the lunge: thrown forward, fists out in front
+    else if (this.lunge) this.strikePose(dt, { lean: 0.6, arms: -1.5, squash: 0.9 }, true)
     // pressure: a short cock of the fists, and a jab, not the slam
     else if (this.cock >= 0) this.strikePose(dt, { lean: -0.1, arms: -1.2 * Math.min(1, this.cock / PRESSURE_HULK.cockMs), squash: 1 })
     else if (this.phase === 'strike' && this.pressure) this.strikePose(dt, { lean: 0.22, arms: -0.9, squash: 0.95 }, true)
@@ -591,6 +751,22 @@ export class Chaser implements Enemy {
     else if (this.reel >= 0) this.strikePose(dt, { lean: -0.42, arms: -1.1, squash: 0.94 })
     else this.strikePose(dt * 0.5, { lean: 0.08, arms: 0, squash: 1 })
     this.core.scale.setScalar(1 + (winding ? t * 0.7 : 0))
+    // the counter's core: swelling and running hot through the crouch, held at full through the lunge
+    if (this.crouch || this.lunge) {
+      const k = this.lunge ? 1 : crouchT
+      this.core.scale.setScalar(1 + k * 0.6)
+      this.coreMat.color.setHex(this.coreOn).lerp(CROUCH_HOT, 0.3 + 0.7 * k)
+      this.flare.visible = true
+      // the lunge carries less of the glow: the body is moving, and a big soft disc would read as a flat mark
+      const glow = this.lunge ? 0.5 : k
+      this.flare.material.opacity = 0.8 * glow
+      this.flare.scale.setScalar(0.5 + glow * 0.7)
+      this.flared = true
+    } else if (this.flared) {
+      this.flared = false
+      this.flare.visible = false
+      if (this.blink <= 0) this.coreMat.color.setHex(this.coreOn)
+    }
     if (this.reel >= 0) {
       this.reel += dt * 1000
       // after the blink, the open core: swollen, pulsing hot like the ram's firebox
@@ -601,18 +777,32 @@ export class Chaser implements Enemy {
     const walking = this.phase === 'approach' && !staggered && this.cock < 0
     this.walking = walking
     const stride = walking ? Math.sin(this.bob * 1.6) * 0.4 : 0
-    this.legL.rotation.x = stride
-    this.legR.rotation.x = -stride
+    // crouching: the legs fold under it and the whole body sinks
+    this.legL.rotation.x = stride - crouchT * 0.7
+    this.legR.rotation.x = -stride - crouchT * 0.7
 
     this.group.scale.setScalar(this.size * (1 + this.flash * 0.1))
     this.tint()
-    this.group.position.set(this.pos.x, walking ? Math.abs(Math.sin(this.bob * 1.6)) * 0.05 : 0, this.pos.z)
-    this.group.rotation.y = Math.atan2(dx, dz)
+    this.group.position.set(this.pos.x, walking ? Math.abs(Math.sin(this.bob * 1.6)) * 0.05 : -0.16 * crouchT, this.pos.z)
+    // locked in the crouch and the lunge: it faces where it will go, whatever Still does
+    this.group.rotation.y = this.crouch || this.lunge ? this.lock : Math.atan2(dx, dz)
 
     return action
   }
 
   idle(dt: number, face: THREE.Vector3) {
+    // a pack that lost him or went to sleep drops any counter it had begun
+    if (this.crouch || this.lunge) {
+      this.crouch = false
+      this.lunge = null
+      this.phase = 'approach'
+    }
+    this.bandT = 0
+    if (this.flared) {
+      this.flared = false
+      this.flare.visible = false
+      this.coreMat.color.setHex(this.asleep ? this.coreOff : this.coreOn)
+    }
     this.bob += dt * (this.asleep ? 1.5 : 5)
     this.flash = Math.max(0, this.flash - dt * 6)
     this.ringMat.opacity = Math.max(0, this.ringMat.opacity - dt * 4)
@@ -636,6 +826,8 @@ export class Chaser implements Enemy {
     if (!asleep) this.flash = 1
     this.phase = 'approach'
     this.reel = -1
+    this.crouch = false
+    this.lunge = null
   }
 
   setSlag() {
@@ -651,6 +843,7 @@ export class Chaser implements Enemy {
     this.mat.dispose()
     this.jointMat.dispose()
     this.coreMat.dispose()
+    this.flare.material.dispose()
     releaseTell(this.ringMat)
     releaseTell(this.discMat)
   }

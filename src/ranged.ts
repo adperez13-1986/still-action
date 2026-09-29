@@ -15,6 +15,8 @@ import { slide, statusTint, disposeBody, reelCore, REEL, SLAG_CORE, SLAG_CORE_AS
 const BODY = HIDES.sentinel.body
 const JOINT = HIDES.sentinel.joint
 const CORE = 0xff5a3c
+/** A ducking lens: a dead coal, not black. */
+const DIM = new THREE.Color(0x2a1512)
 
 export function rod(a: THREE.Vector3, b: THREE.Vector3, r: number, mat: THREE.Material) {
   const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, a.distanceTo(b), 8), mat)
@@ -48,6 +50,21 @@ export const RANGED = {
  */
 export const PRESSURE_SENTINEL = { cockMs: 260, shots: 3, gapMs: 140, damage: 3, reloadMs: 1300 }
 
+/**
+ * The sentinel's duck (29 Sep, his call: "do the counter moves next"; design/enemies/COUNTERS.md).
+ * Planting on a pressure sentinel was safe forever. Planted with a clear sight line to it (within
+ * its `fireRange`) for `plantedS` seconds (drained `drain` times as fast when he moves or is out of
+ * sight), its lens dims and turns away and it breaks off to cover: a spot within `coverR` u it can
+ * walk to that hides it from him (`speedMul` x its speed), where it stays `stayMs` [min, max] while
+ * he stays planted. Then it peeks: steps to the nearest spot with sight and looses its burst (the
+ * lens glow first, as ever). If he moves at any point it goes back to normal at once. No cover in
+ * reach: it backs away `backR` u instead. At most half a pack's sentinels (at least one) hide at once,
+ * and after a peek (or a back-away) it can't build again for `cooldownMs`.
+ */
+export const COUNTER_SENTINEL = {
+  plantedS: 1.5, drain: 2, coverR: 5, speedMul: 1.4, stayMs: [1200, 2000] as const, backR: 2, cooldownMs: 4000,
+}
+
 /** A floor strip starting at the enemy and running along local +z. */
 function strip(width: number, length: number) {
   const g = new THREE.PlaneGeometry(width, length)
@@ -69,9 +86,22 @@ export class Ranged implements Enemy {
   hp = RANGED.hp
   phase: EnemyPhase = 'approach'
   pressure = false
+  counters = false
   /** Pressure: ms the lens has glowed before a burst, or -1; shots left in the burst. */
   private cock = -1
   private burst = 0
+  /**
+   * Counter-move (COUNTER_SENTINEL): seconds Still has been planted in its sight; ms left of the cooldown;
+   * the duck under way (`t` ms in this mode, `stay` how long it hides); how far its lens is turned away, 0..1.
+   */
+  private plantedT = 0
+  private cd = 0
+  private duck: { mode: 'cover' | 'hide' | 'peek' | 'back'; x: number; z: number; t: number; stay: number } | null = null
+  private away = 0
+  /** The lens is dimmed for a duck (it's put back once). */
+  private lensDim = false
+  /** Hidden or on its way to cover: it counts against the pack's half. */
+  get hiding() { return this.duck?.mode === 'cover' || this.duck?.mode === 'hide' }
   dead = false
   armor = 1
   speedMul = 1
@@ -237,6 +267,11 @@ export class Ranged implements Enemy {
         let mz = 0
         // sight is see-mode: a breach opens its line both ways
         const sight = terrain.lineClear(this.pos.x, this.pos.z, target.x, target.z, 0.2, true)
+        if (this.pressure && this.counters) {
+          this.watch(dt, sight && dist <= RANGED.fireRange && target === ctx.player, ctx)
+          if (!this.duck && this.plantedT >= COUNTER_SENTINEL.plantedS && this.cock < 0 && ctx.duckFree(this)) this.startDuck(terrain, target, ctx)
+          if (this.duck && this.stepDuck(dt, target, terrain, ctx, sight)) break
+        }
         if (!sight) {
           // no shot from here: go round the wall until there is one
           const to = terrain.nextStep(this.pos.x, this.pos.z, target.x, target.z, this.radius)
@@ -383,7 +418,12 @@ export class Ranged implements Enemy {
     const glow = this.cock >= 0 ? Math.min(1, this.cock / PRESSURE_SENTINEL.cockMs) : 0
     this.orb.scale.setScalar(1 + (winding ? t * (this.locked ? 0.9 : 0.4) : glow * 0.9))
     this.halo.scale.setScalar(1.1 + (winding ? t * (this.locked ? 1.4 : 0.6) : glow * 1.4))
-    this.halo.material.opacity = 1
+    // a duck: the lens dims and the head turns away from him; it comes back the same way
+    const ducking = this.duck && this.duck.mode !== 'peek'
+    this.away = ducking ? Math.min(1, this.away + dt * 6) : Math.max(0, this.away - dt * 6)
+    this.halo.material.opacity = 1 - 0.85 * this.away
+    if (this.away > 0) this.orb.scale.multiplyScalar(1 - 0.35 * this.away)
+    this.head.rotation.y = this.away * 2.4
     this.barrel.position.z = 0.44 - this.recoil * 0.22
 
     const back = this.recoil * 0.25
@@ -395,6 +435,13 @@ export class Ranged implements Enemy {
     this.group.rotation.y = this.aim
     this.head.position.y = 1.45 + Math.sin(this.bob * 1.3) * 0.07 + (winding ? t * 0.08 : 0)
     this.head.rotation.x = 0
+    if (this.away > 0) {
+      this.coreMat.color.setHex(this.coreOn).lerp(DIM, 0.85 * this.away)
+      this.lensDim = true
+    } else if (this.lensDim) {
+      this.lensDim = false
+      this.coreMat.color.setHex(this.coreOn)
+    }
     if (this.reel >= 0) {
       // reeling: the head knocked up and back, the lens open and pulsing hot
       this.reel += dt * 1000
@@ -412,6 +459,15 @@ export class Ranged implements Enemy {
   }
 
   idle(dt: number, face: THREE.Vector3) {
+    // a pack that lost him or went to sleep drops any duck it had begun
+    this.duck = null
+    this.plantedT = 0
+    this.away = 0
+    this.head.rotation.y = 0
+    if (this.lensDim) {
+      this.lensDim = false
+      this.coreMat.color.setHex(this.asleep ? this.coreOff : this.coreOn)
+    }
     this.bob += dt * (this.asleep ? 1.2 : 4)
     this.flash = Math.max(0, this.flash - dt * 6)
     this.lineMat.opacity = Math.max(0, this.lineMat.opacity - dt * 5)
@@ -428,6 +484,120 @@ export class Ranged implements Enemy {
     // asleep: the head sinks and the barrel droops
     this.head.position.y = this.asleep ? 1.3 : 1.45 + Math.sin(this.bob * 1.3) * 0.07
     this.head.rotation.x = this.asleep ? 0.45 : 0
+  }
+
+  /** Counter-move: seconds planted in its sight build up; a step or a lost line drains them twice as fast; the cooldown builds nothing. */
+  private watch(dt: number, sees: boolean, ctx: EnemyCtx) {
+    if (this.duck) return
+    if (this.cd > 0) {
+      this.cd -= dt * 1000
+      this.plantedT = 0
+      return
+    }
+    this.plantedT = ctx.planted && sees ? this.plantedT + dt : Math.max(0, this.plantedT - dt * COUNTER_SENTINEL.drain)
+  }
+
+  /** The nearest spot within `radii` it can walk straight to, hidden from (or, for a peek, seen by) Still. Null: none. */
+  private spot(terrain: Terrain, still: THREE.Vector3, hidden: boolean, maxR: number): { x: number; z: number } | null {
+    for (let r = 0.5; r <= maxR; r += 0.5) {
+      for (let k = 0; k < 16; k++) {
+        const a = (k / 16) * Math.PI * 2
+        const x = this.pos.x + Math.sin(a) * r
+        const z = this.pos.z + Math.cos(a) * r
+        const d = Math.hypot(still.x - x, still.z - z)
+        // it has to be able to shoot from the edge of the cover, and not come to stand on him
+        if (d > RANGED.fireRange - 1 || d < RANGED.preferMin * 0.5 || terrain.blocked(x, z, this.radius)) continue
+        if (!terrain.lineClear(this.pos.x, this.pos.z, x, z, this.radius)) continue
+        if (hidden) {
+          // the whole body out of his sight, not just the centre line: the lines to either side of it are blocked too
+          const nx = (still.z - z) / d
+          const nz = -(still.x - x) / d
+          const w = this.radius * 0.9
+          if (![-w, 0, w].every((o) => !terrain.lineClear(x + nx * o, z + nz * o, still.x, still.z, 0.2, true))) continue
+        } else if (!terrain.lineClear(x, z, still.x, still.z, 0.2, true)) continue
+        return { x, z }
+      }
+    }
+    return null
+  }
+
+  /** The planted stance has held: break off to cover, or, with none within reach, back away. */
+  private startDuck(terrain: Terrain, still: THREE.Vector3, ctx: EnemyCtx) {
+    this.plantedT = 0
+    const cover = this.spot(terrain, still, true, COUNTER_SENTINEL.coverR)
+    if (cover) {
+      const [lo, hi] = COUNTER_SENTINEL.stayMs
+      this.duck = { mode: 'cover', ...cover, t: 0, stay: lo + Math.random() * (hi - lo) }
+      ctx.emit({ kind: 'counter', e: this, what: 'duck' })
+      return
+    }
+    const dx = this.pos.x - still.x
+    const dz = this.pos.z - still.z
+    const d = Math.hypot(dx, dz) || 1
+    const to = terrain.clampMove(this.pos.x, this.pos.z, this.pos.x + (dx / d) * COUNTER_SENTINEL.backR, this.pos.z + (dz / d) * COUNTER_SENTINEL.backR, this.radius)
+    this.duck = { mode: 'back', x: to.x, z: to.z, t: 0, stay: 0 }
+    ctx.emit({ kind: 'counter', e: this, what: 'backaway' })
+  }
+
+  private endDuck(cooldown: boolean) {
+    this.duck = null
+    this.plantedT = 0
+    if (cooldown) this.cd = COUNTER_SENTINEL.cooldownMs
+  }
+
+  /**
+   * One tick of the duck. True: it took the whole tick (walking or hiding). False: back to its usual
+   * behaviour this tick (he moved, it gave up, or it has stepped out to a spot with sight and its lens glows).
+   */
+  private stepDuck(dt: number, target: THREE.Vector3, terrain: Terrain, ctx: EnemyCtx, sight: boolean): boolean {
+    const d = this.duck!
+    // he moved (or a decoy drew it): back to normal at once
+    if (!ctx.planted || target !== ctx.player) {
+      this.endDuck(false)
+      return false
+    }
+    d.t += dt * 1000
+    if (d.mode === 'hide') {
+      if (d.t < d.stay) {
+        this.stepping = 0
+        return true
+      }
+      const peek = this.spot(terrain, target, false, 6)
+      if (!peek) {
+        this.endDuck(true)
+        return false
+      }
+      Object.assign(d, { mode: 'peek', x: peek.x, z: peek.z, t: 0 })
+    }
+    const dx = d.x - this.pos.x
+    const dz = d.z - this.pos.z
+    const left = Math.hypot(dx, dz)
+    // a peek loosing its burst from the first spot with sight it reaches
+    if (d.mode === 'peek' && sight) {
+      this.endDuck(true)
+      this.reload = 0
+      this.cock = 0
+      ctx.emit({ kind: 'counter', e: this, what: 'peek' })
+      return false
+    }
+    if (left <= 0.05 || d.t > 2500) {
+      if (d.mode === 'cover') {
+        // hidden, or it is not and there is nothing to wait for
+        if (sight) this.endDuck(true)
+        else Object.assign(d, { mode: 'hide', t: 0 })
+        this.stepping = 0
+        return !sight
+      }
+      this.endDuck(true)
+      return false
+    }
+    const to = terrain.nextStep(this.pos.x, this.pos.z, d.x, d.z, this.radius)
+    const sd = Math.hypot(to.x - this.pos.x, to.z - this.pos.z) || 1
+    const step = Math.min(left, RANGED.speed * this.speedMul * COUNTER_SENTINEL.speedMul * dt)
+    this.pos.x += ((to.x - this.pos.x) / sd) * step
+    this.pos.z += ((to.z - this.pos.z) / sd) * step
+    this.stepping = COUNTER_SENTINEL.speedMul
+    return true
   }
 
   private tint() {

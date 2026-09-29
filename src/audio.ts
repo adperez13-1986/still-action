@@ -2082,6 +2082,81 @@ export function lensOut(pan: number) {
   sample(c, 'tin', d, 0.3, 3)
 }
 
+// --- the counter-moves (COUNTERS.md): the hulk's crouch and lunge, the sentinel's duck ---
+
+/**
+ * The hulk's crouch, its own and nothing like the swipe's ratchet: hydraulics giving under a weight,
+ * a low metal scrape sinking with it, and a hiss of pressure building. Returns a stop, like windup().
+ */
+export function crouch(ms: number, pan: number, gain = 1): (hard?: boolean) => void {
+  const c = live()
+  if (!c) return () => {}
+  const t = c.currentTime
+  const dur = ms / 1000
+  const g = c.createGain()
+  g.gain.value = gain
+  g.connect(out(c, 'enemy', pan))
+  // the scrape: a saw sinking through a lowpass
+  const o = c.createOscillator()
+  o.type = 'sawtooth'
+  o.frequency.setValueAtTime(96, t)
+  o.frequency.exponentialRampToValueAtTime(46, t + dur)
+  const lp = c.createBiquadFilter()
+  lp.type = 'lowpass'
+  lp.Q.value = 4
+  lp.frequency.value = 260
+  const swell = c.createGain()
+  swell.gain.setValueAtTime(0.0001, t)
+  swell.gain.linearRampToValueAtTime(0.2, t + dur * 0.8)
+  swell.gain.exponentialRampToValueAtTime(0.0001, t + dur + 0.05)
+  o.connect(lp).connect(swell).connect(g)
+  o.start(t)
+  o.stop(t + dur + 0.08)
+  // the pressure: a hiss climbing through a narrow band
+  hiss(c, g, t, dur, 0.3, 'bandpass', 500, 1700, 2.2, dur * 0.6)
+  sample(c, 'metalMedium', g, 0.22, 0.5, 0.02)
+  return gate(g, c, t + dur)
+}
+
+/** The lunge leaving: a burst of air and a heavy push off the floor. */
+export function lunge(pan: number) {
+  const c = live()
+  if (!c) return
+  const t = c.currentTime
+  const d = out(c, 'enemy', pan)
+  hiss(c, d, t, 0.2, 0.5, 'bandpass', 500, 2600, 1.1, 0.03)
+  tone(c, d, 'sine', t, 150, 55, 0.18, 0.7, 0.004)
+  sample(c, 'metalHeavy', d, 0.45, 0.6)
+}
+
+/**
+ * A sentinel breaking off from a planted Still: a short servo whirr as the head swings away, a saw
+ * through a narrow band sweeping up and back down, and a small click as it settles.
+ */
+export function turnAway(pan: number) {
+  const c = live()
+  if (!c || limited('turnAway', 0.12, c.currentTime)) return
+  const t = c.currentTime
+  const d = out(c, 'enemy', pan)
+  const o = c.createOscillator()
+  o.type = 'sawtooth'
+  o.frequency.setValueAtTime(190, t)
+  o.frequency.exponentialRampToValueAtTime(420, t + 0.12)
+  o.frequency.exponentialRampToValueAtTime(240, t + 0.32)
+  const band = c.createBiquadFilter()
+  band.type = 'bandpass'
+  band.Q.value = 5
+  band.frequency.setValueAtTime(380, t)
+  band.frequency.exponentialRampToValueAtTime(840, t + 0.12)
+  band.frequency.exponentialRampToValueAtTime(480, t + 0.32)
+  const g = c.createGain()
+  env(g, t, 0.07, 0.03, 0.3)
+  o.connect(band).connect(g).connect(d)
+  o.start(t)
+  o.stop(t + 0.4)
+  sample(c, 'tin', d, 0.12, 1.4, 0.3)
+}
+
 // --- the thief: its chime, the snatch, the cage opening ---
 
 /** Every 1.4 s while it carries: two high sines 13 Hz apart, beating. The only cold instrument on an enemy. */
