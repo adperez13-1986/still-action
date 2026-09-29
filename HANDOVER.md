@@ -8,7 +8,10 @@ folder for whatever you're touching. Don't re-derive any of them.
 **29 Sep, 14:10: his calls: R3 and R8 yes (my recs), bossDmg dial left alone** (ba443ce, LINE-RULES). Stage B started:
 the verifier is writing `design/area3/STAGE-B.md` (the build brief, shaped like STAGE-R). R3 and R8 go first as their own
 commits, because they change the live game (push only on his word). Then a Sonnet 5.5 engineer builds B step by step, reviewed.
-If this session dies: check whether STAGE-B.md exists and is complete, then continue from there.
+Brief done and committed (34cd1e5, `design/area3/STAGE-B.md`: B0 fight baseline tools, B1 R3, B2 R8, B3 trains vs pressure
+bodies, B4 Signalman, B5 Handcar, B6 Sleepers, B7 dressing, B8 whole stage). Sonnet engineer on B0 (uncommitted work in tools/).
+If this session dies: rerun B0's "Done when" checks on whatever is in tools/, then continue at the next step. His open items are
+STAGE-B §9 (Parry card line, Iron Crawler page for the Handcar, re-roling met pages, all the words).
 
 **29 Sep, 14:00: pickup card fix (his screenshot).** On a landscape phone a long-named part (history + melt) grew the
 card off the top and put take under the "full" chip. Now: capped to the screen, wider on short screens (<=520 px tall),
