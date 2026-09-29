@@ -14,7 +14,13 @@ below, so live now has the swap fix + counters. He is at the office: **no dev se
   replaces swipes, it doesn't add damage). Sidestepping on the crouch: 0 of 3 hit, HP lost 39.
   If it feels too rare on the phone, `cooldownMs` 4000 -> 2500 gives ~5 s.
 - Sentinel: unchanged; ask whether he even noticed the duck (visibility may be the problem, not damage).
-- Ask about the crouch core colour on the phone (pale peach in screenshots).
+- **Sonnet's verification gaps, closed (except the sounds):** real depth 2 screenshots of the sentinel duck
+  (normal / turned away with the lens dead / hidden behind a pillar / peek) read fine in a lit room. The
+  peek's big salmon halo is the pressure burst glow from 28 Sep, not new. The hulk's crouch core WAS a flat
+  peach slab (0xff7a2e swelling to 1.6x, washed out by ACES + bloom): now deeper red (0xff3812), swells
+  1.3x, flickers 7 -> 18 Hz through the crouch, flare gradient redder. Trade-off: at the top of the crouch
+  it's close to an ordinary core in colour; the tell is the pose + flicker. Ask on the phone if it reads.
+  The three new sounds are still unheard.
 
 ## Earlier start-here (29 Sep, morning: he left for the office mid-decision)
 

@@ -357,8 +357,14 @@ export const PRESSURE_HULK = { contact: 1.5, reach: 1.9, cockMs: 180, damage: 5,
 export const COUNTER_HULK = {
   bandS: 1.5, drain: 2, crouchMs: 350, lungeDist: 3.5, lungeMs: 180, damage: 8, shove: 1.2, hitReach: 1.3, recoverMs: 900, cooldownMs: 4000,
 }
-/** The core at the top of the crouch: hotter and more orange than its ember, never pale (no white on a tell). */
-const CROUCH_HOT = new THREE.Color(0xff7a2e)
+/**
+ * The core at the top of the crouch: deeper and redder than its ember, never pale (no white on a tell).
+ * A lighter orange (0xff7a2e, and swelling to 1.6x) washed out to a flat peach slab under the tone
+ * mapping and bloom (29 Sep screenshots); the heat reads as a flicker speeding up instead.
+ */
+const CROUCH_HOT = new THREE.Color(0xff3812)
+/** The crouch's flicker: `hz` at the start of the crouch to `hz + hzUp` at its top, `depth` of the dip. */
+const CROUCH_FLICKER = { hz: 7, hzUp: 11, depth: 0.35 }
 
 /** The heat round a flaring core: one soft radial glow, shared by every hulk (the sentinel's lens halo, in ember). */
 let flareMap: THREE.CanvasTexture | null = null
@@ -368,9 +374,10 @@ function flareTexture() {
   c.width = c.height = 64
   const g = c.getContext('2d')!
   const grad = g.createRadialGradient(32, 32, 0, 32, 32, 32)
-  grad.addColorStop(0, 'rgba(255,120,50,0.7)')
-  grad.addColorStop(0.25, 'rgba(255,90,40,0.22)')
-  grad.addColorStop(1, 'rgba(255,60,30,0)')
+  // red at the heart, not orange: added over a lit bronze body, an orange centre went pink-peach
+  grad.addColorStop(0, 'rgba(255,70,20,0.6)')
+  grad.addColorStop(0.25, 'rgba(230,50,15,0.2)')
+  grad.addColorStop(1, 'rgba(200,30,10,0)')
   g.fillStyle = grad
   g.fillRect(0, 0, 64, 64)
   flareMap = new THREE.CanvasTexture(c)
@@ -401,6 +408,8 @@ export class Chaser implements Enemy {
   private spent = false
   /** The core is lit for a counter (it's put back once). */
   private flared = false
+  /** The crouch flicker's phase, in cycles. */
+  private flick = 0
   /** The direction locked at the start of the crouch, radians. */
   private lock = 0
   dead = false
@@ -757,16 +766,20 @@ export class Chaser implements Enemy {
     // the counter's core: swelling and running hot through the crouch, held at full through the lunge
     if (this.crouch || this.lunge) {
       const k = this.lunge ? 1 : crouchT
-      this.core.scale.setScalar(1 + k * 0.6)
-      this.coreMat.color.setHex(this.coreOn).lerp(CROUCH_HOT, 0.3 + 0.7 * k)
+      this.core.scale.setScalar(1 + k * 0.3)
+      // flickering faster as it builds, held steady through the lunge
+      this.flick += dt * (CROUCH_FLICKER.hz + CROUCH_FLICKER.hzUp * k)
+      const dip = this.lunge ? 0 : CROUCH_FLICKER.depth * (0.5 + 0.5 * Math.sin(Math.PI * 2 * this.flick))
+      this.coreMat.color.setHex(this.coreOn).lerp(CROUCH_HOT, 0.3 + 0.7 * k).multiplyScalar(1 - dip)
       this.flare.visible = true
       // the lunge carries less of the glow: the body is moving, and a big soft disc would read as a flat mark
       const glow = this.lunge ? 0.5 : k
-      this.flare.material.opacity = 0.8 * glow
+      this.flare.material.opacity = 0.8 * glow * (1 - dip)
       this.flare.scale.setScalar(0.5 + glow * 0.7)
       this.flared = true
     } else if (this.flared) {
       this.flared = false
+      this.flick = 0
       this.flare.visible = false
       if (this.blink <= 0) this.coreMat.color.setHex(this.coreOn)
     }
