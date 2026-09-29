@@ -343,8 +343,9 @@ export const PRESSURE_HULK = { contact: 1.5, reach: 1.9, cockMs: 180, damage: 5,
 /**
  * The hulk's lunge (29 Sep, his call: "do the counter moves next"; design/enemies/COUNTERS.md, the
  * rules round's M2: every archetype has a second tell that punishes the answer that beats its first).
- * Holding the close strike's band on a pressure hulk was safe forever: outside its swipe (`reach`) and
- * inside the strike's reach, for `bandS` seconds (drained `drain` times as fast outside it), and it
+ * Holding the close strike's band on a pressure hulk was safe forever. Anywhere inside the strike's reach
+ * (contact included since 29 Sep: the strike's shove meant the band alone never built), for `bandS` seconds
+ * (drained `drain` times as fast outside it), and it
  * crouches back for `crouchMs` (a body tell only: no ring, its core flaring, its own scrape), locks
  * its direction, and lunges `lungeDist` u in `lungeMs`. `damage` (the depth curve's `dmg` applies) and a
  * `shove` on Still if the lunge passes within `hitReach` of him: a step to the side in the crouch dodges it.
@@ -587,7 +588,9 @@ export class Chaser implements Enemy {
         this.cd -= dt * 1000
         this.bandT = 0
       } else {
-        const inBand = target === ctx.player && dist > PRESSURE_HULK.reach + this.radius && dist <= ctx.handReach + this.radius
+        // contact counts too (29 Sep, his call "A"): the close strike shoves it out of the band before 1.5 s
+        // ever builds, so time anywhere inside the strike's reach is what the lunge answers
+        const inBand = target === ctx.player && dist <= ctx.handReach + this.radius
           && terrain.lineClear(this.pos.x, this.pos.z, target.x, target.z, 0.2)
         this.bandT = inBand ? this.bandT + dt : Math.max(0, this.bandT - dt * COUNTER_HULK.drain)
       }

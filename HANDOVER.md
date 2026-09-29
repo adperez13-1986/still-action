@@ -3,7 +3,20 @@
 For the next session. Read this, then `DESIGN.md` (the settled decisions), then the design
 folder for whatever you're touching. Don't re-derive any of them.
 
-## Start here (29 Sep, morning: he left for the office mid-decision)
+## Start here (29 Sep, midday: his calls made, pushed)
+
+**His calls: hulk trigger A, sentinel judged on the phone first.** Built and pushed with the two commits
+below, so live now has the swap fix + counters. He is at the office: **no dev server while he's there**
+(his ask; it was reachable on the office network). Headless checks run on a localhost-only vite, stopped after.
+- Hulk: contact now counts toward the lunge (`inBand` in enemy.ts drops its lower bound). Headless, free hulk,
+  close strike on, 20 s: lunges at 1.7 / 8.6 / 15.6 s (every ~7 s, not the ~5 I told him: cooldown 4 s +
+  1.5 s build + waiting for the swipe cycle). Standing: 3 of 3 hit, HP lost 45 vs 48 switch off (the lunge
+  replaces swipes, it doesn't add damage). Sidestepping on the crouch: 0 of 3 hit, HP lost 39.
+  If it feels too rare on the phone, `cooldownMs` 4000 -> 2500 gives ~5 s.
+- Sentinel: unchanged; ask whether he even noticed the duck (visibility may be the problem, not damage).
+- Ask about the crouch core colour on the phone (pale peach in screenshots).
+
+## Earlier start-here (29 Sep, morning: he left for the office mid-decision)
 
 **Two commits on `main`, NOT pushed** (31797bb, f087035 on top of 1c7d182). Live is still a4c11dd. Push
 only on his word. The dev server was stopped: start it (`npx vite --host`, give him the LAN address).
