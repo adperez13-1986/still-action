@@ -5,6 +5,11 @@ folder for whatever you're touching. Don't re-derive any of them.
 
 ## Start here (29 Sep, afternoon: stage R done, dark)
 
+**29 Sep, 14:10: his calls: R3 and R8 yes (my recs), bossDmg dial left alone** (ba443ce, LINE-RULES). Stage B started:
+the verifier is writing `design/area3/STAGE-B.md` (the build brief, shaped like STAGE-R). R3 and R8 go first as their own
+commits, because they change the live game (push only on his word). Then a Sonnet 5.5 engineer builds B step by step, reviewed.
+If this session dies: check whether STAGE-B.md exists and is complete, then continue from there.
+
 **29 Sep, 14:00: pickup card fix (his screenshot).** On a landscape phone a long-named part (history + melt) grew the
 card off the top and put take under the "full" chip. Now: capped to the screen, wider on short screens (<=520 px tall),
 sits over the chips, tighter buttons, the words scroll before the buttons move (style.css `#offer`). Checked headless
