@@ -47,7 +47,7 @@ import type { NotebookPage } from './pause'
 import {
   RUN_DEPTHS, BOSS_EVERY, LEAN_HOME, FIRST_RUN_IN_MAZE, DAY, exitsAfterBoss, hourAtEnd, bossFor, areaOf,
   applyDay, dayNow, currentSat, currentGrace, fogAt, dayAt, AREAS, PLACES, WALK_PLACE, ASSEMBLER_DEF, ARBITER_DEF, ENGINE_DEF, ARBITER_AT_6, lookAt, applyDayAt,
-  DAY_SPAN, DAY_FX, flag, setFlags, flagsNow, roadChoice,
+  DAY_SPAN, DAY_FX, flag, setFlags, flagsNow, roadChoice, stepOf, roadOf, openAt,
   type BossDef, type BossKind, type HomeHour, type PlaceDef, type RouteId,
 } from './areas'
 import { createWorkshop, MARKS_MAX, type ArrivalKind, type InteractId, type Workshop } from './workshop'
@@ -4660,6 +4660,9 @@ if (import.meta.env.DEV) {
     __applyDay: (k: keyof typeof DAY, hour?: HomeHour) => applyDay(world, k, hour),
     __bossFor: bossFor,
     __areaOf: (d: number, route: RouteId = 'II') => areaOf(d, route).id,
+    /** The run's length (6, or 9 with ?roads=1), and the road helpers: a depth's step and road (the road takes the ORDER), and whether it's an open field. */
+    __runDepths: RUN_DEPTHS,
+    __stepOf: stepOf, __roadOf: roadOf, __openAt: openAt,
     /** Override area III's switches for this page (design/area3/SPEC.md §12.2); null restores one. Returns what they read now. */
     __flags: (o: { line?: boolean | null; engine?: boolean | null; porter?: boolean | null; roadChoice?: 'crossroads' | 'alternate' | null } = {}) => {
       setFlags(o)

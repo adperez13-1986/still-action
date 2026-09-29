@@ -361,7 +361,7 @@ scope may still crash mid-way (e.g. entering 7 before R2). That's expected until
   - areas.ts :85, :97, :348, :367, :418-420, :510 (rewritten in R2-R4).
 - main.ts hooks: `__runDepths`, `__stepOf`, `__roadOf`, `__openAt` (§2.4). `__flags` (:4664) needs no type change. It returns `flagsNow()`, which now includes `roads`.
 
-**Done when:** K-90, K-9B pass.
+**Done when:** K-90 and K-9B pass (K-9B's depth-9 boot is its own id, K-9B9, which passes from R4 on: the place at 7-9 is R4's `lookAt`; lead's call, 29 Sep, after R1 found the brief contradicted itself).
 
 ### R2. The day and the hour (`src/areas.ts`)
 
@@ -386,7 +386,7 @@ scope may still crash mid-way (e.g. entering 7 before R2). That's expected until
 - Comments to update: ROUTES (:338, "the roads meet only in a 6-depth run"); `ARBITER_AT_6` (:403-407, "the Works' last boss"); `ENGINE_DEF` (:398).
 - main.ts hook `__plan` (§2.4). `routeNow` / `bossHere` / `placeNow` (:2296-2298, :3967-3969) need **no change** (INV-O2). Only re-document `routeNow`.
 
-**Done when:** K-90 and K-92a (the `__plan` tables) pass.
+**Done when:** K-90, K-92a (the `__plan` tables) and K-9B9 pass.
 
 ### R5. Generation by step (`src/dungeon.ts`, hooks)
 
@@ -592,7 +592,7 @@ Every check also fails on any page error.
   - `OFF`: `__bossFor(6).hp === 1170`.
 - **K-9B (flag plumbing).**
   - `ON`: `__runDepths === 9`, `__flags().roads === true`, and `__flags({ roads: false }).roads === true` (INV-F1).
-  - `?depth=9&roads=1&save=memory` boots with `__run.depth === 9`.
+  - (**K-9B9**, from R4) `?depth=9&roads=1&save=memory` boots with `__run.depth === 9`.
   - `?depth=9&save=memory` boots with `__run.depth === 6` and `__runDepths === 6`.
   - `__stepOf(1..9)` is `[1,2,3,4,5,6,4,5,6]`; `__roadOf(d, 'II')` is II for 1-6 and III for 7-9, and the mirror for 'III'.
   - `OFF`: `__stepOf(7) === 6` (clamped) and `__roadOf(7, 'II') === 'II'`.

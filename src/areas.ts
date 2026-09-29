@@ -12,8 +12,6 @@ import { curveAt } from './curve'
  * home, and it ends in one of three ways (design/meta/SPEC.md §2.1, §6).
  */
 
-/** One constant: a 9-depth run is this changing to 9, not a redesign. */
-export const RUN_DEPTHS = 6
 /** Every third depth closes an area with the Assembler. */
 export const BOSS_EVERY = 3
 /** Grace's light leans toward the warm beam once an Assembler falls. It nudges the one decision (Adrian's call). */
@@ -27,32 +25,37 @@ export const FIRST_RUN_IN_MAZE = true
 
 // --- area III's switches (design/area3/SPEC.md §1.7) -------------------------------------
 
-/** The Line and its crossroads. False: no crossroads, the route is always 'II', save.roads never gains 'III'. */
+/**
+ * The Line and its crossroads. False: no crossroads and no alternate, the route is always 'II', save.roads never
+ * gains 'III'; with BOTH_ROADS the Line is still area 3 (Works first).
+ */
 export const LINE_ENABLED = false
 /** The Engine as the Line's boss at 6. False: route III's depth 6 is the quarter's square with the Arbiter. */
 export const ENGINE_ON_LINE = false
 /** The Porter (stage D). */
 export const PORTER_ENABLED = false
+/** Both roads in one run (design/area3/BOTH-ROADS.md §4). DEV override ?roads=1. */
+export const BOTH_ROADS = false
 /** How the road is chosen: the crossroads room, or (the fallback) alternating by save.lastRoad. */
 export const ROAD_CHOICE: 'crossroads' | 'alternate' = 'crossroads'
 
-export type FlagName = 'line' | 'engine' | 'porter'
-const FLAG_DEFAULT: Record<FlagName, boolean> = { line: LINE_ENABLED, engine: ENGINE_ON_LINE, porter: PORTER_ENABLED }
+export type FlagName = 'line' | 'engine' | 'porter' | 'roads'
+const FLAG_DEFAULT: Record<FlagName, boolean> = { line: LINE_ENABLED, engine: ENGINE_ON_LINE, porter: PORTER_ENABLED, roads: BOTH_ROADS }
 /**
  * DEV overrides (a URL param or __flags); null is the constant. Production builds never
  * read them: `import.meta.env.DEV` is false there, so the constants are the whole story.
  */
 const flagOverride: Record<FlagName, boolean | null> & { roadChoice: 'crossroads' | 'alternate' | null } = {
-  line: null, engine: null, porter: null, roadChoice: null,
+  line: null, engine: null, porter: null, roads: null, roadChoice: null,
 }
 if (import.meta.env.DEV && typeof location !== 'undefined') {
   const q = new URLSearchParams(location.search)
-  for (const k of ['line', 'engine', 'porter'] as const) {
+  for (const k of ['line', 'engine', 'porter', 'roads'] as const) {
     const v = q.get(k)
     if (v !== null) flagOverride[k] = v !== '0' && v !== 'false'
   }
 }
-/** INV: the only way code reads the three switches. */
+/** INV: the only way code reads the switches. */
 export function flag(name: FlagName): boolean {
   if (import.meta.env.DEV) return flagOverride[name] ?? FLAG_DEFAULT[name]
   return FLAG_DEFAULT[name]
@@ -62,13 +65,62 @@ export function roadChoice(): 'crossroads' | 'alternate' {
   if (import.meta.env.DEV) return flagOverride.roadChoice ?? ROAD_CHOICE
   return ROAD_CHOICE
 }
-/** DEV only (__flags): override for this page; null (or absent) leaves one as it is, undefined too. */
+/**
+ * DEV only (__flags): override for this page; null (or absent) leaves one as it is, undefined too.
+ * INV-F1: never 'roads'. The run's length is fixed at load (RUN_DEPTHS), so a runtime flip could only
+ * disagree with a live DayTracker and snapshot; 'roads' is set by the URL, or not at all.
+ */
 export function setFlags(o: Partial<Record<FlagName, boolean | null>> & { roadChoice?: 'crossroads' | 'alternate' | null }) {
   if (!import.meta.env.DEV) return
   for (const k of ['line', 'engine', 'porter', 'roadChoice'] as const) if (k in o) (flagOverride as Record<string, unknown>)[k] = o[k] ?? null
 }
 /** What the switches read as now, for checks. */
-export const flagsNow = () => ({ line: flag('line'), engine: flag('engine'), porter: flag('porter'), roadChoice: roadChoice() })
+export const flagsNow = () => ({ line: flag('line'), engine: flag('engine'), porter: flag('porter'), roads: flag('roads'), roadChoice: roadChoice() })
+
+/**
+ * How deep a run goes: 6, or 9 with both roads. INV-F2: read once at module load, after the URL overrides
+ * above, and fixed for the page's life; a production build always reads BOTH_ROADS. INV-F3: RUN_DEPTHS === 9
+ * if and only if flag('roads').
+ */
+export const RUN_DEPTHS: 6 | 9 = flag('roads') ? 9 : 6
+
+export const otherRoad = (r: RouteId): RouteId => (r === 'II' ? 'III' : 'II')
+
+/** A road's own step: 1-3 are the ruin; 4/5/6 are a road's first, second and last depth. */
+export type Step = 1 | 2 | 3 | 4 | 5 | 6
+/**
+ * INV-S1: stepOf(d) === d for every d in 1..6, whatever the run length.
+ * INV-S2: stepOf(7|8|9) === 4|5|6. The depth is clamped to 1..RUN_DEPTHS first, with the clamp every
+ *         depth reader uses (not floored), so in a 6-depth run 7 reads as 6.
+ * Place and road rules read the step; only the curve reads the depth.
+ */
+export function stepOf(depth: number): Step {
+  const d = Math.max(1, Math.min(RUN_DEPTHS, depth))
+  return (d <= 6 ? d : d - 3) as Step
+}
+
+/**
+ * The road a depth is on. `order` is ALWAYS the road taken at the crossroads (run.route, area 2's road),
+ * never the road at some depth.
+ * INV-O1: clamped depth <= 6 gives order; 7..9 give otherRoad(order). In a 6-depth run, always order.
+ * INV-O2: every exported function that takes a `route` param (lookAt, areaOf, bossFor, openAt) and every dev
+ *         hook that takes one (__gen, __genLook, __genKit, __census, __plan) takes the ORDER and applies
+ *         roadOf once, inside. Callers never pass roadOf(...) in: it would flip depths 7-9 twice.
+ */
+export function roadOf(depth: number, order: RouteId = 'II'): RouteId {
+  const d = Math.max(1, Math.min(RUN_DEPTHS, depth))
+  return d <= 6 ? order : otherRoad(order)
+}
+
+/**
+ * INV-P1: the open field is depth 1, and the Works' first step (4 on Works-first, 7 on Line-first). Never the
+ *         Line's (the generator refuses one there), never a boss's: exactly two per 9-depth run.
+ * INV-P2: in a 6-depth run: 1, and 4 only when order is 'II'. That equals the old OPEN_DEPTHS [1, 4] after the
+ *         generator's own `!gen.line` refusal (dungeon.ts).
+ */
+export function openAt(depth: number, order: RouteId = 'II'): boolean {
+  return depth === 1 || (depth <= RUN_DEPTHS && stepOf(depth) === 4 && roadOf(depth, order) === 'II')
+}
 
 /** INV: exactly these two. 'II' is area II as built; 'III' is the Line. */
 export type RouteId = 'II' | 'III'
