@@ -6,7 +6,8 @@ import type { AbilityDef, Mod } from './abilities'
  * I -> II -> III, for this run only. Every rank hits harder and
  * comes back sooner; a blast, a shell, a lob and a swing also reach wider, so a rank is seen.
  * Inside a run Still gets stronger (DESIGN.md, Persistence, 28 Sep); between runs nothing carries.
- * A swap lands at `swapRank` (design/synergy, 28 Sep): the part given up melts into the new one.
+ * A swap from a part at II or III lands at `swapRank` (design/synergy, 28 Sep): the part given up
+ * melts into the new one. From a part at I it's a plain swap (29 Sep, his call: never-melt runs).
  */
 export const TEMPER = {
   maxRank: 3,
@@ -20,8 +21,8 @@ export const TEMPER = {
    */
   killPayout: 0.4,
   /**
-   * A new part taken over a worn one lands at this rank, whatever the old one's was, and the old one
-   * is used up. Keeping half the rank would make swaps free; a full reset kills them by mid-run.
+   * A new part taken over a worn one at II or III lands at this rank and the old one is used up
+   * (over a part at I: a plain swap, the new one at I, the old one at his feet). Keeping half the rank would make swaps free; a full reset kills them by mid-run.
    */
   swapRank: 2,
 }

@@ -2099,11 +2099,14 @@ function swapIn(def: AbilityDef): AbilityDef | null {
 }
 
 /**
- * A swap lands at II (design/synergy, temper on): the part given up melts into the one taken and
- * is used up. Null when nothing would melt: an empty slot, or temper off (the old swap, at I).
+ * A swap from a tempered part lands at II (design/synergy, temper on): the part given up melts into
+ * the one taken and is used up. Null when nothing would melt: an empty slot, temper off, or a worn
+ * part still at I (his call, 29 Sep: a swap never melts for him, so a never-melt run stays one; the
+ * old part drops at his feet and melting it in is his choice).
  */
 function swapsIn(d: AbilityDef): AbilityDef | null {
-  return temperOn ? hud.loadout.find((p) => p.slot === d.slot) ?? null : null
+  if (!temperOn || (run.ranks[d.slot] ?? 1) < TEMPER.swapRank) return null
+  return hud.loadout.find((p) => p.slot === d.slot) ?? null
 }
 
 /** What the card and the compare say a take does: "take · Piston II", "Scrap Cleaver III melts in". Null: no swap. */
@@ -2136,13 +2139,13 @@ function takePart(g: GroundPart) {
     run.swaps.push({ slot, from: melts.id, to: g.def.id, rankLost: melts.rank ?? 1 })
     vfx.embers(at3(still.pos, 0.7), 18, 1.0, COLD)
   } else {
-    // an empty slot starts at I; with temper off, so does a swap
+    // an empty slot starts at I; so does a swap from a part at I, or with temper off
     delete run.ranks[slot]
   }
   if (g.def.lean) run.lastLean = g.def.lean
   endDrop(g, 'taken')
   loot.remove(g)
-  // temper off: the part he gave up lands at his feet as itself
+  // no melt (a part at I, or temper off): the part he gave up lands at his feet as itself
   if (old && !melts) logDrop(loot.drop(byId(old.id), still.pos), 'swap')
   still.wear(slot, g.def)
   offered = null

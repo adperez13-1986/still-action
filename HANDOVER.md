@@ -20,7 +20,7 @@ the log (dev-server runs land in `playtest.json` directly; phone exports fold in
 **pressure bodies** (no big windups; the crowd is the threat); an elite pack's crowned leader keeps the old
 telegraphs (the heavy); rams and Lobbers keep theirs; bosses keep theirs. The autos: the **close strike**
 (in reach) and the **planted shot** (standing still) — never "the hand" / "the eye" on screen. **Temper**:
-melt a floor part into the worn one, ranks I-III; a swap lands at II. **Mastery**: melting into a III part
+melt a floor part into the worn one, ranks I-III; a swap from II or III lands at II (from I: a plain swap, the old part at his feet; 29 Sep). **Mastery**: melting into a III part
 teaches the close strike (close parts) or the planted shot (marksman parts) one of six mods. **Synergy
 trial 1**: chilled and marked states, set by the autos (mastery) and some parts, paid x2 by paying parts;
 shatter. **Depth curve** (`src/curve.ts`): keyed on depth only; bosses take half from the autos. No riders,
