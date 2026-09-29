@@ -9,7 +9,8 @@ folder for whatever you're touching. Don't re-derive any of them.
 the verifier is writing `design/area3/STAGE-B.md` (the build brief, shaped like STAGE-R). R3 and R8 go first as their own
 commits, because they change the live game (push only on his word). Then a Sonnet 5.5 engineer builds B step by step, reviewed.
 Brief done and committed (34cd1e5, `design/area3/STAGE-B.md`: B0 fight baseline tools, B1 R3, B2 R8, B3 trains vs pressure
-bodies, B4 Signalman, B5 Handcar, B6 Sleepers, B7 dressing, B8 whole stage). Sonnet engineer on B0 (uncommitted work in tools/).
+bodies, B4 Signalman, B5 Handcar, B6 Sleepers, B7 dressing, B8 whole stage). B0 done (5538313: `tools/checks/fights.mjs` K-90F,
+K-90N, K-90L). Sonnet engineer on B1 (R3), uncommitted work in src/.
 If this session dies: rerun B0's "Done when" checks on whatever is in tools/, then continue at the next step. His open items are
 STAGE-B §9 (Parry card line, Iron Crawler page for the Handcar, re-roling met pages, all the words).
 
