@@ -182,6 +182,11 @@ export interface Level {
   rooms: Room[]
   entrance: THREE.Vector3
   exit: THREE.Vector3
+  /**
+   * The square's cold beam only: the unit direction away from the tower, along which the beam was placed off its centre
+   * (the -side of coldAt). A dressing on that beam runs its rails this way, never across the husk. Absent everywhere else.
+   */
+  coldAway?: THREE.Vector3
   update: (t: number) => void
   dispose: () => void
   /** INV: non-null only on the crossroads, length 2, routes ['II', 'III'] in that order (design/area3/SPEC.md §3). */
@@ -1834,6 +1839,7 @@ export function generateLevel(
     rooms: layout.rooms,
     entrance: entranceRoom.center.clone(),
     exit: coldAt.clone(),
+    coldAway: cold && square ? side.clone().negate() : undefined,
     update(t) {
       for (const o of shrineParts) if (o.name === 'glyph') o.rotation.y = t * 0.8
       cold?.update(t)

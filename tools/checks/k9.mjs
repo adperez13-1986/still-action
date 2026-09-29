@@ -3,14 +3,15 @@
  * the ids listed. K-90 is baseline.mjs's. Each step of the brief registers its own; an id can have several
  * parts, one per boot it needs. `ON` is the 9-depth page, `OFF` the flag-off one (§4.0).
  */
-import { readFileSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { REPO, assert, assertClose, assertEq, evalJson, hash, suite } from './lib.mjs'
 
 const BASELINE = JSON.parse(readFileSync(REPO + 'tools/checks/baseline/flagoff.json', 'utf8'))
 
 const ON = '?depth=1&save=memory&roads=1'
 const OFF = '?depth=1&save=memory'
-const { check, run } = suite()
+const { check, task, run } = suite()
 
 // --- K-9B: the flag's plumbing (R1); K-9B9 below is its depth-9 boot, from R4 ---------------------------------------------------------
 check('K-9B', ON, async ({ page }) => {
@@ -445,10 +446,20 @@ check('K-94', ON, async ({ page }) => {
       }
       if (!cold) why('the cold beam cannot be reached from the entrance')
       if (!warm) why('the warm beam cannot be reached from the entrance')
+      // the Line's dressing on the cold beam (after boss 6 of a 9-depth run): no rail or sleeper comes within the husk's radius + 0.5
+      const yr = window.__yardRails()
+      if (!yr || !yr.rails.length) { why(`no rails on the dressed cold beam (${JSON.stringify(yr)})`); continue }
+      const segDist = ([x0, z0, x1, z1]) => {
+        const dx = x1 - x0, dz = z1 - z0
+        const t = Math.max(0, Math.min(1, ((fp.x - x0) * dx + (fp.z - z0) * dz) / (dx * dx + dz * dz)))
+        return Math.hypot(x0 + dx * t - fp.x, z0 + dz * t - fp.z)
+      }
+      const near = Math.min(...yr.rails.map(segDist), ...yr.sleepers.map(([x, z]) => Math.hypot(x - fp.x, z - fp.z)))
+      if (near < fp.r + 0.5) why(`the dressing's rails come within ${near.toFixed(2)} of the husk's centre, needs ${(fp.r + 0.5).toFixed(2)}`)
     }
     return bad
   })
-  assertEq("ON: the square's beams over seeds 1..20 (first failures)", got.slice(0, 5), [])
+  assert(got.length === 0, `ON: the square's beams over seeds 1..20, ${got.length} failures, first: ${got.slice(0, 2).join(' | ')}`)
 })
 check('K-94', OFF, async ({ page }) => {
   const got = await evalJson(page, () => {
@@ -459,6 +470,159 @@ check('K-94', OFF, async ({ page }) => {
     return window.__exits().cold
   })
   assertEq('OFF: the cold beam at 6 after the kill', got, null)
+})
+
+// --- K-93: the run through its real transitions (R8) -------------------------------------------
+/**
+ * (K-93's walker.) One sync evaluate walks a run down its depths with the game's own descend: kill at a boss depth, __descend(), step until the
+ * next crawl (or the crossroads). `order` 'III' expects the crossroads after 3 and takes the Line's road there. It returns what
+ * it saw at each depth, and a list of problems (the caller asserts none).
+ */
+const WALK = ({ order, upTo, stopAt7, keepSave }) => {
+  const bad = [], seen = {}
+  // keepSave (K-9C): the run the boot began, on the save it wrote; no reset, no re-entering
+  if (!keepSave) {
+    window.__run.dev = false
+    window.__setSave(null)
+    if (order === 'III') window.__setSave({ roads: ['II', 'III'] })
+    window.__run.route = null
+    window.__enter(1, 1)
+  }
+  const check = (d) => {
+    const look = window.__look().place, boss = window.__boss(), lv = window.__level(), snap = window.__snapshot()
+    seen[d] = { place: look, boss: boss?.kind ?? null, open: !!lv.open, route: window.__run.route, snap: snap && { depth: snap.depth, route: snap.route } }
+    if (d >= 2 && !(snap && snap.depth === window.__run.depth)) bad.push(`depth ${d}: snapshot ${JSON.stringify(snap && { depth: snap.depth, route: snap.route })}, __run.depth ${window.__run.depth}`)
+    if (d >= 4 && snap && snap.route !== order) bad.push(`depth ${d}: snapshot route ${snap.route}, expected ${order}`)
+  }
+  for (let d = 1; d <= upTo; d++) {
+    if (window.__run.depth !== d) { bad.push(`expected depth ${d}, at ${window.__run.depth}`); break }
+    check(d)
+    if (stopAt7 && d === 7) break
+    if (window.__boss()) { window.__killBoss(); window.__step(0.2) }
+    if (d === 9) { seen.descendAt9 = window.__descend(); break }
+    if (window.__descend() !== true) { bad.push(`depth ${d}: __descend() is not true`); break }
+    const t = window.__until(() => window.__mode() === 'crawl' && (window.__run.depth === d + 1 || window.__route().atCrossroads), 8)
+    if (t < 0) { bad.push(`depth ${d}: no crawl at ${d + 1} within 8 s (mode ${window.__mode()})`); break }
+    const cross = window.__route().atCrossroads
+    if (d === 3 && order === 'III') {
+      if (!cross) bad.push('after 3 on the Line-first run: no crossroads')
+      if (window.__takeRoad('III') !== 'III') bad.push("__takeRoad('III') did not give 'III'")
+    } else if (cross) bad.push(`after ${d}: at the crossroads`)
+  }
+  return { bad, seen }
+}
+check('K-93', ON, async ({ page }) => {
+  const got = await evalJson(page, WALK, { order: 'II', upTo: 9 })
+  assertEq('ON W: problems on the way down', got.bad, [])
+  assertEq('ON W: __run.route at 4', got.seen[4].route, 'II')
+  assertEq('ON W: place at 7 (6 to 7 directly)', got.seen[7].place, 'sidings')
+  assertEq('ON W: __descend() after the kill at 9', got.seen.descendAt9, false)
+})
+check('K-93', ON + '&line=1', async ({ page }) => {
+  const got = await evalJson(page, WALK, { order: 'III', upTo: 9 })
+  assertEq('ON L: problems on the way down', got.bad, [])
+  assertEq('ON L: place at 4', got.seen[4].place, 'sidings')
+  assertEq('ON L: place at 7', got.seen[7].place, 'works')
+  assertEq('ON L: open field at 7', got.seen[7].open, true)
+  assertEq('ON L: place at 9', got.seen[9].place, 'quarter')
+  assertEq('ON L: boss at 9', got.seen[9].boss, 'arbiter')
+  assertEq('ON L: __descend() after the kill at 9', got.seen.descendAt9, false)
+})
+
+// --- K-95b: walked into the cold beam at 6 (R8) --------------------------------------------------
+check('K-95b', ON, async ({ page }) => {
+  const got = await evalJson(page, () => {
+    window.__run.route = 'II'
+    window.__enter(6, 1)
+    window.__killBoss()
+    window.__step(0.2)
+    const cold = window.__exits().cold
+    if (!cold || !cold.open) return { bad: `cold is ${JSON.stringify(cold)}` }
+    // 3 u from the beam, one step to arm it, then into it
+    window.__still.pos.set(cold.x + 3, 0, cold.z)
+    window.__step(0.1)
+    window.__still.pos.set(cold.x, 0, cold.z)
+    const t1 = window.__until(() => window.__mode() === 'descending', 2)
+    let crossroads = false
+    let arrived = -1
+    for (let i = 0; i <= 8 * 60 && arrived < 0; i++) {
+      if (window.__route().atCrossroads) crossroads = true
+      if (window.__mode() === 'crawl' && window.__run.depth === 7) arrived = i / 60
+      else window.__step(1 / 60)
+    }
+    return { descending: t1, arrived, crossroads, place: window.__look().place, depth: window.__run.depth }
+  })
+  assert(!got.bad, got.bad)
+  assert(got.descending >= 0, 'never began descending within 2 s of stepping into the cold beam')
+  assert(got.arrived >= 0, `no crawl at 7 within 8 s (depth ${got.depth})`)
+  assertEq('atCrossroads at any step', got.crossroads, false)
+  assertEq('__look().place at 7', got.place, 'sidings')
+})
+
+// --- K-96c: the night walk after the last boss (R8) ----------------------------------------------
+check('K-96c', ON, async ({ page }) => {
+  const got = await evalJson(page, () => {
+    window.__run.route = 'III'
+    window.__enter(9, 1)
+    window.__killBoss()
+    window.__step(0.2)
+    window.__end('home')
+    const hour = window.__run.ending?.hour ?? null
+    const t = window.__until(() => window.__mode() === 'walkHome', 10)
+    return { hour, walkAt: t, depth: window.__level().depth }
+  })
+  assertEq("ON L: __run.ending.hour after __end('home') at 9", got.hour, 'night')
+  assert(got.walkAt >= 0, "never reached 'walkHome' within 10 s")
+  assertEq('ON: __level().depth on the walk', got.depth, 10)
+})
+check('K-96c', OFF, async ({ page }) => {
+  const got = await evalJson(page, () => {
+    window.__run.route = 'II'
+    window.__enter(6, 1)
+    window.__killBoss()
+    window.__step(0.2)
+    window.__end('home')
+    const t = window.__until(() => window.__mode() === 'walkHome', 10)
+    return { walkAt: t, depth: window.__level().depth }
+  })
+  assert(got.walkAt >= 0, "OFF: never reached 'walkHome' within 10 s")
+  assertEq('OFF: __level().depth on the walk', got.depth, 7)
+})
+
+// --- K-9C: a resume at 7, on a real save (R8) ----------------------------------------------------
+check('K-9C', '?roads=1', async ({ page }) => {
+  // a fresh context, no ?depth: the first boot is a real run, and it writes localStorage
+  const got = await evalJson(page, WALK, { order: 'II', upTo: 7, stopAt7: true, keepSave: true })
+  assertEq('walking W to 7: problems', got.bad, [])
+  const snap = await evalJson(page, () => window.__snapshot())
+  assertEq('snapshot depth at 7', snap?.depth, 7)
+  assertEq("snapshot route at 7", snap?.route, 'II')
+  await page.reload()
+  await page.waitForFunction(() => typeof window.__enter === 'function' && window.__level && window.__level(), null, { timeout: 60000 })
+  const back = await evalJson(page, () => ({
+    depth: window.__run.depth, place: window.__look().place, route: window.__route().route, lanes: window.__level().lanes?.length ?? 0,
+  }))
+  assertEq('after the reload: __run.depth', back.depth, 7)
+  assertEq('after the reload: place', back.place, 'sidings')
+  assertEq('after the reload: route', back.route, 'II')
+  assert(back.lanes > 0, `after the reload: __level().lanes.length is ${back.lanes}`)
+})
+
+// --- K-9D: the build (R8) ----------------------------------------------------------------------
+const distBytes = (dir) => readdirSync(dir).reduce((n, f) => {
+  const p = dir + '/' + f
+  return n + (statSync(p).isDirectory() ? distBytes(p) : statSync(p).size)
+}, 0)
+task('K-9D', async () => {
+  for (const cmd of [['npx', 'tsc', '--noEmit', '-p', '.'], ['npx', 'vite', 'build']]) {
+    const r = spawnSync(cmd[0], cmd.slice(1), { cwd: REPO, encoding: 'utf8' })
+    if (r.status !== 0) throw new Error(`${cmd.join(' ')} exited ${r.status}: ${(r.stdout + r.stderr).slice(-400)}`)
+  }
+  const src = readFileSync(REPO + 'src/areas.ts', 'utf8')
+  for (const name of ['BOTH_ROADS', 'LINE_ENABLED', 'ENGINE_ON_LINE']) assert(new RegExp(`export const ${name} = false`).test(src), `${name} is not = false`)
+  const bytes = distBytes(REPO + 'dist')
+  console.log(`INFO K-9D: dist is ${bytes} bytes (${bytes >= 5352326 ? '+' : ''}${bytes - 5352326} against BOTH-ROADS §2's 5,352,326; cap 5,600,000)`)
+  assert(bytes <= 5600000, `dist is ${bytes} bytes, over the 5,600,000 cap`)
 })
 
 process.exit(await run(process.argv.slice(2)))

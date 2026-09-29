@@ -159,10 +159,12 @@ export function assert(ok, what) {
  * in registration order; the exit code is 1 on any fail.
  */
 export function suite() {
-  /** @type {{ id: string, query: string, fn: (ctx: { page: any, url: string }) => Promise<void> }[]} */
+  /** @type {{ id: string, query: string | null, fn: (ctx: { page: any, url: string }) => Promise<void> }[]} */
   const checks = []
   return {
     check: (id, query, fn) => { checks.push({ id, query, fn }) },
+    /** A check with no page (the build's): `fn()` throws on a mismatch. It runs before any server starts. */
+    task: (id, fn) => { checks.push({ id, query: null, fn }) },
     /** @param {string[]} argvIds */
     async run(argvIds = []) {
       const want = argvIds.length ? checks.filter((c) => argvIds.includes(c.id)) : checks
@@ -171,7 +173,14 @@ export function suite() {
       /** @type {Map<string, string | null>} id -> its first failure, or null while it passes */
       const outcome = new Map(want.map((c) => [c.id, null]))
       const groups = new Map()
-      for (const c of want) groups.set(c.query, [...(groups.get(c.query) ?? []), c])
+      for (const c of want) {
+        if (c.query !== null) { groups.set(c.query, [...(groups.get(c.query) ?? []), c]); continue }
+        try {
+          await c.fn()
+        } catch (e) {
+          if (!outcome.get(c.id)) outcome.set(c.id, e instanceof Error ? e.message : String(e))
+        }
+      }
       if (groups.size) {
         const vite = await startVite()
         try {

@@ -2839,10 +2839,21 @@ function dressYardBeam() {
   const route = yardRoad()
   if (!route) return
   const at = level.exit.clone()
-  // the Line's rails run in from past the floor's far-right edge (−z), into the beam's foot
-  let z = at.z
-  while (level.floor.has(key(Math.round(at.x / 4), Math.round(z / 4)))) z -= 1
-  const d = dressRoad(route, at, new THREE.Vector3(at.x, 0, z - 12))
+  let railFrom: THREE.Vector3
+  if (level.coldAway) {
+    // in the square: the rails run out from the beam's foot, away from the tower, to the floor's edge or 14 u, whichever is
+    // shorter (at least 2 u, so a rail has a length); they never cross the husk
+    const away = level.coldAway
+    let t = 0
+    while (t < 14 && level.floor.has(key(Math.round((at.x + away.x * (t + 1)) / 4), Math.round((at.z + away.z * (t + 1)) / 4)))) t += 1
+    railFrom = new THREE.Vector3(at.x + away.x * Math.max(2, t), 0, at.z + away.z * Math.max(2, t))
+  } else {
+    // the depth-3 yard: the Line's rails run in from past the floor's far-right edge (−z), into the beam's foot
+    let z = at.z
+    while (level.floor.has(key(Math.round(at.x / 4), Math.round(z / 4)))) z -= 1
+    railFrom = new THREE.Vector3(at.x, 0, z - 12)
+  }
+  const d = dressRoad(route, at, railFrom)
   const kitGroup = buildInstanced(d.placements)
   level.group.add(d.group, kitGroup)
   yardDressing = { route, at, d, kit: kitGroup }
@@ -4789,6 +4800,31 @@ if (import.meta.env.DEV) {
     __beamLabels: () => hud.beamLabels.map((l) => ({ ...l })),
     /** The alternate's dressed yard beam: the road it names, or null. */
     __yardRoad: () => (yardDressing ? { route: yardDressing.route, label: ROAD_LABEL[yardDressing.route] } : null),
+    /**
+     * The Line's dressing on the cold beam, read off its scene in world coordinates: each rail as a segment [x0, z0, x1, z1] (a box's
+     * two ends along its length), and each sleeper's centre. Null when the beam wears the Works or nothing.
+     */
+    __yardRails: () => {
+      if (!yardDressing || yardDressing.route !== 'III') return null
+      const g = yardDressing.d.group
+      g.updateMatrixWorld(true)
+      const rails: number[][] = [], sleepers: number[][] = []
+      const m = new THREE.Matrix4(), p = new THREE.Vector3()
+      g.traverse((o) => {
+        if (o instanceof THREE.InstancedMesh) {
+          for (let i = 0; i < o.count; i++) {
+            o.getMatrixAt(i, m)
+            o.localToWorld(p.setFromMatrixPosition(m))
+            sleepers.push([p.x, p.z])
+          }
+        } else if (o instanceof THREE.Mesh && o.geometry instanceof THREE.BoxGeometry && o.geometry.parameters.depth > 1) {
+          const half = o.geometry.parameters.depth / 2
+          const a = o.localToWorld(new THREE.Vector3(0, 0, -half)), b = o.localToWorld(new THREE.Vector3(0, 0, half))
+          rails.push([a.x, a.z, b.x, b.z])
+        }
+      })
+      return { rails, sleepers }
+    },
     __zones: () => workshop.zones.map((z) => ({ id: z.id, anchor: z.anchor })),
     /** toggleTurn through the rules, saved and shown as the card's button would. */
     __turn: (id: string) => {
