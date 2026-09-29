@@ -152,6 +152,12 @@ export const HIDES = {
     finish: { scale: [3, 3, 3], grain: 0.1, roughVar: 0.15, tone: [0.85, 0.83, 0.8], mask: 0.62, toneRough: 0.1, toneMetal: -0.1, bump: 0.15 },
     jointFinish: GRAIN_ONLY,
   },
+  /** Sleepers (area III): slate, dull and layered, a warm near-black (never blue-grey). Fallback: body 0x34302b. */
+  sleepers: {
+    body: 0x2f2e2b, joint: 0x1b1a19, rough: 0.95, metal: 0.1, jointRough: 0.65, jointMetal: 0.45,
+    finish: { scale: [10, 3, 10], grain: 0.18, roughVar: 0.1, tone: [1.2, 1.18, 1.12], mask: 0.6, toneRough: -0.1, toneMetal: 0.05, bump: 0.35 },
+    jointFinish: GRAIN_ONLY,
+  },
 } satisfies Record<string, Hide>
 export type HideKind = keyof typeof HIDES
 

@@ -14864,8 +14864,8 @@
        "chaser",
        "chaser"
       ],
-      "elite": "warding",
-      "name": "Mourngrip the Warden",
+      "elite": null,
+      "name": null,
       "lesson": false,
       "budget": 6,
       "template": "M6+H+H+H+H"
@@ -14882,8 +14882,8 @@
        "chaser",
        "chaser"
       ],
-      "elite": null,
-      "name": null,
+      "elite": "splitting",
+      "name": "Mournhook the Many",
       "lesson": false,
       "budget": 6,
       "template": "H+H+G+H+H+H"
@@ -14898,8 +14898,8 @@
        "ranged",
        "chaser"
       ],
-      "elite": "warding",
-      "name": "Paleskull the Warden",
+      "elite": "swift",
+      "name": "Cinderhook the Quick",
       "lesson": false,
       "budget": 5,
       "template": "C+H+G+H"
@@ -14914,8 +14914,8 @@
        "chaser",
        "chaser"
       ],
-      "elite": "plated",
-      "name": "Gutterknell the Plated",
+      "elite": "warding",
+      "name": "Ironjaw the Warden",
       "lesson": false,
       "budget": 5,
       "template": null

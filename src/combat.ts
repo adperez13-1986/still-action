@@ -403,6 +403,8 @@ export class Combat {
   readonly broods: Brood[] = []
   /** Draws every mite in the level in 8 calls. */
   readonly miteBatch: MiteBatch
+  /** The Sleepers' mites (slate materials): built on the first ballast brood, so only a level that has one pays its 8 draw calls. */
+  sleeperBatch: MiteBatch | null = null
   private broodIndex = 0
   /** Game time, seconds. The lock book runs on it. */
   time = 0
@@ -980,6 +982,7 @@ export class Combat {
     this.broodIndex = 0
     TELL_CROWD.locked = 0
     this.miteBatch.clear()
+    this.sleeperBatch?.clear()
     this.boss = null
   }
 
@@ -2679,14 +2682,18 @@ export class Combat {
 
   /** Put a sleeping pack in the level. Packs are placed, not spawned from a rim. */
   /** One body of any archetype but the boss. */
-  private make(kind: Archetype, x: number, z: number, variant?: 'lobber' | 'signal' | 'handcar', lesson?: true, siding?: SidingDef): Enemy {
+  private make(kind: Archetype, x: number, z: number, variant?: 'lobber' | 'signal' | 'handcar', lesson?: true, siding?: SidingDef, look?: 'heap' | 'ballast'): Enemy {
     switch (kind) {
       case 'ranged': return variant === 'lobber' ? new Lobber(x, z) : variant === 'signal' ? new Signal(x, z, !!lesson) : new Ranged(x, z)
       case 'charger': return variant === 'handcar' && siding ? new Handcar(siding, handcarEnd(siding, x, z)) : new Charger(x, z)
       case 'mender': return new Mender(x, z)
       case 'swarm': {
         const m = new Mite(x, z)
-        this.miteBatch.add(m)
+        // the Sleepers wear the slate, drawn by their own batch
+        if (look === 'ballast') {
+          m.hide = 'sleepers'
+          ;(this.sleeperBatch ??= new MiteBatch(this.scene, 'sleepers')).add(m)
+        } else this.miteBatch.add(m)
         return m
       }
       default: return new Chaser(x, z)
@@ -2700,7 +2707,7 @@ export class Combat {
    */
   addPack(
     members: { kind: Archetype; variant?: 'lobber' | 'signal' | 'handcar'; x: number; z: number; face?: { x: number; z: number }; slag?: true; lesson?: true; siding?: SidingDef }[], side: boolean,
-    elite?: { mod: EliteMod; name: string }, look?: 'heap',
+    elite?: { mod: EliteMod; name: string }, look?: 'heap' | 'ballast',
   ): Pack {
     const pack: Pack = {
       members: [], state: 'asleep', side, dropped: false, size: members.length, homes: new Map(), gaze: new Map(), hpSeen: 0,
@@ -2708,7 +2715,7 @@ export class Combat {
     }
     const gazeAt = Math.random() * Math.PI * 2
     for (const m of members) {
-      const e = this.make(m.kind, m.x, m.z, m.variant, m.lesson, m.siding)
+      const e = this.make(m.kind, m.x, m.z, m.variant, m.lesson, m.siding, look)
       // mites never carry one: eight puddles would be noise
       if (m.slag && e.kind !== 'swarm') {
         this.slagged.add(e)
@@ -2730,6 +2737,7 @@ export class Combat {
       pack.brood = new Brood(pack, this.broodIndex++, this.scene)
       for (const m of mites) pack.brood.add(m)
       if (look === 'heap') pack.brood.bury(this.scene)
+      else if (look === 'ballast') pack.brood.ballastIn(this.scene)
       this.broods.push(pack.brood)
     }
     // the depth curve (curve.ts): ordinary bodies' HP and damage; the crowned leader's comes with its crown
@@ -3060,6 +3068,7 @@ export class Combat {
   private tickBroods(dt: number) {
     for (const b of this.broods) {
       b.heap?.update(dt)
+      b.ballast?.update(dt)
       if (b.pack.state !== 'awake' && b.isActive) b.reset()
     }
     const awake = this.broods.filter((b) => b.pack.state === 'awake')
@@ -3110,6 +3119,7 @@ export class Combat {
   /** A mite leaves its brood; the last one takes the brood with it. */
   private buryMite(m: Mite, pack: Pack) {
     this.miteBatch.remove(m)
+    this.sleeperBatch?.remove(m)
     const b = pack.brood
     if (!b) return
     b.remove(m)

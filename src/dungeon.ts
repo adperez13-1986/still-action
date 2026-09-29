@@ -1619,7 +1619,8 @@ export function generateLevel(
   /** Half the time a leader is named for what it is: Cinderhorn, not Cindermaw. */
   const POOL: Partial<Record<Archetype, string[]>> = { charger: ['horn', 'brow', 'skull', 'hoof'], swarm: ['mother', 'nest', 'hive', 'brood'] }
   const TITLES: Record<EliteMod, string> = { swift: 'the Quick', plated: 'the Plated', splitting: 'the Many', warding: 'the Warden' }
-  const mainPacks = packs.filter((p) => p.room.kind === 'main' && p.members.length >= 2 && !p.lesson)
+  // R7: Sleepers are never the elite pack (a surge ring out of gravel would be two new reads in one moment)
+  const mainPacks = packs.filter((p) => p.room.kind === 'main' && p.members.length >= 2 && !p.lesson && p.look !== 'ballast')
   // how many heavies: the depth curve's (curve.ts)
   const eliteCount = Math.min(mainPacks.length, curveAt(depth, RUN_DEPTHS).heavies)
   for (let n = 0; n < eliteCount; n++) {

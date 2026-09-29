@@ -3,7 +3,7 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import { DECAL_Y } from './world'
 import { tellMaterial, releaseTell, haloTexture, tellOrder } from './vfx'
 import { skin } from './kit'
-import { HIDES, finish } from './hide'
+import { HIDES, finish, hideMaterials } from './hide'
 import {
   slide, disposeBody, PLAYER_RADIUS, CORE, CORE_ASLEEP, SLEEP_BODY, RIME,
   type Enemy, type EnemyAction, type EnemyCtx, type EnemyPhase,
@@ -219,6 +219,113 @@ export class Heap {
   }
 }
 
+/**
+ * The Line's Sleepers (design/area3/SPEC.md 6.3, STAGE-B.md 2.6): a Line brood asleep under a patch of ballast, the heap's face
+ * on the Line's gravel. The same brood: a patch of chips shivers now and then (no ember), and its wake is the same ripple by
+ * angle, each mite rising out of the gravel instead of a mound shedding a coal.
+ */
+export const BALLAST = { nestR: 0.8, nestGap: 0.5, stepMs: 200, patchR: 1.3, shiverMs: [1800, 3000] as const, hideY: -0.35, riseMs: 250 }
+/** The patch: this many chips, 0.12-0.2 across, on the floor; a shiver lifts each up to this much, over this long. */
+const PATCH = { chips: 40, lift: 0.02, shiverS: 0.3, y: 0.05 }
+/** A mite of the Sleepers wears the slate: its own shell and joint colours (the batch's material is white, the instance is the colour). */
+const SLATE_C = new THREE.Color(HIDES.sleepers.body)
+const SLATE_JOINT_C = new THREE.Color(HIDES.sleepers.joint)
+
+/**
+ * The chips over a Sleepers nest: 40 instanced boxes in `HIDES.sleepers.body` on a disc round the nest's centre. Its placement and its
+ * shiver schedule come from a local LCG seeded by the centre, never Math.random (the level must not shift a seeded run's draws).
+ * Not solid. Once the brood wakes it lies still for the rest of the level.
+ */
+export class Ballast {
+  readonly group = new THREE.Group()
+  private readonly mesh: THREE.InstancedMesh
+  private readonly mat: THREE.MeshStandardMaterial
+  private readonly rest: { x: number; z: number; y: number; yaw: number; sx: number; sy: number; sz: number; k: number; amp: number }[] = []
+  private state: number
+  /** Seconds to the next shiver, and seconds into the one running (-1: none). */
+  private next: number
+  private into = -1
+  private awake = false
+  private readonly mx = new THREE.Matrix4()
+  private readonly q = new THREE.Quaternion()
+  private readonly up = new THREE.Vector3(0, 1, 0)
+
+  constructor(center: THREE.Vector3) {
+    this.state = ((Math.round(center.x * 100) * 73856093) ^ (Math.round(center.z * 100) * 19349663)) >>> 0
+    const { mat, jointMat } = hideMaterials('sleepers')
+    jointMat.dispose()
+    this.mat = mat
+    this.mesh = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), mat, PATCH.chips)
+    this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage)
+    this.mesh.frustumCulled = false
+    const c = new THREE.Color()
+    for (let i = 0; i < PATCH.chips; i++) {
+      const r = BALLAST.patchR * Math.sqrt(this.rnd())
+      const a = this.rnd() * Math.PI * 2
+      const w = 0.12 + this.rnd() * 0.08
+      this.rest.push({
+        x: Math.sin(a) * r, z: Math.cos(a) * r, y: PATCH.y + w * 0.25, yaw: this.rnd() * Math.PI, sx: w, sy: w * 0.5, sz: w * (0.8 + this.rnd() * 0.4),
+        k: this.rnd() < 0.5 ? 1 : 3, amp: 0.4 + this.rnd() * 0.6,
+      })
+      // a little variety in the slate: a chip is a shade lighter or darker than the next
+      const v = 0.85 + this.rnd() * 0.3
+      this.mesh.setColorAt(i, c.setRGB(v, v, v))
+    }
+    this.next = this.interval()
+    this.group.position.set(center.x, 0, center.z)
+    this.group.add(this.mesh)
+    this.write(0)
+  }
+
+  private rnd() {
+    this.state = (Math.imul(this.state, 1664525) + 1013904223) >>> 0
+    return this.state / 4294967296
+  }
+  private interval() {
+    return (BALLAST.shiverMs[0] + this.rnd() * (BALLAST.shiverMs[1] - BALLAST.shiverMs[0])) / 1000
+  }
+
+  /** Every chip at its rest, lifted by `u` (0..1 through a shiver: each chip a small bounce of its own frequency). */
+  private write(u: number) {
+    this.rest.forEach((c, i) => {
+      const lift = u > 0 ? PATCH.lift * c.amp * Math.abs(Math.sin(Math.PI * u * c.k)) : 0
+      this.q.setFromAxisAngle(this.up, c.yaw)
+      this.mesh.setMatrixAt(i, this.mx.compose(new THREE.Vector3(c.x, c.y + lift, c.z), this.q, new THREE.Vector3(c.sx, c.sy, c.sz)))
+    })
+    this.mesh.instanceMatrix.needsUpdate = true
+  }
+
+  /** The brood wakes: the patch lies still from now. */
+  wake() {
+    this.awake = true
+    this.into = -1
+    this.write(0)
+  }
+
+  /** The chips' height above rest now, at their most lifted (for checks). */
+  get shivering() { return this.into >= 0 }
+
+  update(dt: number) {
+    if (this.awake) return
+    if (this.into >= 0) {
+      this.into += dt
+      const u = this.into / PATCH.shiverS
+      if (u >= 1) {
+        this.into = -1
+        this.next = this.interval()
+        this.write(0)
+      } else this.write(u)
+    } else if ((this.next -= dt) <= 0) this.into = 0
+  }
+
+  dispose() {
+    this.group.removeFromParent()
+    this.mesh.geometry.dispose()
+    this.mesh.dispose()
+    this.mat.dispose()
+  }
+}
+
 const dist = (a: { x: number; z: number }, b: { x: number; z: number }) => Math.hypot(a.x - b.x, a.z - b.z)
 /** Radians of ring a mite walks toward its slot at a time: the chord stays near the ring. */
 const ORBIT_STEP = 0.35
@@ -300,6 +407,10 @@ export class Mite implements Enemy {
   wakeDelay = 0
   /** Under a slag heap: not drawn, and still, until its brood sheds it. */
   buried = false
+  /** Under the gravel (look 'ballast'): `buried` too (still, never nips), but drawn, at y = BALLAST.hideY, until it rises. */
+  sunk = false
+  /** Which hide it wears: the Sleepers' slate, or the mite's coal. Set by Combat for a ballast brood. */
+  hide: 'mite' | 'sleepers' = 'mite'
   /** Seconds since it came out of the heap, for its hop (Infinity once done). */
   private outT = Infinity
   /** It just stopped sliding: the run puffs one dust. */
@@ -560,8 +671,21 @@ export class Mite implements Enemy {
       tgt.jaw = 0.05
     }
 
+    // out of the gravel: up from the ballast's hide depth to the floor, over riseMs (in place of the heap's hop)
+    let lift = 0
+    if (this.sunk) {
+      if (this.buried) lift = BALLAST.hideY
+      else {
+        const u = Math.min(1, this.outT / (BALLAST.riseMs / 1000))
+        lift = BALLAST.hideY * (1 - u)
+        if (u >= 1) {
+          this.sunk = false
+          this.outT = Infinity
+        }
+      }
+    }
     // just out of the heap: one hop up off its coal
-    if (this.outT < HEAP.hopS) {
+    if (!this.sunk && this.outT < HEAP.hopS) {
       const u = this.outT / HEAP.hopS
       hop = Math.max(hop, 4 * HEAP.hop * u * (1 - u))
     }
@@ -587,10 +711,10 @@ export class Mite implements Enemy {
     r.jawR.rotation.y = p.jaw
     r.legsL.rotation.z = legsL ?? p.legs
     r.legsR.rotation.z = legsL !== null ? -legsL : -p.legs
-    this.group.position.set(this.pos.x, hop, this.pos.z)
+    this.group.position.set(this.pos.x, hop + lift, this.pos.z)
     this.group.rotation.y = yaw
-    // under the heap it isn't drawn at all: its coal is what shows
-    this.group.scale.setScalar(this.buried ? 1e-4 : this.size * (1 + this.flash * 0.1))
+    // under the heap it isn't drawn at all: its coal is what shows (under the gravel it is drawn, below the floor)
+    this.group.scale.setScalar(this.buried && !this.sunk ? 1e-4 : this.size * (1 + this.flash * 0.1))
     this.presentQueen()
   }
 
@@ -613,7 +737,7 @@ export class Mite implements Enemy {
 
   /** Shell colour: coal, dimmed asleep, frosted, shaded in the air, and the hit flash over it all. */
   shellColor(out: THREE.Color) {
-    out.copy(BODY_C)
+    out.copy(this.hide === 'sleepers' ? SLATE_C : BODY_C)
     if (this.asleep) out.multiply(SLEEP_BODY)
     if (this.rime > 0) out.lerp(RIME, this.rime * 0.2)
     if (this.air > 0) out.multiplyScalar(1 - 0.5 * this.air)
@@ -621,7 +745,7 @@ export class Mite implements Enemy {
   }
 
   jointColor(out: THREE.Color) {
-    out.copy(JOINT_C)
+    out.copy(this.hide === 'sleepers' ? SLATE_JOINT_C : JOINT_C)
     if (this.asleep) out.multiply(SLEEP_BODY)
     if (this.rime > 0) out.lerp(RIME, this.rime * 0.4)
     if (this.air > 0) out.multiplyScalar(1 - 0.5 * this.air)
@@ -696,11 +820,13 @@ export class MiteBatch {
   private readonly sc = new THREE.Vector3()
   private readonly c = new THREE.Color()
 
-  constructor(scene: THREE.Scene) {
+  /** `hide`: the Sleepers' batch is a second set of materials in the slate (+8 draw calls, only in a level that has a ballast brood). */
+  constructor(scene: THREE.Scene, hide: 'mite' | 'sleepers' = 'mite') {
+    const H = HIDES[hide]
     // white: each mite's colour is its instance's
-    const shellMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: HIDES.mite.rough, metalness: HIDES.mite.metal })
-    const jointMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: HIDES.mite.jointRough, metalness: HIDES.mite.jointMetal })
-    finish(shellMat, HIDES.mite.finish)
+    const shellMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: H.rough, metalness: H.metal })
+    const jointMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: H.jointRough, metalness: H.jointMetal })
+    finish(shellMat, H.finish)
     // cores and halos ignore the fog (the lights-out rule)
     const coreMat = new THREE.MeshBasicMaterial({ color: 0xffffff, fog: false })
     const haloMat = new THREE.MeshBasicMaterial({ map: haloTexture(), blending: THREE.AdditiveBlending, transparent: true, depthWrite: false, fog: false })
@@ -931,6 +1057,8 @@ export class Brood {
   readonly heartHz: number
   /** A Works brood asleep as a slag heap (look: 'heap'). */
   heap: Heap | null = null
+  /** A Line brood asleep under the ballast (look: 'ballast'): its patch, and the mites sunk under it. */
+  ballast: Ballast | null = null
   /** Ticked since its last reset: the first awake tick starts from scratch. */
   private active = false
 
@@ -1286,6 +1414,13 @@ export class Brood {
     const homes = this.mites.map((m) => this.pack.homes.get(m) ?? m.pos)
     const cx = homes.reduce((a, h) => a + h.x, 0) / Math.max(1, homes.length)
     const cz = homes.reduce((a, h) => a + h.z, 0) / Math.max(1, homes.length)
+    if (this.ballast) {
+      this.ballast.wake()
+      const sunk = this.mites.filter((m) => m.buried)
+      const angle = (m: Mite) => Math.atan2(m.pos.x - cx, m.pos.z - cz)
+      sunk.sort((a, b) => angle(a) - angle(b)).forEach((m, rank) => { m.wakeDelay = BALLAST.stepMs * rank })
+      return
+    }
     if (this.heap) {
       this.heap.wake()
       const inHeap = this.mites.filter((m) => m.buried)
@@ -1311,8 +1446,23 @@ export class Brood {
     scene.add(this.heap.group)
   }
 
+  /** Asleep under the ballast: its mites sink under the patch, drawn but below the floor; the patch is built, not scaled to nothing. */
+  ballastIn(scene: THREE.Scene) {
+    const homes = this.mites.map((m) => m.pos)
+    const c = new THREE.Vector3(
+      homes.reduce((a, h) => a + h.x, 0) / Math.max(1, homes.length), 0, homes.reduce((a, h) => a + h.z, 0) / Math.max(1, homes.length),
+    )
+    for (const m of this.mites) {
+      m.buried = true
+      m.sunk = true
+    }
+    this.ballast = new Ballast(c)
+    scene.add(this.ballast.group)
+  }
+
   dispose() {
     this.ring.dispose()
     this.heap?.dispose()
+    this.ballast?.dispose()
   }
 }

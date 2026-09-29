@@ -1605,4 +1605,98 @@ check('K-S3', LINE4, async ({ page }) => {
   console.log(`INFO K-S3: heard at the windup start [${got.atWindup}], at the lock [${got.atLock}], over the whole rush [${got.after}] (live ${got.live}); headless, so nothing was audible`)
 })
 
+// --- Sleepers (B6): SPEC 6.3, R7 ------------------------------------------------------------------------------------------------
+check('K-E8', LINE4, async ({ page }) => {
+  const got = await inPage(page, `
+    const end = begin(1)
+    try {
+      W.__hold(true)
+      W.__run.route = 'III'
+      W.__enter(4, 1)
+      W.__emptyLevel()
+      C.autoAttack = false
+      C.counters = false
+      const T = W.__level().terrain
+      // a nest 16 u from Still (asleep: the wake radius is well inside that): 6 mites round (cx, cz)
+      const cx = W.__still.pos.x + 16, cz = W.__still.pos.z
+      const members = []
+      for (let i = 0; i < 6; i++) { const a = (i / 6) * Math.PI * 2 + 0.3; members.push({ kind: 'swarm', x: cx + Math.cos(a) * 0.5, z: cz + Math.sin(a) * 0.5 }) }
+      const pack = W.__pack(members, false, undefined, 'ballast')
+      const mites = pack.members
+      W.__step(0.1)
+      const Color = C.sleeperBatch && C.sleeperBatch.c.constructor
+      const off = new Color(0x2a1512).getHex()
+      const asleep = mites.map((m) => {
+        const out = new Color()
+        m.coreColor(out, 0)
+        const halo = new Color()
+        m.haloColor(halo)
+        return { sunk: m.sunk, buried: m.buried, y: m.group.position.y, core: out.getHex() === off, halo: halo.r + halo.g + halo.b, hide: m.hide }
+      })
+      const ballast = !!pack.brood.ballast, batch = !!C.sleeperBatch, patch = pack.brood.ballast ? pack.brood.ballast.group.children[0].count : 0
+      // the shiver: over 10 s asleep, a shiver runs at least twice (1.8-3 s apart) and the mites stay under
+      let shivers = 0, was = false
+      for (let i = 0; i < 600; i++) { tick(1); const s = pack.brood.ballast.shivering; if (s && !was) shivers++; was = s }
+      // Still walks within 8 u of the nest: it wakes, the mites rise one by one by angle
+      W.__heard.length = 0
+      const homes = mites.map((m) => ({ x: m.pos.x, z: m.pos.z }))
+      const mx = homes.reduce((a, h) => a + h.x, 0) / 6, mz = homes.reduce((a, h) => a + h.z, 0) / 6
+      const ang = mites.map((m) => Math.atan2(m.pos.x - mx, m.pos.z - mz))
+      W.__still.pos.set(mx - 5, 0, mz)
+      const start = mites.map(() => -1), yAt = mites.map(() => [])
+      for (let i = 0; i < 240; i++) {
+        C.hp = 100
+        W.__still.pos.set(mx - 5, 0, mz)
+        W.__step(1 / 60)
+        mites.forEach((m, j) => { if (start[j] < 0 && !m.buried) start[j] = i; if (start[j] >= 0) yAt[j].push(m.group.position.y) })
+      }
+      const heard = W.__heard.map((h) => h.name)
+      const order = [...mites.keys()].sort((a, b) => ang[a] - ang[b])
+      const t0 = start[order[0]]
+      return { asleep, ballast, batch, patch, shivers, start: order.map((j) => start[j] - t0), yPart: order.map((j) => yAt[j][5]), yEnd: order.map((j) => yAt[j][16]), yStart: order.map((j) => yAt[j][0]),
+        awake: pack.state, heardRise: heard.filter((n) => n === 'gravelRise').length, heard, sunkAfter: mites.some((m) => m.sunk) }
+    } finally { end() }`)
+  bad(got)
+  assert(got.ballast && got.batch && got.patch === 40, `ballast ${got.ballast}, second batch ${got.batch}, ${got.patch} chips (want true, true, 40)`)
+  got.asleep.forEach((m, i) => {
+    assert(m.sunk && m.buried, `mite ${i} asleep: sunk ${m.sunk}, buried ${m.buried}`)
+    assert(m.y === -0.35, `mite ${i} asleep at y ${m.y}, not hideY -0.35`)
+    assert(m.core && m.halo === 0, `mite ${i} asleep: core off ${m.core}, halo ${m.halo}: an ember under the gravel`)
+    assert(m.hide === 'sleepers', `mite ${i} wears the ${m.hide} hide`)
+  })
+  assert(got.shivers >= 2, `${got.shivers} shiver(s) in 10 s asleep (want at least 2)`)
+  assert(got.awake === 'awake', `the nest never woke (${got.awake})`)
+  got.start.forEach((s, i) => assert(Math.abs(s - i * 12) <= 1, `rise starts by angle: rank ${i} began ${s} ticks after the first, want ${i * 12} (${i * 200} ms) +- 1`))
+  got.yStart.forEach((y, i) => assert(y <= -0.3, `rank ${i} began its rise at y ${y}`))
+  got.yEnd.forEach((y, i) => assert(Math.abs(y) < 1e-9, `rank ${i} at y ${y} 16 ticks into its rise, not on the floor (250 ms)`))
+  got.yPart.forEach((y, i) => assert(y < 0 && y > -0.35, `rank ${i} at y ${y} 5 ticks into its rise: not partway`))
+  assert(got.heardRise === 6, `gravelRise heard ${got.heardRise} time(s), not 6 (${got.heard})`)
+  assert(!got.sunkAfter, 'a mite is still sunk after the rise')
+  console.log(`INFO K-E8: 6 mites asleep at y -0.35 (core off, halo 0), ${got.shivers} shivers in 10 s; woke at ${got.start.map((s) => s * 1000 / 60).map((x) => x.toFixed(0)).join('/')} ms by angle, each on the floor 250 ms later; gravelRise x${got.heardRise}`)
+})
+
+/** K-E17 (R7): no pack with look 'ballast' has an elite; counted so the check cannot pass by there being none. */
+const sleepersElite = (page, depths, route) => inPage(page, `
+  const out = { ballast: 0, elite: 0, packs: 0, bad: [] }
+  for (const d of ${JSON.stringify(depths)}) for (let s = 1; s <= 40; s++) {
+    const g = W.__genLook(d, s, ${JSON.stringify(route)})
+    for (const p of g.packs) {
+      out.packs++
+      if (p.look === 'ballast') { out.ballast++; if (p.elite) { out.elite++; out.bad.push('d' + d + ' s' + s) } }
+    }
+  }
+  return out`)
+check('K-E17', LINE4, async ({ page }) => {
+  const g = await sleepersElite(page, [4, 5], 'III')
+  assert(g.ballast >= 5, `only ${g.ballast} ballast packs in ${g.packs} packs over 80 levels: the check proves too little`)
+  assert(g.elite === 0, `${g.elite} of ${g.ballast} ballast packs have an elite: ${g.bad.slice(0, 5)}`)
+  console.log(`INFO K-E17: ${g.ballast} ballast packs in ${g.packs} (Line steps 4 and 5, seeds 1..40), none an elite`)
+})
+check('K-E17', ON, async ({ page }) => {
+  const g = await sleepersElite(page, [7], 'II')
+  assert(g.ballast >= 3, `only ${g.ballast} ballast packs at step 7 over 40 levels: the check proves too little`)
+  assert(g.elite === 0, `${g.elite} of ${g.ballast} ballast packs have an elite: ${g.bad.slice(0, 5)}`)
+  console.log(`INFO K-E17: ${g.ballast} ballast packs in ${g.packs} (Line at 7, seeds 1..40), none an elite`)
+})
+
 process.exit(await run(process.argv.slice(2)))

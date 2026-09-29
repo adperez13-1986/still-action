@@ -745,6 +745,12 @@ function packEvent(ev: EnemyEvent) {
       windups.delete(ev.brood)
       break
     case 'shed':
+      // a Sleeper rising out of the gravel: a crunch and a little dust, no ember (the Line's gravel has nothing burning in it)
+      if (ev.brood.ballast) {
+        sfx.gravelRise(panOf(ev.at))
+        vfx.dust(ev.at, 3, 0.35, undefined, 2)
+        break
+      }
       // one mite out of the slag heap: a spit of embers off its coal, and a pop
       vfx.embers(at3(ev.at, 0.15), 6, 0.3)
       sfx.pop(panOf(ev.at))
@@ -2698,7 +2704,7 @@ function enterLevel(depth: number, o: { seed?: number; bossFelled?: boolean; res
       lesson: p.lesson && m.variant === 'signal' ? (true as const) : undefined,
       siding: m.siding !== undefined ? sidings![m.siding] : undefined,
     }))
-    packOfSpec.set(p, combat.addPack(members, p.room.kind === 'side', p.elite, p.look === 'heap' ? 'heap' : undefined))
+    packOfSpec.set(p, combat.addPack(members, p.room.kind === 'side', p.elite, p.look))
   }
   combat.breakables = level.breakables
   // the Line's trains (design/area3/SPEC.md §5): their clock starts with the level
@@ -4429,6 +4435,7 @@ function frame(nowMs: number) {
   sightline.update(paused ? 0 : elapsed, x, z, seen && { key: seen, x: seen.group.position.x, z: seen.group.position.z, r: seen.radius })
   syncTells()
   combat.miteBatch.sync(world.camera, now)
+  combat.sleeperBatch?.sync(world.camera, now)
   world.render()
   // straight after the render, while the drawing buffer is still there
   drawings.afterRender(world.renderer.domElement)
@@ -4489,7 +4496,7 @@ if (import.meta.env.DEV) {
     /** The crowd's mix: live windup voices, the gain a new one would get, the hush. */
     __mix: { windups, windupGain, hush },
     /** A pack from members, like addPack (a member with `slag: true` carries a slag core). awake = true wakes it at once. */
-    __pack: (members: { kind: Archetype; variant?: 'lobber' | 'signal' | 'handcar'; x: number; z: number; slag?: true; lesson?: true; siding?: SidingDef }[], awake = true, elite?: EliteMod, look?: 'heap'): Pack => {
+    __pack: (members: { kind: Archetype; variant?: 'lobber' | 'signal' | 'handcar'; x: number; z: number; slag?: true; lesson?: true; siding?: SidingDef }[], awake = true, elite?: EliteMod, look?: 'heap' | 'ballast'): Pack => {
       const pack = combat.addPack(members, false, elite ? { mod: elite, name: 'Test' } : undefined, look)
       if (awake) combat.wake(pack)
       return pack

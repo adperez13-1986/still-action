@@ -2148,6 +2148,20 @@ export function lensOut(pan: number) {
 }
 
 /**
+ * A Sleeper rising out of the gravel (STAGE-B.md 2.10; a first pass, his ear decides): 120 ms of highpassed noise, crunchy: a few
+ * grains at random gains, each a very short click of stone on stone.
+ */
+export function gravelRise(pan: number) {
+  heard('gravelRise')
+  const c = live()
+  if (!c) return
+  const t = c.currentTime
+  const d = out(c, 'enemy', pan)
+  hiss(c, d, t, 0.12, 0.14, 'highpass', 2600, 1800, 0.8, 0.006)
+  for (let i = 0; i < 5; i++) hiss(c, d, t + Math.random() * 0.1, 0.018, 0.1 + Math.random() * 0.14, 'bandpass', 3200 + Math.random() * 2400, 2000, 2.5, 0.001)
+}
+
+/**
  * The Signalman's windup voice (STAGE-B.md §2.10; a first pass, his ear decides): six ratchet clicks over `ms`, each a short
  * bandpassed tick a twentieth higher than the last (from 2.2 kHz), over a low lamp hum that swells with the arm. The clicks are the
  * arm's steps (signal.ts). `stop(true)` cuts it dead, like the crouch: the silence is part of the parry.
