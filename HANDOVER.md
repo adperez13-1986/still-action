@@ -18,7 +18,10 @@ B3 (R4-R6, dark) committed. A fresh Sonnet engineer on B4 (the Signalman), uncom
 and the lunge felt; `catches` per depth is in the playtest log.
 **B4 (the Signalman, dark) committed 6568f0c.** K-T13's multi-kill rule fails with it (49% of trains kill 2+; share 24.5%, free 0):
 the translator is ruling on it. **His Parry call: B + grace 150 behind a pause switch** (`parry catch`, on by default, off = today);
-the B4 engineer is building it as its own commit, uncommitted work in src/. Ask him before pushing it. Then B5 (the Handcar).
+built and committed 75bbe9e, **NOT pushed (whole game): ask him.** K-T13 was a harness double-count (fixed): with the Signalman
+trains are ~20% of kills, 8-10% multi-kill, 0 free: PASS; translator: working as designed (hulks lunge through Still onto the
+called lane). Two held options if the phone says "the train did it": no crouch across a lit strip; the recover not committed.
+Next: B5 (the Handcar) with a fresh Sonnet engineer.
 **Parry verdict (design/parry/README.md, 8c8b1f4):** dead slot from d4 even with R3 and perfect timing. Options A (cooldown
 2200), B (a catch readies Parry, cap 1/1.5 s), C (caught body waits 1 s); balancer recommends B + grace 150. **His call, asked.**
 Also: the Cleaver beats Piston from d4 (arms slot has a Cleaver problem).
