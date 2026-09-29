@@ -1,9 +1,32 @@
-# Handover — 29 Sep 2026 (morning)
+# Handover — 29 Sep 2026 (afternoon)
 
 For the next session. Read this, then `DESIGN.md` (the settled decisions), then the design
 folder for whatever you're touching. Don't re-derive any of them.
 
-## Start here (29 Sep, midday: his calls made, pushed)
+## Start here (29 Sep, afternoon: stage R done, dark)
+
+**Both roads in one run: stage R is built, pushed, and dark** (`BOTH_ROADS = false`; DEV `?roads=1`, add
+`&line=1` for the crossroads room). Live is unchanged: `node tools/checks/baseline.mjs compare` (K-90) proves
+flag-off equals the pre-change game. Read `design/area3/BOTH-ROADS.md` (§4: his 8 decisions, all my
+recommendations, names stay PLACEHOLDER), `design/scaling/CURVE9.md` (first-pass 9-depth curve, not locked),
+`design/area3/LINE-RULES.md` (translator, stage B rules R1-R11), `design/area3/STAGE-R.md` (the brief).
+- How it was built (his ask): design agents for design (balancer: curve; translator: Line rules; verifier:
+  the brief), a Sonnet 5.5 engineer (`model: sonnet`, confirmed `claude-sonnet-5-5`) for the code, stepped
+  R0..R9 with SendMessage; I read every diff, reran every check and looked at every screenshot before each
+  commit. Review caught one bug the checks missed: the square's Line dressing rails ran through the husk.
+- Checks now live in the repo: `node tools/checks/k9.mjs` (K-9x, 18) and `node tools/checks/area3.mjs`
+  (stage A, 8), playwright-core + system Chrome, vite forced to 127.0.0.1 (asserted). All pass at 3d9d11f.
+- **His to decide before stage B:** LINE-RULES R3 (Parry Clamp catches any tell in its cone, whole game) and
+  R8 (the hulk's lunge books its beat, whole game). The CURVE9 optional dial: Assembler `bossDmg` 1.1 -> 1.0
+  (also moves the 6-depth game).
+- **His phone, when home:** `?roads=1` on the dev server for a full 9-depth run: the real run length (the whole
+  reason for 9 depths), the in-between hours, Home at 6 at dusk. The Line has trains but none of its own
+  enemies yet and ends in a stand-in Assembler.
+- Next: stage B (Signalman, Handcar, Sleepers, ambience, notebook) per SPEC B1-B4 + LINE-RULES, then C (the Engine).
+- Cleanup still his (the permission classifier blocked me): `git worktree remove --force ../still-action-pedestals
+  && git branch -d pedestals leanings`; the merged `the-line` branch (local + GitHub) can go too if he says.
+
+## Earlier start-here (29 Sep, midday: his calls made, pushed)
 
 **His calls: hulk trigger A, sentinel judged on the phone first.** Built and pushed with the two commits
 below, so live now has the swap fix + counters. He is at the office: **no dev server while he's there**
