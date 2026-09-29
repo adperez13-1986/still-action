@@ -141,15 +141,24 @@ export function exitsAfterBoss(depth: number): ExitKind[] {
 export type HomeHour = 'morning' | 'noon' | 'afternoon' | 'dusk' | 'night'
 
 /**
- * §4.13. Broken or Stopped: whatever hour it happened. Home before the last
- * depth is the afternoon, the kids awake; home from the last depth is night,
- * the kids asleep. Going home early is a different homecoming, not a lesser one.
+ * §4.13. Broken or Stopped: whatever hour it happened. Home is a different homecoming by how far he got, not
+ * a lesser one. A 6-depth run has two: the afternoon before the last depth, the kids awake, and night from it,
+ * the kids asleep. A 9-depth run has three: the afternoon at 3, dusk at 6 (the middle boss: the day has
+ * turned, the kids are still up), night at 9.
+ * INV-H1: for a fixed depth, home's hour is never earlier than broken's, and no hour runs backward as depth rises.
  */
 export function hourAtEnd(kind: 'broken' | 'stopped' | 'home', depth: number): HomeHour {
-  if (kind === 'home') return depth >= RUN_DEPTHS ? 'night' : 'afternoon'
+  if (RUN_DEPTHS === 6) {
+    if (kind === 'home') return depth >= RUN_DEPTHS ? 'night' : 'afternoon'
+    if (depth <= 2) return 'morning'
+    if (depth === 3) return 'noon'
+    if (depth <= 5) return 'afternoon'
+    return 'dusk'
+  }
+  if (kind === 'home') return depth >= 9 ? 'night' : depth >= 6 ? 'dusk' : 'afternoon'
   if (depth <= 2) return 'morning'
   if (depth === 3) return 'noon'
-  if (depth <= 5) return 'afternoon'
+  if (depth <= 6) return 'afternoon'
   return 'dusk'
 }
 
@@ -466,7 +475,7 @@ export const ARBITER_AT_6 = true
 export function bossFor(depth: number, arbiterAt6 = ARBITER_AT_6, route: RouteId = 'II', engineOnLine = ENGINE_ON_LINE): BossDef | null {
   if (depth % BOSS_EVERY !== 0) return null
   // its HP by the depth curve, never by what he carries
-  const hp = (d: BossDef) => Math.round(d.hp * curveAt(depth).bossHp)
+  const hp = (d: BossDef) => Math.round(d.hp * curveAt(depth, RUN_DEPTHS).bossHp)
   if (depth === RUN_DEPTHS && route === 'III' && engineOnLine) return { ...ENGINE_DEF, hp: hp(ENGINE_DEF) }
   if (depth === RUN_DEPTHS && arbiterAt6) return { ...ARBITER_DEF, hp: hp(ARBITER_DEF) }
   return { ...ASSEMBLER_DEF, hp: hp(ASSEMBLER_DEF), adds: depth === RUN_DEPTHS ? 'rams-mites' : 'hulks' }
@@ -474,7 +483,9 @@ export function bossFor(depth: number, arbiterAt6 = ARBITER_AT_6, route: RouteId
 
 // --- the one day -----------------------------------------------------------------------
 
-export type DayKey = 'morning' | 'late-morning' | 'noon' | 'afternoon' | 'late-afternoon' | 'dusk' | 'first-dark' | 'night'
+/** 'mid-afternoon' and 'early-dusk' are the 9-depth day's in-between hours: internal names, never shown. */
+export type DayKey = 'morning' | 'late-morning' | 'noon' | 'afternoon' | 'mid-afternoon' | 'late-afternoon'
+  | 'early-dusk' | 'dusk' | 'first-dark' | 'night'
 /** Multipliers on `grade` (world.ts), plus the colours. morning is today's look, exactly. */
 export interface DayPreset {
   /** x grade.saturation / exposure / vignette / fogNear and fogFar. */
@@ -507,7 +518,7 @@ export const BASE_KEY = 1.15
  * constant at every hour (the §6.1 column rose to 1.25 at night): the world darkens
  * round her, she doesn't brighten.
  */
-export const DAY: Record<DayKey | 'workshop', DayPreset> = {
+const HOURS = {
   morning: { sat: 1.0, exposure: 1.0, vignette: 1.0, fog: 1.0, fogColor: 0x0b1018, background: 0x070a0e, hemi: 1.0, key: 1.0, keyColor: 0x8fb0da, keyDir: [-8, 14, -6], grace: 1 },
   'late-morning': { sat: 1.02, exposure: 1.02, vignette: 1.0, fog: 1.05, fogColor: 0x0c121a, background: 0x070a0e, hemi: 1.0, key: 1.08, keyColor: 0x9ab8de, keyDir: [-6, 15, -5], grace: 1 },
   noon: { sat: 1.04, exposure: 1.04, vignette: 0.95, fog: 1.1, fogColor: 0x0d131b, background: 0x080b10, hemi: 1.05, key: 1.15, keyColor: 0xa8c0e2, keyDir: [-3, 16, -3], grace: 1 },
@@ -524,6 +535,16 @@ export const DAY: Record<DayKey | 'workshop', DayPreset> = {
   night: { sat: 0.7, exposure: 0.72, vignette: 1.25, fog: 0.7, fogColor: 0x05070d, background: 0x030409, hemi: 1.0, key: 0.55, keyColor: 0x6c7cc4, keyDir: [-6, 12, -10], grace: 1, hemiSky: 0x3448bc, bloom: 0.86, rim: 0.3 },
   // the room: its key light, its colour and Grace's lamp come by the hour (WINDOW)
   workshop: { sat: 1.18, exposure: 1.0, vignette: 0.55, fog: 2.0, fogColor: 0x0b0f16, background: 0x070a0e, hemi: 0.6, key: 1, keyColor: 0x98a8c4, keyDir: [-14, 9, 2], grace: 1.2 },
+} satisfies Record<Exclude<DayKey, 'mid-afternoon' | 'early-dusk'> | 'workshop', DayPreset>
+/**
+ * The hours by key. The two in-between hours are the midpoints of their neighbours (mixPreset is hoisted, and
+ * BASE_HEMI_SKY above is set before this runs): the 9-depth day has three more spans than the 6-depth one
+ * and no hour to spare between afternoon and dusk.
+ */
+export const DAY: Record<DayKey | 'workshop', DayPreset> = {
+  ...HOURS,
+  'mid-afternoon': mixPreset(HOURS.afternoon, HOURS['late-afternoon'], 0.5),
+  'early-dusk': mixPreset(HOURS['late-afternoon'], HOURS.dusk, 0.5),
 }
 export const DEPTH_DAY: Record<number, DayKey> = { 1: 'morning', 2: 'late-morning', 3: 'noon', 4: 'afternoon', 5: 'late-afternoon', 6: 'dusk' }
 
@@ -545,13 +566,15 @@ export const WINDOW: Record<HomeHour, { sky: number; key: number; keyColor: numb
 /** Grace's reach: the room's lamp stops at its barriers; in the maze she carries further. */
 export const GRACE_REACH = { run: 34, room: 16 }
 
+export interface DaySpan { from: DayKey; to: DayKey; by: 'rooms' | 'boss' | 'hold' }
 /**
  * The day through each depth (§7): a span from one hour to the next. Inside an area each
  * span's `to` is the next depth's `from`, so the fades join up; nothing in a level reaches
- * night. By 'rooms' the day follows the spine rooms he's reached; 'boss' follows the
- * Arbiter's HP (lights out, capped at first dark); 'hold' keeps it (noon, the Assembler).
+ * night. By 'rooms' the day follows the spine rooms he's reached; 'boss' follows the last
+ * boss's HP (lights out, capped at first dark); 'hold' keeps it (noon, the Assembler).
+ * A 6-depth run's day is this table, unchanged.
  */
-export const DAY_SPAN: Record<number, { from: DayKey; to: DayKey; by: 'rooms' | 'boss' | 'hold' }> = {
+const DAY_SPAN_6: Record<number, DaySpan> = {
   1: { from: 'morning', to: 'late-morning', by: 'rooms' },
   2: { from: 'late-morning', to: 'noon', by: 'rooms' },
   3: { from: 'noon', to: 'noon', by: 'hold' },
@@ -559,6 +582,28 @@ export const DAY_SPAN: Record<number, { from: DayKey; to: DayKey; by: 'rooms' | 
   5: { from: 'late-afternoon', to: 'dusk', by: 'rooms' },
   6: { from: 'dusk', to: 'first-dark', by: 'boss' },
 }
+/**
+ * A 9-depth run's day (design/area3/BOTH-ROADS.md §1): the ruin is the morning to noon, each road's first
+ * two depths are a third of the afternoon apiece, and the middle boss holds the light at late afternoon (the
+ * square keeps its own light there). 7-8 carry it into dusk, and the last boss takes it to first dark by its
+ * HP.
+ * INV-D1: a row for every depth 1..RUN_DEPTHS.
+ * INV-D2: exactly one row is by 'boss', at RUN_DEPTHS.
+ * INV-D3: span[d].to === span[d+1].from for every d in 1..RUN_DEPTHS-1 except d = 3 (the crossroads is the
+ *         afternoon, no span).
+ */
+const DAY_SPAN_9: Record<number, DaySpan> = {
+  1: { from: 'morning', to: 'late-morning', by: 'rooms' },
+  2: { from: 'late-morning', to: 'noon', by: 'rooms' },
+  3: { from: 'noon', to: 'noon', by: 'hold' },
+  4: { from: 'afternoon', to: 'mid-afternoon', by: 'rooms' },
+  5: { from: 'mid-afternoon', to: 'late-afternoon', by: 'rooms' },
+  6: { from: 'late-afternoon', to: 'late-afternoon', by: 'hold' },
+  7: { from: 'late-afternoon', to: 'early-dusk', by: 'rooms' },
+  8: { from: 'early-dusk', to: 'dusk', by: 'rooms' },
+  9: { from: 'dusk', to: 'first-dark', by: 'boss' },
+}
+export const DAY_SPAN: Record<number, DaySpan> = RUN_DEPTHS === 9 ? DAY_SPAN_9 : DAY_SPAN_6
 const spanOf = (depth: number) => DAY_SPAN[Math.max(1, Math.min(RUN_DEPTHS, depth))]!
 
 /** The square's fog is held back past its far corner: the camera is ~40 u off, the corner ~16 u deeper. */
@@ -635,7 +680,8 @@ export function applyDayAt(world: World, depth: number, p: number) {
   const k = Math.max(0, Math.min(1, p))
   current = { key: spanOf(depth).from, hour: 'afternoon', depth, progress: k }
   applyPreset(world, dayAt(depth, k))
-  if (spanOf(depth).by === 'boss') world.fog.far = Math.max(world.fog.far, SQUARE_FOG_FAR)
+  // the square keeps its far corner in the dark, and at 6 of a 9-depth run, where it's held at late afternoon
+  if (spanOf(depth).by === 'boss' || (RUN_DEPTHS === 9 && depth === 6)) world.fog.far = Math.max(world.fog.far, SQUARE_FOG_FAR)
 }
 
 /** After the grade panel moves the base: the hour goes back on top. */

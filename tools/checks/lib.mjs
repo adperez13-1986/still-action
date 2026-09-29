@@ -111,9 +111,37 @@ export function firstDiff(a, b, path = '$') {
   return null
 }
 
+/** Like firstDiff, but numbers within `eps` of each other are equal. */
+export function firstDiffClose(a, b, eps = 1e-9, path = '$') {
+  if (typeof a === 'number' && typeof b === 'number') return Math.abs(a - b) <= eps ? null : `${path}: ${a} != ${b}`
+  if (Array.isArray(a) && Array.isArray(b)) {
+    if (a.length !== b.length) return `${path}.length: ${a.length} != ${b.length}`
+    for (let i = 0; i < a.length; i++) {
+      const d = firstDiffClose(a[i], b[i], eps, `${path}[${i}]`)
+      if (d) return d
+    }
+    return null
+  }
+  if (a && b && typeof a === 'object' && typeof b === 'object' && !Array.isArray(a) && !Array.isArray(b)) {
+    for (const k of [...new Set([...Object.keys(a), ...Object.keys(b)])].sort()) {
+      if (!(k in a) || !(k in b)) return `${path}.${k}: present in only one`
+      const d = firstDiffClose(a[k], b[k], eps, `${path}.${k}`)
+      if (d) return d
+    }
+    return null
+  }
+  return firstDiff(a, b, path)
+}
+
 /** Throw unless a deep-equals b (JSON values). `what` names it in the message. */
 export function assertEq(what, a, b) {
   const d = firstDiff(a, b)
+  if (d) throw new Error(`${what}: ${d}`)
+}
+
+/** Throw unless a deep-equals b, numbers within eps. */
+export function assertClose(what, a, b, eps = 1e-9) {
+  const d = firstDiffClose(a, b, eps)
   if (d) throw new Error(`${what}: ${d}`)
 }
 

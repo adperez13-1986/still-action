@@ -5,7 +5,7 @@ import type { Terrain, WallFace } from './terrain'
 import type { BreachHole } from './parts'
 import { ELITE_MODS, type Archetype, type EliteMod } from './combat'
 import { BROOD, HEAP } from './swarm'
-import { exitsAfterBoss, lookAt, type BossDef, type ExitKind, type KitPreset, type LinePreset, type MachineKind, type PlaceDef, type PlaceId, type RouteId } from './areas'
+import { RUN_DEPTHS, exitsAfterBoss, lookAt, type BossDef, type ExitKind, type KitPreset, type LinePreset, type MachineKind, type PlaceDef, type PlaceId, type RouteId } from './areas'
 import { LINE, SIDING, buildLinePieces, distToSpan, type LaneDef, type SidingDef } from './line'
 import { buildMachines, machineTop, CHIMNEY_H, type MachinePlacement } from './machines'
 import { THIEF } from './thief'
@@ -1469,7 +1469,7 @@ export function generateLevel(
   packRooms.forEach((room, idx) => {
     const big = room.rx >= 2 || room.rz >= 2
     // the room's budget, in body-equivalents: the depth curve's (curve.ts; the same rand() call, so seeds hold)
-    const size = 2 + Math.floor(rand() * 2) + curveAt(depth).budget + (big ? curveAt(depth).bigBonus : 0)
+    const size = 2 + Math.floor(rand() * 2) + curveAt(depth, RUN_DEPTHS).budget + (big ? curveAt(depth, RUN_DEPTHS).bigBonus : 0)
     const rangedCount = depth === 1
       ? (idx === rangedPack ? 1 : 0)
       : (rand() < Math.min(0.85, 0.3 * depth) ? 1 : 0) + (depth >= 4 && big && rand() < 0.5 ? 1 : 0)
@@ -1601,7 +1601,7 @@ export function generateLevel(
   const TITLES: Record<EliteMod, string> = { swift: 'the Quick', plated: 'the Plated', splitting: 'the Many', warding: 'the Warden' }
   const mainPacks = packs.filter((p) => p.room.kind === 'main' && p.members.length >= 2 && !p.lesson)
   // how many heavies: the depth curve's (curve.ts)
-  const eliteCount = Math.min(mainPacks.length, curveAt(depth).heavies)
+  const eliteCount = Math.min(mainPacks.length, curveAt(depth, RUN_DEPTHS).heavies)
   for (let n = 0; n < eliteCount; n++) {
     const p = mainPacks.splice(Math.floor(rand() * mainPacks.length), 1)[0]!
     const kind = p.members[0]!.kind as Exclude<Archetype, 'boss'>

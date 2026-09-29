@@ -451,7 +451,8 @@ export class Combat {
   /** Mastery (mastery.ts): what the hand and the eye have learned this run. Main owns the set; reset() leaves it. */
   mastery: ReadonlySet<MasteryId> = new Set()
   /** The depth curve for packs added now (curve.ts): main sets it per level; keyed on depth alone. */
-  curve: DepthCurve = curveAt(1)
+  // row 1 is shared by both run lengths (INV-C1), so combat need not know the run's (it must not import areas)
+  curve: DepthCurve = curveAt(1, 6)
   /** States and slows, per enemy. Deleted when the enemy is buried. */
   private readonly status = new Map<Enemy, EnemyStatus>()
   /** Enemies in the clamp's throw. While held, an enemy doesn't think. */

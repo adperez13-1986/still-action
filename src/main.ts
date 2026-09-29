@@ -2591,7 +2591,7 @@ function enterLevel(depth: number, o: { seed?: number; bossFelled?: boolean; res
   // their hits stack); the elite pack keeps the big telegraphs as the level's heavies, and bosses keep theirs
   combat.pressure = !level.boss
   combat.counters = combat.pressure && countersOn
-  combat.curve = curveAt(depth)
+  combat.curve = curveAt(depth, RUN_DEPTHS)
   for (const p of level.packs) {
     const members = p.members.map((m) => ({ ...m, variant: m.variant === 'lobber' ? ('lobber' as const) : undefined }))
     packOfSpec.set(p, combat.addPack(members, p.room.kind === 'side', p.elite, p.look === 'heap' ? 'heap' : undefined))
@@ -4663,6 +4663,8 @@ if (import.meta.env.DEV) {
     /** The run's length (6, or 9 with ?roads=1), and the road helpers: a depth's step and road (the road takes the ORDER), and whether it's an open field. */
     __runDepths: RUN_DEPTHS,
     __stepOf: stepOf, __roadOf: roadOf, __openAt: openAt,
+    /** The depth curve's row for this run's length (curve.ts). */
+    __curveAt: (d: number) => curveAt(d, RUN_DEPTHS),
     /** Override area III's switches for this page (design/area3/SPEC.md §12.2); null restores one. Returns what they read now. */
     __flags: (o: { line?: boolean | null; engine?: boolean | null; porter?: boolean | null; roadChoice?: 'crossroads' | 'alternate' | null } = {}) => {
       setFlags(o)

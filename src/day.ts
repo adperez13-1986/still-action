@@ -5,7 +5,7 @@ import type { Boss } from './boss'
 /**
  * The day moves with you (design/content/SPEC.md §7). Each depth has a span of the day,
  * from its own hour to the next (DAY_SPAN): the grade follows how far Still has got
- * through the level's spine rooms, and at the last depth the Arbiter's HP, down to first
+ * through the level's spine rooms, and at the last depth the last boss's HP, down to first
  * dark. It only ever goes forward inside a level, and it eases on game time, so a pause
  * or a hitstop holds it. At a room step of 0.2 and 0.4/s, each change takes about 5 s:
  * you never see it happen, you notice the fog is closer.
