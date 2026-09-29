@@ -21,7 +21,8 @@ the translator is ruling on it. **His Parry call: B + grace 150 behind a pause s
 built and committed 75bbe9e, **NOT pushed (whole game): ask him.** K-T13 was a harness double-count (fixed): with the Signalman
 trains are ~20% of kills, 8-10% multi-kill, 0 free: PASS; translator: working as designed (hulks lunge through Still onto the
 called lane). Two held options if the phone says "the train did it": no crouch across a lit strip; the recover not committed.
-Next: B5 (the Handcar) with a fresh Sonnet engineer.
+**B5 (the Handcar, dark) committed.** Phone questions: its tracking tell is faint at phone size; locked it shares the train's
+red wash (the cart, no lamps, no rail outlines set it apart; lanes and sidings never share a room). Next: B6 (Sleepers).
 **Parry verdict (design/parry/README.md, 8c8b1f4):** dead slot from d4 even with R3 and perfect timing. Options A (cooldown
 2200), B (a catch readies Parry, cap 1/1.5 s), C (caught body waits 1 s); balancer recommends B + grace 150. **His call, asked.**
 Also: the Cleaver beats Piston from d4 (arms slot has a Cleaver problem).
