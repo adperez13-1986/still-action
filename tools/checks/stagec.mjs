@@ -1,6 +1,6 @@
 /**
  * The stage C checks (design/area3/STAGE-C.md §4): `node tools/checks/stagec.mjs [K-N1a ...]` runs all of them, or the ids
- * listed. Each step adds its own checks here, on lib.mjs's `suite()`, as stageb.mjs does (C1-C4: K-N1a, K-N1b, K-N2a, K-N2b, K-N3). The baselines
+ * listed. Each step adds its own checks here, on lib.mjs's `suite()`, as stageb.mjs does (C1-C6: K-N1a, K-N1b, K-N2a, K-N2b, K-N3, K-N4-K-N7, K-N8, K-N17, K-N18). The baselines
  * (K-90, K-90L, K-90F) are baseline.mjs's and fights.mjs's; stage C never re-captures them.
  *
  * The short forms of STAGE-C.md §4, as queries (every one is ?save=memory and a dev run straight into a level):
@@ -21,7 +21,7 @@ const { check, run } = suite()
 
 /**
  * The in-page toolkit every check body starts with (it is source, spliced in front of the body by `inPage`).
- * `enterEngine(order, depth, seed)`: the road taken (`__run.route`), a level at `depth`, Still wearing the Scrap Cleaver, the autos, the
+ * `enterEngine(order, depth, seed, opts)`: (C6: the Engine's steam and cinder are off unless opts.steam, opts.cinder: see resetEngine) the road taken (`__run.route`), a level at `depth`, Still wearing the Scrap Cleaver, the autos, the
  * break rule and the eye's brace (a planted Still takes half) off; returns the Engine's level. `tick(n, before)`: n ticks of 1/60 s with Still's HP put back to 100 before each;
  * returns the HP he lost. `until(pred, maxS, before)`: seconds ticked until pred() (checked before each tick), or -1.
  * `roomOf()`: the arena's centre `c` and `away`, the unit vector from the entrance to it (the entrance axis).
@@ -48,7 +48,25 @@ const until = (pred, maxS, before) => {
   }
   return -1
 }
-const enterEngine = (order, depth, seed) => {
+// the Engine's numbers as they load, so each level starts from them (a page is shared by every check of its query)
+if (!W.__ENGINE0) {
+  const E = W.__ENGINE
+  W.__ENGINE0 = { range: E.steam.range, gapS: E.steam.gapS.slice(), afterMs: E.outrun.afterMs.slice(), first: E.guess.first, speed: E.speed }
+}
+/**
+ * C6's attacks are opt-in: the lit-rail checks measure the run alone, so by default the steam's range is 0 (never in reach) and the
+ * cinder never due. o.steam, o.cinder turn them on as they ship; o.blind is K-N17's before (the guess starts at 0); o.gap = [lo, hi] s.
+ */
+const resetEngine = (o = {}) => {
+  const E = W.__ENGINE, E0 = W.__ENGINE0
+  E.speed = E0.speed
+  E.steam.range = o.steam ? E0.range : 0
+  E.steam.gapS = (o.gap || E0.gapS).slice()
+  E.outrun.afterMs = o.cinder ? E0.afterMs.slice() : [Infinity, Infinity]
+  E.guess.first = o.blind ? 0 : E0.first
+}
+const enterEngine = (order, depth, seed, opts = {}) => {
+  resetEngine(opts)
   W.__hold(true)
   W.__run.route = order
   W.__enter(depth, seed)
@@ -679,6 +697,376 @@ check('K-N7', ENG6, async ({ page }) => {
       if (!stays && got.lost !== 0) why(`walking 2 u off the line at the first arm strip still cost ${got.lost} HP`)
     }
   }
+})
+
+// --- Steam and the cinder (C6) -----------------------------------------------------------------------------------------
+
+/** In the page: a strip's containment (grown by `grow`), and a point's distance to a box. */
+const GEO = `
+  const stripHas = (s, x, z, grow = 0) => {
+    const vx = s.bx - s.ax, vz = s.bz - s.az, len = Math.hypot(vx, vz)
+    if (len < 1e-6) return false
+    const along = ((x - s.ax) * vx + (z - s.az) * vz) / len, across = Math.abs((x - s.ax) * vz - (z - s.az) * vx) / len
+    return along >= 0 && along <= len && across <= s.halfW + grow
+  }
+  const boxDist = (b, x, z) => Math.hypot(Math.max(b.minX - x, 0, x - b.maxX), Math.max(b.minZ - z, 0, z - b.maxZ))
+`
+
+/** K-N8's setup: the Engine of III at 6 with the steam on (the cinder off), woken and running. `arg.gap` = the steam's gap [lo, hi] s. */
+const STEAMING = `
+  enterEngine('III', 6, arg.seed, { steam: true, gap: arg.gap })
+  const { c, away } = roomOf()
+  wake()
+  // the four inner walls (dungeon.ts: the yard's, unchanged in the roundhouse)
+  const inner = [[-6.5, 0, 'z'], [6.5, 0, 'z'], [0, -6.5, 'x'], [0, 6.5, 'x']].map(([ox, oz, al]) => {
+    const x = c.x + ox, z = c.z + oz
+    return al === 'z' ? { minX: x - 0.35, maxX: x + 0.35, minZ: z - 2, maxZ: z + 2 } : { minX: x - 2, maxX: x + 2, minZ: z - 0.35, maxZ: z + 0.35 }
+  })
+  const B = () => W.__combat.boss
+  /**
+   * seconds of ticks with Still put where place(i) says before each; every steam recorded from its booking to its end: the booking's
+   * conditions (range, dot against its facing, how many lit strips he stood in grown 0.42), the ticks its attack lasted with the cue and
+   * phase of each, the strip when it is made, and the phase on the tick it arms. refused counts the ticks the rules turned a steam away.
+   */
+  const watch = (seconds, place) => {
+    const steams = [], refused = { behind: 0, lit: 0 }
+    let cur = null, prevAtk = 'none'
+    for (let i = 0; i < seconds * 60; i++) {
+      place(i)
+      const yaw = B().group.rotation.y
+      const pre = W.__engineSegs().filter((g) => !g.done)
+      tick(1)
+      const b = W.__boss(), atk = b.attack, still = W.__still.pos
+      const dx = still.x - b.x, dz = still.z - b.z, d = Math.hypot(dx, dz), dot = dx * Math.sin(yaw) + dz * Math.cos(yaw)
+      const post = W.__engineSegs().filter((g) => !g.done)
+      const lit = pre.concat(post).filter((g) => stripHas(g.shape, still.x, still.z, 0.42)).length
+      if (prevAtk === 'none' && atk === 'none' && b.state === 'run' && d <= 8) {
+        if (dot < -1.5 - 0.05 && !lit) refused.behind++
+        if (dot >= -1.5 + 0.05 && lit) refused.lit++
+      }
+      if (prevAtk === 'none' && atk === 'steamTrack') {
+        cur = { i, d, dot, lit, state: b.state, windupMs: B().windupMs, ticks: 0, cues: [], phases: [], hazard: null, armPhase: null }
+        steams.push(cur)
+      }
+      if (cur && atk !== 'none') {
+        cur.ticks++
+        cur.cues.push(B().cue.voice)
+        cur.phases.push(B().phase)
+        if (prevAtk === 'steamTrack' && atk === 'steamLock') {
+          const h = W.__hazards().filter((x) => x.source === 'steam' && !x.done).pop()
+          cur.hazard = h ? { shape: h.shape, armIn: h.armIn, damage: h.damage } : null
+          cur.eng = { x: b.x, z: b.z }
+          cur.dmgMul = b.dmgMul
+        }
+        if (cur.hazard && cur.armPhase === null) {
+          const h = W.__hazards().filter((x) => x.source === 'steam').pop()
+          if (h && h.armIn <= 1e-6) cur.armPhase = B().phase
+        }
+      }
+      if (cur && atk === 'none') cur = null
+      prevAtk = atk
+    }
+    return { steams, refused, inner }
+  }
+`
+
+check('K-N8', ENG6, async ({ page }) => {
+  const T = (body, arg) => inPage(page, GEO + STEAMING + body, arg)
+  const ms = (n) => n * 1000 / 60
+  // a jet booked at range must reach the point it aims at (ENGINE-N17.md 2): len >= range + leadMax
+  const st = await evalJson(page, () => ({ len: window.__ENGINE.steam.len, range: window.__ENGINE.steam.range, leadMax: window.__ENGINE.steam.leadMax }))
+  if (st.len < st.range + st.leadMax) throw new Error(`steam.len ${st.len} is under range ${st.range} + leadMax ${st.leadMax}: a strip booked at range stops short of the point it aims at`)
+  let cutSeen = 0, uncutSeen = 0
+  for (const seed of [1, 2]) {
+    // A. Still at c + (0, 5), the inner wall (c + (0, 6.5)) between him and the +z straight: the natural rhythm, 100 s
+    const a = await T(`return watch(100, () => W.__still.pos.set(c.x, 0, c.z + 5))`, { seed })
+    const why = (m) => { throw new Error(`seed ${seed}: ${m}`) }
+    if (a.steams.length < 4) why(`${a.steams.length} steams in 100 s`)
+    a.steams.forEach((k, n) => {
+      const w = `steam ${n}`
+      if (k.d > 8 + 0.2) why(`${w} began with Still ${k.d.toFixed(2)} u away, past 8`)
+      if (k.dot < -1.5 - 0.05) why(`${w} began with Still behind it (dot ${k.dot.toFixed(2)} < -1.5)`)
+      if (k.lit) why(`${w} began with Still inside ${k.lit} lit strip(s) grown 0.42`)
+      if (k.state !== 'run') why(`${w} began in state ${k.state}`)
+      if (Math.abs(ms(k.ticks) - 950) > 17) why(`${w}: the windup lasted ${ms(k.ticks).toFixed(1)} ms, not 950 (250 + 700) +- 17`)
+      if (k.windupMs !== 950) why(`${w}: windupMs is ${k.windupMs}`)
+      if (k.cues.some((x) => x !== 'windup')) why(`${w}: the cue was ${[...new Set(k.cues)]}, not 'windup'`)
+      if (k.phases.slice(0, -1).some((x) => x !== 'windup') || k.phases[k.phases.length - 1] !== 'strike') why(`${w}: the phases were ${k.phases.join(',')}, not windup then a strike on the last`)
+      if (k.armPhase !== 'strike') why(`${w}: the phase on the tick the jet armed was ${k.armPhase}, not 'strike'`)
+      if (!k.hazard) why(`${w}: no steam hazard at the lock`)
+      // made at the lock with armMs 700 (the tick that made it has counted one tick of it), from the engine's centre at the lock
+      if (Math.abs(k.hazard.armIn + 1000 / 60 - 700) > 0.01) why(`${w}: the strip's armMs was ${(k.hazard.armIn + 1000 / 60).toFixed(3)}, not 700`)
+      const sh = k.hazard.shape
+      if (Math.hypot(sh.ax - k.eng.x, sh.az - k.eng.z) > 1e-6) why(`${w}: the strip starts (${sh.ax.toFixed(3)}, ${sh.az.toFixed(3)}), not at the engine's centre (${k.eng.x.toFixed(3)}, ${k.eng.z.toFixed(3)}) at the lock`)
+      if (Math.abs(sh.halfW - 1.3) > 1e-9) why(`${w}: halfW ${sh.halfW}, not 1.3`)
+      if (Math.abs(k.hazard.damage - 14 * k.dmgMul) > 1e-9) why(`${w}: damage ${k.hazard.damage}, not 14 x bossDmg = ${14 * k.dmgMul}`)
+      const len = Math.hypot(sh.bx - sh.ax, sh.bz - sh.az)
+      if (len < st.len - 0.1) {
+        // cut: it ends at the first solid, 0.1 to 0.2 short of the wall's face (the march is 0.1 a step with a pad of 0.1)
+        const dist = Math.min(...a.inner.map((b) => {
+          return Math.hypot(Math.max(b.minX - sh.bx, 0, sh.bx - b.maxX), Math.max(b.minZ - sh.bz, 0, sh.bz - b.maxZ))
+        }))
+        if (!(dist <= 0.22 && dist > 0.05)) why(`${w}: cut to ${len.toFixed(2)} u but its end is ${dist.toFixed(3)} from the nearest wall, not within 0.2`)
+        cutSeen++
+      } else {
+        if (Math.abs(len - st.len) > 0.11) why(`${w}: an uncut strip ${len.toFixed(3)} u long, not ${st.len}`)
+        uncutSeen++
+      }
+    })
+    for (let n = 1; n < a.steams.length; n++) {
+      const gap = ms(a.steams[n].i - a.steams[n - 1].i)
+      if (gap < 6000 - 0.1) why(`steams ${n - 1} and ${n} began ${gap.toFixed(1)} ms apart, under 6000`)
+      if (gap > 9000 + 6000) why(`steams ${n - 1} and ${n} began ${gap.toFixed(1)} ms apart`)
+    }
+    console.log(`INFO K-N8 seed ${seed}: ${a.steams.length} steams in 100 s, gaps ${a.steams.slice(1).map((k, n) => (ms(k.i - a.steams[n].i) / 1000).toFixed(2)).join(' ')} s, windup ${[...new Set(a.steams.map((k) => ms(k.ticks).toFixed(0)))]} ms`)
+
+    // B. gap 0: it steams whenever it may, so the rules are what turn it away. Still at the same place: the engine passes him
+    const b = await T(`return watch(40, () => W.__still.pos.set(c.x, 0, c.z + 5))`, { seed, gap: [0, 0] })
+    if (b.steams.length < 3) why(`with no gap only ${b.steams.length} steams in 40 s`)
+    if (b.refused.behind < 5) why(`the not-behind rule turned it away on only ${b.refused.behind} ticks (the engine should pass behind him in range every lap)`)
+    b.steams.forEach((k, n) => {
+      if (k.dot < -1.5 - 0.05) why(`no gap, steam ${n} began with Still behind it (dot ${k.dot.toFixed(2)})`)
+      if (k.lit) why(`no gap, steam ${n} began with Still in ${k.lit} lit strip(s)`)
+    })
+    // C. Still on its own lit rail (c + (0, 9), the +z straight): it never steams a Still it is about to run over
+    const l = await T(`return watch(40, () => W.__still.pos.set(c.x, 0, c.z + 9))`, { seed, gap: [0, 0] })
+    if (l.steams.length) why(`${l.steams.length} steam(s) began with Still standing on its lit rail (first: d ${l.steams[0].d.toFixed(2)}, lit ${l.steams[0].lit})`)
+    if (l.refused.lit < 5) why(`the lit-path rule turned it away on only ${l.refused.lit} ticks`)
+    console.log(`INFO K-N8 seed ${seed}: no gap: ${b.steams.length} steams, ${b.refused.behind} ticks refused as behind; on the rail: ${l.refused.lit} ticks refused as lit`)
+  }
+  if (!cutSeen) throw new Error('no steam met an inner wall in 200 s (the cut was not exercised)')
+  console.log(`INFO K-N8: ${cutSeen} cut strips, ${uncutSeen} uncut`)
+})
+
+// K-N17's bots, in the page. They walk their own pos each tick (Still's velocity is the position delta), the Engine's HP put back
+// (phase 1 held). camp: planted at c. circle: r 12 round c at 5.5 u/s, outside the loop. dodge: circles, and steps out of a steam strip
+// or a cinder ring by the shortest way 300 ms after one exists (a player's reaction); it is hit by nothing if the escape works.
+const BOTS = GEO + `
+  const bot = (kind, seconds) => {
+    const { c, away } = roomOf()
+    const R = 12, SPD = 5.5, M = 0.5
+    let th = Math.atan2(-away.z, -away.x)
+    const p = kind === 'campdodge' ? { x: c.x, z: c.z } : { x: c.x + R * Math.cos(th), z: c.z + R * Math.sin(th) }
+    let lost = 0, prevAtk = 'none'
+    const n = { steams: 0, cinders: 0, steamHits: 0, cinderHits: 0 }
+    const hitKeys = new Set()
+    const inside = (h, x, z, grow) => {
+      const s = h.shape
+      if (s.kind === 'circle') return Math.hypot(x - s.x, z - s.z) < s.r + grow
+      return stripHas(s, x, z, grow)
+    }
+    // the dodger reacts like a player (the slack rule's 300 ms): a threat is stepped away from once it has been on the floor 18 ticks
+    const firstSeen = new Map()
+    const keyOf = (h) => h.source + ':' + JSON.stringify(h.shape)
+    for (let i = 0; i < seconds * 60; i++) {
+      W.__combat.boss.hp = W.__combat.boss.maxHp
+      const live = kind === 'dodge' || kind === 'campdodge' ? W.__hazards().filter((h) => !h.done && (h.source === 'steam' || h.source === 'shell')) : []
+      for (const h of live) if (!firstSeen.has(keyOf(h))) firstSeen.set(keyOf(h), i)
+      const threats = live.filter((h) => i - firstSeen.get(keyOf(h)) >= 18)
+      if (kind === 'camp') { p.x = c.x; p.z = c.z }
+      else if (kind === 'circle') { th += SPD / R / 60; p.x = c.x + R * Math.cos(th); p.z = c.z + R * Math.sin(th) }
+      else {
+        // its train strips (lit, armed or live) are never stepped into either: the dodger keeps off the rails as any player would
+        const rails = W.__engineSegs().filter((g) => !g.done)
+        const railed = (x, z, grow = 0) => rails.some((g) => stripHas(g.shape, x, z, grow))
+        let esc = null
+        for (const h of threats) {
+          const s = h.shape
+          // the ways out, each a unit direction and the distance it takes; the shortest that does not end on a rail
+          const ways = []
+          if (s.kind === 'circle') {
+            if (Math.hypot(p.x - s.x, p.z - s.z) < s.r + M) {
+              // (dead centre has no radial way out: take +x)
+              const d0 = Math.hypot(p.x - s.x, p.z - s.z), dx = d0 < 1e-6 ? 1 : p.x - s.x, dz = d0 < 1e-6 ? 0 : p.z - s.z, d = Math.hypot(dx, dz)
+              ways.push({ x: dx / d, z: dz / d, len: s.r + M - d0 })
+              ways.push({ x: -dz / d, z: dx / d, len: (s.r + M) * 1.6 }, { x: dz / d, z: -dx / d, len: (s.r + M) * 1.6 })
+            }
+          } else {
+            const vx = s.bx - s.ax, vz = s.bz - s.az, len = Math.hypot(vx, vz), ux = vx / len, uz = vz / len
+            const along = (p.x - s.ax) * ux + (p.z - s.az) * uz, cross = (p.x - s.ax) * uz - (p.z - s.az) * ux
+            if (along >= -M && along <= len + M && Math.abs(cross) < s.halfW + M) {
+              const side = cross >= 0 ? 1 : -1
+              ways.push({ x: uz * side, z: -ux * side, len: s.halfW + M - Math.abs(cross) })
+              ways.push({ x: -uz * side, z: ux * side, len: s.halfW + M + Math.abs(cross) })
+              ways.push({ x: -ux, z: -uz, len: along + M }, { x: ux, z: uz, len: len - along + M })
+            }
+          }
+          ways.sort((a, b) => a.len - b.len)
+          const way = ways.find((w) => !railed(p.x + w.x * (w.len + 0.5), p.z + w.z * (w.len + 0.5), 0.3)) || ways[0]
+          if (way) esc = way
+        }
+        if (esc) { p.x += esc.x * SPD / 60; p.z += esc.z * SPD / 60 }
+        else {
+          // home: on round the circle, or (the camper that dodges) back to c
+          const a = Math.atan2(p.z - c.z, p.x - c.x) + 0.25
+          const tx = (kind === 'campdodge' ? c.x : c.x + R * Math.cos(a)) - p.x, tz = (kind === 'campdodge' ? c.z : c.z + R * Math.sin(a)) - p.z, tl = Math.hypot(tx, tz)
+          const nx = p.x + (tl > 0.1 ? tx / tl : 0) * SPD / 60, nz = p.z + (tl > 0.1 ? tz / tl : 0) * SPD / 60
+          // never step into any threat, seen yet or not: wait at its edge
+          if (!live.some((h) => inside(h, nx, nz, M))) { p.x = nx; p.z = nz }
+        }
+      }
+      W.__still.pos.set(p.x, 0, p.z)
+      lost += tick(1)
+      const atk = W.__boss().attack
+      if (prevAtk === 'none' && atk === 'steamTrack') n.steams++
+      if (prevAtk === 'none' && atk === 'cinderAim') n.cinders++
+      prevAtk = atk
+      for (const h of W.__hazards()) {
+        if ((h.source !== 'steam' && h.source !== 'shell') || !h.hit.includes('still')) continue
+        const key = h.source + ':' + h.shape.kind + ':' + (h.shape.ax !== undefined ? h.shape.ax.toFixed(3) + ',' + h.shape.az.toFixed(3) : h.shape.x.toFixed(3) + ',' + h.shape.z.toFixed(3))
+        if (hitKeys.has(key)) continue
+        hitKeys.add(key)
+        if (h.source === 'steam') n.steamHits++; else n.cinderHits++
+      }
+    }
+    return { lost, ...n }
+  }
+`
+
+/** K-N17's runs, [name, group]: what each bot lost, for the mean at the end of the last part. */
+const N17 = { camp: [], circle: [], dodge: [], campdodge: [], campOff: [], circleOff: [] }
+const N17CONFIGS = { ENG6: [['III', 6]], ENG9: [['III', 6], ['II', 9]] }
+
+async function circling(page, which) {
+  // a what-if without editing the code: N17_SET='{"cinder.leadS":1,"steam.len":11}' sets those ENGINE numbers for the run
+  // (enterEngine resets only the range, gap, cinder timing, guess.first and speed)
+  if (process.env.N17_SET) await page.evaluate((set) => { for (const [k, v] of Object.entries(set)) { const [a, b] = k.split('.'); window.__ENGINE[a][b] = v } }, JSON.parse(process.env.N17_SET))
+  for (const [order, depth] of N17CONFIGS[which]) {
+    for (const seed of [1, 2, 3, 4, 5]) {
+      for (const [name, kind, opts] of [
+        ['camp', 'camp', { steam: true, cinder: true }], ['circle', 'circle', { steam: true, cinder: true }], ['dodge', 'dodge', { steam: true, cinder: true }],
+        ['campdodge', 'campdodge', { steam: true, cinder: true }], ['campOff', 'camp', { steam: true, blind: true }], ['circleOff', 'circle', { steam: true, blind: true }],
+      ]) {
+        const got = await inPage(page, BOTS + `
+          enterEngine(arg.order, arg.depth, arg.seed, arg.opts)
+          wake()
+          return bot(arg.kind, 45)`, { order, depth, seed, kind, opts })
+        N17[name].push({ ...got, group: `${which} ${order}@${depth}`, seed })
+        if ((name === 'dodge' || name === 'campdodge') && (got.steamHits || got.cinderHits)) {
+          throw new Error(`${order} at ${depth}, seed ${seed}: the dodging bot (${name}) was hit by ${got.steamHits} steam(s) and ${got.cinderHits} cinder(s): the escape does not work`)
+        }
+      }
+    }
+  }
+}
+
+const mean = (a) => a.reduce((x, y) => x + y, 0) / (a.length || 1)
+const N17LINE = (name, rows) => {
+  const groups = [...new Set(rows.map((r) => r.group))]
+  return `${name} ${mean(rows.map((r) => r.lost)).toFixed(1)} HP over ${rows.length} runs [${groups.map((g) => `${g} ${mean(rows.filter((r) => r.group === g).map((r) => r.lost)).toFixed(1)}`).join('; ')}]; ${mean(rows.map((r) => r.steams)).toFixed(1)} steams, ${mean(rows.map((r) => r.cinders)).toFixed(1)} cinders per run`
+}
+
+check('K-N17', ENG6, async ({ page }) => circling(page, 'ENG6'))
+check('K-N17', ENG9, async ({ page }) => {
+  await circling(page, 'ENG9')
+  // the means, over every run of both queries: the camp and the circle each lose 20 HP in 45 s or more (else they are trivially dodged)
+  for (const [name, rows] of Object.entries(N17)) console.log(`INFO K-N17 ${N17LINE(name, rows)}`)
+  const camp = mean(N17.camp.map((r) => r.lost)), circle = mean(N17.circle.map((r) => r.lost))
+  // ENGINE-N17.md 4: the circle costs 40-85 (over the floor player's budget rate, under the Arbiter's accepted range), the camp 50-95
+  // (zero input is taxed, but planting is not a death inside 45 s), and moving is never the worse non-answer
+  if (circle < 40 || circle > 85) throw new Error(`the circling bot lost ${circle.toFixed(1)} HP in 45 s on average, outside 40-85`)
+  if (camp < 50 || camp > 95) throw new Error(`the camping bot lost ${camp.toFixed(1)} HP in 45 s on average, outside 50-95`)
+  if (circle > camp) throw new Error(`the circling bot (${circle.toFixed(1)} HP) lost more than the camping one (${camp.toFixed(1)}): moving is the worse non-answer`)
+})
+
+// The cinder's period at c (camp): the time between two cinderAim starts, in each phase. A launch resets both clocks, so it is
+// max(outrun.afterMs[phase], cooldownMs) + windupMs (8.12 s in phase 1 and 5.62 s in phase 2 as ENGINE stands), and phase 2 must be shorter:
+// afterMs[1] going dead again (a cooldown that swallows it) would show as the two equal.
+check('K-N17', ENG6, async ({ page }) => {
+  const means = []
+  for (const phase2 of [false, true]) {
+    const got = await inPage(page, `
+      enterEngine('III', 6, 1, { steam: true, cinder: true })
+      wake()
+      const { c } = roomOf()
+      W.__combat.boss.phase2 = arg.phase2
+      const starts = []
+      let prev = 'none'
+      for (let i = 0; i < 90 * 60; i++) {
+        W.__combat.boss.hp = W.__combat.boss.maxHp
+        W.__still.pos.set(c.x, 0, c.z)
+        tick(1)
+        const a = W.__boss().attack
+        if (prev === 'none' && a === 'cinderAim') starts.push(i)
+        prev = a
+      }
+      return { starts, E: { after: W.__ENGINE0.afterMs, cool: W.__ENGINE.outrun.cooldownMs, wind: W.__ENGINE.cinder.windupMs } }`, { phase2 })
+    const E = got.E
+    if (got.starts.length < 4) throw new Error(`phase ${phase2 ? 2 : 1}: only ${got.starts.length} cinders in 90 s`)
+    const want = (Math.max(E.after[phase2 ? 1 : 0], E.cool) + E.wind) / 1000
+    const gaps = got.starts.slice(1).map((x, n) => (x - got.starts[n]) / 60)
+    const mean = gaps.reduce((a, b) => a + b, 0) / gaps.length
+    console.log(`INFO K-N17 cinder period at c, phase ${phase2 ? 2 : 1}: ${mean.toFixed(2)} s (${gaps.map((g) => g.toFixed(2)).join(' ')}); expected ${want.toFixed(2)}`)
+    means.push(mean)
+    if (Math.abs(mean - want) > 0.1) throw new Error(`the cinder period in phase ${phase2 ? 2 : 1} is ${mean.toFixed(2)} s, not ${want.toFixed(2)}`)
+  }
+  if (!(means[1] < means[0] - 0.5)) throw new Error(`the phase-2 cinder period (${means[1].toFixed(2)} s) is not shorter than phase 1's (${means[0].toFixed(2)} s)`)
+})
+
+// K-N18: the Engine slowed to a crawl (a stationary turret) on the test floor, so the geometry is exact: Still walks x = 3 from z = -5 at
+// 5.5 u/s (it is at (9, 0), 6 away, and only books him once he is not behind it), and the steam must lead him, then learn.
+const TURRET = GEO + `
+  resetEngine({ steam: true, gap: [0, 0] })
+  W.__ENGINE.speed = 0.001
+  W.__hold(true)
+  W.__arena({})
+  W.__equip('scrap-cleaver')
+  C.autoAttack = false; C.autoTimer = 0; C.counters = false; C.breakRule = false; C.eye = false
+  W.__stick(0, 0)
+  W.__still.pos.set(3, 0, -5)
+  W.__spawn('boss', 9, 0, false, undefined, 'engine')
+  if (until(() => W.__boss() && W.__boss().state === 'run', 5) < 0) throw new Error('the turret did not run')
+  const trial = (mode) => {
+    W.__still.pos.set(-8, 0, -8)
+    if (until(() => W.__boss().attack === 'none', 3) < 0) throw new Error('the last steam did not end')
+    tick(3)
+    let z = -5, locked = null, hit = false, lost = 0
+    W.__still.pos.set(3, 0, z)
+    for (let i = 0; i < 60 * 5; i++) {
+      if (!locked || mode === 'go') { z += 5.5 / 60; W.__still.pos.set(3, 0, z) }
+      lost += tick(1)
+      const b = W.__boss()
+      for (const h of W.__hazards()) if (h.source === 'steam' && h.hit.includes('still')) hit = true
+      if (!locked && b.attack === 'steamLock') {
+        const h = W.__hazards().filter((x) => x.source === 'steam' && !x.done).pop()
+        const s = W.__still.pos
+        locked = { guess: b.guess, lead: { x: b.lead.x, z: b.lead.z }, still: { x: s.x, z: s.z }, shape: h && h.shape, inStrip: h ? stripHas(h.shape, s.x, s.z, 0) : null }
+      }
+      if (locked && b.attack === 'none') {
+        return { mode, ...locked, after: b.guess, answers: b.answers.map((a) => Math.round(a * 1e6) / 1e6), hit, lost }
+      }
+    }
+    throw new Error('a ' + mode + ' trial never finished its steam (locked ' + JSON.stringify(locked) + ')')
+  }
+  const out = []
+  for (const mode of arg.modes) out.push(trial(mode))
+  return out
+`
+const N18_MODES = ['go', 'stop', 'stop', 'stop', 'stop', 'go', 'go', 'go']
+
+check('K-N18', ARENA, async ({ page }) => {
+  const runs = []
+  for (let rep = 0; rep < 2; rep++) runs.push(await inPage(page, TURRET, { modes: N18_MODES }))
+  const t = runs[0]
+  // the first lock: guess 1, walking straight on: the aim point is min(leadMax 3, 5.5 x 0.95) ahead of him, along his line
+  const first = t[0]
+  const ahead = Math.hypot(first.lead.x - first.still.x, first.lead.z - first.still.z)
+  if (first.guess !== 1) throw new Error(`the first lock's guess was ${first.guess}, not 1`)
+  // nothing in the test floor to cut it: a full 11 u strip, from the engine's centre (9, 0), 1.3 either side
+  const firstLen = Math.hypot(first.shape.bx - first.shape.ax, first.shape.bz - first.shape.az)
+  if (Math.abs(firstLen - 11) > 0.11 || Math.abs(first.shape.ax - 9) > 0.05 || Math.abs(first.shape.az) > 0.05) throw new Error(`the first strip is ${firstLen.toFixed(3)} u long from (${first.shape.ax.toFixed(2)}, ${first.shape.az.toFixed(2)}), not 11 from (9, 0)`)
+  if (Math.abs(ahead - Math.min(3, 5.5 * 0.95)) > 0.3) throw new Error(`the first lock's aim point is ${ahead.toFixed(3)} ahead of him, not ${Math.min(3, 5.5 * 0.95)} +- 0.3`)
+  if (!(first.lead.z - first.still.z > ahead - 0.3) || Math.abs(first.lead.x - first.still.x) > 0.3) throw new Error(`the first aim point (${first.lead.x.toFixed(2)}, ${first.lead.z.toFixed(2)}) is not ahead of Still (${first.still.x.toFixed(2)}, ${first.still.z.toFixed(2)}) along +z`)
+  // three locks where he stops dead: the guess falls to <= 0.5 (its memory is all stopped answers) and a stopped Still is in the next strip
+  if (t[3].after > 0.5) throw new Error(`after three stops the guess is ${t[3].after}, over 0.5 (answers ${JSON.stringify(t[3].answers)})`)
+  if (t[3].answers.some((a) => Math.abs(a) > 1e-6)) throw new Error(`after three stops its answers are ${JSON.stringify(t[3].answers)}, not zeros`)
+  const next = t[4]
+  if (next.guess > 0.5) throw new Error(`the 5th lock used guess ${next.guess}`)
+  if (!next.inStrip) throw new Error(`a stopped Still is not inside the next strip (${JSON.stringify(next)})`)
+  if (!next.hit || next.lost <= 0) throw new Error(`a stopped Still inside the strip was not hit (lost ${next.lost}, hit ${next.hit})`)
+  // the same seed, the same guesses
+  if (JSON.stringify(runs[0]) !== JSON.stringify(runs[1])) throw new Error(`two runs of the same seed differ: ${runs[0].map((r) => r.guess)} vs ${runs[1].map((r) => r.guess)}`)
+  console.log(`INFO K-N18: guesses used ${t.map((r) => r.guess).join(', ')}; first lead ${ahead.toFixed(2)} ahead; stopped answers ${JSON.stringify(t[3].answers)}; the 5th lock caught him standing (lost ${next.lost.toFixed(1)}); two runs identical`)
 })
 
 process.exit(await run(process.argv.slice(2)))

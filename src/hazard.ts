@@ -50,6 +50,8 @@ export interface HazardSpec {
   sparesOwner?: boolean
   /** Draw only: a shell thrown from here, arcing `peak` high, landing on the arm tick. */
   flight?: { x: number; y: number; z: number; peak: number }
+  /** Draw only: the height its tell lies at (default DECAL_Y). The roundhouse's rails stand up to 0.26 off the floor and would cut a tell laid at 0.1. */
+  raise?: number
   /** Hazards sharing a group share one hit set: a body is hit once per group (one train's segments). */
   group?: object
   /**
@@ -98,6 +100,12 @@ const SHELL = { r: 0.22, hot: new THREE.Color(0xff5a3c), glow: 0xff8a3c, halo: 1
 const shellGeo = new THREE.SphereGeometry(SHELL.r, 12, 8)
 /** A burning strip's layers. The spec's whole strip at 0.95 read as a flat slab on the floor, so it's a wash under a core. */
 const LIVE = { wash: 0.45, core: 0.9, rails: 0.95 }
+/**
+ * A steam jet once it is live (source 'steam'; its unarmed tell is the ember's like every threat's): a warm grey instead of the ember
+ * (not a cold blue: that is Still's), and no raised beam. Grey, not white: under ACES + bloom a pale flat wash goes to a slab, so its layers run lower and the
+ * tell shader's noise and chevrons carry the texture. Its puffs are the maker's (Vfx.jet).
+ */
+const STEAM_LIVE = { hot: new THREE.Color(0x96938d), deep: new THREE.Color(0x2a2c2e), wash: 0.26, core: 0.44, rails: 0.7 }
 /** Where a live puddle's heat ends: the deep ember, darker. */
 const COOLED = EMBER_DEEP.clone().multiplyScalar(0.6)
 /** A live slag puddle: hot slag over a dark crust, fading as it cools; its rim held so the edge stays honest. */
@@ -185,6 +193,7 @@ export class HazardTell {
   private beamMat?: THREE.ShaderMaterial
   private core?: Quads
   private beam?: THREE.Mesh
+  private steamed = false
   /** A thrown shell: world space, apart from the landing ring's group. */
   shell: THREE.Group | null = null
   private shellMats: THREE.Material[] = []
@@ -193,8 +202,9 @@ export class HazardTell {
     const s = spec.shape
     // a train's segment: the lane's rail tell and the rake are its whole drawing (drawn = hit)
     if (spec.source === 'train') return
+    const y = spec.raise ?? DECAL_Y
     if (s.kind === 'circle') {
-      this.group.position.set(s.x, DECAL_Y, s.z)
+      this.group.position.set(s.x, y, s.z)
       // the ring is fixed at the real radius; the disc fills it, so its growth is the clock
       this.ringMat = this.mat(tellMaterial('radial', s.r))
       this.discMat = this.mat(tellMaterial('radial', s.r))
@@ -218,7 +228,7 @@ export class HazardTell {
       const dz = s.bz - s.az
       this.len = Math.hypot(dx, dz)
       this.halfW = s.halfW
-      this.group.position.set(s.ax, DECAL_Y, s.az)
+      this.group.position.set(s.ax, y, s.az)
       this.group.rotation.y = Math.atan2(dx, dz)
       this.railMat = this.mat(tellMaterial('strip'))
       this.coreMat = this.mat(tellMaterial('strip'))
@@ -237,7 +247,7 @@ export class HazardTell {
       this.quads.push(whole, rails, this.core)
       for (const q of this.quads) this.mesh(q.mesh)
       this.beam = this.mesh(new THREE.Mesh(this.geo(beamGeometry(this.len)), this.beamMat))
-      this.beam.position.y = BEAM_Y - DECAL_Y
+      this.beam.position.y = BEAM_Y - y
       this.beam.frustumCulled = false
     }
     this.show()
@@ -329,11 +339,12 @@ export class HazardTell {
         // burning: layered like a rushing lane (wash, core, rails), so its texture reads and it's never a flat slab
         const live = h.liveLeft > 0 || flashing
         if (live) this.core!.set(0, 0, 0, 0, this.len, this.halfW * 0.6, 0.004)
-        for (const [m, at] of [[this.wholeMat!, LIVE.wash], [this.coreMat!, LIVE.core], [this.railMat!, LIVE.rails]] as const) {
+        const L = this.steamLook() ?? LIVE
+        for (const [m, at] of [[this.wholeMat!, L.wash], [this.coreMat!, L.core], [this.railMat!, L.rails]] as const) {
           m.opacity = live ? at : Math.max(0, m.opacity - dt * 5)
         }
       }
-      const beamOn = h.armed && h.sinceArm <= s.liveMs + BEAM_EXTRA_MS
+      const beamOn = h.armed && h.sinceArm <= s.liveMs + BEAM_EXTRA_MS && s.source !== 'steam'
       this.beamMat!.opacity = beamOn ? 1 : Math.max(0, this.beamMat!.opacity - dt * 6)
     }
     this.show()
@@ -353,12 +364,26 @@ export class HazardTell {
         ;(d.uniforms.uDeep!.value as THREE.Color).copy(MOLTEN.crust)
       }
     } else {
+      const L = this.steamLook() ?? LIVE
       this.core!.set(0, 0, 0, 0, this.len, this.halfW * 0.6, 0.004)
-      this.wholeMat!.opacity = LIVE.wash
-      this.coreMat!.opacity = LIVE.core
-      this.railMat!.opacity = LIVE.rails
-      this.beamMat!.opacity = 1
+      this.wholeMat!.opacity = L.wash
+      this.coreMat!.opacity = L.core
+      this.railMat!.opacity = L.rails
+      this.beamMat!.opacity = this.spec.source === 'steam' ? 0 : 1
     }
+  }
+
+  /** A steam jet's live look (its ember tell turns cool grey at the arm): swaps the strip's colours once, and returns its layers; null for any other source. */
+  private steamLook() {
+    if (this.spec.source !== 'steam') return null
+    if (!this.steamed) {
+      this.steamed = true
+      for (const m of [this.wholeMat, this.coreMat, this.railMat, this.beamMat]) {
+        ;(m!.uniforms.uHot!.value as THREE.Color).copy(STEAM_LIVE.hot)
+        ;(m!.uniforms.uDeep!.value as THREE.Color).copy(STEAM_LIVE.deep)
+      }
+    }
+    return STEAM_LIVE
   }
 
   /** Nothing at 0 is drawn: a finished tell costs no draw calls while it waits to go. */

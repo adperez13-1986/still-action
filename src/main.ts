@@ -4792,6 +4792,8 @@ if (import.meta.env.DEV) {
           window: b.window ? { side: b.window.side, open: b.window.open, thrown: b.window.thrown, msOpen: b.window.msOpen } : null,
           wagon: b.wagon ? { x: b.wagon.x, z: b.wagon.z, settled: b.wagon.settled } : null,
           board: b.board(), guess: b.guess, frontier: b.frontier, frontierEnd: b.frontierEnd, dmgMul: b.dmgMul ?? 1,
+          // C6: the aim point of the steam (frozen at its lock) or the cinder, the last steam line, and his last answers
+          lead: { x: b.lead.x, z: b.lead.z }, jetSeg: b.jetSeg ? { ...b.jetSeg } : null, answers: [...b.answers],
         }
       }
       if (!(b instanceof Arbiter)) return b ? { kind: b.def.kind, hp: b.hp, phase2: b.phase2, open: b.open } : null

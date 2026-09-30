@@ -338,6 +338,29 @@ export class Vfx {
     }
   }
 
+  /**
+   * A jet of steam down a strip: lumpy puffs thrown along a → b, spread across `halfW`, drifting the way it points. Normal blending
+   * and a grey `color` (never white: pale puffs under ACES + bloom clip), and they swell as they thin, so the jet has a body and an edge.
+   */
+  jet(ax: number, az: number, bx: number, bz: number, halfW: number, count: number, color: THREE.Color, speed = 3) {
+    const len = Math.hypot(bx - ax, bz - az)
+    if (len < 0.05) return
+    const ux = (bx - ax) / len
+    const uz = (bz - az) / len
+    for (let i = 0; i < count; i++) {
+      const along = rnd(0, len)
+      const across = rnd(-1, 1) * halfW * 0.8
+      const shade = rnd(0.7, 1.1)
+      const drift = speed * rnd(0.3, 1)
+      this.smoke.spawn({
+        x: ax + ux * along + uz * across, y: DECAL_Y + rnd(0.15, 0.9), z: az + uz * along - ux * across,
+        vx: ux * drift + rnd(-0.3, 0.3), vy: rnd(0.2, 0.8), vz: uz * drift + rnd(-0.3, 0.3),
+        max: rnd(0.55, 1.0), size: rnd(0.7, 1.2), grow: rnd(1.0, 1.8), drag: 2.5,
+        r: color.r * shade, g: color.g * shade, b: color.b * shade,
+      })
+    }
+  }
+
   /** Chunks of whatever broke. */
   chunks(at: THREE.Vector3, count: number, color: THREE.Color, speed = 5, size = 0.14) {
     for (let i = 0; i < count; i++) {

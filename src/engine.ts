@@ -1,12 +1,13 @@
 import * as THREE from 'three'
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { hideMaterials, HIDES } from './hide'
-import { haloTexture, tellMaterial, tellOrder, releaseTell, COLD, COLD_DEEP, type Vfx } from './vfx'
+import { haloTexture, tellMaterial, tellOrder, releaseTell, trackingDim, COLD, COLD_DEEP, type Vfx } from './vfx'
 import { statusTint, CORE_ASLEEP, type EnemyAction, type EnemyCtx, type EnemyPhase } from './enemy'
 import type { Circle } from './dungeon'
 import { engineKit, LINE, RAIL_TELL, RAIL_TOP, WASH_Y } from './line'
 import { Quads, UV_LEN } from './lane'
-import type { Hazard, HazardSpec } from './hazard'
+import { inShape, type Hazard, type HazardSpec } from './hazard'
+import { ARBITER } from './arbiter'
 import { loopAt, loopS, TRACK, type Side, type TrackArm, type TrackDef } from './track'
 import type { Terrain } from './terrain'
 import type { BossDef } from './areas'
@@ -23,8 +24,13 @@ import type { Boss, BossCue } from './boss'
  * ahead of the nose, each made at least 1.3 s before it arms, and drawn as the Line draws a train's rails (its hazards are the drawing).
  * C5: the levers. Every third junction it passes, a window opens on that side's lever; a cast within reach throws it, the frontier turns
  * into the arm, the engine drives up to the buffer and derails (open, x1.5), backs out, stands 1.3 s with the loop lit, and runs on.
+ * C6: its two attacks, overlaid on the run (it keeps moving). Steam: within 8 u of Still, off its lit path and not behind it, it tracks
+ * 250 ms with the Arbiter's rails, aimed where its guess says he will be (the Arbiter's answer memory, arbiter.ts), then locks a
+ * strip from where it stands at the lock; 700 ms later the jet. The cinder: out of that reach for 5 s (3.5 in phase 2) and the stack
+ * lobs a shell where he'll be, the Arbiter's (source 'shell': its landing sound and dust are main's, its ring is drawn as its shell's).
  *
  *   run ─(window thrown, the frontier reaches the junction)→ siding ─(centre at the stop)→ derailed 1600 → backing → hold 1300 → run
+ *   attack: none ─→ steamTrack 250 → steamLock 700 → none | none ─→ cinderAim 620 → (launch; 1000 flight) → none
  */
 /** SPEC §2.6, with the brief's changes. INV: no hit above 22 before dmgMul; no windup under 620 ms. */
 export const ENGINE = {
@@ -44,14 +50,21 @@ export const ENGINE = {
   /** A window at every 3rd junction passed, so the sides alternate (the loop's right and left junctions are half a lap apart). */
   lever: { windowMs: 1400, reach: 3.0, everyJunctions: 3 },
   derailMs: 1600, openMul: 1.5,
-  /** 250 ms of aim, then 700 locked (slack 164). len/halfW/damage/gapS/range: SPEC's. */
-  steam: { trackMs: 250, lockMs: 700, liveMs: 200, len: 7, halfW: 1.3, damage: 14, gapS: [6, 9] as const, range: 8, leadMax: 3.0 },
+  /**
+   * 250 ms of aim, then 700 locked (slack 164). halfW/damage/gapS/range: SPEC's. `len` is range + leadMax (ENGINE-N17.md §2): a jet booked at
+   * range must reach the point it aims at (K-N8 keeps len >= range + leadMax).
+   */
+  steam: { trackMs: 250, lockMs: 700, liveMs: 200, len: 11, halfW: 1.3, damage: 14, gapS: [6, 9] as const, range: 8, leadMax: 3.0 },
   /** The Arbiter's answer memory (arbiter.ts), for the steam's lead. `minMove`: a lock he wasn't moving through tells it nothing. */
   guess: { memory: 3, minMove: 0.8, first: 1 },
-  /** The outrun rule (arbiter.ts): out of every reach this long, and the stack lobs a cinder where he'll be. */
-  outrun: { afterMs: [5000, 3500] as const, cooldownMs: 5000 },
-  /** The Arbiter's shell, lobbed from the chimney; `leadS` of his velocity, capped. Source 'shell'. */
-  cinder: { windupMs: 620, flightMs: 1000, r: 1.6, damage: 12, leadS: 0.6, leadMax: 3.0, peak: 3.2 },
+  /**
+   * The outrun rule (arbiter.ts): out of every reach this long, and the stack lobs a cinder where he'll be. Phase 1 started at the Arbiter's outrun
+   * clock (shellMs 6500) and was eased to 7500 so circling never costs more than camping (ENGINE-N17.md). A launch resets both clocks, so the
+   * period is max(afterMs, cooldownMs) + windupMs: 8.12 s, then 5.62 s in phase 2.
+   */
+  outrun: { afterMs: [7500, 5000] as const, cooldownMs: 5000 },
+  /** The Arbiter's shell, lobbed from the chimney; leads him by the whole flight (leadS = flightMs / 1000, as ARBITER.outrun.leadS). Source 'shell'. */
+  cinder: { windupMs: 620, flightMs: 1000, r: 1.6, damage: 12, leadS: 1.0, leadMax: 5.5, peak: 3.2 },
   phase2At: 0.55,
   reverse: { judderMs: 650, everyS: [8, 12] as const },
   /** SPEC's, plus `r`/`at` (line.ts SIDING.wagonR / wagonAt) and `halfLen` (its tub, line.ts WAGON.l / 2). */
@@ -79,8 +92,18 @@ const FIRE = new THREE.Color(ENGINE.fireHot)
 /** The flicker: 7 to `flickerHz` Hz, wandering, dipping the brightness by up to `depth` and never lifting it (INV-C1). */
 const FLICKER = { hz: 7, depth: 0.35 }
 const SOOT = new THREE.Color(0x2c2624)
-/** The whistle's steam: paler than the stack's smoke. */
+/** The whistle's steam, and the jet's puffs: paler than the stack's smoke, still grey (pale puffs under ACES + bloom clip to a slab). */
 const STEAM = new THREE.Color(0x8a9096)
+/** The steam's rails and the cinder's ring lie over the sleepers (0.14) and under the rail heads (0.26): the height of the horizon's wash. */
+const ATTACK_Y = WASH_Y + 0.004
+/** The steam's aim marches this far a step to its first solid (arbiter.ts cutAt marches 0.2; the jet is 2.6 wide, so a finer step). */
+const CUT_STEP = 0.1
+const angleDiff = (a: number, b: number) => {
+  let d = a - b
+  while (d > Math.PI) d -= Math.PI * 2
+  while (d < -Math.PI) d += Math.PI * 2
+  return d
+}
 /**
  * A strip of the lit horizon is laid when its start is within lead + one tick (+ this hair) of the nose in time: the hair keeps the
  * made-to-armed gap over 1300 ms by more than float noise, and costs the nose nothing (it arms exactly when the nose arrives).
@@ -295,6 +318,46 @@ export class Engine implements Boss {
   private readonly endMat = tellMaterial('radial', 0.7, HORIZON.hot, HORIZON.deep)
   private readonly endStar = new THREE.Mesh(new THREE.CircleGeometry(0.7, 20, 0, Math.PI), this.endMat)
 
+  // --- steam and the cinder (C6) ---
+  /** Ms in the attack. */
+  private atkT = 0
+  /** A seeded stream for the gaps, and the one that picks the guess: the same fight gives the same rhythm (never Math.random). */
+  private seed = 1
+  private guessSeed = 7
+  /** His last few answers to a lock (see judge). */
+  readonly answers: number[] = []
+  /** Ms until the next steam may be booked. */
+  private steamIn = 0
+  /** Ms out of the steam's reach (awake), and ms since the last cinder launched. */
+  private outMs = 0
+  private sinceCinder = Infinity
+  /** The steam's aim while it tracks and locks, and where it points: Still's lead point (frozen at the lock). */
+  private aim = 0
+  readonly lead = new THREE.Vector3()
+  private readonly gazeEnd = new THREE.Vector3()
+  /** Still smoothed (the Arbiter's 90 ms), so one frame's hitch does not swing the aim. */
+  private readonly vel = new THREE.Vector3()
+  /** Still and his velocity at the lock, for the judge at the arm. */
+  private readonly lockAt = new THREE.Vector3()
+  private readonly lockVel = new THREE.Vector3()
+  /** The jet's hazard and its line, from the lock; and how long its puffs go on after it fires. */
+  private jet: Hazard | null = null
+  jetSeg: { ax: number; az: number; bx: number; bz: number } | null = null
+  private jetFx = 0
+  private jetFired = false
+  /** The cinder in the air: for its trail. */
+  private flight: { h: Hazard; from: THREE.Vector3; to: THREE.Vector3; peak: number; armMs: number } | null = null
+  private strikeTick = false
+  private strikeKind: 'steam' | 'cinder' | null = null
+  /** The steam's tracking: two rails closing on the jet's edges and a thin wash between (the Arbiter's lance, arbiter.ts). */
+  private readonly gazeMat = tellMaterial('strip')
+  private readonly gaze = new Quads(2, this.gazeMat)
+  private readonly gazeWashMat = tellMaterial('strip')
+  private readonly gazeWash = new Quads(1, this.gazeWashMat)
+  /** The cinder's aim: a faint ring following his lead point (the Arbiter's shell ring). */
+  private readonly cinderRingMat = tellMaterial('radial', ENGINE.cinder.r)
+  private readonly cinderRing = new THREE.Mesh(new THREE.RingGeometry(ENGINE.cinder.r - 0.1, ENGINE.cinder.r, 48), this.cinderRingMat)
+
   private readonly hide = hideMaterials('engine', { transparent: true })
   private readonly mat = this.hide.mat
   private readonly jointMat = this.hide.jointMat
@@ -324,7 +387,9 @@ export class Engine implements Boss {
     this.endStar.visible = false
     this.ring.rotation.x = this.disc.rotation.x = -Math.PI / 2
     this.ring.visible = this.disc.visible = false
-    this.worldGroup.add(this.horizon.wash.mesh, this.horizon.rails.mesh, this.endStar, this.disc, this.ring)
+    this.cinderRing.rotation.x = -Math.PI / 2
+    this.cinderRing.visible = false
+    this.worldGroup.add(this.horizon.wash.mesh, this.horizon.rails.mesh, this.endStar, this.disc, this.ring, this.gazeWash.mesh, this.gaze.mesh, this.cinderRing)
 
     // the crawl trains' engine, cloned (the shared geometry is never ours to dispose), its centre at the group's origin
     const kit = engineKit()
@@ -383,9 +448,16 @@ export class Engine implements Boss {
     }
   }
 
-  get windupMs() { return 0 }
+  /** The windup Combat announces (it reads this on the tick the phase turns 'windup'): the steam's 950, or the cinder's 620. */
+  get windupMs() {
+    return this.attack === 'cinderAim' ? ENGINE.cinder.windupMs : ENGINE.steam.trackMs + ENGINE.steam.lockMs
+  }
 
-  get cue(): BossCue { return { voice: 'none' } }
+  get cue(): BossCue {
+    if (this.attack === 'cinderAim') return { voice: 'lob' }
+    if (this.attack === 'steamTrack' || this.attack === 'steamLock') return { voice: 'windup' }
+    return { voice: 'none' }
+  }
 
   /**
    * The departure board under the bar's name (BOARD's words): the open window's side and "now", else the next window's side and the
@@ -408,7 +480,12 @@ export class Engine implements Boss {
     return false
   }
 
+  /** The jet's arm, or the cinder's launch. */
   landsIn(): number | null {
+    const st = ENGINE.steam
+    if (this.attack === 'steamTrack') return Math.max(0, st.trackMs + st.lockMs - this.atkT)
+    if (this.attack === 'steamLock') return Math.max(0, st.lockMs - this.atkT)
+    if (this.attack === 'cinderAim') return Math.max(0, ENGINE.cinder.windupMs - this.atkT)
     return null
   }
 
@@ -428,9 +505,14 @@ export class Engine implements Boss {
     this.timer = 0
   }
 
-  update(dt: number, _target: THREE.Vector3, _terrain: Terrain, ctx: EnemyCtx): EnemyAction | null {
+  update(dt: number, _target: THREE.Vector3, terrain: Terrain, ctx: EnemyCtx): EnemyAction | null {
     const ms = dt * 1000
     this.timer += ms
+    this.strikeTick = false
+    this.steamIn -= ms
+    this.sinceCinder += ms
+    this.jetFx = Math.max(0, this.jetFx - ms)
+    this.vel.lerp(ctx.playerVel, Math.min(1, ms / ARBITER.guess.smoothMs))
     this.bob += dt
     this.lastDt = dt
     this.flash = Math.max(0, this.flash - dt * 5)
@@ -489,9 +571,188 @@ export class Engine implements Boss {
       default:
         break
     }
+    this.fight(dt, terrain, ctx)
     this.segs = this.segs.filter((g) => !g.h.done)
+    // what Combat sees of it: a windup while it aims, a strike on the tick the jet arms or the cinder leaves, recover while derailed
+    this.phase = this.strikeTick ? 'strike' : this.attack !== 'none' ? 'windup' : this.state === 'derailed' ? 'recover' : 'approach'
     this.present(dt)
     return null
+  }
+
+  private next() {
+    this.seed = (this.seed * 16807) % 2147483647
+    return this.seed / 2147483647
+  }
+
+  // --- steam and the cinder (C6) ---
+
+  /** The seeded gap to the next steam, ms. */
+  private gap() {
+    const [lo, hi] = ENGINE.steam.gapS
+    return 1000 * (lo + (hi - lo) * this.next())
+  }
+
+  /** Not inside any of its not-done strips (lit, armed or live), grown by 0.42: a Still on its rail is its train's to hit. */
+  private onLitPath(x: number, z: number) {
+    return this.segs.some((g) => !g.h.done && inShape(g.h.spec.shape, x, z, 0.42))
+  }
+
+  /**
+   * The attacks, overlaid on the run: the steam (booked in range, off its lit path, not behind it, a gap after the last) and the cinder
+   * (booked once he has been out of the steam's reach long enough). The engine keeps moving through both. A tracking aim that the state
+   * no longer allows (a derail) is dropped; a lock stands, its strip is made.
+   */
+  private fight(dt: number, terrain: Terrain, ctx: EnemyCtx) {
+    const ms = dt * 1000
+    if (this.dead || !this.started) {
+      this.attack = 'none'
+      return
+    }
+    const st = ENGINE.steam
+    const still = ctx.player
+    const dx = still.x - this.pos.x, dz = still.z - this.pos.z
+    const d = Math.hypot(dx, dz)
+    // out of reach: only ever awake (this runs from the unfold on), and it resets the moment he is within it
+    this.outMs = d > st.range ? this.outMs + ms : 0
+    this.atkT += ms
+    const may = this.state === 'run' || this.state === 'hold' || this.state === 'siding' || this.state === 'backing'
+    if (!may && (this.attack === 'steamTrack' || this.attack === 'cinderAim')) this.attack = 'none'
+    switch (this.attack) {
+      case 'none': {
+        if (!may) break
+        const fwdX = Math.sin(this.group.rotation.y), fwdZ = Math.cos(this.group.rotation.y)
+        const behind = dx * fwdX + dz * fwdZ < -ENGINE.length / 2
+        if (this.steamIn <= 0 && d <= st.range && !behind && !this.onLitPath(still.x, still.z) && ctx.canLock(st.trackMs + st.lockMs)) {
+          ctx.book(this, st.trackMs + st.lockMs)
+          this.steamIn = this.gap()
+          this.attack = 'steamTrack'
+          this.atkT = 0
+          this.aim = Math.atan2(dx, dz)
+          this.leadFor(still, (st.trackMs + st.lockMs) / 1000 * this.guess, st.leadMax)
+          this.cutAt(this.aim, terrain, this.gazeEnd)
+        } else if (this.outMs >= ENGINE.outrun.afterMs[this.phase2 ? 1 : 0] && this.sinceCinder >= ENGINE.outrun.cooldownMs
+          && ctx.canLock(ENGINE.cinder.windupMs)) {
+          ctx.book(this, ENGINE.cinder.windupMs)
+          this.attack = 'cinderAim'
+          this.atkT = 0
+          this.cinderLead(still, terrain)
+        }
+        break
+      }
+      case 'steamTrack': {
+        // the aim swings after his lead point no faster than the Arbiter's lance, and the rails show where it is pointed now
+        const left = st.trackMs + st.lockMs - this.atkT
+        this.leadFor(still, (left / 1000) * this.guess, st.leadMax)
+        const turn = ARBITER.lance.turnRate * dt
+        const want = Math.atan2(this.lead.x - this.pos.x, this.lead.z - this.pos.z)
+        this.aim += Math.max(-turn, Math.min(turn, angleDiff(want, this.aim)))
+        this.cutAt(this.aim, terrain, this.gazeEnd)
+        if (this.atkT >= st.trackMs - 1e-6) {
+          // the lock: the aim freezes, and the strip is committed where the engine stands now. Drawn = hit.
+          const ax = this.pos.x, az = this.pos.z
+          this.lockAt.copy(still)
+          this.lockVel.copy(this.vel)
+          this.attack = 'steamLock'
+          this.atkT = 0
+          this.jetFired = false
+          const len = Math.hypot(this.gazeEnd.x - ax, this.gazeEnd.z - az)
+          this.jetSeg = { ax, az, bx: this.gazeEnd.x, bz: this.gazeEnd.z }
+          // a jet with nowhere to go (it stands against a wall) is not made
+          this.jet = len < 0.3 ? null : ctx.addHazard?.(this, {
+            source: 'steam', shape: { kind: 'strip', ax, az, bx: this.gazeEnd.x, bz: this.gazeEnd.z, halfW: st.halfW },
+            armMs: st.lockMs, liveMs: st.liveMs, damage: st.damage, cover: 'none', hurt: 'hazard',
+            owner: this, sparesOwner: true, cancelOnDeath: true, raise: ATTACK_Y,
+          }) ?? null
+        }
+        break
+      }
+      case 'steamLock': {
+        // the jet arms on the tick its hazard does (the strike phase): Combat's onStrike, our puffs, and what he did about it is judged
+        const arming = this.jet ? this.jet.armIn <= ms + 1e-6 : this.atkT >= st.lockMs - ms - 1e-6
+        if (arming && !this.jetFired) {
+          this.jetFired = true
+          this.strikeTick = true
+          this.strikeKind = 'steam'
+          this.jetFx = 350
+          this.judge(still)
+          ctx.emit({ kind: 'engine', e: this, what: 'steam', at: this.pos.clone() })
+        }
+        if (this.atkT >= st.lockMs - 1e-6) {
+          this.attack = 'none'
+          this.jet = null
+        }
+        break
+      }
+      case 'cinderAim': {
+        this.cinderLead(still, terrain)
+        if (this.atkT >= ENGINE.cinder.windupMs - 1e-6) {
+          const c = ENGINE.cinder
+          this.group.updateMatrixWorld(true)
+          const from = this.chimney.getWorldPosition(new THREE.Vector3())
+          const h = ctx.addHazard?.(this, {
+            source: 'shell', shape: { kind: 'circle', x: this.lead.x, z: this.lead.z, r: c.r }, armMs: c.flightMs, liveMs: 0,
+            damage: c.damage, cover: 'none', hurt: 'hazard', owner: this, sparesOwner: true,
+            flight: { x: from.x, y: from.y, z: from.z, peak: c.peak }, raise: ATTACK_Y,
+          })
+          this.flight = h ? { h, from, to: this.lead.clone(), peak: c.peak, armMs: c.flightMs } : null
+          this.attack = 'none'
+          this.outMs = 0
+          this.sinceCinder = 0
+          this.strikeTick = true
+          this.strikeKind = 'cinder'
+          ctx.emit({ kind: 'engine', e: this, what: 'cinder', at: from })
+        }
+        break
+      }
+    }
+  }
+
+  /** Still's lead point: his smoothed velocity for `seconds` on, at most `cap` from him. */
+  private leadFor(still: THREE.Vector3, seconds: number, cap: number) {
+    let lx = this.vel.x * seconds, lz = this.vel.z * seconds
+    const l = Math.hypot(lx, lz)
+    if (l > cap) {
+      lx *= cap / l
+      lz *= cap / l
+    }
+    this.lead.set(still.x + lx, 0, still.z + lz)
+  }
+
+  /** The cinder's landing point: `leadS` of his velocity on (at most `leadMax`), stepped back toward the engine out of anything solid. */
+  private cinderLead(still: THREE.Vector3, terrain: Terrain) {
+    this.leadFor(still, ENGINE.cinder.leadS, ENGINE.cinder.leadMax)
+    const bx = this.pos.x - this.lead.x, bz = this.pos.z - this.lead.z, bd = Math.hypot(bx, bz)
+    for (let k = 0; k < 30 && bd > 0.01 && terrain.blocked(this.lead.x, this.lead.z, 0.01); k++) {
+      this.lead.x += (bx / bd) * 0.5
+      this.lead.z += (bz / bd) * 0.5
+    }
+  }
+
+  /** The jet's cut: marched out from the engine's centre until the first solid in see mode (a barrier, a post, a crate; a breach lets it through) or `len`. */
+  private cutAt(aim: number, terrain: Terrain, out: THREE.Vector3) {
+    const dx = Math.sin(aim), dz = Math.cos(aim)
+    let last = 0
+    for (let s = CUT_STEP; s <= ENGINE.steam.len + 1e-9; s += CUT_STEP) {
+      if (terrain.blocker(this.pos.x + dx * s, this.pos.z + dz * s, 0.1, true)) break
+      last = s
+    }
+    return out.set(this.pos.x + dx * last, 0, this.pos.z + dz * last)
+  }
+
+  /**
+   * At the arm: how far did his answer to the lock take him, against how far he'd have gone had he kept on? Kept going is 1, stopped 0,
+   * turned back below. It remembers his last three answers and each steam guesses one of them (the Arbiter's, arbiter.ts judge, with
+   * straight lines for angles). Standing still, or barely moving, tells it nothing, and the guess stands.
+   */
+  private judge(still: THREE.Vector3) {
+    const wx = this.lockVel.x * (ENGINE.steam.lockMs / 1000), wz = this.lockVel.z * (ENGINE.steam.lockMs / 1000)
+    const w2 = wx * wx + wz * wz
+    if (Math.sqrt(w2) < ENGINE.guess.minMove) return
+    const mx = still.x - this.lockAt.x, mz = still.z - this.lockAt.z
+    this.answers.push(Math.max(-1, Math.min(1, (mx * wx + mz * wz) / w2)))
+    if (this.answers.length > ENGINE.guess.memory) this.answers.shift()
+    this.guessSeed = (this.guessSeed * 16807) % 2147483647
+    this.guess = this.answers[Math.floor((this.guessSeed / 2147483647) * this.answers.length)]!
   }
 
   // --- the path ---
@@ -551,6 +812,7 @@ export class Engine implements Boss {
     this.originBody = this.u
     this.origin = this.laidTo = this.nose
     this.frontier = this.laidTo
+    this.steamIn = this.gap()
   }
 
   /** Drives (or backs) along the path, and works out where it is: the loop, or an arm (s from its junction). */
@@ -770,9 +1032,15 @@ export class Engine implements Boss {
 
   /** Committed ends for the camera: where the lit horizon ends. */
   threats(out: THREE.Vector3[]) {
-    if (this.dead || this.asleep || !this.started || this.segs.length === 0) return
-    const p = this.at(this.laidTo)
-    out.push(new THREE.Vector3(p.x, 0, p.z))
+    if (this.dead || this.asleep || !this.started) return
+    if (this.segs.length > 0) {
+      const p = this.at(this.laidTo)
+      out.push(new THREE.Vector3(p.x, 0, p.z))
+    }
+    // and the steam's end (tracking, then locked), the cinder's landing while it is aimed
+    if (this.attack === 'steamTrack') out.push(this.gazeEnd.clone())
+    else if (this.attack === 'steamLock' && this.jetSeg) out.push(new THREE.Vector3(this.jetSeg.bx, 0, this.jetSeg.bz))
+    else if (this.attack === 'cinderAim') out.push(this.lead.clone())
   }
 
   /** Smoke from the stack while it is awake. */
@@ -783,9 +1051,32 @@ export class Engine implements Boss {
     // the whistle: a burst of steam from the stack for the first 400 ms of the unfold, then its smoke
     if (this.state === 'unfold' && this.timer < 400) vfx.smokePuff(this.chimney.getWorldPosition(new THREE.Vector3()), 4, STEAM)
     else if (this.dressN % 2 === 0) vfx.smokePuff(this.chimney.getWorldPosition(new THREE.Vector3()), 1, SOOT)
+    // the jet goes on billowing for a beat after it fires; a cinder in the air sheds embers and a thread of smoke
+    if (this.jetFx > 0 && this.jetSeg) {
+      const j = this.jetSeg
+      vfx.jet(j.ax, j.az, j.bx, j.bz, ENGINE.steam.halfW, 6, STEAM, 2)
+    }
+    const f = this.flight
+    if (f && !f.h.done && f.h.armIn > 0) {
+      const k = Math.min(1, Math.max(0, 1 - f.h.armIn / f.armMs))
+      const at = new THREE.Vector3(f.from.x + (f.to.x - f.from.x) * k, f.from.y * (1 - k) + 4 * f.peak * k * (1 - k), f.from.z + (f.to.z - f.from.z) * k)
+      vfx.embers(at, 1, 0.08, FIRE)
+      if (this.dressN % 2 === 0) vfx.smokePuff(at, 1)
+    } else this.flight = null
   }
 
-  strikeFx(_vfx: Vfx) {}
+  /** The tick the jet arms: a burst of steam down the strip. The tick the cinder leaves: the stack coughs smoke and embers. */
+  strikeFx(vfx: Vfx) {
+    if (this.strikeKind === 'steam' && this.jetSeg) {
+      const j = this.jetSeg
+      vfx.jet(j.ax, j.az, j.bx, j.bz, ENGINE.steam.halfW, 36, STEAM, 4)
+    } else if (this.strikeKind === 'cinder') {
+      this.group.updateMatrixWorld(true)
+      const at = this.chimney.getWorldPosition(new THREE.Vector3())
+      vfx.smokePuff(at, 3)
+      vfx.embers(at, 6, 0.15, FIRE)
+    }
+  }
 
   // --- presentation ---
 
@@ -821,6 +1112,7 @@ export class Engine implements Boss {
     this.clock += dt
     this.drawHorizon()
     this.drawWindow(dt)
+    this.drawAim(dt)
     // behind it from the camera (which looks from +x +z), he'd be lost: its solid parts thin out until he's clear
     const bx = this.still.x - this.pos.x
     const bz = this.still.z - this.pos.z
@@ -851,6 +1143,40 @@ export class Engine implements Boss {
       this.endMat.opacity = 0.85 * flick
       this.endStar.renderOrder = tellOrder(0) + 0.3
     }
+  }
+
+  /**
+   * The steam's tracking, drawn as the Arbiter's lance is (arbiter.ts present): two faint rails closing from a wide gaze onto the
+   * jet's edges and a thin wash between, brightening as the lock comes, from the engine to where it is pointed now; it gives way to
+   * the hazard's own chevrons at the lock. The cinder's aim is the shell ring following his lead point.
+   */
+  private drawAim(dt: number) {
+    const st = ENGINE.steam
+    if (this.attack === 'steamTrack') {
+      const f = Math.min(1, this.atkT / st.trackMs)
+      const wide = st.halfW + 0.9
+      const half = wide + (st.halfW - 0.04 - wide) * f
+      const nx = Math.cos(this.aim), nz = -Math.sin(this.aim)
+      const ax = this.pos.x, az = this.pos.z, bx = this.gazeEnd.x, bz = this.gazeEnd.z
+      for (const [i, side] of [[0, -1], [1, 1]] as const) {
+        this.gaze.set(i, ax + nx * half * side, az + nz * half * side, bx + nx * half * side, bz + nz * half * side, 0.04, ATTACK_Y + 0.004)
+      }
+      this.gazeWash.set(0, ax, az, bx, bz, half, ATTACK_Y)
+      this.gazeMat.opacity = (0.25 + 0.45 * f) * trackingDim()
+      this.gazeWashMat.opacity = 0.06 + 0.1 * f
+    } else {
+      this.gazeMat.opacity = Math.max(0, this.gazeMat.opacity - dt * 10)
+      this.gazeWashMat.opacity = Math.max(0, this.gazeWashMat.opacity - dt * 10)
+    }
+    const order = tellOrder(this.attack === 'steamTrack' ? st.trackMs + st.lockMs - this.atkT : 2000)
+    this.gaze.mesh.visible = this.gazeMat.opacity > 0.002
+    this.gazeWash.mesh.visible = this.gazeWashMat.opacity > 0.002
+    this.gazeWash.mesh.renderOrder = order + 0.05
+    this.gaze.mesh.renderOrder = order + 0.1
+    this.cinderRingMat.opacity = this.attack === 'cinderAim' ? 0.16 * trackingDim() : Math.max(0, this.cinderRingMat.opacity - dt * 8)
+    this.cinderRing.visible = this.cinderRingMat.opacity > 0.002
+    this.cinderRing.position.set(this.lead.x, ATTACK_Y, this.lead.z)
+    this.cinderRing.renderOrder = tellOrder(this.attack === 'cinderAim' ? ENGINE.cinder.windupMs - this.atkT : 2000)
   }
 
   /** The window's ring and disc on the floor, and the levers turning: the open one's knob bright, a thrown one over. */
@@ -917,5 +1243,11 @@ export class Engine implements Boss {
     releaseTell(this.discMat)
     this.endStar.geometry.dispose()
     releaseTell(this.endMat)
+    this.gaze.dispose()
+    this.gazeWash.dispose()
+    releaseTell(this.gazeMat)
+    releaseTell(this.gazeWashMat)
+    this.cinderRing.geometry.dispose()
+    releaseTell(this.cinderRingMat)
   }
 }
