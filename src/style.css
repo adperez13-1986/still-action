@@ -346,6 +346,14 @@ html, body {
   #offer .take { width: 50px; height: 50px; }
   #offer .melt { max-width: 124px; }
 }
+/* a small phone with its browser bars showing: the column of choices is taller than the room above the arc,
+   so they go in a row under the words (the words scroll first) */
+@media (max-height: 350px) {
+  #offer { flex-wrap: wrap; align-content: flex-end; }
+  #offer .info { flex: 1 1 100%; min-height: 0; max-height: calc(100dvh - env(safe-area-inset-top, 0px) - 218px - 72px); }
+  #offer .choices { flex: 1 1 100%; flex-direction: row; justify-content: flex-end; align-items: center; }
+  #offer .take { width: 44px; height: 44px; font-size: 13px; }
+}
 /* a tempered part's rank on its button: small cold strokes under the icon */
 .btn .lbl { position: relative; }
 .btn .rank {
@@ -367,13 +375,25 @@ html, body {
   border: 1px solid #22303f; background: rgba(16, 23, 34, .85);
 }
 #pauseBtn i { display: block; width: 4px; height: 13px; border-radius: 1px; background: #8fa3b8; }
+/* It scrolls when it's taller than the screen (30 Sep: four long "that saw the Arbiter" cards and five
+   mastery lines on a landscape phone pushed resume off the bottom, and a centred flex column clips both ends
+   out of reach). Centred by auto margins, not justify-content, so an overflow only ever runs downward; the
+   page's touch-action: none stops at this scroll container, and the actions stay pinned to its bottom edge. */
 #pause {
   position: absolute; inset: 0; z-index: 40; display: none; pointer-events: auto;
-  flex-direction: column; align-items: center; justify-content: center; gap: 14px;
-  padding: 16px calc(env(safe-area-inset-right, 0px) + 16px) 16px calc(env(safe-area-inset-left, 0px) + 16px);
+  flex-direction: column; align-items: center; justify-content: flex-start; gap: 14px;
+  padding: calc(env(safe-area-inset-top, 0px) + 16px) calc(env(safe-area-inset-right, 0px) + 16px) 0 calc(env(safe-area-inset-left, 0px) + 16px);
+  overflow-y: auto; overscroll-behavior: contain; touch-action: pan-y;
   background: rgba(5, 8, 12, .82); backdrop-filter: blur(4px);
 }
 #pause.show { display: flex; }
+#pause > * { flex: none; }
+#pause > :first-child { margin-top: auto; }
+#pause > .actions {
+  margin-bottom: auto; position: sticky; bottom: 0; z-index: 1;
+  padding: 10px 0 calc(env(safe-area-inset-bottom, 0px) + 16px);
+  background: linear-gradient(rgba(5, 8, 12, 0), rgba(5, 8, 12, .92) 10px);
+}
 #pause h2 { margin: 0; font: 700 14px/1 var(--display); letter-spacing: .22em; color: #8193a6; }
 #pause .row { display: flex; gap: 10px; align-items: stretch; max-width: 100%; }
 #pause .row.four .pcard .ppips { color: var(--strain); font: 700 11px/1 var(--ui); letter-spacing: 2px; vertical-align: middle; }
@@ -409,7 +429,7 @@ html, body {
 /* marked, not judged: changed values stand out, with no good/bad colour */
 .pcard .stat.changed b { color: #f2f6fa; }
 .pcard .stat.changed span { color: #9fb2c6; }
-#pause .actions { display: flex; gap: 10px; }
+#pause .actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; max-width: 100%; }
 #pause .actions button {
   appearance: none; min-width: 120px; padding: 12px 20px; border-radius: 9px;
   border: 1px solid #2d4460; background: #111a25; color: #cbd7e6;
@@ -424,6 +444,19 @@ html, body {
 @media (max-width: 760px) {
   #pause .row.four .pcard { width: auto; flex: 1; }
   #pause .row.four { width: 100%; }
+}
+/* a landscape phone: the same screens, packed tighter, so most fit without a scroll */
+@media (max-height: 520px) {
+  #pause { gap: 8px; padding-top: calc(env(safe-area-inset-top, 0px) + 10px); }
+  #pause > .actions { padding: 6px 0 calc(env(safe-area-inset-bottom, 0px) + 8px); }
+  #pause .actions { gap: 8px; }
+  #pause .actions button { min-width: 0; padding: 9px 14px; font-size: 13px; }
+  .pcard { padding: 8px 10px; }
+  .pcard .pname { margin-top: 4px; font-size: 14px; }
+  .pcard .pline { margin: 3px 0 6px; font-size: 12px; line-height: 1.3; }
+  .pcard .stats { padding-top: 5px; gap: 1px; }
+  .pcard .stat { font-size: 11px; }
+  #pause .learned { margin-top: 4px; font-size: 11.5px; line-height: 1.4; }
 }
 
 /* --- fight banner --- */
