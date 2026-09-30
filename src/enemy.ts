@@ -7,6 +7,7 @@ import type { EliteMod } from './combat'
 import type { Brood } from './swarm'
 import type { HazardSource, HazardSpec } from './hazard'
 import type { LaneDef } from './line'
+import type { Side } from './track'
 
 /**
  * Every archetype is the same machine: approach, windup, strike, recover.
@@ -159,6 +160,11 @@ export type EnemyEvent =
    * vent opening and closing, a judder (`ms`), a post cracking, the scald going off.
    */
   | { kind: 'arbiter'; e: Enemy; what: 'catch' | 'ratchet' | 'vent' | 'ventEnd' | 'judder' | 'crack' | 'scald' | 'phase2'; at: THREE.Vector3; ms?: number }
+  /** The Engine's instants (engine.ts), for its sounds and the log. `side`: the lever's. `ms`: a judder's length. */
+  | {
+      kind: 'engine'; e: Enemy; at: THREE.Vector3; side?: Side; ms?: number
+      what: 'whistle' | 'window' | 'throw' | 'throwBack' | 'derail' | 'back' | 'judder' | 'flip' | 'steam' | 'cinder' | 'wagon' | 'wagonSettle' | 'wagonSmash' | 'phase2'
+    }
   /**
    * A mender's cable (mender.ts): linked to `patient`, let go (its patient died, a wall, out of reach),
    * or cut by his body at `at`, the cable then running `from` its feet `to` where it reached.

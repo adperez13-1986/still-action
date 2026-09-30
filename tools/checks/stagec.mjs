@@ -207,4 +207,49 @@ const seeds = (n) => [...Array(n)].map((_, i) => i + 1).concat(FAR)
 check('K-N1b', ENG6, async ({ page }) => roundhouse(page, [['III', 6, seeds(20)]]))
 check('K-N1b', ENG9, async ({ page }) => roundhouse(page, [['III', 6, seeds(5)], ['II', 9, seeds(5)]]))
 
+// --- The body and the run (C3, C4) -------------------------------------------------------------------------------------
+
+check('K-N2a', ENG6, async ({ page }) => {
+  for (const seed of seeds(5)) {
+    const got = await inPage(page, `
+      enterEngine('III', 6, arg)
+      const b0 = W.__boss(), c = W.__combat.boss
+      if (!b0 || b0.kind !== 'engine') return { bad: 'the boss is ' + (b0 && b0.kind) + ', not the engine' }
+      const start = { state: b0.state, dir: b0.dir, hp: b0.hp, maxHp: b0.maxHp }
+      const e = W.__level().entrance, { away } = roomOf()
+      const logAt = W.__enemyLog.length
+      const dist = () => Math.hypot(c.pos.x - W.__still.pos.x, c.pos.z - W.__still.pos.z)
+      const steps = []
+      let woke = -1
+      for (let k = 0; k < 600; k++) {
+        W.__still.pos.set(e.x + away.x * 0.25 * k, 0, e.z + away.z * 0.25 * k)
+        const d = dist()
+        tick(1)
+        // the tick may push him off a wall; the wake test used the position set, so that is the distance that counts
+        const asleep = W.__boss().state === 'asleep'
+        steps.push({ k, d, asleep })
+        if (!asleep) { woke = k; break }
+      }
+      if (woke < 0) return { bad: 'never woke in 600 steps', steps: steps.length }
+      // then he stands: the unfold, in ticks
+      let ticks = 0
+      while (W.__boss().state === 'unfold' && ticks < 300) { tick(1); ticks++ }
+      const first = steps[steps.length - 1], early = steps.filter((x) => !x.asleep && x.d >= 16.5).length, late = steps.filter((x) => x.asleep && x.d < 16.5).length
+      const whistles = W.__enemyLog.slice(logAt).filter((x) => x.ev.kind === 'engine' && x.ev.what === 'whistle').length
+      return { start, wokeAt: first.d, early, late, ticks, after: W.__boss().state, whistles, moved: Math.hypot(W.__boss().x - c.pos.x, W.__boss().z - c.pos.z) }`, seed)
+    const why = (m) => { throw new Error(`seed ${seed}: ${m}`) }
+    if (got.bad) why(got.bad)
+    if (got.start.state !== 'asleep' || got.start.dir !== 1) why(`it starts ${got.start.state}, dir ${got.start.dir}`)
+    if (got.start.hp !== got.start.maxHp) why(`it starts at ${got.start.hp} of ${got.start.maxHp}`)
+    if (got.early) why(`it woke ${got.early} step(s) with Still 16.5 or more away`)
+    if (got.late) why(`it slept on ${got.late} step(s) with Still inside 16.5`)
+    if (!(got.wokeAt < 16.5 && got.wokeAt > 16.5 - 0.26)) why(`it woke with Still ${got.wokeAt.toFixed(3)} away, not on the first step inside 16.5`)
+    // the unfold is 1500 ms of ticks; the wake tick is its first update (the whistle is logged in it), then `ticks` more
+    const ms = (got.ticks + 1) * 1000 / 60
+    if (Math.abs(ms - 1500) > 17) why(`the unfold lasted ${ms.toFixed(1)} ms, not 1500 +- 17 (${got.ticks} ticks)`)
+    if (got.after !== 'run') why(`the unfold ended in '${got.after}', not 'run'`)
+    if (got.whistles !== 1) why(`${got.whistles} whistle events, not 1`)
+  }
+})
+
 process.exit(await run(process.argv.slice(2)))

@@ -1716,7 +1716,7 @@ check('K-E9', LINE4, async ({ page }) => {
       return { h: (h + 360) % 360, s, l }
     }
     const hides = {}
-    for (const k of ['signal', 'handcar', 'enamel', 'sleepers']) {
+    for (const k of ['signal', 'handcar', 'enamel', 'sleepers', 'engine']) {
       const h = W.__hides[k]
       hides[k] = h ? { body: hsl(h.body), joint: hsl(h.joint) } : null
     }
@@ -1777,7 +1777,7 @@ check('K-E9', LINE4, async ({ page }) => {
   assert(got.sig.max <= got.sig.coreL + 1e-6, `INV-C1: the lamp's lightness went ${got.sig.max.toFixed(6)}, over CORE's ${got.sig.coreL.toFixed(6)}`)
   assert(got.hand.windup > 20 && got.hand.locked > 10, `the Handcar's windup ${got.hand.windup} ticks, locked ${got.hand.locked}: the seam check proves nothing`)
   assert(got.hand.max <= got.hand.coreL + 1e-6, `INV-C1: the seam's lightness went ${got.hand.max.toFixed(6)}, over CORE's ${got.hand.coreL.toFixed(6)}`)
-  console.log(`INFO K-E9: four hides in palette; lamp lightness peaked ${got.sig.max.toFixed(3)} and seam ${got.hand.max.toFixed(3)} against CORE's ${got.sig.coreL.toFixed(3)}`)
+  console.log(`INFO K-E9: five hides in palette; lamp lightness peaked ${got.sig.max.toFixed(3)} and seam ${got.hand.max.toFixed(3)} against CORE's ${got.sig.coreL.toFixed(3)}`)
 })
 
 // K-E10: the notebook's Line pages (STAGE-B section 2.9, as amended 30 Sep: the Handcar has a page of its own, and only pages he has never met may change role)

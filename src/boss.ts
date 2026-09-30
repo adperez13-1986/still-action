@@ -8,6 +8,8 @@ import type { Terrain } from './terrain'
 import type { BossDef } from './areas'
 import type { Post } from './dungeon'
 import { Arbiter } from './arbiter'
+import { Engine } from './engine'
+import type { TrackDef } from './track'
 
 /** The current windup's sound shape: heavy moves rise like the hulk, aimed ones whistle and click like the sentinel. */
 export type BossCue =
@@ -34,6 +36,10 @@ export interface Boss extends Enemy {
   readonly open: boolean
   /** World-space telegraphs that don't follow the body (piles, lanes). Added to the scene with it. */
   readonly worldGroup: THREE.Group
+  /** How close Still's centre must come to wake it. Absent: 12.5 (combat.ts, every boss today). */
+  readonly wakeRadius?: number
+  /** The departure board under the bar's name, or ''. Absent: none. */
+  board?(): string
   /** Footprint radius when it never walks: spacing never moves it, and Still is pushed out of it. null when it walks. */
   readonly anchored: number | null
   /** The current windup's sound shape. Read on the tick its phase becomes 'windup'. */
@@ -47,13 +53,12 @@ export interface Boss extends Enemy {
 }
 export const isBoss = (e: Enemy): e is Boss => e.kind === 'boss'
 
-/** The one place a boss is built from its def. The Arbiter stands among the square's posts, and cracks them. */
-export function makeBoss(def: BossDef, x: number, z: number, face: THREE.Vector3, posts: Post[] = []): Boss {
+/** The one place a boss is built from its def. The Arbiter stands among the square's posts, and cracks them; the Engine runs the roundhouse's track. */
+export function makeBoss(def: BossDef, x: number, z: number, face: THREE.Vector3, posts: Post[] = [], track?: TrackDef): Boss {
   switch (def.kind) {
     case 'assembler': return new Assembler(def, x, z)
     case 'arbiter': return new Arbiter(def, x, z, face, posts)
-    // stage C builds the Engine; until then a DEV `?engine=1` meets an Assembler under its def
-    case 'engine': return new Assembler(def, x, z)
+    case 'engine': return new Engine(def, x, z, face, track!)
   }
 }
 

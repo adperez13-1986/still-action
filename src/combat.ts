@@ -16,6 +16,7 @@ import type { BossDef } from './areas'
 import { LiveHazard, SLAG, inShape, slagArm, threatPoint, type Hazard, type HazardShape, type HazardSpec } from './hazard'
 import { LINE, type Line, type SidingDef } from './line'
 import type { Room } from './dungeon'
+import type { TrackDef } from './track'
 
 /** §4.24: the second Assembler's adds. Live add HP never passes today's four hulks' worth (4 x 18). */
 const ADDS_HP_CAP = 72
@@ -2802,8 +2803,8 @@ export class Combat {
   }
 
   /** The area's boss, as its def says: its own pack, woken by walking into the arena, never leashed. */
-  addBoss(x: number, z: number, face: THREE.Vector3, def: BossDef, posts: Post[] = []): Boss {
-    const b = makeBoss(def, x, z, face, posts)
+  addBoss(x: number, z: number, face: THREE.Vector3, def: BossDef, posts: Post[] = [], track?: TrackDef): Boss {
+    const b = makeBoss(def, x, z, face, posts, track)
     // the depth curve's boss damage (curve.ts), on every hurt path its hits take
     if (this.curve.bossDmg !== 1) b.dmgMul = this.curve.bossDmg
     this.scene.add(b.group, b.tellGroup, b.worldGroup)
@@ -2813,7 +2814,7 @@ export class Combat {
       members: [b], state: 'asleep', side: false, dropped: false, size: 1, weight: 1, token: null,
       homes: new Map([[b as Enemy, new THREE.Vector3(x, 0, z)]]),
       gaze: new Map([[b as Enemy, face.clone()]]),
-      hpSeen: b.hp, wakeRadius: 12.5, leash: Infinity,
+      hpSeen: b.hp, wakeRadius: b.wakeRadius ?? 12.5, leash: Infinity,
     }
     this.packOf.set(b, pack)
     this.packs.push(pack)

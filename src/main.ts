@@ -15,6 +15,7 @@ import { STATE_IDS, pairWith, paired, type StateId } from './states'
 import type { Enemy, EnemyEvent } from './enemy'
 import { isBoss, Assembler } from './boss'
 import { Arbiter, ARBITER, arbiterHusk } from './arbiter'
+import { Engine } from './engine'
 import { DayTracker } from './day'
 import type { HazardSpec } from './hazard'
 import { Line, LINE, type LineEvent, type SidingDef, type Train } from './line'
@@ -2764,7 +2765,7 @@ function enterLevel(depth: number, o: { seed?: number; bossFelled?: boolean; res
     world.scene.add(combat.line.group)
   }
   const boss = bossHere(depth)
-  if (level.boss && boss && !run.bossFelled) combat.addBoss(level.boss.x, level.boss.z, level.boss.face, boss, level.posts)
+  if (level.boss && boss && !run.bossFelled) combat.addBoss(level.boss.x, level.boss.z, level.boss.face, boss, level.posts, level.track)
   // G8: a thief in a barrel in its elite's room, with no pack (it never spawns carrying)
   arenaFloor = null
   const lt = level.thief
@@ -4631,7 +4632,9 @@ if (import.meta.env.DEV) {
       if (kind === 'boss') {
         const defs: Record<BossKind, BossDef> = { assembler: ASSEMBLER_DEF, arbiter: ARBITER_DEF, engine: ENGINE_DEF }
         // the Arbiter stands among __arena's posts, when it built them
-        const b = combat.addBoss(x, z, new THREE.Vector3(x, 0, z - 1), defs[(variant ?? 'assembler') as BossKind], devPosts?.posts ?? [])
+        // the Engine runs a track round the origin, __arena's floor being exactly the 28 u room there
+        const kindOf = (variant ?? 'assembler') as BossKind
+        const b = combat.addBoss(x, z, new THREE.Vector3(x, 0, z - 1), defs[kindOf], devPosts?.posts ?? [], kindOf === 'engine' ? makeTrack(0, 0, 'z') : undefined)
         if (awake) combat.wake(combat.packs[combat.packs.length - 1]!)
         return b
       }
@@ -4780,6 +4783,15 @@ if (import.meta.env.DEV) {
     },
     __boss: () => {
       const b = combat.boss
+      if (b instanceof Engine) {
+        return {
+          kind: 'engine', hp: b.hp, maxHp: b.maxHp, phase2: b.phase2, open: b.open, state: b.state, attack: b.attack, s: b.s, dir: b.dir, lap: b.lap,
+          x: b.pos.x, z: b.pos.z, path: b.path === 'loop' ? 'loop' : `${b.path.side}-${b.path.kind}`,
+          window: b.window ? { side: b.window.side, open: b.window.open, thrown: b.window.thrown, msOpen: b.window.msOpen } : null,
+          wagon: b.wagon ? { x: b.wagon.x, z: b.wagon.z, settled: b.wagon.settled } : null,
+          board: b.board(), guess: b.guess, frontier: b.frontier, frontierEnd: b.frontierEnd, dmgMul: b.dmgMul ?? 1,
+        }
+      }
       if (!(b instanceof Arbiter)) return b ? { kind: b.def.kind, hp: b.hp, phase2: b.phase2, open: b.open } : null
       return {
         kind: 'arbiter', hp: b.hp, phase2: b.phase2, open: b.open, state: b.state, wedges: [...b.wedges], omega: b.omega, aim: b.aim, guess: b.guess,

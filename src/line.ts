@@ -370,6 +370,15 @@ function rakeParts(): RakeKit {
   return rakeKit
 }
 
+/**
+ * The crawl trains' engine (rakeParts): its geometry and firebox slit, for the Engine (engine.ts) to CLONE. The front is at the
+ * origin and it runs back along −z, 2.6 long. Never dispose these: every rake shares them.
+ */
+export function engineKit(): { engine: THREE.BufferGeometry; firebox: THREE.BufferGeometry } {
+  const { engine, firebox } = rakeParts()
+  return { engine, firebox }
+}
+
 /** Only for a level built without its rail stream (never, in the generator). */
 function fallbackStream(seed: number) {
   let s = Math.abs(seed) % 2147483647 || 1
