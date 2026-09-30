@@ -3,37 +3,45 @@
 For the next session. Read this, then `DESIGN.md` (the settled decisions), then the design
 folder for whatever you're touching. Don't re-derive any of them.
 
-## Start here (30 Sep, late: AREA III IS LIVE)
+## Start here (30 Sep, late: AREA III IS LIVE; next session is at home)
 
-**His call (30 Sep): "no one is playing but me, why hide it?"** LINE_ENABLED, ENGINE_ON_LINE, BOTH_ROADS are now `true` (473a02f,
-pushed, deployed). The live game is 9 depths, both roads (the crossroads picks area 2), the Line's bodies, the Engine. PORTER stays
-false. Checks that meant the old game are pinned with `roads=0&line=0&engine=0` (DEV overrides); K-90/K-90L/K-90F still compare the
-6-depth page, unchanged. All suites PASS except stageb's known K-W3d. **Lesson: he doesn't want work hidden behind flags on this
-repo: he's the only player; ship to main and let him play it.** Everything below "stage C done" still applies, minus the go-live step.
+**State:** main = origin, all pushed and deployed, nothing running, nothing uncommitted. **Area III is live** on his word
+("no one is playing but me, why hide it?"): LINE_ENABLED, ENGINE_ON_LINE, BOTH_ROADS = `true` (473a02f). The live game is 9 depths,
+both roads (the crossroads after the first Assembler picks which is area 2), the Line (trains, Signalman, Handcar, Sleepers) and
+the Engine as its boss. PORTER_ENABLED stays false (stage D not built). Save v3 covers it; no migration.
+**Lesson: on this repo he doesn't want finished work hidden behind flags. He's the only player: ship reviewed steps to main.**
 
-## Start here (30 Sep, evening: stage C done, the Engine complete, all dark, all pushed)
+**First, at home:**
+1. Start the dev server (`npx vite --host`) and give him the LAN address (`ipconfig getifaddr en0`, port 5173). The live URL has it
+   too now (a reload picks up the new service-worker build). No URL flags needed any more.
+2. **Ask how it felt before reading any numbers** (phone playtest log: `playtest.json` on the dev server, or his exported log).
+3. Phone questions, in order:
+   - **The Engine's kill time.** A careful scripted bot needs 150-182 s (SPEC guessed 85-100). If it drags: HP, window cadence.
+   - Does the lever read at phone size? The lit horizon?
+   - Does the derail land as a payoff?
+   - The sounds: none has ever been heard (headless has no audio).
+   - The 9-depth curve (`design/scaling/CURVE9.md`, first pass).
+   - Look doubts: spark flecks may read salmon; the body's sheen; the wagon.
+   - The Line bodies: stage B's phone list, `design/area3/STAGE-B.md` §5.
 
-**Nothing running, nothing uncommitted, main = origin (a55f0c6).** Stages R, B and C are all built and dark: the 9-depth run with
-both roads, the Line's bodies and dressing, and the Engine. Live is unchanged (K-90/K-90L/K-90F PASS at every step).
-Results table: `design/area3/STAGE-C-RESULTS.md`. How it was built: verifier brief (STAGE-C.md), one Sonnet 5.5 engineer per 1-2
-steps, balancer for the steam/cinder numbers (ENGINE-N17.md); I read every diff, reran checks and looked at every screenshot.
+**The Engine, in one breath:** a locomotive on a loop in the roundhouse, lighting the rail >= 1.3 s ahead of itself. Every 3rd
+junction a lever window (cold ring, board "LEFT POINTS · NOW"): a cast within 3 u throws it, and it derails in the siding (open,
+x1.5). Steam leads him and is cut at walls; the cinder comes if he stays out of range (8.1 s, 5.6 s in phase 2). Phase 2 at 55%:
+reversals, a loose wagon it derails on, levers thrown back on him. Death leaves a cold husk.
+Docs: `design/area3/STAGE-C.md` (brief), `STAGE-C-RESULTS.md` (check table), `ENGINE-N17.md` (balancer's steam/cinder numbers).
 
-**The Engine, in one breath:** a locomotive on a loop in the roundhouse, lighting the rail >= 1.3 s ahead of itself; every 3rd
-junction a lever window (cold ring, board "LEFT POINTS · NOW"): a cast within 3 u throws it, it derails in the siding (open, x1.5);
-steam leads him, cut at walls; the cinder if he stays out of range (8.1 s, 5.6 s in phase 2); phase 2 at 55%: reversals, a loose
-wagon it derails on, levers thrown back on him. Death: a cold husk.
+**Checks:** `node tools/checks/{baseline,fights,k9,area3,home,stageb,stagec}.mjs` (localhost vite only). All PASS except stageb's
+K-W3d (Parry a dead slot: a design finding, not a bug). Queries that mean the old 6-depth game are pinned `roads=0&line=0&engine=0`;
+K-90/K-90L/K-90F still compare that page (no baseline re-captured).
 
-**First, at home:** dev server (`npx vite --host`), then on the Poco `?roads=1&line=1&engine=1` for a full 9-depth run. Ask how it
-felt before numbers. Phone questions: does the lever read at phone size; the horizon; the derail as a payoff; the sounds (none ever
-heard); **the kill time** (a scripted bot needs 150-182 s, SPEC guessed 85-100 s: if it drags, the dials are HP and the window
-cadence); the spark flecks (may read salmon); the body's sheen vs the old roof patch; the wagon.
+**How stage C was built:** verifier brief, one Sonnet 5.5 engineer per 1-2 steps, the balancer for numbers; I read every diff, reran
+the checks and looked at every screenshot. Review caught 3 flat/peach looks, a white rail streak, a latent horizon bug, and 3 checks
+the brief never assigned.
 
-**Going live is his call:** LINE_ENABLED, ENGINE_ON_LINE and BOTH_ROADS flip together (BOTH-ROADS §5). Before that he should play
-it on the dev server. Save v3 migration already exists.
-
-**His to write (all PLACEHOLDER):** the Engine's name, openWord, phase-2 banner, BOARD words, notebook line; Signalman / Handcar /
-Sleepers names, WHAT words, lines; ROUTE_WORD.III; Parry Clamp's card line; the warm-beam card copy. Still open from 29 Sep: his feel
-on Parry catch / the lunge / the switch. K-W3d (Parry a dead slot) is the one standing check failure, a design finding.
+**His to write (all PLACEHOLDER):** the Engine's name, openWord, phase-2 banner, BOARD words, notebook line; the Signalman / Handcar /
+Sleepers names, WHAT words and lines; ROUTE_WORD.III; Parry Clamp's card line; the warm-beam card copy.
+**Still open from 29 Sep:** his feel on Parry catch / the lunge / the parry-catch switch.
+**Next build candidates (his pick):** tuning from his runs; stage D (the Porter); Parry's dead slot (`design/parry/`).
 
 ## Start here (30 Sep, morning: B7 + B8 done, stage B complete, all dark)
 
