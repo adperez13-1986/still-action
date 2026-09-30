@@ -4891,6 +4891,8 @@ if (import.meta.env.DEV) {
     __bossFor: bossFor,
     /** C1: the roundhouse's track as numbers (track.ts), for the geometry check. */
     __makeTrack: makeTrack,
+    /** C2: the level's track (the roundhouse only), or null. */
+    __track: () => level?.track ?? null,
     __areaOf: (d: number, route: RouteId = 'II') => areaOf(d, route).id,
     /** The run's length (6, or 9 with ?roads=1), and the road helpers: a depth's step and road (the road takes the ORDER), and whether it's an open field. */
     __runDepths: RUN_DEPTHS,

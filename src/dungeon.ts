@@ -6,7 +6,9 @@ import type { BreachHole } from './parts'
 import { ELITE_MODS, type Archetype, type EliteMod } from './combat'
 import { BROOD, HEAP } from './swarm'
 import { RUN_DEPTHS, exitsAfterBoss, lookAt, stepOf, type BossDef, type ExitKind, type KitPreset, type LinePreset, type MachineKind, type PlaceDef, type PlaceId, type RouteId } from './areas'
-import { LINE, SIDING, buildLinePieces, distToSpan, type LaneDef, type SidingDef } from './line'
+import { LINE, SIDING, buildLinePieces, buildTrackPieces, distToSpan, type LaneDef, type SidingDef } from './line'
+import { TRACK, makeTrack, loopAt, loopS, type TrackDef } from './track'
+import { hideMaterials } from './hide'
 import { handcarSpot } from './handcar'
 import { buildMachines, machineTop, CHIMNEY_H, type MachinePlacement } from './machines'
 import { THIEF } from './thief'
@@ -164,6 +166,8 @@ export interface Level {
   smash: (b: Breakable) => void
   /** Boss levels: where the boss stands and what it faces. The exits stay shut until it falls. */
   boss?: { x: number; z: number; face: THREE.Vector3 }
+  /** The roundhouse only (arena 'roundhouse'): its track. */
+  track?: TrackDef
   /** The square only: its posts, and the tower's footprint (dead until the tower falls and leaves its husk). */
   posts?: Post[]
   footprint?: Circle
@@ -1142,6 +1146,29 @@ function layLine(layout: Layout, progressOf: (r: Room) => number, line: LinePres
 /** A floor cell's piece: the first whose cumulative threshold the cell's one roll is under. */
 export const pickFloor = (table: [Piece, number][], roll: number): Piece => (table.find(([, t]) => roll < t) ?? table[table.length - 1]!)[0]
 
+let leverParts: { post: THREE.BoxGeometry; handle: THREE.BoxGeometry; mats: ReturnType<typeof hideMaterials> } | null = null
+/**
+ * A points lever: a timber post with an iron handle pivoting at its top (the group `lever:<side>`; the handle's pivot is its
+ * child `pivot`, at rest leaning off the vertical). Shared geometry and materials, like the kit: never disposed with a level.
+ */
+function leverMesh(side: 'right' | 'left', x: number, z: number): THREE.Group {
+  leverParts ??= { post: new THREE.BoxGeometry(0.15, 1.0, 0.15), handle: new THREE.BoxGeometry(0.06, 0.5, 0.06), mats: hideMaterials('signal') }
+  const g = new THREE.Group()
+  g.name = `lever:${side}`
+  g.position.set(x, 0, z)
+  const post = new THREE.Mesh(leverParts.post, leverParts.mats.mat)
+  post.position.y = 0.5
+  const pivot = new THREE.Group()
+  pivot.name = 'pivot'
+  pivot.position.y = 1.0
+  pivot.rotation.z = 0.5
+  const handle = new THREE.Mesh(leverParts.handle, leverParts.mats.jointMat)
+  handle.position.y = 0.25
+  pivot.add(handle)
+  g.add(post, pivot)
+  return g
+}
+
 /**
  * `place` (default: the depth's, lookAt) is what it's built with; `boss` is bossFor(depth).
  * INV: the ruin builds exactly what this built before places existed, rand() for rand().
@@ -1338,6 +1365,8 @@ export function generateLevel(
   const posts: Post[] = []
   let footprint: Circle | undefined
   const postMeshes: THREE.Mesh[] = []
+  let track: TrackDef | undefined
+  const trackParts: THREE.Object3D[] = []
   if (square) {
     const entrance = layout.rooms.find((r) => r.kind === 'entrance')!
     const c = square.center
@@ -1362,6 +1391,62 @@ export function generateLevel(
     }
     // it stands at the centre, facing the way you come in
     bossSpot = { x: c.x, z: c.z, face: entrance.center.clone() }
+  } else if (opts.boss?.arena === 'roundhouse') {
+    // --- the roundhouse: the yard's four inner walls, four crates, a loop of track with its levers and buffers (STAGE-C §2.2) ---
+    const arena = layout.rooms.find((r) => r.kind === 'exit')!
+    const entrance = layout.rooms.find((r) => r.kind === 'entrance')!
+    const c = arena.center
+    const away = new THREE.Vector3(c.x - entrance.center.x, 0, c.z - entrance.center.z).normalize()
+    // the spurs run across the entrance, so they never open into its mouth
+    track = makeTrack(c.x, c.z, Math.abs(away.x) > 0.5 ? 'z' : 'x')
+    for (const [ox, oz, along] of [[-6.5, 0, 'z'], [6.5, 0, 'z'], [0, -6.5, 'x'], [0, 6.5, 'x']] as const) {
+      const x = c.x + ox
+      const z = c.z + oz
+      placements.push({ piece: kit.arenaCover, x, z, rotY: along === 'z' ? Math.PI / 2 : 0 })
+      boxes.push(along === 'z'
+        ? { minX: x - 0.35, maxX: x + 0.35, minZ: z - 2, maxZ: z + 2 }
+        : { minX: x - 2, maxX: x + 2, minZ: z - 0.35, maxZ: z + 0.35 })
+    }
+    // four crates on the diagonal of the corners' void, 3.2 u clear of the rails; none of the yard's six
+    for (const [ox, oz] of [[3.2, 12.2], [-3.2, -12.2], [12.2, 3.2], [-12.2, -3.2]] as const) {
+      const x = c.x + ox
+      const z = c.z + oz
+      const piece: Piece = rand() < 0.5 ? kit.breakable[0]! : kit.breakable[1]!
+      const scale = piece === kit.breakable[0] ? 0.7 : 0.8
+      const { geometry, material } = pieceData(piece)
+      const mesh = new THREE.Mesh(geometry, material)
+      mesh.position.set(x, 0, z)
+      mesh.rotation.y = rand() * 6.3
+      mesh.scale.setScalar(scale)
+      const circle: Circle = { x, z, r: pieceData(piece).radius * scale * 0.8 }
+      circles.push(circle)
+      breakables.push({ mesh, x, z, r: circle.r, circle, broken: false })
+    }
+    // the levers and the buffers are solid, never breakable
+    for (const side of ['right', 'left'] as const) {
+      const l = track.levers[side]
+      circles.push({ x: l.x, z: l.z, r: TRACK.leverR })
+      trackParts.push(leverMesh(side, l.x, l.z))
+    }
+    for (const arm of track.arms) circles.push({ x: arm.buffer.x, z: arm.buffer.z, r: TRACK.bufferR })
+    // the rails: the loop's eight runs and the four arms live, the spurs dead; each arm's rail stops at its buffer's face
+    const runs: { ax: number; az: number; bx: number; bz: number; rail: 'live' | 'siding' }[] = []
+    track.loop.forEach((a, i) => {
+      const b = track!.loop[(i + 1) % track!.loop.length]!
+      runs.push({ ax: a.x, az: a.z, bx: b.x, bz: b.z, rail: 'live' })
+    })
+    for (const arm of track.arms) {
+      const k = (arm.len - TRACK.bufferR) / arm.len
+      runs.push({ ax: arm.junction.x, az: arm.junction.z, bx: arm.junction.x + (arm.buffer.x - arm.junction.x) * k, bz: arm.junction.z + (arm.buffer.z - arm.junction.z) * k, rail: 'live' })
+    }
+    for (const sp of track.spurs) runs.push({ ax: sp.outer.x, az: sp.outer.z, bx: sp.onLoop.x, bz: sp.onLoop.z, rail: 'siding' })
+    trackParts.push(buildTrackPieces(runs, track.arms.map((arm) => ({
+      x: arm.buffer.x, z: arm.buffer.z, yaw: Math.atan2(arm.buffer.x - arm.junction.x, arm.buffer.z - arm.junction.z),
+    }))))
+    // it sleeps in the middle of the straight farthest from the entrance, facing along the loop's dir +1
+    const spot = { x: c.x + away.x * 9, z: c.z + away.z * 9 }
+    const there = loopAt(track, loopS(track, spot.x, spot.z))
+    bossSpot = { x: spot.x, z: spot.z, face: new THREE.Vector3(spot.x + there.dx, 0, spot.z + there.dz) }
   } else if (opts.boss) {
     // --- the yard: four low cover walls to hide behind and to charge into, and crates ---
     const arena = layout.rooms.find((r) => r.kind === 'exit')!
@@ -1758,6 +1843,7 @@ export function generateLevel(
 
   const group = buildInstanced(placements)
   for (const m of postMeshes) group.add(m)
+  for (const o of trackParts) group.add(o)
   if (machines.length) group.add(buildMachines(machines))
   const linePieces = line ? buildLinePieces(line.lanes, line.sidings, line.copings) : null
   if (linePieces) group.add(linePieces.group)
@@ -1818,6 +1904,7 @@ export function generateLevel(
     group,
     terrain: makeTerrainNow,
     boss: bossSpot,
+    track,
     posts: square ? posts : undefined,
     footprint,
     lanes: line?.lanes,

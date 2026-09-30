@@ -135,6 +135,57 @@ export interface LinePieces {
   lampMesh: THREE.InstancedMesh | null
 }
 
+type Inst = { x: number; y: number; z: number; sx: number; sy: number; sz: number; yaw: number }
+/** The instances to build, by name: one InstancedMesh each. */
+type InstSets = Map<string, { mat: THREE.Material; geo: THREE.BufferGeometry; list: Inst[] }>
+
+const putIn = (sets: InstSets, name: string, mat: THREE.Material, geo: THREE.BufferGeometry, i: Inst) => {
+  const s = sets.get(name) ?? { mat, geo, list: [] }
+  s.list.push(i)
+  sets.set(name, s)
+}
+/** A run of rail pair and sleepers between two points, in any direction. */
+function trackIn(sets: InstSets, m: PieceMats, ax: number, az: number, bx: number, bz: number, rail: THREE.Material, railName: string) {
+  unitBox ??= new THREE.BoxGeometry(1, 1, 1)
+  const len = Math.hypot(bx - ax, bz - az)
+  const ux = (bx - ax) / len, uz = (bz - az) / len
+  const yaw = Math.atan2(ux, uz)
+  const cx = (ax + bx) / 2, cz = (az + bz) / 2
+  for (const side of [-1, 1]) {
+    putIn(sets, railName, rail, unitBox, { x: cx + uz * side * 0.5, y: BED + RAIL.sleeper.h + RAIL.h / 2, z: cz - ux * side * 0.5, sx: RAIL.w, sy: RAIL.h, sz: len, yaw })
+  }
+  const n = Math.floor(len / RAIL.sleeper.every)
+  const start = (len - (n - 1) * RAIL.sleeper.every) / 2
+  for (let k = 0; k < n; k++) {
+    const t = start + k * RAIL.sleeper.every
+    putIn(sets, 'sleeper', m.wood, unitBox, { x: ax + ux * t, y: BED + RAIL.sleeper.h / 2, z: az + uz * t, sx: RAIL.sleeper.w, sy: RAIL.sleeper.h, sz: RAIL.sleeper.d, yaw })
+  }
+}
+/** A buffer stop at (x, z), across rails running along (ux, uz): a timber beam on two iron posts. */
+function bufferIn(sets: InstSets, m: PieceMats, x: number, z: number, ux: number, uz: number) {
+  unitBox ??= new THREE.BoxGeometry(1, 1, 1)
+  const yaw = Math.atan2(ux, uz)
+  putIn(sets, 'buffer:beam', m.wood, unitBox, { x, y: BUFFER.beamY, z, sx: BUFFER.beam[0], sy: BUFFER.beam[1], sz: BUFFER.beam[2], yaw })
+  for (const side of [-1, 1]) {
+    putIn(sets, 'buffer:post', m.iron, unitBox, { x: x + uz * side * 0.55, y: BUFFER.post[1] / 2, z: z - ux * side * 0.55, sx: BUFFER.post[0], sy: BUFFER.post[1], sz: BUFFER.post[2], yaw })
+  }
+}
+const mx = new THREE.Matrix4()
+const qt = new THREE.Quaternion()
+const up = new THREE.Vector3(0, 1, 0)
+function buildIn(group: THREE.Group, name: string, mat: THREE.Material, geo: THREE.BufferGeometry, list: Inst[]) {
+  const inst = new THREE.InstancedMesh(geo, mat, list.length)
+  inst.name = name
+  list.forEach((p, i) => {
+    qt.setFromAxisAngle(up, p.yaw)
+    inst.setMatrixAt(i, mx.compose(new THREE.Vector3(p.x, p.y, p.z), qt, new THREE.Vector3(p.sx, p.sy, p.sz)))
+  })
+  inst.instanceMatrix.needsUpdate = true
+  inst.computeBoundingSphere()
+  group.add(inst)
+  return inst
+}
+
 /**
  * Rails, sleepers, lamps (live lanes), rusted rails, buffers and dead wagons (sidings), and
  * the platform copings. `copings`: for each station hall lane, the side (+1/−1 across) the
@@ -146,29 +197,9 @@ export function buildLinePieces(lanes: readonly LaneDef[], sidings: readonly Sid
   wheelGeo ??= new THREE.CylinderGeometry(WAGON.wheelR, WAGON.wheelR, 0.12, 10).rotateZ(Math.PI / 2)
   const group = new THREE.Group()
   group.name = 'line'
-  type Inst = { x: number; y: number; z: number; sx: number; sy: number; sz: number; yaw: number }
-  const sets = new Map<string, { mat: THREE.Material; geo: THREE.BufferGeometry; list: Inst[] }>()
-  const put = (name: string, mat: THREE.Material, geo: THREE.BufferGeometry, i: Inst) => {
-    const s = sets.get(name) ?? { mat, geo, list: [] }
-    s.list.push(i)
-    sets.set(name, s)
-  }
-  /** A run of rail pair and sleepers between two points, along an axis. */
-  const track = (ax: number, az: number, bx: number, bz: number, rail: THREE.Material, railName: string) => {
-    const len = Math.hypot(bx - ax, bz - az)
-    const ux = (bx - ax) / len, uz = (bz - az) / len
-    const yaw = Math.atan2(ux, uz)
-    const cx = (ax + bx) / 2, cz = (az + bz) / 2
-    for (const side of [-1, 1]) {
-      put(railName, rail, unitBox!, { x: cx + uz * side * 0.5, y: BED + RAIL.sleeper.h + RAIL.h / 2, z: cz - ux * side * 0.5, sx: RAIL.w, sy: RAIL.h, sz: len, yaw })
-    }
-    const n = Math.floor(len / RAIL.sleeper.every)
-    const start = (len - (n - 1) * RAIL.sleeper.every) / 2
-    for (let k = 0; k < n; k++) {
-      const t = start + k * RAIL.sleeper.every
-      put('sleeper', m.wood, unitBox!, { x: ax + ux * t, y: BED + RAIL.sleeper.h / 2, z: az + uz * t, sx: RAIL.sleeper.w, sy: RAIL.sleeper.h, sz: RAIL.sleeper.d, yaw })
-    }
-  }
+  const sets: InstSets = new Map()
+  const put = (name: string, mat: THREE.Material, geo: THREE.BufferGeometry, i: Inst) => putIn(sets, name, mat, geo, i)
+  const track = (ax: number, az: number, bx: number, bz: number, rail: THREE.Material, railName: string) => trackIn(sets, m, ax, az, bx, bz, rail, railName)
   const lamps = new Map<number, number[]>()
   const lampAt: Inst[] = []
   for (const l of lanes) {
@@ -202,12 +233,7 @@ export function buildLinePieces(lanes: readonly LaneDef[], sidings: readonly Sid
     const ux = (s.bx - s.ax) / len, uz = (s.bz - s.az) / len
     const yaw = Math.atan2(ux, uz)
     // a buffer stop past each end: a timber beam on two iron posts, across the rails
-    for (const b of s.buffers) {
-      put('buffer:beam', m.wood, unitBox!, { x: b.x, y: BUFFER.beamY, z: b.z, sx: BUFFER.beam[0], sy: BUFFER.beam[1], sz: BUFFER.beam[2], yaw })
-      for (const side of [-1, 1]) {
-        put('buffer:post', m.iron, unitBox!, { x: b.x + uz * side * 0.55, y: BUFFER.post[1] / 2, z: b.z - ux * side * 0.55, sx: BUFFER.post[0], sy: BUFFER.post[1], sz: BUFFER.post[2], yaw })
-      }
-    }
+    for (const b of s.buffers) bufferIn(sets, m, b.x, b.z, ux, uz)
     if (s.holds === 'wagon') {
       // a dead wagon at the centre: an ore tub on four wheels, the length along the rails
       const cx = (s.ax + s.bx) / 2, cz = (s.az + s.bz) / 2
@@ -217,21 +243,7 @@ export function buildLinePieces(lanes: readonly LaneDef[], sidings: readonly Sid
       }
     }
   }
-  const mx = new THREE.Matrix4()
-  const q = new THREE.Quaternion()
-  const up = new THREE.Vector3(0, 1, 0)
-  const build = (name: string, mat: THREE.Material, geo: THREE.BufferGeometry, list: Inst[]) => {
-    const inst = new THREE.InstancedMesh(geo, mat, list.length)
-    inst.name = name
-    list.forEach((p, i) => {
-      q.setFromAxisAngle(up, p.yaw)
-      inst.setMatrixAt(i, mx.compose(new THREE.Vector3(p.x, p.y, p.z), q, new THREE.Vector3(p.sx, p.sy, p.sz)))
-    })
-    inst.instanceMatrix.needsUpdate = true
-    inst.computeBoundingSphere()
-    group.add(inst)
-    return inst
-  }
+  const build = (name: string, mat: THREE.Material, geo: THREE.BufferGeometry, list: Inst[]) => buildIn(group, name, mat, geo, list)
   for (const [name, s] of sets) build(name, s.mat, s.geo, s.list)
   let lampMesh: THREE.InstancedMesh | null = null
   if (lampAt.length) {
@@ -241,6 +253,22 @@ export function buildLinePieces(lanes: readonly LaneDef[], sidings: readonly Sid
     lampMesh.instanceColor!.needsUpdate = true
   }
   return { group, lamps, lampMesh }
+}
+
+/**
+ * The roundhouse's track (design/area3/STAGE-C.md §2.4): rails, sleepers and buffers along any straight runs, the loop's diagonal
+ * corners included. The same pieces, materials and instancing as buildLinePieces; `rail` picks the live or the siding steel.
+ */
+export function buildTrackPieces(runs: readonly { ax: number; az: number; bx: number; bz: number; rail: 'live' | 'siding' }[],
+  buffers: readonly { x: number; z: number; yaw: number }[]): THREE.Group {
+  const m = pieceMats()
+  const group = new THREE.Group()
+  group.name = 'track'
+  const sets: InstSets = new Map()
+  for (const r of runs) trackIn(sets, m, r.ax, r.az, r.bx, r.bz, r.rail === 'live' ? m.live : m.dead, r.rail === 'live' ? 'rail:live' : 'rail:siding')
+  for (const b of buffers) bufferIn(sets, m, b.x, b.z, Math.sin(b.yaw), Math.cos(b.yaw))
+  for (const [name, s] of sets) buildIn(group, name, s.mat, s.geo, s.list)
+  return group
 }
 
 // --- trains (§5) ------------------------------------------------------------------------

@@ -80,6 +80,62 @@ const wake = (maxS = 5) => {
 const inPage = (page, body, arg) =>
   evalJson(page, { toString: () => `async (arg) => { ${HELPERS}\n${body}\n}` }, arg)
 
+/** K-N1b's body: the roundhouse as `generateLevel` built it, for each [order, depth, seeds]. */
+async function roundhouse(page, runs) {
+  const axesSeen = new Set()
+  for (const [order, depth, list] of runs) {
+    for (const seed of list) {
+      const got = await inPage(page, `
+        const level = enterEngine(arg.order, arg.depth, arg.seed)
+        const t = W.__track()
+        if (!t) return { bad: 'no track' }
+        const exit = level.rooms.find((r) => r.kind === 'exit'), ent = level.entrance
+        const dx = exit.center.x - ent.x, dz = exit.center.z - ent.z, l = Math.hypot(dx, dz)
+        const T = level.terrain
+        const seg = (x, z, a, b) => {
+          const ex = b.x - a.x, ez = b.z - a.z, len = Math.hypot(ex, ez)
+          const u = Math.max(0, Math.min(len, ((x - a.x) * ex + (z - a.z) * ez) / len))
+          return Math.hypot(x - (a.x + ex / len * u), z - (a.z + ez / len * u))
+        }
+        const rail = (x, z) => Math.min(
+          ...t.loop.map((a, i) => seg(x, z, a, t.loop[(i + 1) % t.loop.length])),
+          ...t.arms.map((a) => seg(x, z, a.junction, a.buffer)),
+          ...t.spurs.map((s) => seg(x, z, s.outer, s.onLoop)))
+        const b = W.__level().boss
+        return {
+          c: t.c, exit: { x: exit.center.x, z: exit.center.z }, away: { x: dx / l, z: dz / l }, spurAxis: t.spurAxis,
+          levers: ['right', 'left'].map((side) => T.blocked(t.levers[side].x, t.levers[side].z, 0.01)),
+          buffers: t.arms.map((a) => T.blocked(a.buffer.x, a.buffer.z, 0.01)),
+          walls: [[6.5, 0], [-6.5, 0], [0, 6.5], [0, -6.5]].map(([x, z]) => T.blocked(t.c.x + x, t.c.z + z, 0)),
+          crates: level.breakables.map((k) => ({ r: k.r, d: rail(k.x, k.z) })),
+          boss: b ? { x: b.x, z: b.z, fx: b.face.x - b.x, fz: b.face.z - b.z } : null,
+          def: W.__combat.boss ? W.__combat.boss.def.arena : null,
+        }`, { order, depth, seed })
+      const why = (m) => { throw new Error(`${order} at ${depth}, seed ${seed}: ${m}`) }
+      if (got.bad) why(got.bad)
+      const near = (a, b, eps = 0.01) => Math.abs(a - b) <= eps
+      axesSeen.add(got.spurAxis)
+      if (got.def !== 'roundhouse') why(`the boss's arena is ${got.def}, not roundhouse`)
+      if (!near(got.c.x, got.exit.x, 1e-9) || !near(got.c.z, got.exit.z, 1e-9)) why(`c is (${got.c.x}, ${got.c.z}), the exit room's centre (${got.exit.x}, ${got.exit.z})`)
+      if (!(Math.abs(got.away.x) > 0.99 || Math.abs(got.away.z) > 0.99)) why(`the entrance is not on an axis: away (${got.away.x}, ${got.away.z})`)
+      const want = Math.abs(got.away.x) > 0.5 ? 'z' : 'x'
+      if (got.spurAxis !== want) why(`spurAxis is '${got.spurAxis}' with away (${got.away.x}, ${got.away.z}); across it is '${want}'`)
+      if (got.levers.some((x) => !x)) why(`a lever is not solid: ${JSON.stringify(got.levers)}`)
+      if (got.buffers.some((x) => !x)) why(`a buffer is not solid: ${JSON.stringify(got.buffers)}`)
+      if (got.walls.some((x) => !x)) why(`an inner wall is not solid: ${JSON.stringify(got.walls)}`)
+      if (got.crates.length !== 4) why(`${got.crates.length} breakables, not the roundhouse's 4`)
+      for (const k of got.crates) if (k.d < 1.8 + k.r) why(`a crate (r ${k.r.toFixed(2)}) is ${k.d.toFixed(2)} from a rail, under ${(1.8 + k.r).toFixed(2)}`)
+      // asleep at c + away * 9, facing along dir +1 (the Engine's own state comes with C3)
+      if (!got.boss) why('no boss spot')
+      if (!near(got.boss.x, got.c.x + got.away.x * 9) || !near(got.boss.z, got.c.z + got.away.z * 9)) why(`the boss spot is (${got.boss.x}, ${got.boss.z}), not c + away * 9`)
+      // dir +1 by SPEC 7.2's vertex order: +x on the -z straight, +z on the +x one, -x on the +z one, -z on the -x one
+      const tan = Math.abs(got.away.x) > 0.5 ? [0, Math.sign(got.away.x)] : [-Math.sign(got.away.z), 0]
+      if (!near(got.boss.fx, tan[0], 1e-6) || !near(got.boss.fz, tan[1], 1e-6)) why(`it faces (${got.boss.fx}, ${got.boss.fz}), not dir +1's (${tan})`)
+    }
+  }
+  assert(axesSeen.has('x') && axesSeen.has('z'), `only the spur axes ${[...axesSeen]} were exercised`)
+}
+
 // --- Geometry (C1) -----------------------------------------------------------------------------------------------------
 
 // SPEC §7.2 typed out again here, on purpose: the check must not read track.ts's own table back
@@ -143,5 +199,12 @@ check('K-N1a', ENG6, async ({ page }) => {
     })
   }
 })
+
+// The seeds 1..N of the brief all give the entrance on -x (the generator's first draw, seed * 16807 / 2^31 - 1, is under 0.25 until
+// seed 31,900): away (+1, 0), the 'z' spur axis. FAR adds one seed per other entrance side: 40000 away (0, +1), 80000 (-1, 0), 110000 (0, -1).
+const FAR = [40000, 80000, 110000]
+const seeds = (n) => [...Array(n)].map((_, i) => i + 1).concat(FAR)
+check('K-N1b', ENG6, async ({ page }) => roundhouse(page, [['III', 6, seeds(20)]]))
+check('K-N1b', ENG9, async ({ page }) => roundhouse(page, [['III', 6, seeds(5)], ['II', 9, seeds(5)]]))
 
 process.exit(await run(process.argv.slice(2)))
