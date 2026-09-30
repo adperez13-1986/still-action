@@ -15,7 +15,7 @@ import { STATE_IDS, pairWith, paired, type StateId } from './states'
 import type { Enemy, EnemyEvent } from './enemy'
 import { isBoss, Assembler } from './boss'
 import { Arbiter, ARBITER, arbiterHusk } from './arbiter'
-import { BOARD, ENGINE, Engine } from './engine'
+import { BOARD, ENGINE, Engine, engineHusk, engineHuskCircles, engineSleepAt } from './engine'
 import { DayTracker } from './day'
 import type { HazardSpec } from './hazard'
 import { Line, LINE, type LineEvent, type SidingDef, type Train } from './line'
@@ -2469,6 +2469,13 @@ function raiseHusk(x: number, z: number, headYaw: number) {
   level.group.add(arbiterHusk(x, z, headYaw))
 }
 
+/** The dead Engine, where it stopped: its husk on the floor, solid (two circles along its axis), a body you walk round. */
+function raiseEngineHusk(x: number, z: number, yaw: number) {
+  if (!level) return
+  level.group.add(engineHusk(x, z, yaw))
+  for (const c of engineHuskCircles(x, z, yaw)) level.terrain.add(c)
+}
+
 /**
  * H5: the lance heats one button. Among the filled ones that are ready, the one with the
  * longest cooldown (the one he'd most want); else the one nearest ready; ties in slot order.
@@ -2502,8 +2509,18 @@ function bossDown(at: THREE.Vector3) {
     const d = Math.hypot(dx, dz) || 1
     at = new THREE.Vector3(at.x + (dx / d) * 1.9, 0, at.z + (dz / d) * 1.9)
   }
-  // the day goes to first dark on the same tick: a 6-depth run's Arbiter at 6, a 9-depth run's last boss at 9 (the Arbiter at 6 holds its light)
-  const toDark = DAY_SPAN[run.depth]?.by === 'boss' && (RUN_DEPTHS === 9 || arbiter)
+  const engine = felled instanceof Engine
+  if (engine) {
+    // the fire out: it stands where it stopped, along the way it faced, solid; its drops land outside it, toward him, as the Arbiter's do
+    const h = felled.huskAt()
+    raiseEngineHusk(h.x, h.z, h.yaw)
+    const dx = still.pos.x - at.x
+    const dz = still.pos.z - at.z
+    const d = Math.hypot(dx, dz) || 1
+    at = new THREE.Vector3(at.x + (dx / d) * 1.9, 0, at.z + (dz / d) * 1.9)
+  }
+  // the day goes to first dark on the same tick: a 6-depth run's Arbiter or Engine at 6, a 9-depth run's last boss at 9 (the Assembler at 6 holds its light)
+  const toDark = DAY_SPAN[run.depth]?.by === 'boss' && (RUN_DEPTHS === 9 || arbiter || engine)
   if (toDark) {
     day.snap(1)
     dayApplied = 1
@@ -2777,6 +2794,11 @@ function enterLevel(depth: number, o: { seed?: number; bossFelled?: boolean; res
   if (run.bossFelled) {
     for (const kind of exitsAfterBoss(depth)) kind === 'cold' ? level.openExit() : level.openHome()
     if (level.footprint && level.boss) raiseHusk(level.boss.x, level.boss.z, 0)
+    // the Engine dies anywhere and a save does not know where: its husk stands where it slept, along the rails there
+    else if (boss?.kind === 'engine' && level.boss && level.track) {
+      const at = engineSleepAt(level.track, level.boss.x, level.boss.z)
+      raiseEngineHusk(at.x, at.z, at.yaw)
+    }
   }
   if (run.bossFelled) {
     run.depth = depth
@@ -2789,7 +2811,7 @@ function enterLevel(depth: number, o: { seed?: number; bossFelled?: boolean; res
   // the place's look (every place wears the ruin's today; setSurfaces is a no-op until they don't)
   setSurfaces(place.surfaces)
   // the day starts where this depth's span does; the last depth's boss, once down, is at first dark (a 6-depth run's is the Arbiter's square)
-  day.enter(depth, run.bossFelled && (RUN_DEPTHS === 9 || boss?.kind === 'arbiter'))
+  day.enter(depth, run.bossFelled && (RUN_DEPTHS === 9 || boss?.kind === 'arbiter' || boss?.kind === 'engine'))
   dayApplied = day.shown
   applyDayAt(world, depth, day.shown)
   run.fought = false
@@ -5120,6 +5142,11 @@ if (import.meta.env.DEV) {
     },
     /** The parts on pedestals now: which set, where, and what the next take from its set costs. */
     __picks: () => loot.ground.filter((g) => g.set).map((g) => ({ id: g.def.id, kind: g.set!.kind, x: g.pos.x, z: g.pos.z, cost: pickCost(g.set!) })),
+    /** C8: what a part is called on a card and a drop now (its name with its past, and its history line), whatever the run is doing. */
+    __describe: (id: string) => {
+      const d = PARTS.find((p) => p.id === id)
+      return d ? describePart(d) : null
+    },
     /** What the pickup card is offering. history arrives with "parts remember". */
     __offer: () => (offered ? { id: offered.def.id, ...describePart(offered.def), tag: save.found.includes(offered.def.id) ? null : 'new', shown: document.querySelector('#offer .name')?.textContent } : null),
     /**

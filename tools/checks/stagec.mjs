@@ -1,6 +1,6 @@
 /**
  * The stage C checks (design/area3/STAGE-C.md §4): `node tools/checks/stagec.mjs [K-N1a ...]` runs all of them, or the ids
- * listed. Each step adds its own checks here, on lib.mjs's `suite()`, as stageb.mjs does (C1-C7: K-N1a, K-N1b, K-N2a, K-N2b, K-N3, K-N4-K-N8, K-N10-K-N13, K-N17, K-N18). The baselines
+ * listed. Each step adds its own checks here, on lib.mjs's `suite()`, as stageb.mjs does (C1-C8: K-N1a, K-N1b, K-N2a, K-N2b, K-N3, K-N4-K-N8, K-N10-K-N15, K-N17, K-N18, K-N21, K-N22). The baselines
  * (K-90, K-90L, K-90F) are baseline.mjs's and fights.mjs's; stage C never re-captures them.
  *
  * The short forms of STAGE-C.md §4, as queries (every one is ?save=memory and a dev run straight into a level):
@@ -1408,5 +1408,363 @@ check('K-N13', ENG6, async ({ page }) => {
   }
   console.log('INFO K-N13: phase 2, 1.9 off the arm (inside 1.2 + 0.8): thrown back with the lever over, the arm lit as any rail; 2.2 off, or the same place in phase 1: nothing')
 })
+
+// --- Death, the husk, the run (C8) ---------------------------------------------------------------------------------------
+
+/**
+ * In the page, what a felled Engine leaves. `huskOf()`: the husk in the level's group (or null). `axisOf(h)`: its unit axis. `railDist(x, z)`: the distance to
+ * the nearest rail centre line (the loop, the arms to their buffers, the spurs). `beamsAfter()`: both beams and `side` as the level places them (dungeon.ts:1918-1934:
+ * the warm one at c + side x 4.5, the side with the smaller x + z, across the entrance axis).
+ */
+const KILLED = `
+  const huskOf = () => W.__level().group.getObjectByName('engine:husk')
+  const axisOf = (h) => ({ x: Math.sin(h.rotation.y), z: Math.cos(h.rotation.y) })
+  const railDist = (x, z) => {
+    const t = W.__track()
+    const seg = (a, b) => {
+      const ex = b.x - a.x, ez = b.z - a.z, len = Math.hypot(ex, ez)
+      const u = Math.max(0, Math.min(len, ((x - a.x) * ex + (z - a.z) * ez) / len))
+      return Math.hypot(x - (a.x + ex / len * u), z - (a.z + ez / len * u))
+    }
+    return Math.min(...t.loop.map((a, i) => seg(a, t.loop[(i + 1) % t.loop.length])), ...t.arms.map((a) => seg(a.junction, a.buffer)), ...t.spurs.map((sp) => seg(sp.outer, sp.onLoop)))
+  }
+  const sideOf = () => {
+    const { away } = roomOf()
+    const a = { x: away.z, z: -away.x }
+    return a.x + a.z <= -a.x - a.z ? a : { x: -a.x, z: -a.z }
+  }
+  const wornIds = () => W.__hud.slots.map((sl) => (sl.def ? sl.def.id : null)).filter((id) => id)
+`
+
+/** The husk's colours (the hide rule): typed again here on purpose. CORE_ASLEEP (enemy.ts) and HIDES.engine's body. */
+const CORE_ASLEEP_RGB = [0x2a, 0x15, 0x12]
+
+check('K-N14', ENG6, async ({ page }) => {
+  for (const seed of [1, 2, 3]) {
+    const got = await inPage(page, RUNNING + KILLED + `
+      W.__run.tally.engines = {}
+      tick(150)
+      const B = W.__combat.boss
+      const b = W.__boss()
+      const before = {
+        armed: W.__hazards().filter((h) => h.source === 'train' && !h.done && h.armIn <= 1e-6).length,
+        unarmed: W.__hazards().filter((h) => h.source === 'train' && !h.done && h.armIn > 1e-6).length,
+        x: b.x, z: b.z, yaw: rot(), state: b.state,
+      }
+      W.__killBoss()
+      tick(1)
+      // the tick after the kill: nothing of its own left, lit or armed (drawn = hit: its strips are drawn by the body that is gone)
+      const own = W.__hazards().filter((h) => (h.source === 'train' || h.source === 'wagon') && !h.done)
+      tick(12)
+      const T = W.__level().terrain
+      const h = huskOf()
+      const ax = h ? axisOf(h) : { x: 0, z: 0 }
+      const at = (along, across) => h ? T.blocked(h.position.x + ax.x * along + ax.z * across, h.position.z + ax.z * along - ax.x * across, 0) : null
+      const mats = []
+      let sprites = 0, lights = 0
+      if (h) h.traverse((o) => {
+        if (o.isSprite) sprites++
+        if (o.isLight) lights++
+        if (o.material) mats.push({ type: o.material.type, color: o.material.color.getHex(), emissive: o.material.emissive ? o.material.emissive.getHex() : 0 })
+      })
+      const E = W.__ENGINE, H = W.__hides.engine
+      const dim = (hex) => [(hex >> 16) & 255, (hex >> 8) & 255, hex & 255]
+      return {
+        before, ownAfter: own.length, boss: W.__boss(), bar: document.querySelector('#bossBar').classList.contains('show'),
+        husk: !!h, at: h && [h.position.x, h.position.z, h.rotation.y], inScene: !!h && !!h.parent && h.parent === W.__level().group, name: h && h.name,
+        centre: at(0, 0), c1: at(0.7, 0), c2: at(-0.7, 0), edgeIn: at(1.49, 0), edgeOut: at(1.51, 0), sideIn: at(0.7, 0.79), sideOut: at(0.7, 0.81), sideOut2: at(-0.7, -0.81),
+        cold: W.__exits().cold, warm: W.__exits().warm, bossLoot: W.__run.bossLoot.length, felled: W.__snapshot() === null || W.__run.bossFelled,
+        tally: W.__run.tally.engines, arb: W.__run.tally.arbiters, asm: W.__run.tally.assemblers, worn: wornIds(),
+        ground: W.__loot.ground.map((g) => ({ x: g.pos.x, z: g.pos.z, blocked: T.blocked(g.pos.x, g.pos.z, 0.3), d: h ? Math.hypot(g.pos.x - h.position.x, g.pos.z - h.position.z) : null })),
+        progress: W.__day().progress, sprites, lights, mats, body: dim(H.body).map((v) => v * E.husk.dim), joint: dim(H.joint).map((v) => v * E.husk.dim), dimK: E.husk.dim,
+        eng: W.__combat.enemies.filter((e) => e.kind === 'boss').length,
+      }`, seed)
+    const why = (m) => { throw new Error(`seed ${seed}: ${m}`) }
+    if (got.before.state !== 'run' || got.before.armed < 1) why(`killed in ${got.before.state} with ${got.before.armed} armed strips: the leftover test needs a running engine`)
+    if (got.before.unarmed < 1) why('it had no strips laid ahead when it was killed (the unarmed ones are Combat\'s cancelOnDeath)')
+    if (got.ownAfter !== 0) why(`${got.ownAfter} of its own strips still live one tick after it died: armed strips live and undrawn`)
+    if (got.boss !== null) why(`__boss() is ${JSON.stringify(got.boss)} after the kill`)
+    if (got.bar) why('the boss bar is still shown')
+    if (got.eng) why(`${got.eng} boss bodies still in combat`)
+    if (!got.husk || got.name !== 'engine:husk' || !got.inScene) why('no husk in the level\'s group')
+    if (Math.hypot(got.at[0] - got.before.x, got.at[1] - got.before.z) > 1e-6) why(`the husk stands at ${got.at[0].toFixed(3)}, ${got.at[1].toFixed(3)}, not where it stopped (${got.before.x.toFixed(3)}, ${got.before.z.toFixed(3)})`)
+    if (Math.abs(Math.atan2(Math.sin(got.at[2] - got.before.yaw), Math.cos(got.at[2] - got.before.yaw))) > 1e-6) why(`the husk faces ${got.at[2]}, the engine faced ${got.before.yaw}`)
+    if (!got.centre || !got.c1 || !got.c2) why(`its centre or a circle's is not solid (${got.centre} ${got.c1} ${got.c2})`)
+    if (!got.edgeIn || got.edgeOut) why(`along its axis the solid runs to ${got.edgeIn ? '' : 'less than '}1.49 and ${got.edgeOut ? 'past' : 'not past'} 1.51 (two circles r 0.8 at +-0.7 make 1.5)`)
+    if (!got.sideIn || got.sideOut || got.sideOut2) why(`across a circle the solid is ${got.sideIn ? 'in' : 'not in'} at 0.79 and ${got.sideOut || got.sideOut2 ? 'still there' : 'out'} at 0.81`)
+    if (got.cold !== null || !got.warm || !got.warm.open) why(`ENG6 exits after the kill: cold ${JSON.stringify(got.cold)}, warm ${JSON.stringify(got.warm)}; the 6-depth run's last boss leaves the warm alone`)
+    if (got.bossLoot !== 2) why(`run.bossLoot has ${got.bossLoot}, not 2`)
+    if (got.ground.length < 2) why(`${got.ground.length} drops on the floor, not 2`)
+    for (const g of got.ground) if (g.blocked || g.d < 1.6) why(`a drop at ${g.x.toFixed(2)}, ${g.z.toFixed(2)} is ${g.d.toFixed(2)} u from the husk${g.blocked ? ' and inside something solid' : ''}`)
+    if (JSON.stringify(Object.keys(got.tally).sort()) !== JSON.stringify([...got.worn].sort()) || Object.values(got.tally).some((n) => n !== 1)) why(`tally.engines ${JSON.stringify(got.tally)} for the worn ${got.worn}: each once`)
+    if (got.progress !== 1) why(`the day's progress is ${got.progress} on the kill's tick: first dark is 1`)
+    if (got.sprites || got.lights) why(`the husk has ${got.sprites} sprites and ${got.lights} lights: no glow on a dead thing`)
+    for (const m of got.mats) {
+      if (m.emissive) why(`a husk material is emissive (${m.emissive.toString(16)})`)
+      if (m.type === 'MeshBasicMaterial') {
+        const rgb = [(m.color >> 16) & 255, (m.color >> 8) & 255, m.color & 255]
+        // sRGB bytes here are the linear colour's, so the compare is on the linear side: dimmer than CORE_ASLEEP in every channel
+        if (rgb.some((v, i) => v > CORE_ASLEEP_RGB[i])) why(`the firebox/lamp colour ${m.color.toString(16)} is lighter than CORE_ASLEEP in a channel`)
+      }
+    }
+    if (!(got.dimK > 0 && got.dimK <= 0.5)) why(`ENGINE.husk.dim ${got.dimK}: it should be at most the sleeping body's 0.5`)
+  }
+  console.log('INFO K-N14: killed running: its armed and unarmed strips are all gone one tick later; the husk stands where it stopped, along its travel, two solid circles r 0.8 at +-0.7; warm beam only; 2 drops clear of it')
+})
+
+check('K-N14', ENG6, async ({ page }) => {
+  // a wagon at its death: rolling (its armed hazard ends with it), and settled (its two solids go)
+  for (const stage of ['roll', 'settled']) {
+    for (const seed of [1, 2]) {
+      const got = await inPage(page, RUNNING + PHASE2 + `
+        const B = toPhase2({ noReverse: true })
+        B.wagonIn = 0
+        const st = ${JSON.stringify(stage)}
+        const T = W.__level().terrain
+        const n = until(() => W.__boss() && W.__boss().wagon && W.__boss().wagon.stage === st, 12, () => W.__still.pos.set(c.x, 0, c.z))
+        if (n < 0) return { bad: 'no wagon reached ' + st }
+        const wg = W.__boss().wagon
+        const pre = { x: wg.x, z: wg.z, blocked: T.blocked(wg.x, wg.z, 0), live: W.__hazards().filter((h) => h.source === 'wagon' && !h.done).length, tub: B.tub.visible, train: W.__hazards().filter((h) => h.source === 'train' && !h.done).length }
+        W.__killBoss()
+        tick(1)
+        const post = {
+          wagonHaz: W.__hazards().filter((h) => h.source === 'wagon' && !h.done).length, train: W.__hazards().filter((h) => h.source === 'train' && !h.done).length,
+          wagon: B.wagon ? B.wagon.stage : null, tub: B.tub.visible, blocked: T.blocked(pre.x, pre.z, 0), onScene: !!(B.group.parent || B.worldGroup.parent || B.tellGroup.parent),
+          wagonTellVisible: B.wagonTell.group.visible,
+        }
+        return { pre, post, dead: B.dead }`, seed)
+      const why = (m) => { throw new Error(`${stage}, seed ${seed}: ${m}`) }
+      if (got.bad) why(got.bad)
+      if (got.pre.live !== 1 && stage === 'roll') why(`the rolling wagon had ${got.pre.live} live hazards`)
+      if (stage === 'settled' && !got.pre.blocked) why('the settled wagon was not solid before the kill')
+      if (!got.dead) why('not dead')
+      if (got.post.wagonHaz !== 0 || got.post.train !== 0) why(`after its death: ${got.post.wagonHaz} wagon hazards and ${got.post.train} strips still live`)
+      if (got.post.wagon !== null || got.post.tub) why(`after its death the wagon is ${got.post.wagon} / tub drawn ${got.post.tub}`)
+      if (got.post.blocked) why('after its death the wagon\'s place is still solid')
+      if (got.post.onScene) why('its groups are still in the scene')
+    }
+  }
+  console.log('INFO K-N14: a rolling wagon and a settled one at the engine\'s death: their hazards end, the tub goes, the solids go; nothing of the wagon stays')
+})
+
+check('K-N14', ENG9, async ({ page }) => {
+  // the exits by road: ENG9's III at 6 (cold + warm), II at 9 (warm alone); the husk, the drops and the tally as at 6
+  for (const [order, depth, cold] of [['III', 6, true], ['II', 9, false]]) {
+    for (const seed of [1, 2]) {
+      const got = await inPage(page, KILLED + `
+        const A = arg
+        enterEngine(A.order, A.depth, A.seed)
+        W.__run.tally.engines = {}
+        const kind = W.__boss() && W.__boss().kind
+        wake()
+        tick(60)
+        W.__killBoss()
+        tick(12)
+        const T = W.__level().terrain, h = huskOf()
+        return {
+          kind, boss: W.__boss(), husk: !!h, blocked: h ? T.blocked(h.position.x, h.position.z, 0) : null, cold: W.__exits().cold, warm: W.__exits().warm,
+          after: W.__exitsAfterBoss(A.depth), loot: W.__run.bossLoot.length, tally: W.__run.tally.engines, worn: wornIds(), yard: W.__yardRoad(),
+          ground: W.__loot.ground.filter((g) => !g.set).length, picks: W.__picks().length,
+        }`, { order, depth, seed })
+      const why = (m) => { throw new Error(`${order} at ${depth}, seed ${seed}: ${m}`) }
+      if (got.kind !== 'engine') why(`the boss is ${got.kind}, not the engine`)
+      if (got.boss !== null || !got.husk || !got.blocked) why(`after the kill: boss ${JSON.stringify(got.boss)}, husk ${got.husk}, solid ${got.blocked}`)
+      if (!got.warm || !got.warm.open) why(`the warm beam is ${JSON.stringify(got.warm)}`)
+      if (cold && (!got.cold || !got.cold.open)) why(`the cold beam is ${JSON.stringify(got.cold)}, open`)
+      if (!cold && got.cold !== null) why(`a cold beam at the last depth: ${JSON.stringify(got.cold)}`)
+      if (got.after.join() !== (cold ? 'cold,warm' : 'warm')) why(`exitsAfterBoss(${depth}) is ${got.after}`)
+      if (got.loot !== 2) why(`run.bossLoot has ${got.loot}, not 2 (${got.picks} pedestal picks, ${got.ground} loose parts)`)
+      if (JSON.stringify(Object.keys(got.tally).sort()) !== JSON.stringify([...got.worn].sort()) || Object.values(got.tally).some((n) => n !== 1)) why(`tally.engines ${JSON.stringify(got.tally)} for the worn ${got.worn}`)
+    }
+  }
+  console.log('INFO K-N14: III at 6: cold + warm open, II at 9: warm alone; the husk solid, run.bossLoot 2, each worn part counted once')
+})
+
+const ENG6_N15 = ENG6 + '&x=n15'
+check('K-N15', ENG6_N15, async ({ page }) => {
+  const got = await inPage(page, RUNNING + `
+    // a real run, not a dev one: its end commits to the (in-memory) save
+    W.__run.dev = false
+    W.__run.tally.engines = {}
+    W.__run.tally.carried.push('scrap-cleaver')
+    const worn = W.__hud.slots.map((sl) => (sl.def ? sl.def.id : null)).filter((id) => id)
+    const carried = [...W.__run.tally.carried]
+    tick(60)
+    W.__killBoss()
+    tick(12)
+    const ok = W.__end('home')
+    W.__step(0.2)
+    const hist = W.__save().history
+    const names = Object.fromEntries([...carried, 'anvil'].map((id) => [id, W.__describe(id)]))
+    return { ok, worn, carried, hist, names, arb: W.__run.tally.arbiters, runs: W.__save().runs }`, 1)
+  assert(got.ok, 'no ending')
+  assert(got.runs === 1, `the commit wrote ${got.runs} runs`)
+  assert(got.carried.length >= 2, `only ${got.carried} carried`)
+  for (const id of got.carried) {
+    const h = got.hist[id]
+    assert(h, `no history for ${id}`)
+    assert(h[7] === 1, `${id}: history[7] is ${h[7]}, not 1`)
+    assert(h[6] === 0 && h[2] === 0, `${id}: it saw an Arbiter (${h[6]}) or an Assembler (${h[2]})`)
+    assert(got.names[id].name.endsWith(', that saw the Engine'), `${id} is named "${got.names[id].name}", not "..., that saw the Engine"`)
+  }
+  assert(!/saw the/.test(got.names.anvil.name), `a part that never went through it is "${got.names.anvil.name}"`)
+  console.log(`INFO K-N15: ${got.carried.join(', ')}: history[7] 1, named "${got.names[got.carried[0]].name}"`)
+})
+
+// K-N21 / K-N22's walker: a real run down its depths with the game's own descend (k9.mjs WALK, without the assertions of K-93): the road at the crossroads, a kill at each boss depth.
+const WALKDOWN = `
+  const walkTo = ({ order, upTo, roads }) => {
+    const bad = []
+    W.__run.dev = false
+    W.__setSave(roads ? { roads: ['II', 'III'] } : null)
+    W.__run.route = roads ? null : order
+    W.__enter(1, 1)
+    for (let d = 1; d < upTo; d++) {
+      if (W.__run.depth !== d) { bad.push('expected depth ' + d + ', at ' + W.__run.depth); break }
+      if (W.__boss()) { W.__killBoss(); W.__step(0.2) }
+      if (W.__descend() !== true) { bad.push('depth ' + d + ': __descend() is not true'); break }
+      const t = W.__until(() => W.__mode() === 'crawl' && (W.__run.depth === d + 1 || W.__route().atCrossroads), 8)
+      if (t < 0) { bad.push('depth ' + d + ': no crawl at ' + (d + 1)); break }
+      if (W.__route().atCrossroads && W.__takeRoad(order) !== order) bad.push('the road ' + order + ' was not taken')
+    }
+    return { bad, depth: W.__run.depth, boss: W.__boss() && W.__boss().kind }
+  }
+`
+
+const beamCheck = (why, o) => {
+  // both beams where dungeon.ts puts them: cold at c (the room's centre), warm at c + side x 4.5; each at least halfW + the honest margin 0.42 + 1.4 from every rail
+  const need = 1.2 + 0.42 + 1.4
+  if (o.cold) {
+    if (!o.cold.open) why('the cold beam is not open')
+    if (Math.hypot(o.cold.x - o.c.x, o.cold.z - o.c.z) > 1e-6) why(`the cold beam is at ${o.cold.x}, ${o.cold.z}, not at c (${o.c.x}, ${o.c.z})`)
+    if (o.coldRail < need) why(`the cold beam is ${o.coldRail.toFixed(3)} u from a rail, under ${need}`)
+  } else if (o.wantCold) why('no cold beam')
+  if (!o.warm || !o.warm.open) why(`the warm beam is ${JSON.stringify(o.warm)}, open`)
+  if (Math.hypot(o.warm.x - (o.c.x + o.side.x * 4.5), o.warm.z - (o.c.z + o.side.z * 4.5)) > 1e-6) why(`the warm beam is at ${o.warm.x}, ${o.warm.z}, not at c + side x 4.5 (${o.c.x + o.side.x * 4.5}, ${o.c.z + o.side.z * 4.5})`)
+  if (o.warmRail < need) why(`the warm beam is ${o.warmRail.toFixed(3)} u from a rail, under ${need}`)
+}
+
+const BEAMS = `
+  const beams = () => {
+    const { c } = roomOf(), side = sideOf(), ex = W.__exits()
+    return { c, side, cold: ex.cold, warm: ex.warm, coldRail: ex.cold ? railDist(ex.cold.x, ex.cold.z) : null, warmRail: ex.warm ? railDist(ex.warm.x, ex.warm.z) : null }
+  }
+  const dayNow = () => { const d = W.__day(); return { day: d.day, hour: d.hour, progress: d.progress, target: d.target, to: d.to, keyLight: d.keyLight, fogNear: d.fogNear, exposure: d.exposure } }
+`
+
+check('K-N21', ENG9, async ({ page }) => {
+  // III at 6 in a 9-depth run: the cold beam (dressed to the other road) at c and the warm at c + side x 4.5; the day unchanged by the kill (the middle boss holds the light)
+  for (const seed of [1, 2, 3, 4]) {
+    const got = await inPage(page, KILLED + BEAMS + `
+      enterEngine('III', 6, arg)
+      wake()
+      tick(60)
+      const before = dayNow()
+      W.__killBoss()
+      tick(12)
+      return { ...beams(), before, after: dayNow(), yard: W.__yardRoad(), route: W.__run.route }`, seed)
+    const why = (m) => { throw new Error(`III at 6, seed ${seed}: ${m}`) }
+    beamCheck(why, { ...got, wantCold: true })
+    if (!got.yard || got.yard.route !== 'II') why(`__yardRoad() is ${JSON.stringify(got.yard)}, not the other road, II`)
+    if (JSON.stringify(got.before) !== JSON.stringify(got.after)) why(`the kill moved the day: ${JSON.stringify(got.before)} -> ${JSON.stringify(got.after)}`)
+  }
+  // II at 9: the warm alone, and the day at first dark on the kill's tick
+  for (const seed of [1, 2, 3, 4]) {
+    const got = await inPage(page, KILLED + BEAMS + `
+      enterEngine('II', 9, arg)
+      wake()
+      tick(60)
+      const before = dayNow()
+      W.__killBoss()
+      W.__step(1 / 60)
+      const onTick = dayNow()
+      tick(12)
+      return { ...beams(), before, onTick, boss: null }`, seed)
+    const why = (m) => { throw new Error(`II at 9, seed ${seed}: ${m}`) }
+    if (got.cold !== null) why(`a cold beam at the last depth: ${JSON.stringify(got.cold)}`)
+    beamCheck(why, got)
+    if (got.onTick.progress !== 1 || got.onTick.target !== 1 || got.onTick.to !== 'first-dark') why(`the day on the kill's tick: ${JSON.stringify(got.onTick)}, not first dark`)
+    if (!(got.onTick.keyLight < got.before.keyLight)) why(`the light did not go down on the kill's tick (${got.before.keyLight} -> ${got.onTick.keyLight})`)
+  }
+  console.log('INFO K-N21: III at 6 (9 depths): cold at c and warm at c + side x 4.5, both >= 3.02 from every rail, yard road II, day unchanged; II at 9: warm alone, first dark on the kill tick')
+})
+
+check('K-N21', ENG6, async ({ page }) => {
+  // the 6-depth run: the Engine at 6 leaves the warm beam alone and takes the day to first dark on the same tick (the Arbiter's rule)
+  for (const seed of [1, 2, 3, 4]) {
+    const got = await inPage(page, KILLED + BEAMS + `
+      enterEngine('III', 6, arg)
+      wake()
+      tick(60)
+      const before = dayNow()
+      W.__killBoss()
+      W.__step(1 / 60)
+      const onTick = dayNow()
+      tick(12)
+      return { ...beams(), before, onTick }`, seed)
+    const why = (m) => { throw new Error(`ENG6, seed ${seed}: ${m}`) }
+    if (got.cold !== null) why(`a cold beam at the last depth: ${JSON.stringify(got.cold)}`)
+    beamCheck(why, got)
+    if (got.onTick.progress !== 1 || got.onTick.target !== 1 || got.onTick.to !== 'first-dark') why(`the day on the kill's tick: ${JSON.stringify(got.onTick)}, not first dark`)
+    if (!(got.onTick.keyLight < got.before.keyLight)) why(`the light did not go down on the kill's tick (${got.before.keyLight} -> ${got.onTick.keyLight})`)
+  }
+})
+
+/**
+ * K-N22: a resume after the kill, on a real save. `walkTo` is the game's own walk to the Engine's depth; the kill writes the beam save; a reload rebuilds the level:
+ * no boss, its husk where it slept (blocked, along the loop's straight there), the beams open, the day as the kill left it.
+ */
+const resumeCheck = (query, order, roads, expectDay) => check('K-N22', query, async ({ page }) => {
+  const walked = await inPage(page, WALKDOWN + `return walkTo(arg)`, { order, upTo: 6, roads })
+  if (walked.bad.length) throw new Error(`the walk to 6: ${walked.bad}`)
+  if (walked.depth !== 6 || walked.boss !== 'engine') throw new Error(`at depth ${walked.depth} with boss ${walked.boss}, not the Engine at 6`)
+  const first = await inPage(page, KILLED + BEAMS + `
+    W.__killBoss(); W.__step(0.2)
+    const snap = W.__snapshot()
+    return { felled: snap && snap.bossFelled, depth: snap && snap.depth, exits: W.__exits(), day: dayNow(), loot: [...W.__run.bossLoot], route: W.__run.route }`)
+  assert(first.felled === true, `__snapshot().bossFelled is ${first.felled} after the kill`)
+  await page.reload()
+  await page.waitForFunction(() => typeof window.__enter === 'function' && window.__level && window.__level(), null, { timeout: 60000 })
+  const back = await inPage(page, KILLED + BEAMS + `
+    W.__step(0.1)
+    const lv = W.__level(), h = huskOf(), b = lv.boss
+    const T = lv.terrain
+    // the loop's straight through the spot the Engine slept at: the nearest run's direction
+    const t = W.__track()
+    let best = Infinity, dir = null
+    t.loop.forEach((a, i) => {
+      const q = t.loop[(i + 1) % t.loop.length], ex = q.x - a.x, ez = q.z - a.z, len = Math.hypot(ex, ez)
+      const u = Math.max(0, Math.min(len, ((b.x - a.x) * ex + (b.z - a.z) * ez) / len))
+      const d = Math.hypot(b.x - (a.x + ex / len * u), b.z - (a.z + ez / len * u))
+      if (d < best) { best = d; dir = { x: ex / len, z: ez / len } }
+    })
+    const ax = h ? axisOf(h) : { x: 0, z: 0 }
+    return {
+      depth: W.__run.depth, boss: W.__boss(), enemies: W.__combat.enemies.filter((e) => e.kind === 'boss').length, bar: document.querySelector('#bossBar').classList.contains('show'),
+      husk: !!h, at: h && [h.position.x, h.position.z], slept: [b.x, b.z], blocked: h ? T.blocked(h.position.x, h.position.z, 0) : null,
+      c1: h ? T.blocked(h.position.x + ax.x * 0.7, h.position.z + ax.z * 0.7, 0) : null, out: h ? T.blocked(h.position.x + ax.x * 1.51, h.position.z + ax.z * 1.51, 0) : null,
+      parallel: h && dir ? Math.abs(ax.x * dir.z - ax.z * dir.x) : null, onLoop: best,
+      exits: W.__exits(), day: dayNow(), loot: [...W.__run.bossLoot], route: W.__run.route, felled: W.__snapshot() && W.__snapshot().bossFelled, ground: W.__loot.ground.length,
+      leftover: W.__hazards().filter((x) => !x.done).length,
+    }`)
+  const why = (m) => { throw new Error(`${query}: ${m}`) }
+  if (back.depth !== 6) why(`resumed at depth ${back.depth}`)
+  if (back.boss !== null || back.enemies || back.bar) why(`a boss after the reload: ${JSON.stringify(back.boss)} (${back.enemies} bodies, bar ${back.bar})`)
+  if (!back.husk) why('no husk after the reload')
+  if (Math.hypot(back.at[0] - back.slept[0], back.at[1] - back.slept[1]) > 1e-6) why(`the husk is at ${back.at}, not where it slept ${back.slept}`)
+  if (!back.blocked || !back.c1 || back.out) why(`the husk's solid: centre ${back.blocked}, a circle ${back.c1}, 1.51 out ${back.out}`)
+  if (!(back.parallel < 1e-6)) why(`the husk does not lie along the loop's straight there (cross ${back.parallel})`)
+  if (JSON.stringify(back.exits) !== JSON.stringify(first.exits)) why(`the beams differ: before ${JSON.stringify(first.exits)}, after ${JSON.stringify(back.exits)}`)
+  if (!back.exits.warm || !back.exits.warm.open) why('the warm beam is not open')
+  if (JSON.stringify(back.day) !== JSON.stringify(first.day)) why(`the day differs: before ${JSON.stringify(first.day)}, after ${JSON.stringify(back.day)}`)
+  if (expectDay === 'dark' && back.day.progress !== 1) why(`the day is ${back.day.progress}, not first dark (6 depths)`)
+  if (expectDay === 'held' && back.day.progress !== 0) why(`the day is ${back.day.progress}, not held (9 depths, the middle boss)`)
+  if (JSON.stringify(back.loot) !== JSON.stringify(first.loot)) why(`bossLoot ${JSON.stringify(first.loot)} -> ${JSON.stringify(back.loot)}`)
+  if (back.felled !== true || back.route !== first.route) why(`snapshot felled ${back.felled}, route ${first.route} -> ${back.route}`)
+  console.log(`INFO K-N22 ${query}: reloaded at 6 on ${back.route}: no boss, the husk at ${back.at.map((v) => v.toFixed(1))} (blocked, along the straight), beams ${back.exits.cold ? 'cold+' : ''}warm open, day progress ${back.day.progress}`)
+})
+// 9 depths: Line-first road (III at 6 holds the light); 6 depths: the Engine at 6 is the last (first dark, snapped by day.enter)
+resumeCheck('?roads=1&line=1&engine=1', 'III', true, 'held')
+resumeCheck('?line=1&engine=1', 'III', false, 'dark')
 
 process.exit(await run(process.argv.slice(2)))

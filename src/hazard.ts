@@ -42,6 +42,12 @@ export interface HazardSpec {
   /** Who made it. Its death cancels it while unarmed if `cancelOnDeath`. The owner is never spared its own hazard. */
   owner?: Enemy
   cancelOnDeath?: boolean
+  /**
+   * With `cancelOnDeath`: its death ends it even armed. For a hazard the owner draws itself (the Engine's lit track and its rolling wagon):
+   * Combat's tell is skipped for it (`quiet`, source 'train' / 'wagon'), so once the owner is disposed nothing draws it, and drawn = hit.
+   * Every other cancelOnDeath hazard (the Arbiter's lance) is Combat's to draw and resolves once armed.
+   */
+  endOnDeath?: boolean
   /** Draw only: the owner's own tell already shows the arm clock, so the arming draw is skipped. */
   quiet?: boolean
   /** The lance only: a hit on Still (taken, or turned to strain by Brace) heats one of his buttons. */

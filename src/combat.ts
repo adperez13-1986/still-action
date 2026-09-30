@@ -1502,8 +1502,8 @@ export class Combat {
     e.dispose(this.scene)
     this.enemies.splice(i, 1)
     this.book.unbook(e)
-    // H7: its unarmed lance goes with it; shells in flight, slag and scald still resolve
-    for (const h of this.live) if (h.spec.owner === e && h.spec.cancelOnDeath && !h.armed && !h.done) this.endHazard(h)
+    // H7: its unarmed lance goes with it; shells in flight, slag and scald still resolve. An owner-drawn one (`endOnDeath`) goes armed too
+    for (const h of this.live) if (h.spec.owner === e && h.spec.cancelOnDeath && (!h.armed || h.spec.endOnDeath) && !h.done) this.endHazard(h)
     // H6: a slag core spills, unless a hazard killed it (no chains)
     if (this.slagged.has(e) && !this.hazardKilled.has(e)) this.spillSlag(e.pos)
     // the thief has no pack, so no kill and no roll: its catch (and the part it had) is its own event

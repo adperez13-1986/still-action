@@ -83,7 +83,11 @@ export const ENGINE = {
   wagon: { tellMs: 1200, speed: 7, damage: 12, halfW: 1.2, everyS: 14, firstS: 4, r: 0.75, at: 0.5, halfLen: 0.95, clear: 6 },
   /** The lever thrown back: how far past the arm's strip (halfW) Still's centre may stand. */
   throwBack: { grow: 0.8 },
-  husk: { r: 0.8, at: 0.7, color: 0x202124 },
+  /**
+   * Two solid circles `at` either side of its centre along its axis. Its colour is HIDES.engine, `dim` of it (the asleep body is 0.5): the body
+   * gone cold, no ember on it (the brief's 0x202124 is a flat grey, and the hide rule keeps every body its own metal).
+   */
+  husk: { r: 0.8, at: 0.7, dim: 0.42, doorAjar: 0.7 },
   seeThrough: { opacity: 0.45, reach: 3.0, half: 1.6 },
   /** The firebox while derailed: deeper and redder than CORE, flickering, never FIRE_HOT's peach. */
   fireHot: 0xff3812, flickerHz: 18,
@@ -164,6 +168,16 @@ const WINDOW_EPS = 1e-6
 const LAMP = { y: 0.95, z: 0.2 }
 /** Where the cab's side slits are (line.ts rakeParts). */
 const SLIT = { x: 0.74, y: 0.55, z: -2.2 }
+
+/** Brass: two bands round the boiler, the dome, and the headlamp's housing (the body's and the husk's). */
+function brassGeometry(): THREE.BufferGeometry {
+  return mergeGeometries([
+    new THREE.CylinderGeometry(0.575, 0.575, 0.07, 16).rotateX(Math.PI / 2).translate(0, 0.85, -0.5),
+    new THREE.CylinderGeometry(0.575, 0.575, 0.07, 16).rotateX(Math.PI / 2).translate(0, 0.85, -1.35),
+    new THREE.SphereGeometry(0.2, 12, 8).translate(0, 1.4, -1.1),
+    new THREE.BoxGeometry(0.3, 0.3, 0.2).translate(0, LAMP.y, LAMP.z - 0.1),
+  ].map((g) => g.toNonIndexed()))!
+}
 
 /** One of its own hazards, and what the drawing and the checks need of it. */
 interface Seg {
@@ -482,13 +496,7 @@ export class Engine implements Boss {
     this.doorPivot.add(door)
     this.chimney.position.set(0, CHIMNEY.y, CHIMNEY.z)
     // brass: two bands round the boiler, the dome, and the headlamp's housing
-    const brass = mergeGeometries([
-      new THREE.CylinderGeometry(0.575, 0.575, 0.07, 16).rotateX(Math.PI / 2).translate(0, 0.85, -0.5),
-      new THREE.CylinderGeometry(0.575, 0.575, 0.07, 16).rotateX(Math.PI / 2).translate(0, 0.85, -1.35),
-      new THREE.SphereGeometry(0.2, 12, 8).translate(0, 1.4, -1.1),
-      new THREE.BoxGeometry(0.3, 0.3, 0.2).translate(0, LAMP.y, LAMP.z - 0.1),
-    ].map((g) => g.toNonIndexed()))!
-    const fittings = new THREE.Mesh(brass, this.jointMat)
+    const fittings = new THREE.Mesh(brassGeometry(), this.jointMat)
     // the lamp's lens, in the housing's mouth
     const lens = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.18, 0.02), this.lampMat)
     lens.position.set(0, LAMP.y, LAMP.z + 0.005)
@@ -552,6 +560,11 @@ export class Engine implements Boss {
   /** Always false: bosses can't be broken (SPEC §1.5.8). */
   interrupt(): false {
     return false
+  }
+
+  /** Where it stopped and the way it faced (its travel), for its husk. `pos` is the body's centre on the rails, never the judder's shake. */
+  huskAt(): { x: number; z: number; yaw: number } {
+    return { x: this.pos.x, z: this.pos.z, yaw: this.yaw() }
   }
 
   /** The jet's arm, or the cinder's launch. */
@@ -1000,7 +1013,7 @@ export class Engine implements Boss {
         source: 'train',
         shape: { kind: 'strip', ax: a.x, az: a.z, bx: b.x, bz: b.z, halfW: ENGINE.halfW },
         armMs, liveMs: (1000 * (len + ENGINE.length)) / speed,
-        damage: ENGINE.runDamage, cover: 'none', hurt: 'hazard', quiet: true, owner: this, sparesOwner: true, cancelOnDeath: true,
+        damage: ENGINE.runDamage, cover: 'none', hurt: 'hazard', quiet: true, owner: this, sparesOwner: true, cancelOnDeath: true, endOnDeath: true,
         group: this.groupObj, shove: { dx, dz, along: LINE.shove.along, across: LINE.shove.across },
       }
       this.segs.push({
@@ -1311,7 +1324,7 @@ export class Engine implements Boss {
     const h = ctx.addHazard(this, {
       source: 'wagon', shape: { kind: 'strip', ax: sp.outer.x, az: sp.outer.z, bx: sp.onLoop.x, bz: sp.onLoop.z, halfW: w.halfW },
       armMs: w.tellMs, liveMs: (1000 * len) / w.speed, damage: w.damage, cover: 'none', hurt: 'hazard', quiet: true,
-      owner: this, sparesOwner: true, cancelOnDeath: true,
+      owner: this, sparesOwner: true, cancelOnDeath: true, endOnDeath: true,
     })
     this.wagon = {
       spur: best, x: sp.outer.x, z: sp.outer.z, settled: false, circles: [], stage: 'tell',
@@ -1677,4 +1690,63 @@ export class Engine implements Boss {
     this.smashWagon()
     this.wagonTell.dispose()
   }
+}
+
+/** The husk's geometry and materials, built once and shared: a level frees none of them, and nothing here is ever disposed. */
+let huskKit: {
+  body: THREE.BufferGeometry; brass: THREE.BufferGeometry; slits: THREE.BufferGeometry; core: THREE.BufferGeometry; lens: THREE.BufferGeometry; door: THREE.BufferGeometry
+  mat: THREE.Material; jointMat: THREE.Material; dark: THREE.Material
+} | null = null
+
+/**
+ * The dead engine, where it stopped (main.ts bossDown, or a resume): the enamel body dimmed (HIDES.engine x ENGINE.husk.dim), the firebox and
+ * the headlamp and the cab's slits dark (CORE_ASLEEP taken down again, lit by the fog like any dead thing), the firebox door hanging ajar on
+ * a cold coal. No halo, no glow: the fire is out. Facing along its travel. Solid is `engineHuskCircles`'s.
+ */
+export function engineHusk(x: number, z: number, yaw: number): THREE.Group {
+  if (!huskKit) {
+    const kit = engineKit()
+    const { mat, jointMat } = hideMaterials('engine')
+    mat.color.setHex(HIDES.engine.body).multiplyScalar(ENGINE.husk.dim)
+    jointMat.color.setHex(HIDES.engine.joint).multiplyScalar(ENGINE.husk.dim)
+    huskKit = {
+      body: kit.engine, brass: brassGeometry(), slits: kit.firebox, core: new THREE.BoxGeometry(FIREBOX.w, FIREBOX.h, 0.04),
+      lens: new THREE.BoxGeometry(0.18, 0.18, 0.02), door: new THREE.BoxGeometry(FIREBOX.door.w, FIREBOX.door.h, 0.05),
+      mat, jointMat, dark: new THREE.MeshBasicMaterial({ color: new THREE.Color(CORE_ASLEEP).multiplyScalar(0.55) }),
+    }
+  }
+  const k = huskKit
+  const model = new THREE.Group()
+  model.scale.setScalar(ENGINE.scale)
+  model.position.z = (MODEL_LEN / 2) * ENGINE.scale
+  const core = new THREE.Mesh(k.core, k.dark)
+  core.position.set(0, FIREBOX.y, CAB_BACK - 0.02)
+  const lens = new THREE.Mesh(k.lens, k.dark)
+  lens.position.set(0, LAMP.y, LAMP.z + 0.005)
+  const pivot = new THREE.Group()
+  pivot.position.set(0, FIREBOX.y + FIREBOX.door.h / 2, CAB_BACK - 0.06)
+  pivot.rotation.x = ENGINE.husk.doorAjar
+  const door = new THREE.Mesh(k.door, k.jointMat)
+  door.position.y = -FIREBOX.door.h / 2
+  pivot.add(door)
+  model.add(new THREE.Mesh(k.body, k.mat), new THREE.Mesh(k.brass, k.jointMat), new THREE.Mesh(k.slits, k.dark), lens, core, pivot)
+  const g = new THREE.Group()
+  g.add(model)
+  g.position.set(x, 0, z)
+  g.rotation.y = yaw
+  g.name = 'engine:husk'
+  return g
+}
+
+/** The husk's two solid circles, `ENGINE.husk.at` either side of its centre along its axis. */
+export function engineHuskCircles(x: number, z: number, yaw: number): Circle[] {
+  const h = ENGINE.husk
+  return [-1, 1].map((sign) => ({ x: x + sign * h.at * Math.sin(yaw), z: z + sign * h.at * Math.cos(yaw), r: h.r }))
+}
+
+/** Where the Engine sleeps and the way it faces: on the loop at its wake place, along the loop as the body would lie (a resume's husk). */
+export function engineSleepAt(track: TrackDef, x: number, z: number): { x: number; z: number; yaw: number } {
+  const s = loopS(track, x, z), at = loopAt(track, s)
+  const ahead = loopAt(track, s + ENGINE.length / 2), back = loopAt(track, s - ENGINE.length / 2)
+  return { x: at.x, z: at.z, yaw: Math.atan2(ahead.x - back.x, ahead.z - back.z) }
 }
