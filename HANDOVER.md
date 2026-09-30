@@ -1,7 +1,15 @@
-# Handover — 30 Sep 2026 (evening)
+# Handover — 30 Sep 2026 (late)
 
 For the next session. Read this, then `DESIGN.md` (the settled decisions), then the design
 folder for whatever you're touching. Don't re-derive any of them.
+
+## Start here (30 Sep, late: AREA III IS LIVE)
+
+**His call (30 Sep): "no one is playing but me, why hide it?"** LINE_ENABLED, ENGINE_ON_LINE, BOTH_ROADS are now `true` (473a02f,
+pushed, deployed). The live game is 9 depths, both roads (the crossroads picks area 2), the Line's bodies, the Engine. PORTER stays
+false. Checks that meant the old game are pinned with `roads=0&line=0&engine=0` (DEV overrides); K-90/K-90L/K-90F still compare the
+6-depth page, unchanged. All suites PASS except stageb's known K-W3d. **Lesson: he doesn't want work hidden behind flags on this
+repo: he's the only player; ship to main and let him play it.** Everything below "stage C done" still applies, minus the go-live step.
 
 ## Start here (30 Sep, evening: stage C done, the Engine complete, all dark, all pushed)
 
