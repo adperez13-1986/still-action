@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
-import { hideMaterials, HIDES } from './hide'
+import { finish, hideMaterials, HIDES, type Finish } from './hide'
 import { haloTexture, tellMaterial, tellOrder, releaseTell, trackingDim, COLD, COLD_DEEP, type Vfx } from './vfx'
 import { statusTint, CORE_ASLEEP, type EnemyAction, type EnemyCtx, type EnemyPhase } from './enemy'
 import type { Circle } from './dungeon'
@@ -103,6 +103,8 @@ const MODEL_LEN = 2.6
 /** The cab's back face, and where the chimney's top stands, in that frame. */
 const CAB_BACK = -2.6
 const CHIMNEY = { y: 1.7, z: -0.35 }
+/** The open firebox's glow (C9): the halo's size and the pool's on the floor, in metres, and how strong each is (of the door's openness). */
+const FIRE_GLOW = { halo: 3.4, pool: 4.6, haloOpacity: 0.75, poolOpacity: 0.85 }
 const FIREBOX = { w: 0.34, h: 0.26, y: 0.7, door: { w: 0.44, h: 0.36 } }
 const WHITE = new THREE.Color(0xffffff)
 /** The firebox and the headlamp awake: deeper and redder than CORE, never pale (the crouch's lesson, enemy.ts CROUCH_HOT). */
@@ -112,6 +114,12 @@ const FLICKER = { hz: 7, depth: 0.35 }
 const SOOT = new THREE.Color(0x2c2624)
 /** A smashed wagon's chunks: the tub's dark iron. */
 const TUB_IRON = new THREE.Color(0x3a3836)
+/** The loose wagon's tub: its own iron (worked, with streaks of rust), a rim of dull rust (a brown, not the ember's red-orange). `rim` is the slab's thickness, `rimOver` how far it stands proud, metres. */
+const TUB = { rim: 0.07, rimOver: 0.05 }
+const TUB_RIM = 0x5a4033
+const TUB_IRON_LIGHT = 0x4a4541
+/** Worked iron with streaks of rust (the hide.ts finish): coarse chips in a warm brown, a fine grain, a little pitting. */
+const TUB_FINISH: Finish = { scale: [3.5, 3.5, 3.5], grain: 0.14, roughVar: 0.12, tone: [1.6, 1.25, 1.0], mask: 0.55, toneRough: 0.1, toneMetal: -0.1, bump: 0.2 }
 /** The whistle's steam, and the jet's puffs: paler than the stack's smoke, still grey (pale puffs under ACES + bloom clip to a slab). */
 const STEAM = new THREE.Color(0x8a9096)
 /** The steam's rails and the cinder's ring lie over the sleepers (0.14) and under the rail heads (0.26): the height of the horizon's wash. */
@@ -154,7 +162,12 @@ const HORIZON = {
 /** The lever's turn (about z, in its own frame): at rest leaning back, thrown over; and how fast it swings. */
 const LEVER = { rest: 0.55, thrown: -0.55, rate: 12 }
 /** The judder (C7): the body shudders, and its wheels throw sparks (vfx.hotSparks: deep red to orange, flickering). Metres, rad, hertz. */
-const JUDDER = { shake: 0.05, yaw: 0.012, hz: 40, burst: 8, perDress: 20, turnS: 0.35 }
+const JUDDER = { shake: 0.05, yaw: 0.012, hz: 40, burst: 12, perDress: 30, turnS: 0.35, size: 1.35 }
+/**
+ * The derail's payoff (C9): steam bursts from the boiler for `steamMs`, the wheels spray hot sparks (a burst, then a spray for `sprayMs`), and
+ * embers rise off the open firebox while the door stands open. Metres, ms.
+ */
+const DERAIL = { steamMs: 800, sprayMs: 500, burst: 44, perDress: 24, size: 1.1, speed: 9 }
 /** The wagon's tell is the ram's lane 4 u long: tracking (faint core) for this share of the tell, then locked and filling. */
 const WAGON_TELL = { trackFrac: 0.25, coreHalf: 0.78, settleFrom: 0.7 }
 /**
@@ -168,6 +181,47 @@ const WINDOW_EPS = 1e-6
 const LAMP = { y: 0.95, z: 0.2 }
 /** Where the cab's side slits are (line.ts rakeParts). */
 const SLIT = { x: 0.74, y: 0.55, z: -2.2 }
+
+/**
+ * The enamel's tops (C9): faces looking up (the cab's roof, the running board, the boiler's crown) hold a matte 0.85 and take 0.65 of the colour, so the
+ * roof neither catches a light overhead as a pale patch nor reads a lighter khaki than the sides. Worked into a finished body material after `finish`
+ * (hide.ts) by wrapping its shader hook; it fades with the hit flash as the finish does (hideK), and the program is its own (the cache key).
+ */
+const ENAMEL_TOP = { rough: 0.85, dim: 0.65 }
+function enamelTops(m: THREE.MeshStandardMaterial) {
+  const finished = m.onBeforeCompile
+  m.onBeforeCompile = (shader, renderer) => {
+    finished.call(m, shader, renderer)
+    shader.uniforms.uEnamelTop = { value: new THREE.Vector2(ENAMEL_TOP.rough, ENAMEL_TOP.dim) }
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying float vEnamelTop;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvEnamelTop = smoothstep(0.6, 0.92, objectNormal.y);')
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying float vEnamelTop;\nuniform vec2 uEnamelTop;')
+      .replace('#include <lights_physical_fragment>', `roughnessFactor = max(roughnessFactor, mix(0.0, uEnamelTop.x, vEnamelTop));
+        diffuseColor.rgb *= mix(1.0, mix(1.0, uEnamelTop.y, vEnamelTop), hideK);
+        #include <lights_physical_fragment>`)
+  }
+  m.customProgramCacheKey = () => 'engine-enamel-tops'
+  m.needsUpdate = true
+}
+
+let rimGeo: THREE.BufferGeometry | null = null
+/**
+ * The loose wagon's rim (shared, never disposed): the tub is 1.5 × 1.9 with its top at 1.1 (line.ts tub); four slabs stand proud of its top edge and
+ * four more of a low skirt above the wheels, so its outline reads against the floor and the flat top has an edge.
+ */
+function tubRim(): THREE.BufferGeometry {
+  if (rimGeo) return rimGeo
+  const hx = 0.75, hz = 0.95, o = TUB.rimOver
+  const slab = (w: number, h: number, d: number, x: number, y: number, z: number) => new THREE.BoxGeometry(w, h, d).translate(x, y, z).toNonIndexed()
+  const band = (y: number, h: number) => [
+    slab(TUB.rim, h, hz * 2 + o * 2, -(hx + o / 2), y, 0), slab(TUB.rim, h, hz * 2 + o * 2, hx + o / 2, y, 0),
+    slab(hx * 2 + o * 2, h, TUB.rim, 0, y, -(hz + o / 2)), slab(hx * 2 + o * 2, h, TUB.rim, 0, y, hz + o / 2),
+  ]
+  rimGeo = mergeGeometries([...band(1.06, 0.1), ...band(0.3, 0.08)])!
+  return rimGeo
+}
 
 /** Brass: two bands round the boiler, the dome, and the headlamp's housing (the body's and the husk's). */
 function brassGeometry(): THREE.BufferGeometry {
@@ -377,8 +431,13 @@ export class Engine implements Boss {
   private readonly discMat = tellMaterial('radial', ENGINE.lever.reach, COLD, COLD_DEEP, { cold: true })
   private readonly ring = new THREE.Mesh(new THREE.RingGeometry(ENGINE.lever.reach - 0.1, ENGINE.lever.reach, 64), this.ringMat)
   private readonly disc = new THREE.Mesh(new THREE.CircleGeometry(ENGINE.lever.reach, 48), this.discMat)
-  /** The firebox's glow while its door stands open, seen from any side. */
-  private readonly fireHalo = new THREE.SpriteMaterial({ map: haloTexture(), color: ENGINE.fireHot, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, fog: false, opacity: 0 })
+  /**
+   * The firebox's glow while its door stands open, seen from any side: the cab hides the door from the camera on the arm that turns its back
+   * to it, so the halo is not depth-tested (it shows through the cab as the glow round a lit doorway would), and a pool of it lies on the floor.
+   */
+  private readonly fireHalo = new THREE.SpriteMaterial({ map: haloTexture(), color: ENGINE.fireHot, blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false, transparent: true, fog: false, opacity: 0 })
+  private readonly fireGlowMat = new THREE.MeshBasicMaterial({ map: haloTexture(), color: ENGINE.fireHot, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, fog: false, opacity: 0 })
+  private readonly fireGlow = new THREE.Mesh(new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2), this.fireGlowMat)
   /** The end mark where the horizon stops at a buffer or a wagon (the ram's star), or null. */
   private endMark: { x: number; z: number; yaw: number } | null = null
   private readonly endMat = tellMaterial('radial', 0.7, HORIZON.hot, HORIZON.deep)
@@ -414,7 +473,7 @@ export class Engine implements Boss {
   /** The cinder in the air: for its trail. */
   private flight: { h: Hazard; from: THREE.Vector3; to: THREE.Vector3; peak: number; armMs: number } | null = null
   private strikeTick = false
-  private strikeKind: 'steam' | 'cinder' | null = null
+  strikeKind: 'steam' | 'cinder' | null = null
   /** The steam's tracking: two rails closing on the jet's edges and a thin wash between (the Arbiter's lance, arbiter.ts). */
   private readonly gazeMat = tellMaterial('strip')
   private readonly gaze = new Quads(2, this.gazeMat)
@@ -437,9 +496,16 @@ export class Engine implements Boss {
   /** The wagon's tell: the ram's lane with no rails (trackWash), down its spur. */
   readonly wagonTell = new LaneTell(WAGON_LOOK, { hot: HORIZON.hot, deep: HORIZON.deep })
   private readonly tub: THREE.Mesh
-  /** Where the last wagon was smashed, for the chunks (dress); and the judder's first-frame burst. */
+  /** Where the last wagon was smashed, for the chunks (dress); and the judder's and the derail's first-frame bursts. */
   private smashAt: { x: number; z: number } | null = null
   private judderBurst = false
+  private derailBurst = false
+  /** The tub's own iron and its rust rim (both fade as the engine's body does), and how faded they are. */
+  private readonly tubMat: THREE.MeshStandardMaterial
+  private readonly rimMat = new THREE.MeshStandardMaterial({ color: TUB_RIM, roughness: 0.9, metalness: 0.2, transparent: true })
+  private tubFade = 1
+  /** The model's frame (scaled, offset), for placing the boiler and the door in the world. */
+  private readonly model = new THREE.Group()
 
   private readonly hide = hideMaterials('engine', { transparent: true })
   private readonly mat = this.hide.mat
@@ -462,7 +528,14 @@ export class Engine implements Boss {
     this.windowWait = track.loopLen
     this.wagonTell.trackWash = true
     const wk = wagonKit()
-    this.tub = new THREE.Mesh(wk.tub, wk.grate)
+    enamelTops(this.mat)
+    // its own iron, not the rake's grate (which reads a flat dark block at 0.5): worked, with streaks of rust, and fading like the engine when Still is behind it
+    this.tubMat = new THREE.MeshStandardMaterial({ color: TUB_IRON_LIGHT, roughness: 0.78, metalness: 0.25, transparent: true })
+    finish(this.tubMat, TUB_FINISH)
+    this.tub = new THREE.Mesh(wk.tub, this.tubMat)
+    // a rim of rust round the top edge (four slabs, 1.5 × 1.9 tub with its top at 1.1) and a lower band on the sides
+    const rim = new THREE.Mesh(tubRim(), this.rimMat)
+    this.tub.add(rim)
     this.tub.visible = false
     // placed on the loop, going dir +1, facing its travel
     this.s = this.u = this.originBody = loopS(track, x, z)
@@ -481,7 +554,7 @@ export class Engine implements Boss {
 
     // the crawl trains' engine, cloned (the shared geometry is never ours to dispose), its centre at the group's origin
     const kit = engineKit()
-    const model = new THREE.Group()
+    const model = this.model
     model.scale.setScalar(ENGINE.scale)
     model.position.z = (MODEL_LEN / 2) * ENGINE.scale
     const body = new THREE.Mesh(kit.engine.clone(), this.mat)
@@ -511,9 +584,13 @@ export class Engine implements Boss {
     lampGlow.scale.setScalar(1.3 / ENGINE.scale)
     // seen with the door open from any side: a red glow behind the cab
     const boxGlow = new THREE.Sprite(this.fireHalo)
-    boxGlow.position.set(0, FIREBOX.y, CAB_BACK - 0.3)
-    boxGlow.scale.setScalar(2.2 / ENGINE.scale)
-    model.add(body, fittings, slits, core, lens, this.doorPivot, this.chimney, ...halos, lampGlow, boxGlow)
+    boxGlow.position.set(0, FIREBOX.y + 0.15, CAB_BACK - 0.3)
+    boxGlow.scale.setScalar(FIRE_GLOW.halo / ENGINE.scale)
+    boxGlow.renderOrder = 6
+    this.fireGlow.position.set(0, 0.32, CAB_BACK - 0.5)
+    this.fireGlow.scale.setScalar(FIRE_GLOW.pool / ENGINE.scale)
+    this.fireGlow.renderOrder = 5
+    model.add(body, fittings, slits, core, lens, this.doorPivot, this.chimney, ...halos, lampGlow, boxGlow, this.fireGlow)
     this.group.add(model)
     this.present(0)
   }
@@ -592,6 +669,7 @@ export class Engine implements Boss {
   private go(state: EngineState) {
     this.state = state
     this.timer = 0
+    if (state === 'derailed') this.derailBurst = true
   }
 
   update(dt: number, _target: THREE.Vector3, terrain: Terrain, ctx: EnemyCtx): EnemyAction | null {
@@ -1409,8 +1487,9 @@ export class Engine implements Boss {
     // the whistle: a burst of steam from the stack for the first 400 ms of the unfold, then its smoke
     if (this.state === 'unfold' && this.timer < 400) vfx.smokePuff(this.chimney.getWorldPosition(new THREE.Vector3()), 4, STEAM)
     else if (this.dressN % 2 === 0) vfx.smokePuff(this.chimney.getWorldPosition(new THREE.Vector3()), 1, SOOT)
-    // the judder throws sparks off the wheels; a smashed wagon flies apart
+    // the judder throws sparks off the wheels; the derail bursts steam and sprays them; a smashed wagon flies apart
     if (this.state === 'judder') this.judderSparks(vfx)
+    if (this.state === 'derailed') this.derailFx(vfx)
     if (this.smashAt) {
       const at = new THREE.Vector3(this.smashAt.x, 0.5, this.smashAt.z)
       vfx.chunks(at, 16, TUB_IRON, 6, 0.16)
@@ -1446,10 +1525,46 @@ export class Engine implements Boss {
     for (let i = 0; i < n; i++) {
       const side = first ? (i % 2 ? 1 : -1) : Math.random() < 0.5 ? -1 : 1
       const z = wheels[first ? i % 3 : Math.floor(Math.random() * 3)]!
-      this.group.localToWorld(at.set(side * 0.66, 0.28, z))
+      // a hand's width of scatter about the wheel, so the flecks do not pile on one point (additive: a pile reads pink, not as sparks)
+      this.group.localToWorld(at.set(side * 0.66 + (Math.random() - 0.5) * 0.3, 0.28 + Math.random() * 0.2, z + (Math.random() - 0.5) * 0.4))
       dir.set(Math.cos(yaw) * side, 0, -Math.sin(yaw) * side)
-      vfx.hotSparks(at, 1, first ? 7 : 5.5, dir, 0.7)
+      vfx.hotSparks(at, 1, first ? 7 : 5.5, dir, 0.7, JUDDER.size)
     }
+  }
+
+  /**
+   * The derail's payoff (C9): steam bursting from the boiler (grey puffs, from both sides so it reads from either), a spray of hot sparks off the
+   * wheels thrown forward and out (vfx.hotSparks: deep red to orange, never white), and embers rising off the open firebox while it stands open.
+   */
+  private derailFx(vfx: Vfx) {
+    const first = this.derailBurst
+    this.derailBurst = false
+    this.model.updateMatrixWorld(true)
+    const at = new THREE.Vector3(), dir = new THREE.Vector3()
+    const yaw = this.group.rotation.y
+    if (this.timer < DERAIL.steamMs) {
+      const n = first ? 12 : 5
+      for (const x of [-0.5, 0, 0.5]) {
+        this.model.localToWorld(at.set(x, 1.2, -0.9))
+        vfx.smokePuff(at, n, STEAM)
+      }
+    }
+    if (this.timer < DERAIL.sprayMs) {
+      const n = first ? DERAIL.burst : DERAIL.perDress
+      const wheels = [0.98, 0.06, -0.86]
+      for (let i = 0; i < n; i++) {
+        const side = i % 2 ? 1 : -1
+        // a hand's width of scatter about the wheel, so the flecks do not pile on one point (additive: a pile reads pink, not as sparks)
+        this.group.localToWorld(at.set(side * 0.66 + (Math.random() - 0.5) * 0.3, 0.28 + Math.random() * 0.2, wheels[i % 3]! + (Math.random() - 0.5) * 0.4))
+        // forward (the way it was going) and out to the side
+        const a = yaw + side * (0.5 + Math.random() * 0.9)
+        dir.set(Math.sin(a), 0, Math.cos(a))
+        vfx.hotSparks(at, 1, DERAIL.speed * (first ? 1 : 0.75), dir, 0.45, DERAIL.size)
+      }
+    }
+    // the open door: embers rising off the coals
+    this.firebox.getWorldPosition(at)
+    vfx.embers(at, 2, 0.15, FIRE)
   }
 
   /** The tick the jet arms: a burst of steam down the strip. The tick the cinder leaves: the stack coughs smoke and embers. */
@@ -1481,7 +1596,11 @@ export class Engine implements Boss {
     this.lampMat.color.setHex(CORE_ASLEEP).lerp(FIRE, lit).multiplyScalar(1 - dip / 3)
     this.slitHalo.opacity = 0.6 * lit * (1 - dip)
     this.lampHalo.opacity = 0.5 * lit * (1 - dip / 3)
-    this.fireHalo.opacity = 0.6 * lit * this.door * (1 - dip)
+    this.fireHalo.opacity = FIRE_GLOW.haloOpacity * lit * this.door * (1 - dip)
+    this.fireGlowMat.opacity = FIRE_GLOW.poolOpacity * lit * this.door * (1 - dip)
+    // the pool breathes and turns with the flame (it only ever grows and shrinks, never brightens past its opacity)
+    this.fireGlow.rotation.y = this.flick * 0.9
+    this.fireGlow.scale.setScalar((FIRE_GLOW.pool / ENGINE.scale) * (0.9 + 0.1 * Math.sin(Math.PI * 2 * this.flick * 1.7)))
     this.doorPivot.rotation.x = this.door * 1.2
     this.firebox.scale.setScalar(1 + 0.8 * this.door)
     // the body: lamp-black enamel, dimmed asleep, the hit flash over it
@@ -1509,16 +1628,20 @@ export class Engine implements Boss {
     this.drawWindow(dt)
     this.drawAim(dt)
     // behind it from the camera (which looks from +x +z), he'd be lost: its solid parts thin out until he's clear
-    const bx = this.still.x - this.pos.x
-    const bz = this.still.z - this.pos.z
-    const along = -(bx + bz) * Math.SQRT1_2
-    const across = Math.abs(bx - bz) * Math.SQRT1_2
-    const behind = along > 0 && along < ENGINE.seeThrough.reach && across < ENGINE.seeThrough.half
-    this.fade += ((behind ? ENGINE.seeThrough.opacity : 1) - this.fade) * Math.min(1, dt * 8 || 1)
+    this.fade += ((this.hides(this.pos.x, this.pos.z) ? ENGINE.seeThrough.opacity : 1) - this.fade) * Math.min(1, dt * 8 || 1)
     for (const m of [this.mat, this.jointMat]) {
       m.opacity = this.fade
       m.depthWrite = this.fade > 0.99
     }
+  }
+
+  /** Something standing at (x, z) hides Still from the camera (which looks from +x +z): he is behind it, within its reach and width. */
+  private hides(x: number, z: number): boolean {
+    const bx = this.still.x - x
+    const bz = this.still.z - z
+    const along = -(bx + bz) * Math.SQRT1_2
+    const across = Math.abs(bx - bz) * Math.SQRT1_2
+    return along > 0 && along < ENGINE.seeThrough.reach && across < ENGINE.seeThrough.half
   }
 
   /**
@@ -1614,6 +1737,12 @@ export class Engine implements Boss {
     }
     this.tub.position.set(wg.x, 0, wg.z)
     this.tub.rotation.y = yaw
+    // the same see-through as the engine's when Still is behind the tub from the camera
+    this.tubFade += ((this.hides(wg.x, wg.z) ? ENGINE.seeThrough.opacity : 1) - this.tubFade) * Math.min(1, dt * 8 || 1)
+    for (const m of [this.tubMat, this.rimMat]) {
+      m.opacity = this.tubFade
+      m.depthWrite = this.tubFade > 0.99
+    }
   }
 
   /** The window's ring and disc on the floor, and the levers turning: the open one's knob bright, a thrown one over. */
@@ -1672,7 +1801,7 @@ export class Engine implements Boss {
     this.group.traverse((o) => {
       if (o instanceof THREE.Mesh) o.geometry.dispose()
     })
-    for (const m of [this.mat, this.jointMat, this.coreMat, this.lampMat, this.slitHalo, this.lampHalo, this.fireHalo]) m.dispose()
+    for (const m of [this.mat, this.jointMat, this.coreMat, this.lampMat, this.slitHalo, this.lampHalo, this.fireHalo, this.fireGlowMat]) m.dispose()
     this.horizon.dispose()
     this.ring.geometry.dispose()
     this.disc.geometry.dispose()
@@ -1686,7 +1815,9 @@ export class Engine implements Boss {
     releaseTell(this.gazeWashMat)
     this.cinderRing.geometry.dispose()
     releaseTell(this.cinderRingMat)
-    // the tub's geometry and material are the rake's (line.ts wagonKit): never ours to free. Its circles stop being solid.
+    // the tub's and the rim's geometry are the rake's and the module's (never ours to free); the two materials are ours. Its circles stop being solid.
+    this.tubMat.dispose()
+    this.rimMat.dispose()
     this.smashWagon()
     this.wagonTell.dispose()
   }
@@ -1707,6 +1838,7 @@ export function engineHusk(x: number, z: number, yaw: number): THREE.Group {
   if (!huskKit) {
     const kit = engineKit()
     const { mat, jointMat } = hideMaterials('engine')
+    enamelTops(mat)
     mat.color.setHex(HIDES.engine.body).multiplyScalar(ENGINE.husk.dim)
     jointMat.color.setHex(HIDES.engine.joint).multiplyScalar(ENGINE.husk.dim)
     huskKit = {

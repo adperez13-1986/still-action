@@ -648,6 +648,12 @@ const combat = new Combat(world.scene, OPEN, {
         sfx.mortar(panOf(e.pos))
         sfx.whistle(ARBITER.shell.flightMs, panOf(e.pos))
       } else sfx.scald(panOf(e.pos))
+    } else if (e instanceof Engine) {
+      // the jet is steam; the cinder is lobbed from the stack and whistles down as the Arbiter's shell does
+      if (e.strikeKind === 'cinder') {
+        sfx.mortar(panOf(e.pos))
+        sfx.whistle(ENGINE.cinder.flightMs, panOf(e.pos))
+      } else sfx.scald(panOf(e.pos))
     } else sfx.strike(panOf(e.pos))
     strikeFx(e)
   },
@@ -762,6 +768,9 @@ function packEvent(ev: EnemyEvent) {
     case 'arbiter':
       arbiterBeat(ev)
       break
+    case 'engine':
+      engineBeat(ev)
+      break
     case 'lock':
       // the Arbiter's aim sets with a clank of its brake (the others' locks are in their windup voices)
       if (ev.e instanceof Arbiter) sfx.servoLock(panOf(ev.e.pos))
@@ -782,6 +791,79 @@ function packEvent(ev: EnemyEvent) {
       }
       break
   }
+}
+
+/** Where a lever stands, as a point. */
+const leverAt = (e: Engine, side: 'right' | 'left') => new THREE.Vector3(e.track.levers[side].x, 0, e.track.levers[side].z)
+
+/**
+ * The Engine's instants (STAGE-C.md 2.9): its whistle, a lever's window, the throw, the derail (a heavy hit: the camera shakes), a
+ * judder, a wagon's roll and its end. The steam and the cinder are heard from its windup cues and its strikes (onWindup, onStrike).
+ */
+function engineBeat(ev: Extract<EnemyEvent, { kind: 'engine' }>) {
+  if (!(ev.e instanceof Engine)) return
+  const pan = panOf(ev.at)
+  switch (ev.what) {
+    case 'whistle':
+      sfx.horn(pan)
+      break
+    case 'window':
+      // the chime comes from the lever it opens
+      if (ev.side) sfx.pointsChime(panOf(leverAt(ev.e, ev.side)))
+      break
+    case 'throw':
+    case 'throwBack':
+      // the latch and the clack of the lever going over (thrown by Still's cast, or by the engine itself when he stood in the arm)
+      if (ev.side) {
+        const pl = panOf(leverAt(ev.e, ev.side))
+        sfx.latch(pl, 1.2)
+        sfx.clack(pl, 1)
+      }
+      break
+    case 'derail':
+      sfx.ramCrash(pan, false)
+      shake = Math.max(shake, DERAIL_SHAKE)
+      break
+    case 'judder':
+      sfx.judder(ev.ms ?? ENGINE.reverse.judderMs, pan)
+      break
+    case 'wagon':
+      // the tub's wheels over the joints, three clacks over the roll (the tell first)
+      for (const ms of [ENGINE.wagon.tellMs, ENGINE.wagon.tellMs + 400, ENGINE.wagon.tellMs + 800]) window.setTimeout(() => { if (run.phase === 'crawl') sfx.clack(pan, 1) }, ms)
+      break
+    case 'wagonSettle':
+      sfx.plateDull(pan)
+      break
+    case 'wagonSmash':
+      sfx.smash(pan)
+      break
+    default:
+      break
+  }
+}
+
+/** The camera's shake when the Engine derails (a ram's wall hit is 0.3, a train's hit on him 0.5). */
+const DERAIL_SHAKE = 0.45
+
+/** The Engine's run, a loop that follows it: on while it moves (run, up an arm, backing out), off at hold, judder, derailed and dead. */
+let engineRunState: string | null = null
+function engineVoice() {
+  const b = combat.boss
+  if (!(b instanceof Engine)) return
+  const moving = !b.dead && run.phase === 'crawl' && (b.state === 'run' || b.state === 'siding' || b.state === 'backing')
+  const v = loops.get(b)
+  if (!moving) {
+    if (v) {
+      v.stop()
+      loops.delete(b)
+    }
+    engineRunState = null
+    return
+  }
+  const voice = v ?? sfx.engineRun(panOf(b.pos))
+  if (!v) loops.set(b, voice)
+  if (engineRunState !== b.state || !v) voice.speed?.(b.state === 'backing' ? ENGINE.backSpeed / ENGINE.speed : 1)
+  engineRunState = b.state
 }
 
 /** Hulks whose lunge has just begun: the strike that follows this tick is the lunge, not a swipe. */
@@ -1959,7 +2041,7 @@ function metPack(pack: Pack) {
   const firsts: { id: string; e: Enemy }[] = []
   for (const e of pack.members) {
     let id: string | undefined
-    if (isBoss(e)) id = e.def.roster
+    if (isBoss(e)) id = bossPage(e.def) ?? undefined
     else if (pack.elite?.leader === e) {
       id = elitePage(pack.elite.mod, depth)
       if (meet(save.notebook, id, depth, run.met)) wrote = true
@@ -1988,6 +2070,11 @@ function metPack(pack: Pack) {
   if (wrote || pack.elite) store.write()
 }
 
+/** A boss's page: its def's, but the Engine's is a Line page, unmet-only (notebook.ts LINE_DONORS.engine); null: unwritten. */
+function bossPage(def: BossDef): string | null {
+  return def.kind === 'engine' && linePagesActive() ? linePage('engine') : def.roster
+}
+
 /** A body's own page when it has one whatever the level's names are: a Lobber's, a slag heap's mites', the Line's three. */
 function pageOf(e: Enemy, pack: Pack): string | null | undefined {
   if (e.variant === 'lobber') return LOBBER_PAGE
@@ -2005,7 +2092,7 @@ function pageOf(e: Enemy, pack: Pack): string | null | undefined {
 function stampLine(id: string) {
   const e = save.notebook[id]
   if (!e || e.r) return
-  for (const role of ['signal', 'handcar', 'sleepers'] as const) if (linePage(role) === id) e.r = role
+  for (const role of ['signal', 'handcar', 'sleepers', 'engine'] as const) if (linePage(role) === id) e.r = role
 }
 
 /** Felled: counted on its page, written with the next event write. Adds count for nothing. */
@@ -2013,7 +2100,7 @@ function felled(kind: Archetype, pack: Pack, wasElite: boolean, summoned: boolea
   if (run.dev || summoned) return
   let id: string | undefined
   // the boss is still combat's on the tick it's felled: bossDown clears it after
-  if (kind === 'boss') id = combat.boss?.def.roster ?? BOSS_PAGE
+  if (kind === 'boss') id = combat.boss ? bossPage(combat.boss.def) ?? undefined : BOSS_PAGE
   else if (own && !wasElite) id = own
   // a Line body with no page: felled unwritten, like the mender
   else if (own === null && !wasElite) id = undefined
@@ -2430,7 +2517,7 @@ let bossWasOpen = false
 const BOSS_COPY: Record<BossKind, { phase2: string; open: (pan: number) => void }> = {
   assembler: { phase2: 'the Assembler overloads', open: (pan) => sfx.clang(pan) },
   arbiter: { phase2: 'the Arbiter opens its second eye', open: (pan) => sfx.vent(pan) },
-  // stage C; until then only a DEV ?engine=1 meets it (an Assembler under its def)
+  // the Engine's words are PLACEHOLDER too; it meets only where bossFor gives ENGINE_DEF (ENGINE_ON_LINE, or a DEV ?engine=1)
   engine: { phase2: 'the Engine runs both ways', open: (pan) => sfx.clang(pan) },
 }
 
@@ -3969,6 +4056,7 @@ function simulate(realDt: number) {
   still.planted = combat.inStance
   thiefFx(dt)
   menderLog()
+  engineVoice()
   trackDay(dt)
   partFx.update(dt)
   loot.update(dt, still.pos)
@@ -4182,9 +4270,9 @@ function placeNow(): PlaceDef {
 let moodLast: AmbienceMood = 'crawl'
 
 /** The room tone for where he is: the place's, a boss level's own. */
-function moodNow() {
+function moodNow(): AmbienceMood {
   const place = placeNow()
-  return level?.boss ? place.ambience.boss : place.ambience.crawl
+  return level?.boss ? (bossHere(run.depth)?.arena === 'roundhouse' ? 'roundhouse' : place.ambience.boss) : place.ambience.crawl
 }
 
 /** A boss that never walks has a footprint: he's kept out of it, as out of a wall. */

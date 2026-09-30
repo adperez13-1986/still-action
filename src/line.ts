@@ -87,6 +87,8 @@ export function distToSpan(x: number, z: number, ax: number, az: number, bx: num
 /** Worn steel on the live rails; rust on the dead. INV: the siding rail never carries a tell. */
 const LIVE_RAIL = 0x4b4e52
 const SIDING_RAIL = 0x46362c
+/** The roundhouse's steel, darker than the Line's: at 0.3 metal it is lit by diffuse where the Line's is lit by its sheen. */
+const TRACK_RAIL = 0x2a2c2f
 const RAIL = { w: 0.09, h: 0.12, sleeper: { w: 1.6, h: 0.08, d: 0.25, every: 0.8 } }
 /** The floor tiles stand up to ~0.1 (DECAL_Y): the track is laid on them, not in them. */
 const BED = 0.06
@@ -98,6 +100,8 @@ const BUFFER = { beam: [1.6, 0.45, 0.3] as const, beamY: 0.55, post: [0.2, 0.8, 
 
 interface PieceMats {
   live: THREE.MeshStandardMaterial
+  /** The roundhouse's live steel (C9): rougher and less metal than the Line's, so no rail catches the warm light as a near-white streak. */
+  trackLive: THREE.MeshStandardMaterial
   dead: THREE.MeshStandardMaterial
   wood: THREE.MeshStandardMaterial
   iron: THREE.MeshStandardMaterial
@@ -111,6 +115,10 @@ function pieceMats(): PieceMats {
   const live = new THREE.MeshStandardMaterial({ color: LIVE_RAIL, metalness: 0.8, roughness: 0.4 })
   // streaks along the rail: drawn steel, polished by the wheels
   finish(live, { scale: [2, 2, 18], grain: 0.18, roughVar: 0.2, tone: [1.3, 1.3, 1.32], mask: 0.62, toneRough: -0.15, toneMetal: 0.1, bump: 0.1 })
+  // the roundhouse's rails lie in the arena's one warm light with the horizon's tell over them: at 0.4 / 0.8 the top edge of a rail caught it as a
+  // cream line that blooms to white. The same colour and streaks, worn duller; the Line's own lanes keep `live`.
+  const trackLive = new THREE.MeshStandardMaterial({ color: TRACK_RAIL, metalness: 0.3, roughness: 0.8 })
+  finish(trackLive, { scale: [2, 2, 18], grain: 0.18, roughVar: 0.1, tone: [1.3, 1.3, 1.32], mask: 0.62, toneRough: 0, toneMetal: 0, bump: 0.1 })
   const dead = new THREE.MeshStandardMaterial({ color: SIDING_RAIL, metalness: 0.3, roughness: 0.9 })
   const wood = new THREE.MeshStandardMaterial({ color: 0xffffff })
   skin(wood, 'wood', { gain: 0.5 })
@@ -121,7 +129,7 @@ function pieceMats(): PieceMats {
   skin(paving, 'paving', { gain: 1.6 })
   // the lamp is the lane's tell (stage A4): banked at rest, like a sleeping core. INV: emissive nothing, ever
   const lamp = new THREE.MeshBasicMaterial({ color: 0xffffff, fog: false })
-  mats = { live, dead, wood, iron, paving, lamp }
+  mats = { live, trackLive, dead, wood, iron, paving, lamp }
   return mats
 }
 let unitBox: THREE.BoxGeometry | null = null
@@ -265,7 +273,7 @@ export function buildTrackPieces(runs: readonly { ax: number; az: number; bx: nu
   const group = new THREE.Group()
   group.name = 'track'
   const sets: InstSets = new Map()
-  for (const r of runs) trackIn(sets, m, r.ax, r.az, r.bx, r.bz, r.rail === 'live' ? m.live : m.dead, r.rail === 'live' ? 'rail:live' : 'rail:siding')
+  for (const r of runs) trackIn(sets, m, r.ax, r.az, r.bx, r.bz, r.rail === 'live' ? m.trackLive : m.dead, r.rail === 'live' ? 'rail:live' : 'rail:siding')
   for (const b of buffers) bufferIn(sets, m, b.x, b.z, Math.sin(b.yaw), Math.cos(b.yaw))
   for (const [name, s] of sets) buildIn(group, name, s.mat, s.geo, s.list)
   return group

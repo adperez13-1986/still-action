@@ -101,8 +101,8 @@ function rng(seed: number) {
   return () => (s = (s * 16807) % 2147483647) / 2147483647
 }
 
-/** The Line's three new bodies, each of which needs a page of its own (the Engine's and the Porter's wait for stages C and D). */
-export type LineRole = 'signal' | 'handcar' | 'sleepers'
+/** The Line's bodies that take a page of a name he may not have met yet: the three crawl bodies, and the Engine (stage C; the Porter's waits for stage D). */
+export type LineRole = 'signal' | 'handcar' | 'sleepers' | 'engine'
 /**
  * The pages a Line body may take, all blank-line pages of a name he may not have met yet (never `raging-hull` or
  * `drifting-frame`, which stages C and D will take). Only a page he has never met can change role (INV-N2): a page he
@@ -112,11 +112,16 @@ export const LINE_DONORS: Record<LineRole, readonly RosterId[]> = {
   signal: ['signal-jammer', 'thermal-scanner', 'glitch-node'],
   handcar: ['feedback-loop', 'phase-drone'],
   sleepers: ['conduit-spider', 'strain-siphon', 'void-leech'],
+  /**
+   * The Engine's page. SPEC's raging-hull while he hasn't met it; else echo-shell, the one page the live game never assigns (role
+   * 'reserved', never in namesFor), so it is unmet on every save and a boss is never unwritten. PLACEHOLDER choice: Adrian's (STAGE-C §9).
+   */
+  engine: ['raging-hull', 'echo-shell'],
 }
 const LINE_ROLES = Object.keys(LINE_DONORS) as LineRole[]
 
 let linePagesOn = false
-const chosen: Record<LineRole, RosterId | null> = { signal: null, handcar: null, sleepers: null }
+const chosen: Record<LineRole, RosterId | null> = { signal: null, handcar: null, sleepers: null, engine: null }
 
 /**
  * INV-N1: while off, every roster lookup is exactly today's (namesFor, WHAT, the pages' order). main sets it once at
@@ -140,9 +145,9 @@ export const linePagesActive = () => linePagesOn
 /** A Line body's page, or null: off, or every donor already met as something else. */
 export const linePage = (role: LineRole): RosterId | null => chosen[role]
 
-/** A page's role and band now: the Line body's role, band 'any', for a chosen donor; its own otherwise. */
+/** A page's role and band now: the Line body's role, band 'any', for a chosen donor (the Engine's page reads as a boss's); its own otherwise. */
 export function roleOf(r: RosterEntry): { role: RosterRole; band: RosterEntry['band'] } {
-  if (linePagesOn) for (const role of LINE_ROLES) if (chosen[role] === r.id) return { role, band: 'any' }
+  if (linePagesOn) for (const role of LINE_ROLES) if (chosen[role] === r.id) return { role: role === 'engine' ? 'boss' : role, band: 'any' }
   return { role: r.role, band: r.band }
 }
 

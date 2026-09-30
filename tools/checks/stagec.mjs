@@ -1,6 +1,6 @@
 /**
  * The stage C checks (design/area3/STAGE-C.md §4): `node tools/checks/stagec.mjs [K-N1a ...]` runs all of them, or the ids
- * listed. Each step adds its own checks here, on lib.mjs's `suite()`, as stageb.mjs does (C1-C8: K-N1a, K-N1b, K-N2a, K-N2b, K-N3, K-N4-K-N8, K-N10-K-N15, K-N17, K-N18, K-N21, K-N22). The baselines
+ * listed. Each step adds its own checks here, on lib.mjs's `suite()`, as stageb.mjs does (C1-C9: K-N1a, K-N1b, K-N2a, K-N2b, K-N3, K-N4-K-N8, K-N10-K-N15, K-N17, K-N18, K-N19-K-N22, K-S5, K-E9c). The baselines
  * (K-90, K-90L, K-90F) are baseline.mjs's and fights.mjs's; stage C never re-captures them.
  *
  * The short forms of STAGE-C.md §4, as queries (every one is ?save=memory and a dev run straight into a level):
@@ -9,7 +9,8 @@
  *   ARENA  a clean test floor with the Engine on it: `__arena()`, `__spawn('boss', 9, 0, false, 'engine')` (the track round the origin)
  *   OFF, ON  stageb.mjs's: the 6-depth page, and the 9-depth page
  */
-import { assert, evalJson, suite } from './lib.mjs'
+import { readFileSync } from 'node:fs'
+import { REPO, assert, assertEq, evalJson, suite } from './lib.mjs'
 
 const ENG6 = '?depth=1&save=memory&line=1&engine=1'
 const ENG9 = '?depth=1&save=memory&roads=1&line=1&engine=1'
@@ -1766,5 +1767,243 @@ const resumeCheck = (query, order, roads, expectDay) => check('K-N22', query, as
 // 9 depths: Line-first road (III at 6 holds the light); 6 depths: the Engine at 6 is the last (first dark, snapped by day.enter)
 resumeCheck('?roads=1&line=1&engine=1', 'III', true, 'held')
 resumeCheck('?line=1&engine=1', 'III', false, 'dark')
+
+
+// --- The dressing (C9) -----------------------------------------------------------------------------------------------------
+
+const NAMES = JSON.parse(readFileSync(REPO + 'tools/checks/baseline/names.json', 'utf8'))
+
+/**
+ * K-N19: the Engine's page (STAGE-C 2.7), unmet-only as stage B's Line pages are. Fresh: raging-hull, and the rams at 4-9 lose it (two names left);
+ * raging-hull met as a ram (no `r`): echo-shell, the rams keep it; met as the Engine (`r: 'engine'`): raging-hull again. A meeting of the Engine on a non-dev
+ * run writes the chosen page with r 'engine', its felling counts a kill, and the page reads 'the boss'.
+ */
+const PAGES = `
+  const entry = (r) => ({ f: '2026-09-01', m: 1, k: 0, d: 1, ...(r ? { r } : {}) })
+  const rams = () => { const o = {}; for (let d = 4; d <= 9; d++) o[d] = W.__namesFor('charger', d); return o }
+  const seed = (nb) => { W.__setSave({ notebook: nb }); W.__setLinePages(true); return { page: W.__linePage('engine'), rams: rams() } }
+`
+check('K-N19', ENG6, async ({ page }) => {
+  const got = await inPage(page, PAGES + `
+    const { roleOf, ROSTER_BY_ID, WHAT } = await import('/src/notebook.ts')
+    try {
+      W.__setSave(null)
+      W.__setLinePages(true)
+      const out = { fresh: { page: W.__linePage('engine'), rams: rams() } }
+      out.hullMet = seed({ 'raging-hull': entry() })
+      out.hullR = seed({ 'raging-hull': entry('engine') })
+      out.echoR = seed({ 'raging-hull': entry(), 'echo-shell': entry('engine') })
+      W.__setSave(null)
+      W.__setLinePages(true)
+      out.role = roleOf(ROSTER_BY_ID.get('raging-hull')).role
+      out.what = WHAT[out.role]
+      // a non-dev meeting, fresh: the page is written on the wake with its role, and the felling counts
+      W.__run.dev = false
+      enterEngine('III', 6, 1)
+      wake()
+      out.met = JSON.parse(JSON.stringify(W.__notebook()['raging-hull'] ?? null))
+      out.others = Object.keys(W.__notebook()).filter((id) => id !== 'raging-hull')
+      W.__killBoss()
+      tick(6)
+      out.felled = JSON.parse(JSON.stringify(W.__notebook()['raging-hull'] ?? null))
+      // raging-hull already met as a ram: the Engine is written on echo-shell, and the ram's page is left alone
+      W.__setSave({ notebook: { 'raging-hull': entry() } })
+      W.__setLinePages(true)
+      enterEngine('III', 6, 2)
+      wake()
+      out.echoMet = JSON.parse(JSON.stringify({ hull: W.__notebook()['raging-hull'], echo: W.__notebook()['echo-shell'] ?? null }))
+      W.__killBoss()
+      tick(6)
+      out.echoFelled = JSON.parse(JSON.stringify(W.__notebook()['echo-shell'] ?? null))
+      return out
+    } finally { W.__run.dev = true; W.__setSave(null); W.__setLinePages(true) }`)
+  assertEq('fresh: the Engine takes raging-hull', got.fresh.page, 'raging-hull')
+  for (let d = 4; d <= 9; d++) {
+    const r = got.fresh.rams[d]
+    assert(!r.includes('raging-hull') && r.length === 2, `fresh, the rams at ${d}: ${r} (want two names, raging-hull among none)`)
+    assertEq(`fresh, the rams at ${d} are names.json's less raging-hull`, r, NAMES.names.charger[d].filter((id) => id !== 'raging-hull'))
+  }
+  assertEq('raging-hull met as a ram: the Engine takes echo-shell', got.hullMet.page, 'echo-shell')
+  for (let d = 4; d <= 9; d++) assertEq(`raging-hull met as a ram keeps its place among the rams at ${d}`, got.hullMet.rams[d], NAMES.names.charger[d])
+  assertEq('raging-hull met as the Engine: its page again', got.hullR.page, 'raging-hull')
+  assert(got.hullR.rams[4].length === 2 && !got.hullR.rams[4].includes('raging-hull'), `raging-hull met as the Engine is still a ram: ${got.hullR.rams[4]}`)
+  assertEq('echo-shell met as the Engine (raging-hull as a ram): echo-shell', got.echoR.page, 'echo-shell')
+  assertEq("the page's role", got.role, 'boss')
+  assertEq("the page's WHAT", got.what, 'the boss')
+  assert(got.met && got.met.r === 'engine' && got.met.m === 1 && got.met.k === 0, `meeting the Engine wrote ${JSON.stringify(got.met)}, want r 'engine', m 1, k 0`)
+  assert(got.others.length === 0, `meeting the Engine wrote other pages too: ${got.others}`)
+  assert(got.felled && got.felled.r === 'engine' && got.felled.k === 1, `felling the Engine left ${JSON.stringify(got.felled)}, want k 1`)
+  assert(got.echoMet.hull && got.echoMet.hull.r === undefined && got.echoMet.hull.m === 1, `the ram's page raging-hull was changed: ${JSON.stringify(got.echoMet.hull)}`)
+  assert(got.echoMet.echo && got.echoMet.echo.r === 'engine' && got.echoMet.echo.m === 1, `with raging-hull met, the Engine wrote echo-shell as ${JSON.stringify(got.echoMet.echo)}`)
+  assert(got.echoFelled && got.echoFelled.k === 1, `felling the Engine on echo-shell: ${JSON.stringify(got.echoFelled)}`)
+  console.log(`INFO K-N19: fresh raging-hull (the rams 4-9 keep 2 names); hull met as a ram: echo-shell; as the Engine: raging-hull; a meeting writes ${JSON.stringify(got.met)}, felled k ${got.felled.k}`)
+})
+check('K-N19', OFF, async ({ page }) => {
+  const got = await inPage(page, `
+    const out = { page: W.__linePage('engine'), rams: {} }
+    for (let d = 1; d <= 9; d++) out.rams[d] = W.__namesFor('charger', d)
+    return out`)
+  assertEq('OFF: no Engine page', got.page, null)
+  for (let d = 1; d <= 9; d++) assertEq(`OFF: the rams at ${d} equal names.json`, got.rams[d], NAMES.names.charger[d])
+})
+
+/** K-N20's page-side helper (stageb's K-E12 MOOD, again): the mood a level reports, and the one the frame loop has passed after a few frames. */
+const MOOD = `
+  const settle = async (want) => {
+    await new Promise((r) => setTimeout(r, 200))
+    for (let i = 0; i < 150; i++) {
+      if (W.__ambience() === want) return want
+      await new Promise((r) => setTimeout(r, 20))
+    }
+    return W.__ambience()
+  }
+  const moodAt = async (route, depth) => {
+    W.__hold(true)
+    W.__run.route = route
+    W.__enter(depth, 1)
+    W.__step(0.5)
+    const look = W.__look()
+    return { route, depth, look: look.ambience, boss: !!W.__boss(), def: W.__combat.boss ? W.__combat.boss.def.kind : null, settled: await settle(look.ambience) }
+  }
+`
+const moodCheck = (query, cases) => check('K-N20', query, async ({ page }) => {
+  const got = await inPage(page, MOOD + `
+    const out = []
+    for (const [route, depth] of arg) out.push(await moodAt(route, depth))
+    return out`, cases.map(([r, d]) => [r, d]))
+  for (const [i, [route, depth, want, engine]] of cases.entries()) {
+    const m = got[i]
+    assert(m.look === want, `${query} ${route}${depth}: __look().ambience is ${m.look}, want ${want}`)
+    assert(m.settled === want, `${query} ${route}${depth}: after __step(0.5) the frame loop passed ${m.settled}, want ${want}`)
+    assert((m.def === 'engine') === engine, `${query} ${route}${depth}: the boss is ${m.def}, ${engine ? 'want the Engine' : 'want no Engine'}`)
+  }
+  console.log(`INFO K-N20 ${query}: ${got.map((m) => `${m.route}${m.depth} ${m.settled}`).join(', ')}`)
+})
+// the Engine's level: roundhouse; the Line's other levels stay 'line'; the stand-in's station (no engine flag) is 'line' whatever (stageb K-E12 holds the rest)
+moodCheck(ENG6, [['III', 4, 'line', false], ['III', 5, 'line', false], ['III', 6, 'roundhouse', true]])
+moodCheck(ENG9, [['III', 5, 'line', false], ['III', 6, 'roundhouse', true], ['II', 8, 'line', false], ['II', 9, 'roundhouse', true]])
+moodCheck('?depth=1&save=memory&roads=1&line=1', [['III', 6, 'line', false], ['II', 9, 'line', false]])
+
+/** In the page: the audio log's names since a mark, counted. */
+const HEARD = `
+  const heardSince = (at) => { const o = {}; for (const h of W.__heard.slice(at)) o[h.name] = (o[h.name] || 0) + 1; return o }
+`
+check('K-S5', ENG6, async ({ page }) => {
+  const got = await inPage(page, HEARD + NEAR_LEVER + `
+    enterEngine('III', 6, arg, { steam: true, cinder: true, gap: [1, 2] })
+    const { c, away } = roomOf()
+    const B = W.__combat.boss
+    const rot = () => B.group.rotation.y
+    const mark = W.__heard.length
+    const logAt = W.__enemyLog.length
+    let prevAttack = 'none', steamStarts = 0, cinderStarts = 0, runStarts = 0, wasMoving = false
+    const obs = () => {
+      const b = W.__boss()
+      if (!b) return
+      if (prevAttack === 'none' && b.attack === 'steamTrack') steamStarts++
+      if (prevAttack === 'none' && b.attack === 'cinderAim') cinderStarts++
+      prevAttack = b.attack
+      const moving = ['run', 'siding', 'backing'].includes(b.state)
+      if (moving && !wasMoving) runStarts++
+      wasMoving = moving
+    }
+    const step = (n, before) => { for (let i = 0; i < n; i++) { tick(1, before); obs() } }
+    const stepUntil = (pred, maxS, before) => { for (let i = 0; i < maxS * 60; i++) { if (pred()) return i / 60; step(1, before) } return -1 }
+    const out = { at: {} }
+    // 1. it wakes: one whistle, one horn, and the run loop starts
+    W.__still.pos.set(c.x - away.x * 7, 0, c.z - away.z * 7)
+    out.woke = stepUntil(() => W.__boss().state === 'run', 5)
+    out.at.wake = heardSince(mark)
+    // 2. beside its path (inside the steam's range, off the strip it lights): steams, each with its windup and its scald
+    const beside = () => { const b = W.__boss(), y = rot(); W.__still.pos.set(b.x + Math.cos(y) * 4.5, 0, b.z - Math.sin(y) * 4.5) }
+    out.steamed = stepUntil(() => steamStarts >= 2, 40, beside)
+    // 3. at the centre out of its reach: a cinder, its lob aim and its mortar
+    W.__still.pos.set(c.x, 0, c.z)
+    out.lobbed = stepUntil(() => cinderStarts >= 1, 30, () => W.__still.pos.set(c.x, 0, c.z))
+    // 4. two windows: at the lever, a cast throws it, and it derails
+    for (let n = 0; n < 2; n++) {
+      out['window' + n] = stepUntil(() => W.__boss().window && W.__boss().window.open, 60, () => W.__still.pos.set(c.x, 0, c.z))
+      const side = W.__boss().window && W.__boss().window.side
+      if (!side) break
+      const p = leverPos(side)
+      W.__still.pos.set(p.x, 0, p.z)
+      W.__fire('arms')
+      out['derail' + n] = stepUntil(() => W.__boss().state === 'derailed', 15, () => W.__still.pos.set(p.x, 0, p.z))
+      out['run' + n] = stepUntil(() => W.__boss().state === 'run' && !W.__boss().window, 15, () => W.__still.pos.set(c.x, 0, c.z))
+    }
+    // 5. phase 2: a reversal (its window closed first), each with its judder
+    B.hp = B.maxHp * 0.5
+    B.wagonIn = 1e9
+    out.judder = stepUntil(() => W.__boss().state === 'judder', 40, () => { W.__combat.boss.wagonIn = 1e9; W.__still.pos.set(c.x, 0, c.z) })
+    step(80, () => W.__still.pos.set(c.x, 0, c.z))
+    // 6. a loose wagon: settles on the loop, and the nose meets it and smashes it
+    B.wagonIn = 0
+    out.smashed = stepUntil(() => W.__enemyLog.slice(logAt).some((x) => x.ev.kind === 'engine' && x.ev.what === 'wagonSmash'), 60, () => { W.__combat.boss.reverseIn = 1e9; W.__still.pos.set(c.x, 0, c.z) })
+    // a dead engine runs no longer
+    W.__killBoss()
+    step(20)
+    const ev = (w) => W.__enemyLog.slice(logAt).filter((x) => x.ev.kind === 'engine' && x.ev.what === w).length
+    return {
+      ...out, heard: heardSince(mark), live: W.__heard.slice(mark).some((h) => h.live), steamStarts, cinderStarts, runStarts,
+      events: { whistle: ev('whistle'), window: ev('window'), throw: ev('throw'), throwBack: ev('throwBack'), derail: ev('derail'), steam: ev('steam'), cinder: ev('cinder'), judder: ev('judder'), wagon: ev('wagon'), wagonSettle: ev('wagonSettle'), wagonSmash: ev('wagonSmash') },
+    }`, 1)
+  const H = got.heard, E = got.events
+  const why = (m) => { throw new Error(`${m} (heard ${JSON.stringify(H)}, events ${JSON.stringify(E)}, steam starts ${got.steamStarts}, cinder starts ${got.cinderStarts}, run starts ${got.runStarts})`) }
+  if (got.woke < 0) why('it did not wake')
+  if (got.steamed < 0) why('no two steams in 40 s beside its path')
+  if (got.lobbed < 0) why('no cinder in 30 s out of its reach')
+  if (got.derail0 < 0 || got.derail1 < 0 || got.judder < 0) why(`the script fell short: derails ${got.derail0} ${got.derail1}, judder ${got.judder}`)
+  const n = (k) => H[k] || 0
+  if (n('horn') !== 1 || E.whistle !== 1 || (got.at.wake.horn || 0) !== 1) why(`the horn: ${n('horn')} heard (${got.at.wake.horn || 0} by the wake), ${E.whistle} whistle event(s)`)
+  if (n('engineRun') < 1 || n('engineRun') !== got.runStarts) why(`engineRun heard ${n('engineRun')} times for ${got.runStarts} starts of its motion`)
+  if ((got.at.wake.engineRun || 0) < 1) why('the run loop had not started when it began to run')
+  if (n('pointsChime') !== E.window || E.window < 2) why(`pointsChime ${n('pointsChime')} for ${E.window} windows`)
+  if (n('latch') !== E.throw + E.throwBack || E.throw < 2) why(`latch ${n('latch')} for ${E.throw} throws and ${E.throwBack} thrown back`)
+  if (n('ramCrash') !== E.derail || E.derail < 2) why(`ramCrash ${n('ramCrash')} for ${E.derail} derails`)
+  if (n('windup') !== got.steamStarts || n('scald') !== E.steam || E.steam < 2) why(`windup ${n('windup')} / scald ${n('scald')} for ${got.steamStarts} steam windups and ${E.steam} jets`)
+  if (n('lobAim') !== got.cinderStarts || n('mortar') !== E.cinder || E.cinder < 1) why(`lobAim ${n('lobAim')} / mortar ${n('mortar')} for ${got.cinderStarts} cinder aims and ${E.cinder} launches`)
+  if (n('judder') !== E.judder || E.judder < 1) why(`judder heard ${n('judder')} for ${E.judder} reversals`)
+  if (got.smashed < 0 || E.wagonSettle < 1 || E.wagonSmash < 1) why(`the wagon: smashed after ${got.smashed} s, ${E.wagonSettle} settles, ${E.wagonSmash} smashes`)
+  if (n('plateDull') < E.wagonSettle) why(`plateDull ${n('plateDull')} for ${E.wagonSettle} wagons settled`)
+  if (n('smash') < E.wagonSmash) why(`smash ${n('smash')} for ${E.wagonSmash} wagons smashed`)
+  if (n('aim') || n('rev')) why(`aim (${n('aim')}) or rev (${n('rev')}) was heard: the Engine has no sentinel's whistle or ram's engine`)
+  console.log(`INFO K-S5: one fight: ${Object.entries(H).map(([k, v]) => `${k} ${v}`).join(', ')} (headless: ${got.live ? 'the audio context ran' : 'nothing audible, only asked for'})`)
+})
+
+check('K-E9c', ENG6, async ({ page }) => {
+  const got = await inPage(page, RUNNING + NEAR_LEVER + `
+    const L = (col) => col.getHSL({}).l
+    const CORE = new (W.__combat.boss.coreMat.color.constructor)(0xff5a3c)
+    const coreL = L(CORE)
+    const B = W.__combat.boss
+    const mats = { core: B.coreMat, lamp: B.lampMat, slitHalo: B.slitHalo, lampHalo: B.lampHalo, fireHalo: B.fireHalo, fireGlow: B.fireGlowMat }
+    const max = {}, seen = {}
+    for (const k of Object.keys(mats)) { max[k] = 0; seen[k] = 1 }
+    let derailed = 0, doorMax = 0
+    const sample = () => {
+      for (const [k, m] of Object.entries(mats)) { const l = L(m.color); max[k] = Math.max(max[k], l); seen[k] = Math.min(seen[k], l) }
+      if (W.__boss().state === 'derailed') derailed++
+      doorMax = Math.max(doorMax, B.door)
+    }
+    // one derail from the lever, sampled every tick from the window to the run again
+    if (untilWindow(40) < 0) return { bad: 'no window in 40 s' }
+    const side = W.__boss().window.side
+    const p = leverPos(side)
+    for (let i = 0; i < 60; i++) { W.__still.pos.set(c.x, 0, c.z); tick(1); sample() }
+    W.__still.pos.set(p.x, 0, p.z)
+    W.__fire('arms')
+    for (let i = 0; i < 60 * 12; i++) { W.__still.pos.set(p.x, 0, p.z); tick(1); sample() }
+    // the lever ring and its disc are Still's cold, in his own shader path
+    const cold = [B.ringMat.uniforms.uCold.value, B.discMat.uniforms.uCold.value]
+    const enamel = W.__hides.enamel
+    return { max, min: seen, coreL, derailed, doorMax, cold, coreHex: mats.core.color.getHex(), haloHex: mats.fireHalo.color.getHex(), enamel: !!enamel }`, 1)
+  if (got.bad) throw new Error(got.bad)
+  assert(got.derailed > 90 && got.doorMax > 0.9, `the derail lasted ${got.derailed} ticks with the door ${got.doorMax} open: the check proves nothing`)
+  assert(got.max.core - got.min.core > 0.02, `the firebox's lightness never moved (${got.min.core} .. ${got.max.core}): the check proves nothing`)
+  for (const [k, l] of Object.entries(got.max)) assert(l <= got.coreL + 1e-6, `INV-C1: the ${k}'s lightness went ${l.toFixed(6)}, over CORE's ${got.coreL.toFixed(6)}`)
+  assertEq("the lever ring's and disc's uCold", got.cold, [1, 1])
+  assert(got.enamel, 'HIDES.enamel is missing')
+  console.log(`INFO K-E9c: over one derail (${got.derailed} ticks, door open ${got.doorMax.toFixed(2)}): firebox lightness ${got.min.core.toFixed(3)} .. ${got.max.core.toFixed(3)}, halo ${got.max.fireHalo.toFixed(3)}, glow ${got.max.fireGlow.toFixed(3)}, against CORE's ${got.coreL.toFixed(3)}; the ring is cold`)
+})
 
 process.exit(await run(process.argv.slice(2)))

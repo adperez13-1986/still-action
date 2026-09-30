@@ -88,7 +88,7 @@ const SMOKE_FRAG = /* glsl */ `
 /**
  * The threat's sparks (C7, the Engine's judder): a ragged hot core, deep red at its rim and orange at its heart, flickering on its own beat
  * (it only ever dips: 9 to 25 Hz), never white. The additive pool's sparks are lightened toward white by up to half at birth and glow smooth,
- * which under ACES + bloom reads as a flat peach dot; these carry their colour as given and break up in time.
+ * which under ACES + bloom reads as a flat peach dot; these carry their colour as given and break up in time (C9: dimmed to 0.35 / 0.75 of it, so a pile of flecks over the warm floor stays red).
  */
 const HOT_FRAG = /* glsl */ `
   varying float vAlpha;
@@ -109,7 +109,7 @@ const HOT_FRAG = /* glsl */ `
     float flick = 1.0 - 0.55 * (0.5 + 0.5 * sin(6.2832 * (uTime * beat + vSeed * 7.0)));
     float a = pow(core, 1.1) * vAlpha * flick;
     if (a < 0.01) discard;
-    gl_FragColor = vec4(mix(vColor * 0.45, vColor * 0.95, smoothstep(0.0, 0.8, core)), a);
+    gl_FragColor = vec4(mix(vColor * 0.35, vColor * 0.75, smoothstep(0.0, 0.8, core)), a);
   }
 `
 
@@ -319,11 +319,11 @@ export class Vfx {
 
   /**
    * Sparks in the threat language (HOT_FRAG): short-lived, flickering, deep red to orange, thrown mostly along `dir` if given. Nothing is
-   * lightened toward white; `speed` is the fastest, and the smallest are a third of it.
+   * lightened toward white; `speed` is the fastest, and the smallest are a third of it. `size` scales the flecks (1: C7's).
    */
-  hotSparks(at: THREE.Vector3, count: number, speed = 5, dir?: THREE.Vector3, spread = 0.8) {
+  hotSparks(at: THREE.Vector3, count: number, speed = 5, dir?: THREE.Vector3, spread = 0.8, size = 1) {
     if (!this.hot) {
-      this.hot = new Pool(320, HOT_FRAG, THREE.AdditiveBlending)
+      this.hot = new Pool(480, HOT_FRAG, THREE.AdditiveBlending)
       this.scene.add(this.hot.points)
     }
     for (let i = 0; i < count; i++) {
@@ -333,7 +333,7 @@ export class Vfx {
       this.hot.spawn({
         x: at.x, y: at.y, z: at.z,
         vx: Math.sin(a) * s, vy: rnd(1.2, 4), vz: Math.cos(a) * s,
-        max: rnd(0.22, 0.5), size: rnd(0.2, 0.36), gravity: 14, drag: 2,
+        max: rnd(0.22, 0.5), size: rnd(0.2, 0.36) * size, gravity: 14, drag: 2,
         r: c.r, g: c.g, b: c.b,
       })
     }

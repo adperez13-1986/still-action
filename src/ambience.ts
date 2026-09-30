@@ -26,8 +26,11 @@ import { beatClock } from './music'
  * And home, the Workshop: the stone goes, and a small wooden room is left with
  * a clock ticking in it and Grace's tone under everything, never ending.
  */
-/** 'square': the quarter's open air round the Arbiter, and quieter still. 'line': the quarter's air over rails. */
-export type AmbienceMood = 'crawl' | 'boss' | 'workshop' | 'works' | 'quarter' | 'square' | 'line'
+/**
+ * 'square': the quarter's open air round the Arbiter, and quieter still. 'line': the quarter's air over rails.
+ * 'roundhouse': the Line's air round the Engine: the same open air and cooling rails, no far shunting (the engine is here), and the boss's steam.
+ */
+export type AmbienceMood = 'crawl' | 'boss' | 'workshop' | 'works' | 'quarter' | 'square' | 'line' | 'roundhouse'
 
 interface Engine {
   ctx: AudioContext
@@ -243,7 +246,7 @@ function clockTick(e: Engine, when: number) {
 }
 
 /** The reverb the mood is in: the Works' iron room, or the stone one. */
-const roomOf = (e: Engine) => (mood === 'works' ? e.worksRoom : mood === 'quarter' || mood === 'square' || mood === 'line' ? e.airRoom : e.room)
+const roomOf = (e: Engine) => (mood === 'works' ? e.worksRoom : mood === 'quarter' || mood === 'square' || mood === 'line' || mood === 'roundhouse' ? e.airRoom : e.room)
 
 function drip(e: Engine) {
   const { ctx } = e
@@ -474,7 +477,8 @@ function tick() {
   e.nextTick = t + 1
   const boss = mood === 'boss'
   const works = mood === 'works'
-  const line = mood === 'line'
+  const roundhouse = mood === 'roundhouse'
+  const line = mood === 'line' || roundhouse
   const air = mood === 'quarter' || mood === 'square' || line
   if (works) forge(e)
   if (line) {
@@ -483,7 +487,7 @@ function tick() {
       railTick(e)
       e.nextRail = t + 6 + Math.random() * 6
     }
-    if (t >= e.nextShunt) {
+    if (!roundhouse && t >= e.nextShunt) {
       farShunt(e)
       e.nextShunt = t + 18 + Math.random() * 12
     }
@@ -511,7 +515,7 @@ function tick() {
     gust(e)
     e.nextGust = t + 6 + Math.random() * 8
   }
-  if ((boss || works) && t >= e.nextSteam) {
+  if ((boss || works || roundhouse) && t >= e.nextSteam) {
     steam(e)
     e.nextSteam = t + 3 + Math.random() * 5
   }
@@ -559,7 +563,7 @@ export function updateAmbience(next: AmbienceMood) {
     const t = engine.ctx.currentTime
     // the Works hums with the foundry at 0.6, over half the stone's tone
     engine.foundry.gain.setTargetAtTime(next === 'boss' ? 1 : next === 'works' ? 0.6 : 0, t, 1.5)
-    const open = next === 'quarter' || next === 'square' || next === 'line'
+    const open = next === 'quarter' || next === 'square' || next === 'line' || next === 'roundhouse'
     engine.toneGain.gain.setTargetAtTime(next === 'works' || open ? 0.035 : 0.07, t, 1.5)
     // the quarter: the hum lower, and the drafts a wider, lower wind
     engine.toneLp.frequency.setTargetAtTime(open ? 180 : 260, t, 1.5)

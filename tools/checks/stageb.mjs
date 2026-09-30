@@ -1790,7 +1790,7 @@ const NAMES_NOW = `
     for (const k of ${JSON.stringify(KINDS)}) { out[k] = {}; for (let d = 1; d <= 9; d++) out[k][d] = W.__namesFor(k, d) }
     return out
   }
-  const pagesNow = () => ({ signal: W.__linePage('signal'), handcar: W.__linePage('handcar'), sleepers: W.__linePage('sleepers') })
+  const pagesNow = () => ({ signal: W.__linePage('signal'), handcar: W.__linePage('handcar'), sleepers: W.__linePage('sleepers'), engine: W.__linePage('engine') })
   const entry = (r) => ({ f: '2026-09-01', m: 1, k: 0, d: 1, ...(r ? { r } : {}) })
   const seed = (nb) => { W.__setSave({ notebook: nb }); W.__setLinePages(true); return { pages: pagesNow(), ranged: W.__namesFor('ranged', 1), charger: W.__namesFor('charger', 1), swarm: W.__namesFor('swarm', 4) } }
 `
@@ -1818,7 +1818,8 @@ check('K-E10', LINE4, async ({ page }) => {
       const { WHAT } = await import('/src/notebook.ts')
       return { fresh, cases, off, what: WHAT }
     } finally { W.__setSave(null); W.__setLinePages(true) }`)
-  const chosen = { signal: 'signal-jammer', handcar: 'feedback-loop', sleepers: 'conduit-spider' }
+  // C9: the Engine's page joins the Line's (STAGE-C 2.7): raging-hull while he has not met it, so the rams lose it too
+  const chosen = { signal: 'signal-jammer', handcar: 'feedback-loop', sleepers: 'conduit-spider', engine: 'raging-hull' }
   assertEq('on, an empty notebook: the pages', got.fresh.pages, chosen)
   for (const k of KINDS) for (let d = 1; d <= 9; d++) {
     const now = got.fresh.names[k][d]
@@ -1841,7 +1842,7 @@ check('K-E10', LINE4, async ({ page }) => {
   assert(c.handcarMet.charger.includes('iron-crawler') && c.handcarMet.charger.includes('overload-core'), `rams keep both band I names (the Handcar has a page of its own): ${c.handcarMet.charger}`)
   assertEq('conduit-spider met, strain-siphon met as Sleepers: its page', c.sleepersR.pages.sleepers, 'strain-siphon')
   assert(c.sleepersR.swarm.includes('conduit-spider') && !c.sleepersR.swarm.includes('strain-siphon'), `Sleepers page leaves the mites, the met conduit-spider stays: ${c.sleepersR.swarm}`)
-  assertEq('off: no Line pages', got.off.pages, { signal: null, handcar: null, sleepers: null })
+  assertEq('off: no Line pages', got.off.pages, { signal: null, handcar: null, sleepers: null, engine: null })
   for (const k of KINDS) for (let d = 1; d <= 9; d++) assertEq(`off: ${k} at ${d}`, got.off.names[k][d], NAMES.names[k][d])
   for (const [role, word] of Object.entries(NAMES.what)) assertEq(`WHAT.${role}`, got.what[role], word)
   for (const role of ['signal', 'handcar', 'sleepers']) assert(typeof got.what[role] === 'string' && got.what[role].length > 0, `WHAT.${role} is missing`)
@@ -1852,7 +1853,7 @@ check('K-E10', OFF, async ({ page }) => {
     ${NAMES_NOW}
     const { WHAT } = await import('/src/notebook.ts')
     return { pages: pagesNow(), names: namesNow(), roster: W.__roster().map((r) => [r.id, r.name, r.role, r.band, r.mod ?? null]), what: WHAT }`)
-  assertEq('OFF: no Line pages', got.pages, { signal: null, handcar: null, sleepers: null })
+  assertEq('OFF: no Line pages', got.pages, { signal: null, handcar: null, sleepers: null, engine: null })
   for (const k of KINDS) for (let d = 1; d <= 9; d++) assertEq(`OFF: ${k} at ${d} equals names.json`, got.names[k][d], NAMES.names[k][d])
   assertEq('OFF: the roster', got.roster, NAMES.roster)
   for (const [role, word] of Object.entries(NAMES.what)) assertEq(`OFF: WHAT.${role}`, got.what[role], word)
@@ -1910,7 +1911,7 @@ check('K-E10', LINE4, async ({ page }) => {
       return out
     } finally { W.__run.dev = true; W.__setSave(null); W.__setLinePages(true); end() }`)
   bad(got)
-  assertEq('the pages a fresh notebook hands out', got.pages, { signal: 'signal-jammer', handcar: 'feedback-loop', sleepers: 'conduit-spider' })
+  assertEq('the pages a fresh notebook hands out', got.pages, { signal: 'signal-jammer', handcar: 'feedback-loop', sleepers: 'conduit-spider', engine: 'raging-hull' })
   for (const [step, id, role] of [['signal', 'signal-jammer', 'signal'], ['handcar', 'feedback-loop', 'handcar'], ['sleepers', 'conduit-spider', 'sleepers']]) {
     const met = got.steps[step + 'Met'][id]
     assert(met, `meeting the ${step} wrote no ${id} page (${Object.keys(got.steps[step + 'Met'])})`)

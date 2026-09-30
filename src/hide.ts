@@ -151,11 +151,13 @@ export const HIDES = {
    * (enamel, which stays theirs, the hazard) so it reads as a body and not a silhouette, chipped through to iron in
    * plenty; gunmetal for the bands, dome and lamp housing (brass read copper-orange under the warm light). Not the lobber's verdigris (lighter, bluer,
    * rougher) and not the Arbiter's steel. C5: rough 0.72 (was 0.28): at 0.3-0.46 the cab's flat roof caught a grazing light as a white patch; found by trying the roughness, the
-   * chip tone and the metalness alone on it, and only the roughness took it out. Fallback: mask 0.7 (fewer chips).
+   * chip tone and the metalness alone on it, and only the roughness took it out. C9: the sides and the boiler are back to 0.4 (enamel with some life: a sheen along the curve, not a flat olive
+   * veil) and the roof is held matte and dimmed in engine.ts (enamelTops: faces looking up take roughness 0.85 and 0.65 of the colour), which is where the patch was and is the
+   * pale khaki the roof went under a light overhead. Fallback: rough 0.72 with no enamelTops. Fallback for chips: mask 0.7 (fewer).
    */
   engine: {
-    body: 0x22302a, joint: 0x3a3e42, rough: 0.72, metal: 0.15, jointRough: 0.5, jointMetal: 0.6,
-    finish: { scale: [2.2, 2.2, 2.2], grain: 0.08, roughVar: 0.12, tone: [2.3, 2.05, 1.95], mask: 0.62, toneRough: 0.2, toneMetal: 0.45, bump: 0.15 },
+    body: 0x22302a, joint: 0x3a3e42, rough: 0.4, metal: 0.15, jointRough: 0.5, jointMetal: 0.6,
+    finish: { scale: [2.2, 2.2, 2.2], grain: 0.08, roughVar: 0.18, tone: [2.3, 2.05, 1.95], mask: 0.58, toneRough: 0.2, toneMetal: 0.45, bump: 0.15 },
     jointFinish: GRAIN_ONLY,
   },
   /** The Handcar (area III): lead, matte, soft, a warm grey with a brown cast: lighter than the hulk's soot, duller than the sentinel. Fallback: body 0x3d3936. */

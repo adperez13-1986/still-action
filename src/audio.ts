@@ -182,6 +182,7 @@ export function step(who: 'still' | 'hulk' | 'tripod' | 'ram' | 'boss' | 'thief'
 
 /** The crucible tilting back to aim: a creak, and a sine rising over the windup. Cut when it's broken. */
 export function lobAim(ms: number, pan: number, gain = 1): (hard?: boolean) => void {
+  heard('lobAim')
   const c = live()
   if (!c) return () => {}
   const t = c.currentTime
@@ -195,6 +196,7 @@ export function lobAim(ms: number, pan: number, gain = 1): (hard?: boolean) => v
 
 /** The launch: a soft heavy thud and a low drop. */
 export function mortar(pan: number) {
+  heard('mortar')
   const c = live()
   if (!c) return
   const d = out(c, 'enemy', pan)
@@ -204,6 +206,7 @@ export function mortar(pan: number) {
 
 /** The shell in the air: a thin falling whistle, the whole flight long. */
 export function whistle(ms: number, pan: number) {
+  heard('whistle')
   const c = live()
   if (!c) return
   tone(c, out(c, 'enemy', pan), 'sine', c.currentTime, 1400, 700, ms / 1000, 0.03, 0.05)
@@ -275,7 +278,7 @@ function live(): AudioContext | null {
 }
 
 /**
- * DEV only (STAGE-B.md §2.10): every call of a stage-B sound, and of aim / rev, in order. A headless page's AudioContext never
+ * DEV only (STAGE-B.md §2.10, STAGE-C.md §2.9): every call of a stage-B or stage-C sound, and of aim / rev, in order. A headless page's AudioContext never
  * runs (live() is null), so every sfx returns at once and nothing else proves a sound was asked for; only a phone proves it sounds right.
  */
 export const heardLog: { name: string; live: boolean }[] = []
@@ -488,6 +491,7 @@ export function hurt() {
  * dodge a hulk you aren't looking at. Returns a stop for when it dies mid-windup.
  */
 export function windup(ms: number, pan: number, gain = 1): (hard?: boolean) => void {
+  heard('windup')
   const c = live()
   if (!c) return () => {}
   const t = c.currentTime
@@ -634,6 +638,7 @@ export function blocked(pan: number) {
 
 /** A crate or barrel giving way: dry wood, a rattle of what was in it. */
 export function smash(pan: number) {
+  heard('smash')
   const c = live()
   if (!c) return
   const t = c.currentTime
@@ -876,6 +881,7 @@ export function rush(pan: number): Voice {
 
 /** A ram's face into a wall: stone and iron, and a bell of the boiler ringing (not when it's caught on the clamp). */
 export function ramCrash(pan: number, bell = true) {
+  heard('ramCrash')
   const c = live()
   if (!c) return
   const t = c.currentTime
@@ -943,6 +949,7 @@ export function hitOpen(pan: number, gain = 1) {
 
 /** A hit on shut plate: dull, the blocked-shot layer. Layered on a quieter hit(). */
 export function plateDull(pan: number) {
+  heard('plateDull')
   const c = live()
   if (!c) return
   sample(c, 'generic', out(c, 'hits', pan), 0.4, 0.9)
@@ -2099,6 +2106,7 @@ export function vent(pan: number) {
 
 /** A judder: tin ticking every 40 ms, then the clank. */
 export function judder(ms: number, pan: number) {
+  heard('judder')
   const c = live()
   if (!c) return
   const d = out(c, 'enemy', pan)
@@ -2108,9 +2116,88 @@ export function judder(ms: number, pan: number) {
 
 /** The scald going off: a burst of steam. */
 export function scald(pan: number) {
+  heard('scald')
   const c = live()
   if (!c) return
   hiss(c, out(c, 'enemy', pan), c.currentTime, 0.4, 0.5, 'highpass', 2000, 2000, 0.7)
+}
+
+/**
+ * The Engine running, a loop that follows it (STAGE-C.md 2.9; a first pass, his ear decides): chuffs at wheel rate, short 300 Hz-lowpassed
+ * noise bursts (4.2 Hz at 11 u/s: one buffer of a single chuff, looped, its rate the speed), over a 55 Hz rumble. `speed(k)` is its pace
+ * against full speed (backing out is slower); `stop(true)` cuts it dead.
+ */
+export function engineRun(pan: number): Voice {
+  heard('engineRun')
+  const c = live()
+  if (!c) return asVoice(() => {})
+  const t = c.currentTime
+  const p = livePan(c, 'enemy', pan)
+  const g = c.createGain()
+  g.gain.setValueAtTime(0.0001, t)
+  g.gain.linearRampToValueAtTime(1, t + 0.15)
+  g.connect(p)
+  // one chuff per wheel turn: a burst with a fast attack and a short tail, in a buffer as long as the period
+  const period = 1 / 4.2
+  const n = Math.floor(c.sampleRate * period)
+  const buf = c.createBuffer(1, n, c.sampleRate)
+  const d = buf.getChannelData(0)
+  for (let i = 0; i < n; i++) {
+    const x = i / c.sampleRate
+    d[i] = (Math.random() * 2 - 1) * Math.min(1, x / 0.004) * Math.exp(-x / 0.035)
+  }
+  const chuff = c.createBufferSource()
+  chuff.buffer = buf
+  chuff.loop = true
+  const lp = c.createBiquadFilter()
+  lp.type = 'lowpass'
+  lp.frequency.value = 300
+  lp.Q.value = 0.9
+  const cg = c.createGain()
+  cg.gain.value = 0.55
+  chuff.connect(lp).connect(cg).connect(g)
+  const rumble = c.createOscillator()
+  rumble.type = 'triangle'
+  rumble.frequency.value = 55
+  const rl = c.createBiquadFilter()
+  rl.type = 'lowpass'
+  rl.frequency.value = 140
+  const rg = c.createGain()
+  rg.gain.value = 0.16
+  rumble.connect(rl).connect(rg).connect(g)
+  chuff.start(t)
+  rumble.start(t)
+  let stopped = false
+  return {
+    stop: (hard) => {
+      const now = c.currentTime
+      stopped = true
+      g.gain.cancelScheduledValues(now)
+      if (hard) g.gain.setValueAtTime(0, now)
+      else g.gain.setTargetAtTime(0.0001, now, 0.08)
+      chuff.stop(now + (hard ? 0.02 : 0.6))
+      rumble.stop(now + (hard ? 0.02 : 0.6))
+    },
+    pan: (v) => p.pan.setTargetAtTime(clampPan(v), c.currentTime, 0.05),
+    speed: (k) => {
+      if (stopped) return
+      const now = c.currentTime
+      const s = Math.max(0.2, Math.min(1.5, k))
+      chuff.playbackRate.setTargetAtTime(s, now, 0.1)
+      rumble.frequency.setTargetAtTime(50 + 5 * s, now, 0.1)
+    },
+  }
+}
+
+/** A lever's window opening: two cold sine partials, 1320 and 1760 Hz, 5 ms attack, 600 ms decay, quiet (the ring is Still's colour, so is its sound). */
+export function pointsChime(pan: number) {
+  heard('pointsChime')
+  const c = live()
+  if (!c) return
+  const t = c.currentTime
+  const d = out(c, 'hits', pan)
+  tone(c, d, 'sine', t, 1320, 1320, 0.6, 0.06, 0.005)
+  tone(c, d, 'sine', t, 1760, 1760, 0.6, 0.045, 0.005)
 }
 
 /** Heat on Still: a sizzle, and a tin tick. */
@@ -2400,6 +2487,7 @@ export function railHum(pan: number, ms = 2000): Voice {
 
 /** The two-tone horn at the commit: a held chord, high then low, from the train's side. */
 export function horn(pan: number) {
+  heard('horn')
   const c = live()
   if (!c) return
   const t = c.currentTime
@@ -2429,6 +2517,7 @@ export function horn(pan: number) {
 
 /** One wheel clack of the pass (every 0.18 s from the arrival): light iron over a thump, by distance. */
 export function clack(pan: number, gain: number) {
+  heard('clack')
   const c = live()
   if (!c || gain <= 0.01) return
   const t = c.currentTime
