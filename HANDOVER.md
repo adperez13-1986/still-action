@@ -44,8 +44,11 @@ ring + board "LEFT POINTS · NOW", derail -> open x1.5; lever rebuilt with a col
 0.72, no white patch). For C9's dressing: the derail is modest for the payoff moment (add steam/sparks/a stronger firebox read), and
 the matte body reads flat olive in close-up. C6 committed + pushed (818f4ca: steam leads
 him, cut at walls, grey puffs; the cinder lobbed after 7.5 s / 5 s out of range; balancer's `design/area3/ENGINE-N17.md` fixed the
-jet's reach (len 11) and paced the cinder: camp 65, circle 60.7 HP / 45 s, dodgers never hit). C7 (phase 2: reversal, wagon, lever
-thrown back) under way. **His standing word: push each reviewed stage-C step as it lands, through C10.** Held for C5: the lever is a 0.15 u post, invisible at game camera: it must read at
+jet's reach (len 11) and paced the cinder: camp 65, circle 60.7 HP / 45 s, dodgers never hit). C7 committed + pushed (d254083: phase 2
+at 55%: reversal with a judder, the loose wagon, the lever thrown back; long runs found + fixed a latent C4 horizon bug). C8 (death,
+the husk, resume) under way. **C9 dressing list so far:** derail too modest for the payoff (steam, sparks, stronger firebox); matte
+body reads flat olive close up; bright cream streaks where the warm light catches the roundhouse rails (near flat white); the wagon
+tub reads as a flat dark block and has no see-through; judder sparks small. **His standing word: push each reviewed stage-C step as it lands, through C10.** Held for C5: the lever is a 0.15 u post, invisible at game camera: it must read at
 phone size. Rails are faint at game camera too (the lit rail in C4 should carry it; phone judges). **His calls (brief §9): on 30 Sep he said "go with your defaults", so every bracketed default below is DECIDED:** lever cadence (every 3rd junction, ~8.9 s, alternating sides; SPEC's "every lap alternating"
 is geometrically impossible); accept leading steam (250 ms aim with the Arbiter's lead-guess, 700 ms locked) and the new
 **cinder** (a lobbed ring after 5 s out of steam range, so camping inside the loop isn't safe); husk position on resume (where it
