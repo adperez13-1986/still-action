@@ -517,6 +517,20 @@ const combat = new Combat(world.scene, OPEN, {
     st.autoDmg = { hand: st.autoDmg?.hand ?? 0, eye: (st.autoDmg?.eye ?? 0) + EYE.damage }
     if (broke) st.eyeBreaks = (st.eyeBreaks ?? 0) + 1
   },
+  onAutoDmg: (form, damage) => {
+    const st = run.stats[run.stats.length - 1]
+    if (st?.autoDmgReal) st.autoDmgReal[form] += damage
+  },
+  onBank: (what) => {
+    const st = run.stats[run.stats.length - 1]
+    if (!st) return
+    if (what === 'spent') st.bankBeats = (st.bankBeats ?? 0) + 1
+    else st.emptyBeats = (st.emptyBeats ?? 0) + 1
+  },
+  onFelled: (_e, by) => {
+    const st = run.stats[run.stats.length - 1]
+    if (st?.kills) st.kills[by]++
+  },
   onTrigger: (by, e, how) => {
     // a boss can't be broken: its opening's first hit plays the break it would have been
     if (how === 'opening') {
@@ -1545,6 +1559,18 @@ interface DepthStats {
   eyeBreaks?: number; openings?: number; plantedS?: number
   autoDmg?: { hand: number; eye: number }
   riders?: Record<string, number>
+  /**
+   * The follow-through trial (design/autos/BUILD-1.md), logged with the switch on or off. `followThrough`: on at this depth.
+   * `autoDmgReal`: what the autos actually dealt (after a boss's half, with the hand-cleave and the eye's splits), where
+   * `autoDmg` stays the nominal. `kills`: who dealt the killing blow. `fightS`: seconds with an awake body within FIGHT_NEAR
+   * of Still (game time, crawl). `bankBeats`: auto beats that spent a banked one; `emptyBeats`: beats that would have fired
+   * with the bank empty (always 0 with the switch off).
+   */
+  followThrough?: boolean
+  autoDmgReal?: { hand: number; eye: number }
+  kills?: { part: number; auto: number; other: number }
+  fightS?: number
+  bankBeats?: number; emptyBeats?: number
   /** Seconds actually played on this depth's crawl: game time, so pauses, loot screens and the app in the background don't count. */
   playS?: number
   /** The pressure prototype on at this depth (its ordinary packs), and integrity lost here, all sources. */
@@ -1580,7 +1606,7 @@ interface DepthStats {
   menders?: { met: number; cut: number; killed: number; healed: number }
 }
 /** One press on a filled button, for the playtest file: how long taps really last on the phone. */
-interface TapLog { depth: number; slot: SlotName; ms: number; ready: boolean; result: Press['result'] }
+interface TapLog { depth: number; slot: SlotName; ms: number; ready: boolean; result: Press['result']; leftMs: number }
 
 const run = {
   phase: 'boot' as Phase,
@@ -1637,6 +1663,8 @@ const run = {
   met: new Set<string>(),
 }
 
+/** An awake body this near Still (u, the wake radius) is a fight, for the log's `fightS`. */
+const FIGHT_NEAR = 8
 /** Nothing awake for this long counts as a fight cleared. */
 const QUIET_SECONDS = 2.5
 const QUIET_STRAIN = 2
@@ -1747,7 +1775,7 @@ function partDrops() {
 }
 /** run.stats as the playtest file and __runStats read it: the open depth's strain now, and its drops. */
 const statsOut = () => run.stats.map((st) => ({
-  ...st, strainOut: st.strainOut ?? run.strain, playS: Math.round(st.playS ?? 0), plantedS: Math.round(st.plantedS ?? 0), ...depthDrops(st.depth),
+  ...st, strainOut: st.strainOut ?? run.strain, playS: Math.round(st.playS ?? 0), plantedS: Math.round(st.plantedS ?? 0), fightS: Math.round((st.fightS ?? 0) * 10) / 10, ...depthDrops(st.depth),
   ...(st.menders ? { menders: { ...st.menders, healed: Math.round(st.menders.healed) } } : {}),
 }))
 
@@ -2233,6 +2261,33 @@ pause.setSwitch('parry catch', () => parryCatchOn, (on) => {
     // private window: it holds for this session
   }
 })
+/**
+ * The follow-through trial (design/autos/BUILD-1.md; the bank, BANK in combat.ts). On, a part cast that fired banks auto beats and
+ * each auto beat spends one: no press, no auto. A pause switch, kept per device, off by default; it takes effect from the next
+ * depth, as parry catch does. The words are PLACEHOLDER (his to write). Off is today's game exactly.
+ */
+const FOLLOW_KEY = 'still-action.followThrough'
+let followThroughOn = (() => {
+  try {
+    return localStorage.getItem(FOLLOW_KEY) === '1'
+  } catch {
+    return false
+  }
+})()
+pause.setSwitch('follow-through', () => followThroughOn, (on) => {
+  followThroughOn = on
+  try {
+    localStorage.setItem(FOLLOW_KEY, on ? '1' : '0')
+  } catch {
+    // private window: it holds for this session
+  }
+})
+/** The switch's state applied to Combat, bank empty: at each level, and by the DEV hook. */
+function applyFollowThrough(on: boolean) {
+  combat.followThrough = on
+  combat.bank = 0
+}
+
 /** Combat time of the last readying, and whether one is waiting for the button to have finished its cast (the cast sets the cooldown after the snap). */
 let parryReadyAt = -Infinity
 let parryReadyPending = false
@@ -2268,6 +2323,8 @@ function quiet() {
   run.fought = false
   run.quietT = 0
   run.killed = false
+  // follow-through: each fight starts empty, and opens on a press
+  combat.bank = 0
   const before = combat.hp
   combat.hp += (100 - combat.hp) / 2
   const from = run.strain
@@ -2850,6 +2907,7 @@ function enterLevel(depth: number, o: { seed?: number; bossFelled?: boolean; res
   combat.pressure = !level.boss
   combat.counters = combat.pressure && countersOn
   applyParryCatch(parryCatchOn)
+  applyFollowThrough(followThroughOn)
   combat.curve = curveAt(depth, RUN_DEPTHS)
   const sidings = level.sidings
   for (const p of level.packs) {
@@ -2909,7 +2967,8 @@ function enterLevel(depth: number, o: { seed?: number; bossFelled?: boolean; res
   prev.copy(still.pos)
   run.depth = depth
   closeStats()
-  run.stats.push({ depth, fights: 0, pushes: 0, breaks: 0, deadTaps: 0, quiets: 0, strainIn: run.strain, strainOut: null, hand: 0, shots: 0, eye: 0, eyeCasts: 0, handBreaks: 0, braced: 0, playS: 0, eyeBreaks: 0, openings: 0, plantedS: 0, autoDmg: { hand: 0, eye: 0 }, riders: {}, pressure: combat.pressure, hpLost: 0, temper: temperOn, melts: 0,
+  run.stats.push({ depth, fights: 0, pushes: 0, breaks: 0, deadTaps: 0, quiets: 0, strainIn: run.strain, strainOut: null, hand: 0, shots: 0, eye: 0, eyeCasts: 0, handBreaks: 0, braced: 0, playS: 0, eyeBreaks: 0, openings: 0, plantedS: 0, autoDmg: { hand: 0, eye: 0 }, riders: {}, pressure: combat.pressure, hpLost: 0,
+    followThrough: combat.followThrough, autoDmgReal: { hand: 0, eye: 0 }, kills: { part: 0, auto: 0, other: 0 }, fightS: 0, bankBeats: 0, emptyBeats: 0, temper: temperOn, melts: 0,
     counters: combat.counters, lunges: { started: 0, hit: 0, broken: 0 }, catches: { hulk: 0, sentinel: 0, mite: 0 }, parryCatch: combat.parryCatch, parryReadies: 0, ducks: { started: 0, peeked: 0, backed: 0 },
     states: Object.fromEntries(STATE_IDS.map((id) => [id, { set: 0, paid: 0, expired: 0 }])) as DepthStats['states'],
     stateBonus: Object.fromEntries(STATE_IDS.map((id) => [id, 0])) as DepthStats['stateBonus'],
@@ -3596,7 +3655,7 @@ hud.onFire((def, pushed) => {
 
 hud.onPress((p) => {
   if (run.phase !== 'crawl') return
-  run.taps.push({ depth: run.depth, slot: p.slot, ms: Math.round(p.ms), ready: p.ready, result: p.result })
+  run.taps.push({ depth: run.depth, slot: p.slot, ms: Math.round(p.ms), ready: p.ready, result: p.result, leftMs: p.leftMs })
   if (p.result !== 'dead') return
   const st = run.stats[run.stats.length - 1]
   if (st) st.deadTaps++
@@ -3920,6 +3979,9 @@ const tmpLean = new THREE.Vector3()
 
 function simulate(realDt: number) {
   prev.copy(still.pos)
+  // the core's follow-through dim is the fight's alone: every other phase (the room, the endings, the walk home) lights it.
+  // In the crawl it's written after still.update reads it, so it stands until the next tick
+  if (run.phase !== 'crawl') still.coreDim = 0
   miteKills = 0
 
   if (run.phase === 'ending' || run.phase === 'boot') return
@@ -3959,6 +4021,7 @@ function simulate(realDt: number) {
     if (st) {
       st.playS = (st.playS ?? 0) + realDt
       if (combat.inStance) st.plantedS = (st.plantedS ?? 0) + realDt
+      if (combat.foeWithin(still.pos, FIGHT_NEAR)) st.fightS = (st.fightS ?? 0) + realDt
     }
     if (level?.open) fieldMap.reveal(level, still.pos)
   } else if (run.phase === 'homing' || run.phase === 'toWalk' || run.phase === 'walkHome') run.walkS += realDt
@@ -4054,6 +4117,9 @@ function simulate(realDt: number) {
   combat.walking = hud.moveX !== 0 || hud.moveZ !== 0
   combat.update(dt, still.pos)
   still.planted = combat.inStance
+  // follow-through, bank empty in a fight: the core dims, Still waiting for a press. Between fights the quiet has
+  // emptied it, and a core dim down every corridor would read as Still switched off, not waiting
+  still.coreDim = combat.followThrough && combat.bank < 1 && combat.foeWithin(still.pos, FIGHT_NEAR) ? 1 : 0
   thiefFx(dt)
   menderLog()
   engineVoice()
@@ -4961,6 +5027,16 @@ if (import.meta.env.DEV) {
     __parryCatch: (on?: boolean) => {
       if (on !== undefined) applyParryCatch(on)
       return combat.parryCatch
+    },
+    /** The follow-through trial's switch, applied now (bank emptied); returns whether it is on. */
+    __followThrough: (on?: boolean) => {
+      if (on !== undefined) applyFollowThrough(on)
+      return combat.followThrough
+    },
+    /** The core's drawn light: the sum of its colour's channels (follow-through dims it; off never moves it by itself). */
+    __coreLight: () => {
+      const c = (still.core.material as THREE.MeshBasicMaterial).color
+      return c.r + c.g + c.b
     },
     /** B1 (R3): Parry Clamp's grace after a pressure tell, ms. Sets it if given (150 is the dial to try); returns it. */
     __parryGrace: (ms?: number) => {

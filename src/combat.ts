@@ -82,6 +82,12 @@ export const HAND_REACH = HAND.range + MELEE_PAD - 0.55
  * it aims at such a windup first.
  */
 export const EYE = { settle: 0.3, range: 11, brace: 0.5, shove: 0.6, damage: 8 }
+/**
+ * The bank (design/autos/BUILD-1.md, "follow-through"): with the switch on, a part cast that fired (ready or pushed,
+ * landed or not) adds `perPress` auto beats, up to `cap`, and each auto beat that would fire spends one. Empty,
+ * the beat passes and the autos wait for a press. Off is today's game exactly.
+ */
+export const BANK = { perPress: 3, cap: 6 }
 
 /** Who broke a windup, or hit a boss in its opening: the hand's strike or the eye's planted shot. */
 export type AutoForm = 'hand' | 'eye'
@@ -333,6 +339,12 @@ export interface CombatEvents {
    * struck a boss first in one of its openings ('opening', nothing interrupted). Never a part's break.
    */
   onTrigger: (by: AutoForm, e: Enemy, how: 'break' | 'opening') => void
+  /** An auto dealt `damage` (after a boss's half) to a body: the hand's strike or cleave, the eye's lance or split shot. */
+  onAutoDmg: (form: AutoForm, damage: number) => void
+  /** The bank on an auto beat that would have fired: 'spent' one and fired, or 'empty' and passed. Never called with the switch off. */
+  onBank: (what: 'spent' | 'empty') => void
+  /** A body died, and what dealt the killing blow: a part, an auto, or anything else (hazards, walls, trains). */
+  onFelled: (e: Enemy, by: 'part' | 'auto' | 'other') => void
   onWindup: (e: Enemy, ms: number) => void
   onStrike: (e: Enemy) => void
   onGone: (e: Enemy) => void
@@ -429,6 +441,12 @@ export class Combat {
   private hurtCaught = false
   /** Dev checks switch it off to test a part in isolation. */
   autoAttack = true
+  /** The follow-through trial (BANK): main sets it per level from its pause switch. Off is exactly today's game. */
+  followThrough = false
+  /** Auto beats banked by presses, 0..BANK.cap. Empties with the level and with the quiet. */
+  bank = 0
+  /** Who dealt each body's killing blow, read when it is buried. Absent: a hazard, a wall, a train. */
+  private readonly felledBy = new WeakMap<Enemy, 'part' | 'auto'>()
   /**
    * The parry-catch trial (design/parry/README.md, option B + grace 150): main sets it per level from its pause switch, with
    * PARRY.graceMs. Combat itself only tags the interrupt a Parry snap made; main readies the button. Off is exactly today's game.
@@ -661,13 +679,15 @@ export class Combat {
       // Planted, it's the lance at the eye's body; with the hand on, walking, nothing out of reach
       const usual = close || this.closeHand ? null : this.nearest(player, AUTO_RANGE, true)
       const target = close ? null : this.eyeTarget ?? usual
-      if (close) {
+      // follow-through: a beat that would fire spends a banked one, or passes (the cadence holds) for want of a press
+      if ((close || target) && this.followThrough && !this.spendBeat()) this.autoTimer = AUTO_INTERVAL
+      else if (close) {
         // no flight, no break of a push's kind: the same beat as the shot, twice the weight, one body.
         // A windup it can break goes back to closing in, and the body slides off half a step
         this.autoTimer = AUTO_INTERVAL
         const broke = this.breakable(close, true) && close.interrupt(false)
         if (broke) this.interrupted(close, false, 'hand')
-        close.hit(autoOn(close, HAND.damage))
+        this.autoHit(close, HAND.damage, 'hand')
         if (!isBoss(close)) this.shoveFrom(close, player.x, player.z, HAND.shove)
         // a narrow cold sweep to its body, the arcs' own floor mark: the form reads as reach, not a bolt
         const aim = Math.atan2(close.pos.x - player.x, close.pos.z - player.z)
@@ -686,7 +706,7 @@ export class Combat {
             }
           }
           if (next) {
-            next.hit(autoOn(next, Math.round(HAND.damage * MASTERY_TUNE.cleaveShare)))
+            this.autoHit(next, Math.round(HAND.damage * MASTERY_TUNE.cleaveShare), 'hand')
             if (!isBoss(next)) this.shoveFrom(next, player.x, player.z, HAND.shove)
             this.sweep(player, Math.atan2(next.pos.x - player.x, next.pos.z - player.z), nd, 0x8fb8e8, 0.3)
             this.events.onHit(next.pos, next)
@@ -861,7 +881,8 @@ export class Combat {
       if (b.payer) this.hitPart(e, b.damage, !!b.pushed, b.payer)
       else if (b.eye) this.eyeHit(e, b.damage)
       else {
-        e.hit(autoOn(e, b.damage))
+        // a plain Still bolt: the eye's split shots (or the far shot, when a check turns the hand off)
+        this.autoHit(e, b.damage, 'eye')
         this.events.onHit(e.pos, e)
       }
       if (b.shove && !e.dead && !isBoss(e)) e.knock.addScaledVector(shoveVelocity(b.dir.x, b.dir.z, b.shove), e.knockMul)
@@ -995,6 +1016,7 @@ export class Combat {
 
   reset() {
     this.hp = PLAYER_MAX_HP
+    this.bank = 0
     this.clearBodies()
     for (const b of this.bolts) this.scene.remove(b.mesh)
     this.bolts.length = 0
@@ -1122,6 +1144,7 @@ export class Combat {
     const { mul, used } = stateMul(st, payer)
     const d = damage * mul
     const killed = e.hit(d)
+    if (killed) this.felledBy.set(e, 'part')
     this.events.onHit(e.pos, e)
     this.events.onPartDamage?.(d)
     if (used && st) {
@@ -1153,7 +1176,7 @@ export class Combat {
       bestD = d
     }
     if (!best) return
-    best.hit(excess)
+    if (best.hit(excess)) this.felledBy.set(best, 'part')
     this.events.onHit(best.pos, best)
     this.events.onPart({ kind: 'shatter', from: from.pos.clone(), to: best.pos.clone(), enemy: best, damage: excess })
   }
@@ -1289,7 +1312,7 @@ export class Combat {
     this.hitPart(e, h.def.damage, h.pushed, h.def)
     // a plain hit: a state was the first hit's to pay
     if (h.short && mod && !e.dead) {
-      e.hit(mod.wallDamage)
+      if (e.hit(mod.wallDamage)) this.felledBy.set(e, 'part')
       this.events.onHit(e.pos, e)
     }
     const blast = h.def.blast ?? 0
@@ -1495,6 +1518,7 @@ export class Combat {
   private bury(i: number) {
     const e = this.enemies[i]!
     const pack = this.packOf.get(e)
+    this.events.onFelled(e, this.felledBy.get(e) ?? 'other')
     // dying in the air means no landing
     this.status.delete(e)
     this.held.delete(e)
@@ -1751,7 +1775,7 @@ export class Combat {
   private eyeHit(e: Enemy, damage: number) {
     const broke = this.breakable(e, true) && e.interrupt(false)
     if (broke) this.interrupted(e, false, 'eye')
-    e.hit(autoOn(e, damage))
+    this.autoHit(e, damage, 'eye')
     this.events.onHit(e.pos, e)
     this.events.onLance(e, broke)
     this.trigger('eye', e, broke)
@@ -1767,6 +1791,29 @@ export class Combat {
         this.bolts[this.bolts.length - 1]!.damage = MASTERY_TUNE.splitDamage
       }
     }
+  }
+
+  /** One auto beat's price under follow-through: spends a banked beat and says so, or finds the bank empty and says that. */
+  private spendBeat(): boolean {
+    if (this.bank < 1) {
+      this.events.onBank('empty')
+      return false
+    }
+    this.bank--
+    this.events.onBank('spent')
+    return true
+  }
+
+  /** An auto's hit on `e`: a boss takes its half, the damage is logged by form, and a killing blow is the auto's. */
+  private autoHit(e: Enemy, damage: number, form: AutoForm) {
+    const dealt = autoOn(e, damage)
+    this.events.onAutoDmg(form, dealt)
+    if (e.hit(dealt)) this.felledBy.set(e, 'auto')
+  }
+
+  /** Whether an awake body stands within `r` of `p`: the log's fight seconds. */
+  foeWithin(p: THREE.Vector3, r: number): boolean {
+    return this.enemies.some((e) => !e.dead && this.awakeNow(e) && Math.hypot(e.pos.x - p.x, e.pos.z - p.z) <= r)
   }
 
   /** Mastery on an auto's hit: the state its form learned to set, a boss included. A mastery's chill never slows. */
@@ -1852,7 +1899,7 @@ export class Combat {
               if (Math.hypot(e.pos.x - to.x, e.pos.z - to.z) > def.radius + e.radius) continue
               if (mark) {
                 // Signal Flare: its own hit is a plain one (a setter, not a payer), so it never uses up the mark it leaves
-                e.hit(def.damage)
+                if (e.hit(def.damage)) this.felledBy.set(e, 'part')
                 this.events.onHit(e.pos, e)
                 this.setState(e, 'marked', mark.ms / 1000, def.slot)
                 if (pushed) this.pushBreak(e)
@@ -2172,6 +2219,8 @@ export class Combat {
         break
       }
     }
+    // follow-through: a press that fired pays the bank, here once for every part (a refused one paid nothing)
+    if (r.cooldown !== 'refused' && this.followThrough) this.bank = Math.min(BANK.cap, this.bank + BANK.perPress)
     return r
   }
 

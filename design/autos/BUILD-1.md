@@ -63,3 +63,12 @@ tsc and `vite build` clean; K-A1..8 PASS, each negative-tested once (break the r
 these still pass unchanged: `fights` (compare), `baseline`, `home`, `screens`, `k9`, `area3`, `stagec`, `stageb`
 (except its known K-W3d). Report every file touched, every check result verbatim, and the two core screenshots'
 paths. **Do not commit.** Do not change HAND / EYE / cooldown numbers.
+
+## As built (30 Sep, reviewed)
+
+- Core dim 0.85, not half: half didn't read at game camera (engineer's screenshots). Even at 0.85 it's subtle
+  in the full frame (the lens outshines it); the lens isn't dimmed because the eye going out already means stopping.
+- Review change: the dim shows **only in a fight** (an awake body within 8 u). Between fights the quiet empties
+  the bank, and a dim core down every corridor would read as Still switched off. Outside the crawl it's always lit.
+  K-A9 checks both (negative-tested).
+- K-A1 is `fights.mjs compare` (PASS). All suites as in "Done when"; stageb only K-W3d, as before.

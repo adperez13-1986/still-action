@@ -10,7 +10,12 @@ Round done in `design/autos/` (BRIEF, 1-/2- per voice, sims, **PITCHES.md = the 
 agree (the planted shot IS Archero); no to removing autos (never-melt finish 31% -> 0%) and no to a fifth
 button. Recommendation: trial the **bank / "follow-through"** (each press adds 3 auto beats, cap 6) as a pause
 switch, log fixes first (PITCHES §Recommendation). Second trial if he still names standing still: the
-translator's package. **His pick (30 Sep): the bank first.** Brief `design/autos/BUILD-1.md`; a Sonnet 5.5 engineer is building it (uncommitted until reviewed). Side finding: ~1 in 5 pushes held <240 ms, maybe
+translator's package. **His pick (30 Sep): the bank first. BUILT + LIVE:** pause switch "follow-through" (PLACEHOLDER words), off by default,
+from the next depth. Brief + as-built notes `design/autos/BUILD-1.md`; checks `tools/checks/autos.mjs` (K-A2..A9, K-A1 =
+fights compare). The core dims in a fight with the bank empty (subtle: ask if the gaps read as Still waiting or a bug).
+New log fields every run: autoDmgReal, kills, fightS, bankBeats, emptyBeats, taps[].leftMs. **Next: his run with it
+on; judge by PITCHES pass lines** (40+ presses a fight-minute, emptyBeats < 20%, hpLost d1-3 within 20%).
+He tests on the live deploy, not the dev server. Side finding: ~1 in 5 pushes held <240 ms, maybe
 accidental (PITCHES last section). My 67% auto-share figure was wrong (64% never-melt / 34% investor).
 
 ## Start here (30 Sep, 19:00, at home: screens fix live)
@@ -21,7 +26,6 @@ tighter cards under 520 px tall; the same fault hid take/leave on compare and cl
 choices in a row. **New check `node tools/checks/screens.mjs`** (K-S1..12): every overlay at 4 landscape phone sizes with worst-case
 content; negative-tested against the old CSS. Add any new overlay to its SCREENS table.
 Reload resumes the run at the depth's last beam (save.ts), so the boss fight restarts, not the run.
-Dev server running this session (`npx vite --host`, LAN 10.0.0.79:5173): stop it at session end.
 Everything below from "30 Sep, late" still stands (the phone questions, his words to write).
 
 ## Start here (30 Sep, late: AREA III IS LIVE; next session is at home)

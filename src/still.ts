@@ -118,6 +118,12 @@ interface Move {
   src: StillMove
 }
 
+/**
+ * The core's light while it waits for a press (follow-through): `dim` of it is gone, eased over `easeS`. Half (0.5) did not read at
+ * the game camera, where the core is a few pixels behind the cage and the lens outshines it; 0.85 leaves a faint glint.
+ */
+const CORE_DIM = { dim: 0.85, easeS: 0.15 }
+
 export class Still {
   readonly group = new THREE.Group()
   readonly parts = {} as Record<SlotName, THREE.Object3D>
@@ -145,6 +151,13 @@ export class Still {
   jawR!: THREE.Mesh
   /** A pose's own lift (a crouch, a squash), added over the walk bob and any hop. */
   private lift = 0
+  /**
+   * The core waits for a press (follow-through, bank empty): main sets 1 to dim it, 0 to light it; it eases over CORE_DIM.easeS.
+   * The core wears its own copy of the eye's material, so the lens and the glass keep their light.
+   */
+  coreDim = 0
+  private coreK = 0
+  private readonly coreMat = Object.assign(new THREE.MeshBasicMaterial({ vertexColors: true }), { userData: { shared: true } })
 
   /** What each slot wears right now: a part's model or the frame. */
   readonly models = {} as Record<SlotName, SlotModel>
@@ -200,7 +213,12 @@ export class Still {
     this.models[slot] = m
     this.setPart(slot, m.root)
     if (m.lens) this.lens = m.lens
-    if (m.core) this.core = m.core
+    if (m.core) {
+      this.core = m.core
+      this.core.material = this.coreMat
+      // drawn at the eye's colour now, whatever wrote it last (a slowdown, the homecoming), less the dim
+      this.core.onBeforeRender = () => this.lightCore()
+    }
     if (m.armL && m.armR && m.jawL && m.jawR) {
       this.armL = m.armL
       this.armR = m.armR
@@ -241,6 +259,11 @@ export class Still {
     const dur = p?.pose === 'patient' ? p.dur + 0.14 * power : p?.dur ?? 0
     // a beat with no body yet still lights the eye
     this.anim = p ? { pose: p.pose, t: 0, dur, hold: a.holdS ?? 0, pushed: a.pushed, power, yaw: p.yaw ?? 1, lean: a.lean ?? 0 } : null
+  }
+
+  /** The core's colour this frame: the eye's, less the dim. */
+  private lightCore() {
+    this.coreMat.color.copy(EYE.color).multiplyScalar(1 - CORE_DIM.dim * this.coreK)
   }
 
   /** 0 is running, 1 is stopped: the eye goes out and the head drops. */
@@ -647,6 +670,9 @@ export class Still {
     if (this.slowdown <= 0 && this.lockT <= 0) head.rotation.x = -EYE_LIFT.tip * this.eyeLift
     this.eyeFlash = Math.max(0, this.eyeFlash - dt * 5)
     if (this.slowdown <= 0) EYE.color.copy(EYE_ON).lerp(new THREE.Color(0xffffff), this.eyeFlash).lerp(EYE_OFF, 1 - this.eyeLit)
+    const step = dt / CORE_DIM.easeS
+    this.coreK += Math.max(-step, Math.min(step, this.coreDim - this.coreK))
+    this.lightCore()
 
     const a = this.anim
     if (!a) return

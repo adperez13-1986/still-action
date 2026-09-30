@@ -52,8 +52,9 @@ export type FireResult = Pick<CastResult, 'cooldown'>
 /**
  * One press, down to up, for the playtest log. `ms` is wall time (a pause mid-press counts).
  * dead: released on a cooling button before the push fired. refused: the run said no.
+ * `leftMs`: the cooldown (or heat) left on the button when the press went down, game ms; 0 if it was ready.
  */
-export interface Press { slot: SlotName; ms: number; ready: boolean; result: 'cast' | 'push' | 'dead' | 'refused' }
+export interface Press { slot: SlotName; ms: number; ready: boolean; result: 'cast' | 'push' | 'dead' | 'refused'; leftMs: number }
 
 interface ButtonState {
   el: HTMLElement
@@ -72,6 +73,8 @@ interface ButtonState {
   /** The press's own timestamp, for how long a tap really lasts. */
   downWall: number
   readyAtDown: boolean
+  /** The cooldown left when the press went down, game ms. */
+  leftAtDown: number
   pushed: boolean
   /** What the press already did: cast on the way down, or waiting out the last BUFFER_MS to cast. */
   pressed: 'cast' | 'refused' | 'buffered' | null
@@ -362,7 +365,7 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
     el.style.right = `calc(env(safe-area-inset-right, 0px) + ${PAD + ARC_R * Math.cos(th) - BTN / 2}px)`
     el.style.bottom = `calc(env(safe-area-inset-bottom, 0px) + ${PAD + ARC_R * Math.sin(th) - BTN / 2}px)`
     root.appendChild(el)
-    const b: ButtonState = { el, cdEl: el.querySelector<HTMLElement>('.cd')!, slot, def: null, icon: null, readyAt: 0, hotUntil: 0, hotMs: 0, pointerId: null, downAt: 0, downWall: 0, readyAtDown: true, pushed: false, pressed: null, queued: false, deadAt: -Infinity, arc: null, wasReady: true, cue: '' }
+    const b: ButtonState = { el, cdEl: el.querySelector<HTMLElement>('.cd')!, slot, def: null, icon: null, readyAt: 0, hotUntil: 0, hotMs: 0, pointerId: null, downAt: 0, downWall: 0, readyAtDown: true, leftAtDown: 0, pushed: false, pressed: null, queued: false, deadAt: -Infinity, arc: null, wasReady: true, cue: '' }
     paint(b)
     return b
   })
@@ -498,6 +501,7 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
       b.downAt = state.clock
       b.downWall = e.timeStamp
       b.readyAtDown = isReadyAt(b, state.clock)
+      b.leftAtDown = Math.max(0, b.readyAt - state.clock, b.hotUntil - state.clock)
       b.pushed = false
       b.pressed = null
       // the hold ring takes over from any dead-tap arc still pulling back
@@ -525,7 +529,7 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
           if (b.def && state.enabled) deadTap(b)
         }
         if (!b.def || !state.enabled) return
-        const p: Press = { slot: b.slot, ms: e.timeStamp - b.downWall, ready: b.readyAtDown, result }
+        const p: Press = { slot: b.slot, ms: e.timeStamp - b.downWall, ready: b.readyAtDown, result, leftMs: Math.round(b.leftAtDown) }
         for (const cb of pressListeners) cb(p)
       })
     }
