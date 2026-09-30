@@ -1,6 +1,6 @@
 /**
  * The stage C checks (design/area3/STAGE-C.md §4): `node tools/checks/stagec.mjs [K-N1a ...]` runs all of them, or the ids
- * listed. Each step adds its own checks here, on lib.mjs's `suite()`, as stageb.mjs does (C1-C9: K-N1a, K-N1b, K-N2a, K-N2b, K-N3, K-N4-K-N8, K-N10-K-N15, K-N17, K-N18, K-N19-K-N22, K-S5, K-E9c). The baselines
+ * listed. Each step adds its own checks here, on lib.mjs's `suite()`, as stageb.mjs does (C1-C9: K-N1a, K-N1b, K-N2a, K-N2b, K-N3, K-N4-K-N8, K-N10-K-N15, K-N17, K-N18, K-N19-K-N22, K-S5, K-E9c; C10: K-N9, K-N16, K-N23). The baselines
  * (K-90, K-90L, K-90F) are baseline.mjs's and fights.mjs's; stage C never re-captures them.
  *
  * The short forms of STAGE-C.md §4, as queries (every one is ?save=memory and a dev run straight into a level):
@@ -1587,7 +1587,9 @@ check('K-N15', ENG6_N15, async ({ page }) => {
     // a real run, not a dev one: its end commits to the (in-memory) save
     W.__run.dev = false
     W.__run.tally.engines = {}
-    W.__run.tally.carried.push('scrap-cleaver')
+    // enterEngine wore the cleaver, and the save's random starting hook (Math.random) gave one of four parts, the cleaver among them a quarter of the time:
+    // each part is carried once, and kickstart is put on so that two are carried whatever the hook gave
+    for (const id of ['scrap-cleaver', 'kickstart']) { W.__equip(id); if (!W.__run.tally.carried.includes(id)) W.__run.tally.carried.push(id) }
     const worn = W.__hud.slots.map((sl) => (sl.def ? sl.def.id : null)).filter((id) => id)
     const carried = [...W.__run.tally.carried]
     tick(60)
@@ -2004,6 +2006,284 @@ check('K-E9c', ENG6, async ({ page }) => {
   assertEq("the lever ring's and disc's uCold", got.cold, [1, 1])
   assert(got.enamel, 'HIDES.enamel is missing')
   console.log(`INFO K-E9c: over one derail (${got.derailed} ticks, door open ${got.doorMax.toFixed(2)}): firebox lightness ${got.min.core.toFixed(3)} .. ${got.max.core.toFixed(3)}, halo ${got.max.fireHalo.toFixed(3)}, glow ${got.max.fireGlow.toFixed(3)}, against CORE's ${got.coreL.toFixed(3)}; the ring is cold`)
+})
+
+// --- The stage (C10) ---------------------------------------------------------------------------------------------------
+
+/**
+ * K-N9's and K-N23's bot, in the page. `fightBot(o)` plays the fight from the wake (Engine in `run`, Still set out of reach).
+ *  - It reads the departure board for the next window's side and walks to that lever's quadrant: the corner between the side's two arms,
+ *    1.85 u off both centre lines (outside both strips, 0.6 u from the lever, inside its reach 3.0). No board, no window: it waits at c.
+ *  - It casts the arms part when the window is open and it is in reach (pushed when the part is cooling), holds there through the siding and the derail,
+ *    and punishes the derail with the autos and its head, torso and arms parts (a part that is ready and within 6 u of the Engine).
+ *  - It never steps into a lit strip, a steam jet or a cinder ring (grown 0.5); one on the floor for 18 ticks (a player's 300 ms) it steps out of by the
+ *    shortest way that does not end on a rail (K-N17's dodger). HP is put back by `tick`, the sum reported.
+ * o.greedy (K-N23's second bot, INFO only): the parts fire whenever they are ready and the Engine is within 6 u, not just at the derail, so the arms part is
+ * often cooling at the next window (the pushes). o.seconds: the cap. o.forceP2At: seconds after which the Engine's HP is put to half once (phase 2) and held above 10%, or null (a real fight to the kill).
+ * Returns what it saw: every hazard made ([source, damage, armMs, escape]), the attacks' lengths, the hits taken by source, and the events.
+ */
+const FIGHT = GEO + `
+  const BOARD_SIDE = (text) => (text.startsWith(W.__BOARD.right) ? 'right' : text.startsWith(W.__BOARD.left) ? 'left' : null)
+  const fightBot = (o) => {
+    const { c } = roomOf(), t = W.__track(), B = W.__combat.boss
+    const SPD = 5.5, M = 0.5, OFF = 1.85
+    const quad = {}
+    for (const side of ['right', 'left']) {
+      const arms = t.arms.filter((a) => a.side === side)
+      const ax = arms.find((a) => Math.abs(a.buffer.z - a.junction.z) < 1e-9), az = arms.find((a) => Math.abs(a.buffer.x - a.junction.x) < 1e-9)
+      const X = { x: az.junction.x, z: ax.junction.z }, L = t.levers[side]
+      quad[side] = { x: X.x + Math.sign(L.x - X.x) * OFF, z: X.z + Math.sign(L.z - X.z) * OFF, lever: L,
+        strips: arms.map((a) => ({ ax: a.junction.x, az: a.junction.z, bx: a.buffer.x, bz: a.buffer.z, halfW: 1.2 })) }
+    }
+    const inside = (h, x, z, grow) => {
+      const s = h.spec.shape
+      return s.kind === 'circle' ? Math.hypot(x - s.x, z - s.z) < s.r + grow : stripHas(s, x, z, grow)
+    }
+    const seenAt = new Map(), seenH = new WeakSet(), hitH = new WeakSet()
+    const out = { hz: [], hits: { train: 0, steam: 0, shell: 0, wagon: 0 }, windups: [], pushes: 0, casts: 0, punished: 0, lost: 0, dead: false, foreign: 0, onRail: 0, onArmed: 0, streak: 0, maxStreak: 0,
+      p2S: null, hpAt60: null, forced: null, ticks: 0, endState: null, dropped: 0 }
+    // the marks are the caller's, taken before the wake (the horn and the whistle are at the unfold), else now
+    const mark = o.heard0 ?? W.__heard.length, logAt = o.log0 ?? W.__enemyLog.length, time0 = W.__combat.time
+    const P = W.__still.pos
+    let side = null, castTried = false, prevAtk = 'none', atkTicks = 0, atkKind = null, atkDeclared = 0, forced = false, sawLock = false, cindersBefore = 0
+    const cinderEvents = () => W.__enemyLog.slice(logAt).filter((x) => x.ev.kind === 'engine' && x.ev.what === 'cinder').length
+    for (let i = 0; i < o.seconds * 60; i++) {
+      const b = W.__boss()
+      if (!b || b.state === 'dead') { out.dead = true; break }
+      if (i === 60 * 60) out.hpAt60 = b.hp
+      if (o.forceP2At !== null && i >= o.forceP2At * 60) {
+        if (!forced && !B.phase2) { forced = true; out.forced = { at: i / 60, hp: B.hp }; B.hp = Math.min(B.hp, B.maxHp * 0.5) }
+        if (B.hp < B.maxHp * 0.1) B.hp = B.maxHp * 0.1
+      }
+      if (b.phase2 && out.p2S === null) out.p2S = (W.__combat.time - time0)
+      const hz = W.__combat.hazards.filter((h) => !h.done && (h.spec.source === 'train' || h.spec.source === 'steam' || h.spec.source === 'shell'))
+      for (const h of hz) if (!seenAt.has(h)) seenAt.set(h, i)
+      const threats = hz.filter((h) => i - seenAt.get(h) >= 18)
+      // where it wants to be
+      const w = b.window, st = b.state
+      let goal = { x: c.x, z: c.z }
+      if (w && w.open && !w.thrown) { side = w.side; goal = quad[side] }
+      else if (st === 'siding' || st === 'derailed' || (w && w.thrown)) { if (side) goal = quad[side] }
+      else { side = BOARD_SIDE(b.board); if (side) goal = quad[side] }
+      if (!(w && w.open)) castTried = false
+      // the shortest way out of a threat it stands in, that does not end on a rail
+      const rails = hz.filter((h) => h.spec.source === 'train')
+      const railed = (x, z, grow) => rails.some((h) => stripHas(h.spec.shape, x, z, grow))
+      let esc = null
+      for (const h of threats) {
+        const s = h.spec.shape, ways = []
+        if (s.kind === 'circle') {
+          const d0 = Math.hypot(P.x - s.x, P.z - s.z)
+          if (d0 < s.r + M) {
+            const dx = d0 < 1e-6 ? 1 : P.x - s.x, dz = d0 < 1e-6 ? 0 : P.z - s.z, d = Math.hypot(dx, dz)
+            ways.push({ x: dx / d, z: dz / d, len: s.r + M - d0 }, { x: -dz / d, z: dx / d, len: (s.r + M) * 1.6 }, { x: dz / d, z: -dx / d, len: (s.r + M) * 1.6 })
+          }
+        } else {
+          const vx = s.bx - s.ax, vz = s.bz - s.az, len = Math.hypot(vx, vz), ux = vx / len, uz = vz / len
+          const along = (P.x - s.ax) * ux + (P.z - s.az) * uz, cross = (P.x - s.ax) * uz - (P.z - s.az) * ux
+          if (along >= -M && along <= len + M && Math.abs(cross) < s.halfW + M) {
+            const sg = cross >= 0 ? 1 : -1
+            ways.push({ x: uz * sg, z: -ux * sg, len: s.halfW + M - Math.abs(cross) }, { x: -uz * sg, z: ux * sg, len: s.halfW + M + Math.abs(cross) },
+              { x: -ux, z: -uz, len: along + M }, { x: ux, z: uz, len: len - along + M })
+          }
+        }
+        ways.sort((a, b2) => a.len - b2.len)
+        const way = ways.find((q) => !railed(P.x + q.x * (q.len + 0.5), P.z + q.z * (q.len + 0.5), 0.3)) || ways[0]
+        if (way) esc = way
+      }
+      let nx = P.x, nz = P.z
+      if (esc) { nx += esc.x * SPD / 60; nz += esc.z * SPD / 60 }
+      else {
+        const dx = goal.x - P.x, dz = goal.z - P.z, d = Math.hypot(dx, dz)
+        if (d > 0.05) {
+          const step = Math.min(d, SPD / 60)
+          nx = P.x + dx / d * step; nz = P.z + dz / d * step
+          // never step into a lit strip or a threat, seen yet or not: wait at its edge
+          if (hz.some((h) => inside(h, nx, nz, M))) { nx = P.x; nz = P.z }
+          // a window in its last 0.8 s (phase 2 throws it back on him in the arm): he does not start across an arm's strip that late, and waits for the next
+          if (w && w.open && !w.thrown && w.msOpen >= 600) {
+            const arm = quad[w.side].strips
+            if (arm.some((sh) => stripHas(sh, nx, nz, M)) && !arm.some((sh) => stripHas(sh, P.x, P.z, M))) { nx = P.x; nz = P.z }
+          }
+        }
+      }
+      P.set(nx, 0, nz)
+      // the cast that throws the lever: once a window, from its quadrant (0.35 of the corner, 0.64 from the lever, well inside its reach): a throw with him still
+      // on his way across an arm is the wrong throw (K-N7), the arm lit under him
+      if (w && w.open && !w.thrown && !castTried && Math.hypot(P.x - quad[w.side].x, P.z - quad[w.side].z) <= 0.35) {
+        castTried = true
+        const ready = W.__hud.isReady('arms')
+        W.__fire('arms', !ready)
+        out.casts++
+        if (!ready) out.pushes++
+      }
+      // the derail is punished with what is ready
+      if ((st === 'derailed' || o.greedy) && Math.hypot(P.x - b.x, P.z - b.z) <= 6) {
+        for (const slot of ['head', 'torso', 'arms']) if (W.__hud.isReady(slot)) { W.__fire(slot, false); out.punished++ }
+      }
+      out.lost += tick(1)
+      out.ticks++
+      const b2 = W.__boss()
+      const atk = b2 ? b2.attack : 'none'
+      if (atk !== 'none') {
+        if (prevAtk === 'none') { atkKind = atk === 'cinderAim' ? 'cinder' : 'steam'; atkDeclared = B.windupMs; atkTicks = 0; sawLock = false; cindersBefore = cinderEvents() }
+        atkTicks++
+        if (atk === 'steamLock') sawLock = true
+      } else if (prevAtk !== 'none') {
+        // an aim the state no longer allowed (a derail) is dropped before it makes a threat: no strip, no shell, so no windup to measure
+        const made = atkKind === 'steam' ? sawLock : cinderEvents() > cindersBefore
+        if (made) out.windups.push({ kind: atkKind, ms: atkTicks * 1000 / 60, declared: atkDeclared })
+        else out.dropped++
+      }
+      prevAtk = atk
+      let onNow = false
+      for (const h of W.__combat.hazards) {
+        const sp = h.spec
+        if (!seenH.has(h)) {
+          seenH.add(h)
+          if (sp.owner !== B) out.foreign++
+          out.hz.push([sp.source, sp.damage, sp.armMs, sp.shape.kind === 'strip' ? sp.shape.halfW : sp.shape.r])
+        }
+        if (h.hit.has('still') && !hitH.has(h)) { hitH.add(h); if (sp.source in out.hits) out.hits[sp.source]++ }
+        if (sp.source === 'train' && !h.done && stripHas(sp.shape, P.x, P.z, 0)) { onNow = true; out.onRail++; if (h.armIn <= 0) out.onArmed++ }
+      }
+      out.streak = onNow ? out.streak + 1 : 0
+      out.maxStreak = Math.max(out.maxStreak, out.streak)
+    }
+    const ev = (what) => W.__enemyLog.slice(logAt).filter((x) => x.ev.kind === 'engine' && x.ev.what === what).length
+    out.events = {}
+    for (const what of ['whistle', 'window', 'throw', 'throwBack', 'derail', 'steam', 'cinder', 'judder', 'wagon', 'wagonSettle', 'wagonSmash', 'phase2']) out.events[what] = ev(what)
+    out.heard = {}
+    for (const h of W.__heard.slice(mark)) out.heard[h.name] = (out.heard[h.name] || 0) + 1
+    out.s = W.__combat.time - time0
+    out.strain = W.__run.strain
+    const bE = W.__boss()
+    out.endState = bE ? bE.state : 'gone'
+    out.dmgMul = B.dmgMul ?? 1
+    out.hp = { hp: B.hp, maxHp: B.maxHp, defHp: B.def.hp }
+    return out
+  }
+`
+
+/** In the page, from a fresh level: the Engine of `order` at `depth`, all its attacks on, autos on, woken; then the bot. */
+const playFight = (extra) => `
+  enterEngine(arg.order, arg.depth, arg.seed, { steam: true, cinder: true })
+  // the other three parts are the save's random starting hook (a fresh memory save picks them by Math.random), so the loadout is fixed: the game's own four
+  for (const id of ['focusing-lens', 'pressure-vent', 'scrap-cleaver', 'kickstart']) W.__equip(id)
+  W.__combat.autoAttack = true
+  // strain is the run's, and a __enter does not clear it: the pushes of one fight must not end the next by 'stopped'
+  W.__run.strain = 0
+  const start = { hp: W.__boss().hp, maxHp: W.__boss().maxHp, defHp: W.__combat.boss.def.hp, dmgMul: W.__boss().dmgMul }
+  // both logs keep their last 2000 entries and a mark taken at the cap goes stale: this fight's own, from empty
+  W.__heard.length = 0
+  W.__enemyLog.length = 0
+  const heard0 = 0, log0 = 0
+  const wakeS = wake()
+  const out = fightBot({ seconds: arg.seconds, forceP2At: arg.forceP2At, greedy: !!arg.greedy, heard0, log0 })
+  out.start = start
+  out.wakeS = wakeS
+  ${extra || ''}
+  return out`
+
+// K-N9: the INV sweep. 120 s of the bot's fight on ENG6 and both ENG9 orders, two seeds each. The brief's "HP at the start is def.hp" is 900 x the depth
+// curve's bossHp: 1170 (6-depth, at 6), 1080 (9-depth, III at 6), 1170 (9-depth, II at 9).
+const N9_BASE = { train: 20, steam: 14, shell: 12, wagon: 12 }
+const N9_HP = { 'III@6/6': 1170, 'III@6/9': 1080, 'II@9/9': 1170 }
+const N9_SPECS = [[ENG6, [['III', 6, '6']]], [ENG9, [['III', 6, '9'], ['II', 9, '9']]]]
+for (const [query, orders] of N9_SPECS) {
+  check('K-N9', query, async ({ page }) => {
+    for (const [order, depth, runLen] of orders) {
+      for (const seed of [1, 2]) {
+        const got = await inPage(page, FIGHT + playFight(), { order, depth, seed, seconds: 120, forceP2At: 60 })
+        const key = `${order}@${depth}/${runLen}`
+        const why = (m) => { throw new Error(`${key} seed ${seed}: ${m}`) }
+        const wantHp = N9_HP[`${order}@${depth}/${runLen}`]
+        if (got.start.hp !== wantHp || got.start.maxHp !== wantHp || got.start.defHp !== wantHp) why(`HP at the start is ${got.start.hp} / ${got.start.maxHp} (def.hp ${got.start.defHp}), not ${wantHp}`)
+        if (got.foreign) why(`${got.foreign} hazard(s) on the floor were not the Engine's`)
+        if (got.ticks < 60 * 100 && !got.dead) why(`the sweep ran only ${got.ticks} ticks`)
+        const per = {}
+        let minSlack = Infinity
+        for (const [source, damage, armMs, esc] of got.hz) {
+          const base = N9_BASE[source]
+          if (base === undefined) why(`a hazard of source '${source}' (not the Engine's train, steam, shell, wagon)`)
+          per[source] = (per[source] || 0) + 1
+          if (damage / got.dmgMul > 22 + 1e-9) why(`a ${source} hazard of ${damage} (${(damage / got.dmgMul).toFixed(3)} before dmgMul ${got.dmgMul}), over 22`)
+          if (Math.abs(damage - base * got.dmgMul) > 1e-9) why(`a ${source} hazard's damage is ${damage}, not ${base} x dmgMul ${got.dmgMul} = ${base * got.dmgMul}`)
+          if (armMs < 620 - 1e-9) why(`a ${source} hazard armed in ${armMs} ms, a windup under 620`)
+          const slack = armMs - 300 - 1000 * esc / 5.5
+          minSlack = Math.min(minSlack, slack)
+          if (slack < 150 - 1e-9) why(`a ${source} hazard (armMs ${armMs}, escape ${esc}) leaves a slack of ${slack.toFixed(1)} ms, under 150`)
+        }
+        for (const need of ['train', 'steam', 'shell', 'wagon']) if (!per[need]) why(`no ${need} hazard in 120 s (${JSON.stringify(per)}): the sweep proves nothing about it`)
+        if (per.train < 200) why(`only ${per.train} train strips in 120 s`)
+        // the windups (steam's 250 + 700, the cinder's 620): as observed in ticks (one tick of counting slack) and as the Engine declares them
+        const kinds = new Set(got.windups.map((k) => k.kind))
+        if (!kinds.has('steam') || !kinds.has('cinder')) why(`the attacks seen were ${[...kinds]}: no steam or no cinder windup measured`)
+        for (const k of got.windups) {
+          if (k.ms < 620 - 1000 / 60 - 1e-6) why(`a ${k.kind} attack lasted ${k.ms.toFixed(1)} ms, a windup under 620`)
+          if (k.declared < 620) why(`a ${k.kind} attack declares windupMs ${k.declared}, under 620`)
+        }
+        const wm = (kind) => [...new Set(got.windups.filter((k) => k.kind === kind).map((k) => k.ms.toFixed(0)))]
+        if (got.p2S === null) why('phase 2 was never reached or forced')
+        console.log(`INFO K-N9 ${key} seed ${seed}: HP ${got.start.hp}, dmgMul ${got.dmgMul}; ${got.hz.length} hazards (${Object.entries(per).map(([k, v]) => `${k} ${v}`).join(', ')}); max damage before dmgMul ${Math.max(...got.hz.map((h) => h[1] / got.dmgMul)).toFixed(2)}; least slack ${minSlack.toFixed(1)} ms; steam windups ${wm('steam')} ms, cinder ${wm('cinder')} ms (declared ${[...new Set(got.windups.map((k) => k.declared))]}; ${got.dropped} aims dropped by a derail); ${got.events.window} windows, ${got.events.throw} thrown, ${got.events.derail} derails, ${got.events.judder} reversals, ${got.events.wagon} wagons; phase 2 ${got.forced ? `forced at ${got.forced.at.toFixed(0)} s from ${got.forced.hp.toFixed(0)} HP` : `reached by the fight itself at ${(got.wakeS + got.p2S).toFixed(1)} s`}${got.dead ? '; the Engine died at ' + got.s.toFixed(1) + ' s' : ''}; Still's HP put back: ${got.lost.toFixed(0)} lost`)
+      }
+    }
+  })
+}
+
+// K-N16: the flag-off fallback. The Engine is where the flag says and nowhere else: off, III at 6 is the Line's quarter with the Arbiter; on, its station with the Engine; II at 6 is
+// the Arbiter's either way.
+check('K-N16', ENG6, async ({ page }) => {
+  const seedList = [1, 2, 3]
+  const got = await inPage(page, `
+    const at = (order, seed) => { enterEngine(order, 6, seed); const b = W.__boss(); return { place: W.__look().place, boss: b && b.kind, def: W.__combat.boss && W.__combat.boss.def.kind } }
+    const out = { flagsOff: null, flagsOn: null }
+    out.flagsOff = W.__flags({ engine: false }).engine
+    out.offIII = arg.map((s) => at('III', s))
+    out.offII = arg.map((s) => at('II', s))
+    out.flagsOn = W.__flags({ engine: true }).engine
+    out.onIII = arg.map((s) => at('III', s))
+    out.onII = arg.map((s) => at('II', s))
+    return out`, seedList)
+  assert(got.flagsOff === false && got.flagsOn === true, `__flags({ engine }) reads back ${got.flagsOff} then ${got.flagsOn}`)
+  seedList.forEach((seed, n) => {
+    const why = (m) => { throw new Error(`seed ${seed}: ${m}`) }
+    const row = (k, place, boss) => { if (got[k][n].place !== place || got[k][n].boss !== boss || got[k][n].def !== boss) why(`${k}: ${JSON.stringify(got[k][n])}, not place '${place}' with the ${boss}`) }
+    row('offIII', 'quarter', 'arbiter')
+    row('offII', 'quarter', 'arbiter')
+    row('onIII', 'station', 'engine')
+    row('onII', 'quarter', 'arbiter')
+  })
+  console.log(`INFO K-N16: engine off: III at 6 ${got.offIII[0].place} / ${got.offIII[0].boss}, II at 6 ${got.offII[0].place} / ${got.offII[0].boss}; engine on: III at 6 ${got.onIII[0].place} / ${got.onIII[0].boss}, II at 6 ${got.onII[0].place} / ${got.onII[0].boss} (seeds ${seedList})`)
+})
+
+// K-N23: the fight, INFO. ENG9 both orders, seeds 1..5: the bot plays it to the kill; FAIL only past 240 s (it cannot be killed as built). SPEC 7.5's guess: 85-100 s, about 5 pushes.
+const N23 = []
+check('K-N23', ENG9, async ({ page }) => {
+  // the bot the brief describes ('punish'), then (INFO only) a greedy one that spends its parts whenever they are ready, for the pushes
+  for (const [variant, greedy] of [['punish', false], ['greedy', true]]) {
+    for (const [order, depth] of [['III', 6], ['II', 9]]) {
+      for (const seed of [1, 2, 3, 4, 5]) {
+        const got = await inPage(page, FIGHT + playFight(), { order, depth, seed, seconds: 240, forceP2At: null, greedy })
+        const s = got.wakeS + got.s
+        N23.push({ variant, order, depth, seed, ...got, killS: s })
+        const hits = got.hits
+        console.log(`INFO K-N23 ${variant} ${order}@${depth} seed ${seed}: ${got.dead ? `killed at ${s.toFixed(1)} s` : `NOT killed in ${s.toFixed(1)} s (${got.endState}, HP ${got.hp.hp.toFixed(0)} of ${got.hp.maxHp})`}; HP lost ${got.lost.toFixed(0)}; ${got.pushes} pushes of ${got.casts} casts; windows ${got.events.window} seen / ${got.events.throw} thrown; ${got.events.derail} derails, ${got.events.cinder} cinders, ${got.events.steam} steams, ${got.events.judder} reversals, ${got.events.wagon} wagons; phase 2 at ${got.p2S === null ? 'never' : (got.wakeS + got.p2S).toFixed(1) + ' s'}; hit by train ${hits.train}, steam ${hits.steam}, cinder ${hits.shell}, wagon ${hits.wagon}; on a lit rail ${got.onRail} ticks (longest ${got.maxStreak}, ${got.onArmed} of them armed); strain ${got.strain}`)
+      }
+    }
+  }
+  const mean = (rows, f) => rows.reduce((a, r) => a + f(r), 0) / rows.length
+  const rng = (rows, f) => `${Math.min(...rows.map(f)).toFixed(1)}-${Math.max(...rows.map(f)).toFixed(1)}`
+  for (const variant of ['punish', 'greedy']) {
+    for (const key of ['all', 'III@6', 'II@9']) {
+      const rows = N23.filter((r) => r.variant === variant && (key === 'all' || `${r.order}@${r.depth}` === key))
+      console.log(`INFO K-N23 ${variant} ${key} (${rows.length} fights): kill time mean ${mean(rows, (r) => r.killS).toFixed(1)} s (${rng(rows, (r) => r.killS)}); HP lost mean ${mean(rows, (r) => r.lost).toFixed(0)} (${rng(rows, (r) => r.lost)}); pushes mean ${mean(rows, (r) => r.pushes).toFixed(1)} (${rng(rows, (r) => r.pushes)}); windows seen ${mean(rows, (r) => r.events.window).toFixed(1)} / thrown ${mean(rows, (r) => r.events.throw).toFixed(1)}; derails ${mean(rows, (r) => r.events.derail).toFixed(1)}; cinders ${mean(rows, (r) => r.events.cinder).toFixed(1)}; steams ${mean(rows, (r) => r.events.steam).toFixed(1)}${key === 'all' ? '; SPEC 7.5 guessed 85-100 s and about 5 pushes' : ''}`)
+    }
+  }
+  const one = N23.find((r) => r.variant === 'punish')
+  console.log(`INFO K-N23 heard log, one fight (punish ${one.order}@${one.depth} seed ${one.seed}, ${one.dead ? 'to the kill at ' + one.killS.toFixed(1) + ' s' : 'not killed'}): ${Object.entries(one.heard).sort().map(([k, v]) => `${k} ${v}`).join(', ')}`)
+  const late = N23.filter((r) => r.variant === 'punish' && (!r.dead || r.killS > 240))
+  if (late.length) throw new Error(`${late.length} of the brief's bot's fights ended without a kill inside 240 s: ${late.map((r) => `${r.order}@${r.depth} seed ${r.seed} (${r.endState}, HP ${r.hp.hp.toFixed(0)}, ${r.killS.toFixed(1)} s)`)}`)
 })
 
 process.exit(await run(process.argv.slice(2)))
