@@ -424,11 +424,14 @@ export const tellOrder = (msToStrike: number) => 1000 - Math.max(0, msToStrike) 
 // --- telegraphs: animated, textured, instead of flat red ---
 
 const TELL_VERT = /* glsl */ `
+  attribute float aEta;
   varying vec2 vUv;
   varying vec3 vPos;
+  varying float vEta;
   void main() {
     vUv = uv;
     vPos = position;
+    vEta = aEta;
     gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
   }
 `
@@ -452,8 +455,10 @@ const TELL_FRAG = /* glsl */ `
   uniform float uSweepHalf;
   uniform float uPlain;
   uniform vec3 uPulse;
+  uniform vec2 uFade;
   varying vec2 vUv;
   varying vec3 vPos;
+  varying float vEta;
   float h(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
   float n(vec2 p) {
     vec2 i = floor(p), f = fract(p); vec2 u = f * f * (3.0 - 2.0 * f);
@@ -532,6 +537,8 @@ const TELL_FRAG = /* glsl */ `
     float heat = clamp(noise * 0.8 + pattern * 0.45 + edge * 0.9, 0.0, 1.6);
     vec3 col = mix(uDeep, uHot, clamp(heat, 0.0, 1.0)) + uHot * max(0.0, heat - 1.0) * 0.6;
     float a = uOpacity * clamp(0.35 + noise * 0.5 + pattern * 0.35 + edge * 0.8, 0.0, 1.0) * cut;
+    // a strip may dim with the time its point has left (aEta, s): uFade = (the fraction left at uFade.y seconds, uFade.y). Off by default.
+    if (uFade.y > 0.0) a *= mix(1.0, uFade.x, clamp(vEta / uFade.y, 0.0, 1.0));
     gl_FragColor = vec4(col, a);
   }
 `
@@ -562,6 +569,7 @@ export function tellMaterial(style: TellStyle, radius = 1, hot = EMBER, deep = E
       uSweepHalf: { value: 0.26 },
       uPlain: { value: opts.plain ? 1 : 0 },
       uPulse: { value: new THREE.Vector3(0, 1, 0) },
+      uFade: { value: new THREE.Vector2(1, 0) },
     },
     transparent: true,
     depthWrite: false,

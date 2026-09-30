@@ -1146,26 +1146,74 @@ function layLine(layout: Layout, progressOf: (r: Room) => number, line: LinePres
 /** A floor cell's piece: the first whose cumulative threshold the cell's one roll is under. */
 export const pickFloor = (table: [Piece, number][], roll: number): Piece => (table.find(([, t]) => roll < t) ?? table[table.length - 1]!)[0]
 
-let leverParts: { post: THREE.BoxGeometry; handle: THREE.BoxGeometry; mats: ReturnType<typeof hideMaterials> } | null = null
+interface LeverParts {
+  base: THREE.BoxGeometry; pedestal: THREE.BoxGeometry; cheek: THREE.BoxGeometry; handle: THREE.BoxGeometry; knob: THREE.IcosahedronGeometry
+  mats: ReturnType<typeof hideMaterials>; steel: THREE.MeshStandardMaterial; glow: THREE.Texture
+  /** Per side: the knob's material and its halo's, which the Engine brightens while that side's window is open. */
+  knobs: Record<'right' | 'left', { knob: THREE.MeshStandardMaterial; halo: THREE.SpriteMaterial }>
+}
+let leverParts: LeverParts | null = null
 /**
- * A points lever: a timber post with an iron handle pivoting at its top (the group `lever:<side>`; the handle's pivot is its
- * child `pivot`, at rest leaning off the vertical). Shared geometry and materials, like the kit: never disposed with a level.
+ * A points lever, a ground frame that has to read at game camera: an iron base plate, a timber pedestal with cheek plates, a thick
+ * steel handle pivoting between them (the child `pivot` of the group `lever:<side>`, at rest leaning back; the Engine turns it), and at
+ * the handle's tip a faceted knob in Still's cold light with a soft halo (never ember: the lever is his tool, the ring round it his
+ * colour). Dim when its window is closed, bright when open (the Engine sets the two materials in `userData`). Shared geometry and
+ * materials, like the kit: never disposed with a level.
  */
 function leverMesh(side: 'right' | 'left', x: number, z: number): THREE.Group {
-  leverParts ??= { post: new THREE.BoxGeometry(0.15, 1.0, 0.15), handle: new THREE.BoxGeometry(0.06, 0.5, 0.06), mats: hideMaterials('signal') }
+  if (!leverParts) {
+    const c = document.createElement('canvas')
+    c.width = c.height = 64
+    const g2 = c.getContext('2d')!
+    const grad = g2.createRadialGradient(32, 32, 0, 32, 32, 32)
+    grad.addColorStop(0, 'rgba(255,255,255,0.8)')
+    grad.addColorStop(0.4, 'rgba(255,255,255,0.25)')
+    grad.addColorStop(1, 'rgba(255,255,255,0)')
+    g2.fillStyle = grad
+    g2.fillRect(0, 0, 64, 64)
+    const glow = new THREE.CanvasTexture(c)
+    const knobs = Object.fromEntries((['right', 'left'] as const).map((k) => [k, {
+      knob: new THREE.MeshStandardMaterial({ color: 0x1d2a3a, emissive: 0x4f86c8, emissiveIntensity: 0.45, roughness: 0.3, metalness: 0.2, flatShading: true }),
+      halo: new THREE.SpriteMaterial({ map: glow, color: 0x6fa3e0, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, fog: false, opacity: 0.3 }),
+    }])) as LeverParts['knobs']
+    leverParts = {
+      base: new THREE.BoxGeometry(0.9, 0.1, 0.9), pedestal: new THREE.BoxGeometry(0.34, 0.5, 0.34), cheek: new THREE.BoxGeometry(0.06, 0.36, 0.42),
+      handle: new THREE.BoxGeometry(0.13, 0.95, 0.13), knob: new THREE.IcosahedronGeometry(0.19, 0),
+      mats: hideMaterials('signal'), steel: new THREE.MeshStandardMaterial({ color: 0x5d6873, roughness: 0.42, metalness: 0.6 }), glow, knobs,
+    }
+  }
+  const p = leverParts
   const g = new THREE.Group()
   g.name = `lever:${side}`
   g.position.set(x, 0, z)
-  const post = new THREE.Mesh(leverParts.post, leverParts.mats.mat)
-  post.position.y = 0.5
+  // bigger than the 0.3 u it blocks: the fight's interactive target has to read at game camera, and 1.3 u of base clears both arms' strips
+  g.scale.setScalar(1.35)
+  const base = new THREE.Mesh(p.base, p.mats.jointMat)
+  base.position.y = 0.05
+  const pedestal = new THREE.Mesh(p.pedestal, p.mats.mat)
+  pedestal.position.y = 0.35
+  const PIVOT_Y = 0.66
+  const cheeks = [-0.12, 0.12].map((dx) => {
+    const m = new THREE.Mesh(p.cheek, p.mats.jointMat)
+    m.position.set(dx, PIVOT_Y - 0.06, 0)
+    return m
+  })
   const pivot = new THREE.Group()
   pivot.name = 'pivot'
-  pivot.position.y = 1.0
-  pivot.rotation.z = 0.5
-  const handle = new THREE.Mesh(leverParts.handle, leverParts.mats.jointMat)
-  handle.position.y = 0.25
-  pivot.add(handle)
-  g.add(post, pivot)
+  pivot.position.y = PIVOT_Y
+  // at rest leaning back; the Engine swings it over when the lever is thrown (engine.ts LEVER)
+  pivot.rotation.z = 0.55
+  const handle = new THREE.Mesh(p.handle, p.steel)
+  handle.position.y = 0.4
+  const knob = new THREE.Mesh(p.knob, p.knobs[side].knob)
+  knob.position.y = 0.95
+  const halo = new THREE.Sprite(p.knobs[side].halo)
+  halo.position.y = 0.95
+  halo.scale.setScalar(2.3)
+  pivot.add(handle, knob, halo)
+  g.add(base, pedestal, ...cheeks, pivot)
+  g.userData.knob = p.knobs[side].knob
+  g.userData.halo = p.knobs[side].halo
   return g
 }
 

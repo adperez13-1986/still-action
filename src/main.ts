@@ -15,7 +15,7 @@ import { STATE_IDS, pairWith, paired, type StateId } from './states'
 import type { Enemy, EnemyEvent } from './enemy'
 import { isBoss, Assembler } from './boss'
 import { Arbiter, ARBITER, arbiterHusk } from './arbiter'
-import { Engine } from './engine'
+import { BOARD, ENGINE, Engine } from './engine'
 import { DayTracker } from './day'
 import type { HazardSpec } from './hazard'
 import { Line, LINE, type LineEvent, type SidingDef, type Train } from './line'
@@ -3526,6 +3526,8 @@ function cast(def: AbilityDef, pushed: boolean): CastResult {
     sfx.denied()
     return r
   }
+  // the Engine's lever: any cast that landed, with Still within reach of the open one, throws it
+  if (combat.boss instanceof Engine) combat.boss.onCast(still.pos)
   // a rewind gave integrity back: the fill is seen, not just counted
   if (combat.hp > hpBefore + 0.5) hud.healing()
   // Snap the body to the target, or the swing plays sideways out of his shoulder.
@@ -3993,7 +3995,7 @@ function simulate(realDt: number) {
   if (boss && !boss.dead) {
     const awakeBoss = combat.awake.includes(boss)
     const def = boss.def
-    hud.bossBar(awakeBoss ? { name: def.name, frac: boss.hp / boss.maxHp, phase2: boss.phase2, open: boss.open, openWord: def.openWord } : null)
+    hud.bossBar(awakeBoss ? { name: def.name, frac: boss.hp / boss.maxHp, phase2: boss.phase2, open: boss.open, openWord: def.openWord, board: boss.board?.() ?? '' } : null)
     if (boss.justPhase2) {
       overlay.banner(BOSS_COPY[def.kind].phase2)
       sfx.roar()
@@ -4798,6 +4800,8 @@ if (import.meta.env.DEV) {
         cut: b.cut ? { x: b.cut.x, z: b.cut.z } : null, posts: b.posts.map((p) => ({ x: p.x, z: p.z, lances: p.lances, cracked: p.cracked, r: p.circles[0].r })),
       }
     },
+    /** C5: the Engine's numbers (mutable for a check) and the board's words. */
+    __ENGINE: ENGINE, __BOARD: BOARD,
     /** C4: the Engine's own hazards (its lit track), with the clocks Combat keeps; [] with no Engine. */
     __engineSegs: () => (combat.boss instanceof Engine ? combat.boss.segments() : []),
     /** Flip the Arbiter's switch for this session (false: Home's second Assembler at 6); null restores it. */

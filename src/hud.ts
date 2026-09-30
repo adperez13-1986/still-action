@@ -123,7 +123,7 @@ export interface Hud {
   resetLoadout: (parts: readonly AbilityDef[]) => void
   /** The boss's health across the top. Null hides it. */
   /** `open`: its ×1.5 window, named on the bar by `openWord` ('stunned'). */
-  bossBar: (b: { name: string; frac: number; phase2: boolean; open: boolean; openWord: string } | null) => void
+  bossBar: (b: { name: string; frac: number; phase2: boolean; open: boolean; openWord: string; board?: string } | null) => void
   /**
    * A road's name over its beam (the crossroads, and the alternate's dressed yard beam):
    * the elite-name label's element and style. `at` is the screen point (px) under the name;
@@ -251,7 +251,7 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
         <button type="button" class="melt">melt</button>
       </div>
     </div>
-    <div id="bossBar"><b></b><div class="track"><i></i></div></div>
+    <div id="bossBar"><b></b><small></small><div class="track"><i></i></div></div>
     <div id="prompt">
       <div class="info"><b class="name"></b><p class="line"></p></div>
       <div class="choices"><button type="button" class="take"></button></div>
@@ -714,6 +714,7 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
       el.classList.toggle('show', !!b)
       if (!b) return
       el.querySelector('b')!.textContent = b.open ? `${b.name} \u2014 ${b.openWord}` : b.name
+      el.querySelector('small')!.textContent = b.board ?? ''
       el.querySelector<HTMLElement>('i')!.style.width = `${Math.max(0, b.frac) * 100}%`
       el.classList.toggle('phase2', b.phase2)
       el.classList.toggle('open', b.open)

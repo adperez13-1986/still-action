@@ -442,6 +442,8 @@ html, body {
 }
 #bossBar.show { display: block; }
 #bossBar b { display: block; margin-bottom: 5px; font: 700 15px/1 var(--display); letter-spacing: .2em; color: #e6c9c2; text-shadow: 0 1px 3px #000; }
+#bossBar small { display: block; margin: -2px 0 5px; font: 600 12px/1 var(--display); letter-spacing: .2em; color: #c9b1aa; text-shadow: 0 1px 3px #000; }
+#bossBar small:empty, #bossBar.open small { display: none; }
 #bossBar .track { height: 8px; border-radius: 4px; overflow: hidden; background: rgba(8, 12, 18, .8); border: 1px solid #3a2522; }
 #bossBar i { display: block; height: 100%; background: linear-gradient(90deg, #7a2a22, #ff5a3c); transition: width .15s; }
 #bossBar.phase2 i { background: linear-gradient(90deg, #a13a1e, #ffa04a); }

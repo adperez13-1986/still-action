@@ -415,4 +415,270 @@ check('K-N3', ENG6, async ({ page }) => {
   }
 })
 
+// --- Levers (C5) -------------------------------------------------------------------------------------------------------
+
+// The honest-rail watcher, for the checks that turn the Engine off the loop: after every tick `observe(prevState)` records when each
+// strip was made and armed, and every tick its leading end moves (the nose driving, the tail backing) that end must lie in an armed,
+// not-done strip of its own, grown 0.05. `honesty()` is what it saw.
+const WATCH = `
+  const seen = new Map(), bad = []
+  let movingTicks = 0
+  const observe = (prevState) => {
+    const b = W.__boss(), segs = W.__engineSegs()
+    for (const s of segs) {
+      let r = seen.get(s.id)
+      if (!r) { r = { madeAt: s.madeAt, armMs: s.armMs, armedAt: null }; seen.set(s.id, r) }
+      if (r.armedAt === null && s.armIn <= 1e-6) r.armedAt = W.__combat.time
+    }
+    if ((b.state === 'run' || b.state === 'siding' || b.state === 'backing') && prevState === b.state) {
+      movingTicks++
+      const y = rot(), f = b.state === 'backing' ? -1 : 1
+      const nx = b.x + Math.sin(y) * 1.5 * f, nz = b.z + Math.cos(y) * 1.5 * f
+      const ok = segs.some((s) => s.source === 'train' && !s.done && s.armIn <= 1e-6 && inStrip(s.shape, nx, nz, 0.05))
+      if (!ok && bad.length < 3) bad.push({ state: b.state, s: b.s, path: b.path, end: [nx, nz] })
+    }
+  }
+  const honesty = () => {
+    const rows = [...seen.values()], armed = rows.filter((r) => r.armedAt !== null)
+    return { n: rows.length, armed: armed.length, movingTicks, bad, minGap: Math.min(...armed.map((r) => (r.armedAt - r.madeAt) * 1000)), minArmMs: Math.min(...rows.map((r) => r.armMs)) }
+  }
+`
+const honestOk = (why, h) => {
+  if (h.bad.length) why(`the leading end was outside every armed strip on a tick: ${JSON.stringify(h.bad[0])}`)
+  if (h.minGap < 1300 - 1e-6) why(`a strip armed ${h.minGap.toFixed(4)} ms after it was made, under 1300`)
+  if (h.minArmMs < 1300 - 1e-6) why(`a strip was given armMs ${h.minArmMs.toFixed(4)}, under 1300`)
+}
+
+check('K-N4', ENG6, async ({ page }) => {
+  for (const seed of [1, 2]) {
+    const got = await inPage(page, RUNNING + `
+      const t = W.__track(), B = W.__BOARD, vS = (side) => t.vertexS[t.arms.find((a) => a.side === side && a.dir === 1).vertex]
+      let un = 0, prevS = W.__boss().s, cur = null
+      const wins = [], rows = []
+      for (let i = 0; i < 60 * 70; i++) {
+        tick(1)
+        const b = W.__boss()
+        let d = b.s - prevS; if (d < -loop / 2) d += loop
+        un += d; prevS = b.s
+        const bar = document.querySelector('#bossBar small')
+        rows.push({ board: b.board, dom: bar ? bar.textContent : null, open: !!(b.window && b.window.open), side: b.window ? b.window.side : null })
+        if (b.window && !cur) {
+          const nose = un + 1.5, v = vS(b.window.side)
+          const dist = (((v - (b.s + 1.5)) % loop) + loop) % loop
+          cur = { i0: i, side: b.window.side, dist, junction: nose + dist, lap: b.lap }
+        }
+        if (!b.window && cur) { wins.push({ ...cur, ticks: i - cur.i0 }); cur = null }
+        if (b.state !== 'run') return { bad: 'left run to ' + b.state }
+      }
+      return { wins, rows, now: B.now, right: B.right, left: B.left }`, seed)
+    const why = (m) => { throw new Error(`seed ${seed}: ${m}`) }
+    if (got.bad) why(got.bad)
+    const W = got.wins
+    if (W.length < 5) why(`${W.length} windows in 70 s`)
+    for (const [k, w] of W.entries()) {
+      if (Math.abs(w.dist - 29.7) > 0.3) why(`window ${k} opened ${w.dist.toFixed(3)} u from its junction, not 29.7 +- 0.3`)
+      const ms = w.ticks * 1000 / 60
+      if (Math.abs(ms - 1400) > 17) why(`window ${k} lasted ${ms.toFixed(1)} ms, not 1400 +- 17`)
+      if (w.lap < 1) why(`window ${k} opened on lap ${w.lap}`)
+      if (k > 0) {
+        if (w.side === W[k - 1].side) why(`windows ${k - 1} and ${k} are both ${w.side}: the sides do not alternate`)
+        const gap = w.junction - W[k - 1].junction
+        if (Math.abs(gap - 97.47) > 0.15) why(`window ${k}'s junction is ${gap.toFixed(3)} u after window ${k - 1}'s, not every 3rd junction (97.47)`)
+      }
+    }
+    // the board: the words from BOARD, "now" while a window is open, else the next window's side and the whole seconds to it
+    const words = { right: got.right, left: got.left }
+    let dom = 0
+    got.rows.forEach((r, i) => { if (r.dom !== r.board) dom++ })
+    if (dom) why(`the hud's #bossBar small differed from the board on ${dom} tick(s)`)
+    for (const [k, w] of W.entries()) {
+      for (let i = w.i0; i < w.i0 + w.ticks; i++) {
+        const want = `${words[w.side]} · ${got.now}`
+        if (got.rows[i].board !== want) why(`window ${k}, tick ${i - w.i0} of it: the board reads "${got.rows[i].board}", not "${want}"`)
+      }
+      const from = k > 0 ? W[k - 1].i0 + W[k - 1].ticks : 0
+      for (let i = Math.max(from, w.i0 - 600); i < w.i0; i++) {
+        const gap = w.i0 - i
+        const r = got.rows[i]
+        if (gap / 60 > 9 + 1 / 60) {
+          if (r.board !== '') why(`window ${k}: ${(gap / 60).toFixed(2)} s out the board reads "${r.board}", not ''`)
+        } else if (gap / 60 < 9) {
+          const lo = Math.max(1, Math.ceil((gap - 1) / 60 + 1e-6)), hi = Math.max(1, Math.ceil(gap / 60))
+          const ok = [lo, hi].some((n) => r.board === `${words[w.side]} · ${n}`)
+          if (!ok) why(`window ${k}: ${(gap / 60).toFixed(2)} s out the board reads "${r.board}", not "${words[w.side]} · ${lo}" or ${hi}`)
+        }
+      }
+    }
+    console.log(`INFO K-N4 seed ${seed}: ${W.length} windows, opened ${Math.min(...W.map((w) => w.dist)).toFixed(2)}-${Math.max(...W.map((w) => w.dist)).toFixed(2)} u out, ${[...new Set(W.map((w) => w.ticks))].map((n) => (n * 1000 / 60).toFixed(0)).join('/')} ms long, sides ${W.map((w) => w.side[0]).join('')}`)
+  }
+})
+
+/** The lever's place: 2.5 u out along x from it, clear of both of its arms' strips and of the buffers. */
+const NEAR_LEVER = `
+  const leverPos = (side, out = 2.5) => { const l = W.__track().levers[side]; return { x: l.x + (side === 'right' ? out : -out), z: l.z } }
+  const untilWindow = (maxS = 40, pin) => until(() => { const b = W.__boss(); return b && b.window && b.window.open }, maxS, pin)
+`
+
+check('K-N5', ENG6, async ({ page }) => {
+  for (const [pushed, seed] of [[false, 1], [true, 2], [false, 3]]) {
+    const got = await inPage(page, RUNNING + WATCH + NEAR_LEVER + `
+      if (untilWindow(40) < 0) return { bad: 'no window in 40 s' }
+      const side = W.__boss().window.side, t = W.__track()
+      const arm = t.arms.find((a) => a.side === side && a.dir === 1)
+      const p = leverPos(side)
+      let state = W.__boss().state
+      W.__still.pos.set(p.x, 0, p.z)
+      W.__fire('arms', arg.pushed)
+      const thrownAt = W.__boss().window ? W.__boss().window.thrown : null
+      const timeline = [], onArm = []
+      let last = null, ticksIn = 0, stop = null, hitTaken = null, backV = [], holdOk = null
+      for (let i = 0; i < 60 * 12; i++) {
+        W.__still.pos.set(p.x, 0, p.z)
+        const prev = state
+        tick(1)
+        observe(prev)
+        const b = W.__boss()
+        state = b.state
+        if (b.state !== last) { timeline.push({ state: b.state, ticks: 0, path: b.path, s: b.s, open: b.open, dir: b.dir }); last = b.state }
+        timeline[timeline.length - 1].ticks++
+        if (b.state === 'derailed' && stop === null) {
+          stop = { s: b.s, path: b.path }
+          const hp0 = W.__combat.boss.hp
+          W.__combat.boss.hit(10)
+          hitTaken = hp0 - W.__combat.boss.hp
+          W.__combat.boss.hp = hp0
+        }
+        if (b.state === 'backing') backV.push(b.s)
+        if (b.state === 'siding') {
+          for (const s of W.__engineSegs()) {
+            const sh = s.shape
+            const dist = (x, z) => {
+              const ex = arm.buffer.x - arm.junction.x, ez = arm.buffer.z - arm.junction.z, l = Math.hypot(ex, ez)
+              return { across: Math.abs((x - arm.junction.x) * ez - (z - arm.junction.z) * ex) / l, along: ((x - arm.junction.x) * ex + (z - arm.junction.z) * ez) / l }
+            }
+            const a = dist(sh.ax, sh.az), c = dist(sh.bx, sh.bz)
+            if (a.across < 1e-6 && c.across < 1e-6 && a.along > -1e-6 && c.along > 0.5 && !onArm.includes(s.id)) onArm.push(s.id)
+          }
+        }
+        if (b.state === 'run' && timeline.length > 1 && timeline.some((x) => x.state === 'hold')) break
+      }
+      const b = W.__boss()
+      return { side, arm: { len: arm.len, side: arm.side, kind: arm.kind }, thrownAt, timeline, stop, hitTaken, backV, onArm: onArm.length, dir: b.dir, honest: honesty(), pushed: arg.pushed,
+        junction: arm.junction, end: { x: b.x, z: b.z }, state: b.state }`, { pushed })
+    const why = (m) => { throw new Error(`seed ${seed}${pushed ? ' pushed' : ''}: ${m}`) }
+    if (got.bad) why(got.bad)
+    if (got.thrownAt !== true) why(`the window was not thrown after the cast (${got.thrownAt})`)
+    const T = Object.fromEntries(got.timeline.map((x) => [x.state, x]))
+    for (const st of ['siding', 'derailed', 'backing', 'hold']) if (!T[st]) why(`never reached ${st}: ${got.timeline.map((x) => x.state).join(' > ')}`)
+    if (!got.onArm) why('no strip was laid on the arm line past the junction')
+    const stopWant = got.arm.len - 0.6 - 1.5
+    if (!got.stop || got.stop.path !== `${got.arm.side}-${got.arm.kind}` || Math.abs(got.stop.s - stopWant) > 0.05) why(`it stopped at ${JSON.stringify(got.stop)}, not ${stopWant.toFixed(2)} along ${got.arm.side}-${got.arm.kind}`)
+    const ms = (n) => n * 1000 / 60
+    if (Math.abs(ms(T.derailed.ticks) - 1600) > 17) why(`derailed lasted ${ms(T.derailed.ticks).toFixed(1)} ms, not 1600 +- 17`)
+    if (!T.derailed.open) why('derailed but not open')
+    if (Math.abs(got.hitTaken - 15) > 1e-6) why(`b.hit(10) took ${got.hitTaken} while open, not 15`)
+    // backing at 4 u/s, to the junction
+    const steps = got.backV.slice(1).map((v, i) => got.backV[i] - v)
+    // every step but the last (which stops at the junction) is 4 u/s
+    if (steps.slice(0, -1).some((d) => Math.abs(d - 4 / 60) > 0.004)) why(`backing steps ${steps.slice(0, 5)}, not 4/60 = ${(4 / 60).toFixed(4)}`)
+    if (Math.abs(ms(T.backing.ticks) - 1000 * stopWant / 4) > 34) why(`backing lasted ${ms(T.backing.ticks).toFixed(1)} ms, not ${(1000 * stopWant / 4).toFixed(0)} for ${stopWant.toFixed(2)} u at 4 u/s`)
+    if (Math.abs(ms(T.hold.ticks) - 1300) > 17) why(`hold lasted ${ms(T.hold.ticks).toFixed(1)} ms, not 1300 +- 17`)
+    if (T.hold.path !== 'loop') why(`the hold is on ${T.hold.path}`)
+    if (got.state !== 'run' || got.dir !== 1) why(`after the hold: ${got.state}, dir ${got.dir}`)
+    honestOk(why, got.honest)
+    console.log(`INFO K-N5 seed ${seed}${pushed ? ' pushed' : ''}: ${got.timeline.map((x) => `${x.state} ${ms(x.ticks).toFixed(0)}`).join(' > ')}; stop ${got.stop.s.toFixed(2)}; ${got.honest.n} strips, least made-to-armed ${got.honest.minGap.toFixed(1)} ms, ${got.honest.movingTicks} moving ticks in a strip`)
+  }
+})
+
+check('K-N6', ENG6, async ({ page }) => {
+  // nothing that is not a cast in reach of an open lever throws it. Each case is its own level, and a control cast follows where the
+  // window is still open (so the case was not silently a refusal for another reason)
+  const CASES = {
+    // a cast while no window is open, close to the lever, at the very start
+    early: `
+      const p = leverPos('right')
+      W.__still.pos.set(p.x, 0, p.z)
+      W.__fire('arms')
+      return { window: W.__boss().window }`,
+    // the autos on, standing at the lever, then a control cast
+    autos: `
+      if (untilWindow(40, () => W.__still.pos.set(0, 0, 0)) < 0) return { bad: 'no window' }
+      const side = W.__boss().window.side, p = leverPos(side)
+      C.autoAttack = true; C.autoTimer = 0
+      W.__still.pos.set(p.x, 0, p.z)
+      tick(20, () => W.__still.pos.set(p.x, 0, p.z))
+      const before = W.__boss().window.thrown
+      C.autoAttack = false
+      W.__fire('arms')
+      return { before, control: W.__boss().window.thrown }`,
+    // a cast from 3.2 u
+    far: `
+      if (untilWindow(40, () => W.__still.pos.set(0, 0, 0)) < 0) return { bad: 'no window' }
+      const side = W.__boss().window.side, far = leverPos(side, 3.2), lv = W.__track().levers[side]
+      W.__still.pos.set(far.x, 0, far.z)
+      W.__fire('arms')
+      return { before: W.__boss().window.thrown, dist: Math.hypot(far.x - lv.x, far.z - lv.z), open: W.__boss().window.open }`,
+    // a cast while the run is not in the crawl (refused), then a control cast
+    phase: `
+      if (untilWindow(40, () => W.__still.pos.set(0, 0, 0)) < 0) return { bad: 'no window' }
+      const side = W.__boss().window.side, p = leverPos(side)
+      W.__still.pos.set(p.x, 0, p.z)
+      const phase = W.__run.phase
+      W.__run.phase = 'stopping'
+      W.__fire('arms')
+      const before = W.__boss().window.thrown
+      W.__run.phase = phase
+      W.__fire('arms')
+      return { before, control: W.__boss().window.thrown }`,
+  }
+  for (const [name, body] of Object.entries(CASES)) {
+    const got = await inPage(page, RUNNING + NEAR_LEVER + body, 1)
+    const why = (m) => { throw new Error(`${name}: ${m}`) }
+    if (got.bad) why(got.bad)
+    if (name === 'early' && got.window) why(`a window was open at the start: ${JSON.stringify(got.window)}`)
+    if (name === 'far' && (!(got.dist > 3.19) || got.before !== false || !got.open)) why(`a cast from ${got.dist.toFixed(2)} u: thrown ${got.before}, open ${got.open}`)
+    if (name === 'autos' && (got.before !== false || got.control !== true)) why(`the autos ${got.before ? 'threw it' : 'did not, but the control cast then did not either'}: ${JSON.stringify(got)}`)
+    if (name === 'phase' && (got.before !== false || got.control !== true)) why(`a refused cast: ${JSON.stringify(got)}`)
+  }
+})
+
+check('K-N7', ENG6, async ({ page }) => {
+  for (const seed of [1, 2]) {
+    for (const stays of [true, false]) {
+      const got = await inPage(page, RUNNING + WATCH + NEAR_LEVER + `
+        if (untilWindow(40) < 0) return { bad: 'no window' }
+        const side = W.__boss().window.side, t = W.__track()
+        const arm = t.arms.find((a) => a.side === side && a.dir === 1)
+        // on the arm's centre line 2 u short of its buffer
+        const ex = (arm.buffer.x - arm.junction.x) / arm.len, ez = (arm.buffer.z - arm.junction.z) / arm.len
+        const spot = { x: arm.buffer.x - ex * 2, z: arm.buffer.z - ez * 2 }
+        const lv = t.levers[side]
+        const toLever = Math.hypot(spot.x - lv.x, spot.z - lv.z)
+        W.__still.pos.set(spot.x, 0, spot.z)
+        W.__fire('arms')
+        const thrown = W.__boss().window ? W.__boss().window.thrown : null
+        // the first arm strip's appearance: the state turns to siding
+        let lost = 0, off = 0, appeared = false, state = W.__boss().state
+        const nx = -ez, nz = ex, sign = (lv.x - spot.x) * nx + (lv.z - spot.z) * nz >= 0 ? 1 : -1
+        for (let i = 0; i < 60 * 9; i++) {
+          if (W.__boss().state === 'siding') appeared = true
+          if (appeared && !arg.stays && off < 2) {
+            off = Math.min(2, off + 5.5 / 60)
+            W.__still.pos.set(spot.x + nx * sign * off, 0, spot.z + nz * sign * off)
+          } else if (!appeared || arg.stays) W.__still.pos.set(spot.x, 0, spot.z)
+          const prev = state
+          lost += tick(1)
+          observe(prev); state = W.__boss().state
+        }
+        return { thrown, lost, toLever, dmg, honest: honesty() }`, { stays })
+      const why = (m) => { throw new Error(`seed ${seed}${stays ? ' staying' : ' walking off'}: ${m}`) }
+      if (got.bad) why(got.bad)
+      if (got.toLever > 3.0) why(`the spot is ${got.toLever.toFixed(2)} u from the lever`)
+      if (got.thrown !== true) why('the wrong throw did not throw')
+      if (stays && Math.abs(got.lost - got.dmg) > 1e-6) why(`staying on the arm cost ${got.lost} HP, not one hit of ${got.dmg}`)
+      if (!stays && got.lost !== 0) why(`walking 2 u off the line at the first arm strip still cost ${got.lost} HP`)
+    }
+  }
+})
+
 process.exit(await run(process.argv.slice(2)))
