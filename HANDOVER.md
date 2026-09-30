@@ -36,8 +36,15 @@ Signalman once Still stands within `laneReach` (3.7 u) of a lane (the lesson cal
 `pump` + `latch` once per Handcar that locks; `aim`/`rev` as before. `gravelRise` is K-E8's (6 per brood). The ambience's
 `railTick`/`farShunt` never reach heardLog: headless audio never runs. **Nothing new has ever been heard: phone only.**
 
-**Next: stage C, the Engine** (the Line's boss; today the Line ends in a stand-in Assembler). Needs a verifier brief
-first (`design/area3/STAGE-C.md`, from SPEC + BOTH-ROADS + CURVE9). Phone list for stage B is STAGE-B §5.
+**Stage C, the Engine: brief done** (`design/area3/STAGE-C.md`, 5f97e5c, verifier; steps C0-C10, checks K-N*). A Sonnet
+engineer is on C0 + C1 (check scaffold, `src/track.ts`); C2 (the roundhouse arena) next. **His calls before C5-C9 (brief §9),
+verifier's defaults in brackets:** lever cadence (every 3rd junction, ~8.9 s, alternating sides; SPEC's "every lap alternating"
+is geometrically impossible); accept leading steam (250 ms aim with the Arbiter's lead-guess, 700 ms locked) and the new
+**cinder** (a lobbed ring after 5 s out of steam range, so camping inside the loop isn't safe); husk position on resume (where it
+slept); the Engine's page under unmet-only (`raging-hull`, fallback `echo-shell`; his save has likely met raging-hull);
+"that saw the Arbiter" outranks "that saw the Engine" in every full run. Words all PLACEHOLDER (name, openWord, phase-2 banner,
+BOARD, notebook line). Contradictions the brief lists in its "differs" table (SPEC's 900 HP ignores the curve: 1080 at 6,
+1170 at 9). Phone list for stage B is STAGE-B §5.
 
 **His to write (PLACEHOLDER):** Signalman / Handcar / Sleepers names and WHAT words ('a signalman', 'a handcar', 'sleepers'),
 their notebook lines, `ROUTE_WORD.III`, Parry Clamp's card line, the warm-beam card copy. Still open from 29 Sep: his feel on
