@@ -1,6 +1,6 @@
 /**
  * The stage C checks (design/area3/STAGE-C.md §4): `node tools/checks/stagec.mjs [K-N1a ...]` runs all of them, or the ids
- * listed. C0 registers none: each later step adds its own here, on lib.mjs's `suite()`, as stageb.mjs does. The baselines
+ * listed. Each step adds its own checks here, on lib.mjs's `suite()`, as stageb.mjs does (C1-C4: K-N1a, K-N1b, K-N2a, K-N2b, K-N3). The baselines
  * (K-90, K-90L, K-90F) are baseline.mjs's and fights.mjs's; stage C never re-captures them.
  *
  * The short forms of STAGE-C.md §4, as queries (every one is ?save=memory and a dev run straight into a level):
@@ -21,8 +21,8 @@ const { check, run } = suite()
 
 /**
  * The in-page toolkit every check body starts with (it is source, spliced in front of the body by `inPage`).
- * `enterEngine(order, depth, seed)`: the road taken (`__run.route`), a level at `depth`, Still wearing the Scrap Cleaver, the autos and
- * the break rule off; returns the Engine's level. `tick(n, before)`: n ticks of 1/60 s with Still's HP put back to 100 before each;
+ * `enterEngine(order, depth, seed)`: the road taken (`__run.route`), a level at `depth`, Still wearing the Scrap Cleaver, the autos, the
+ * break rule and the eye's brace (a planted Still takes half) off; returns the Engine's level. `tick(n, before)`: n ticks of 1/60 s with Still's HP put back to 100 before each;
  * returns the HP he lost. `until(pred, maxS, before)`: seconds ticked until pred() (checked before each tick), or -1.
  * `roomOf()`: the arena's centre `c` and `away`, the unit vector from the entrance to it (the entrance axis).
  * `wake()`: Still set 7 u short of c against `away` (inside ENGINE.wakeR 16.5 of a body on the loop), stepped until the Engine runs.
@@ -57,6 +57,8 @@ const enterEngine = (order, depth, seed) => {
   C.autoTimer = 0
   C.counters = false
   C.breakRule = false
+  // planted, every hit on him is halved (EYE.brace, as stageb's K-T check turns it off): the checks measure the flat hit
+  C.eye = false
   W.__stick(0, 0)
   C.hp = 100
   return W.__level()
@@ -249,6 +251,167 @@ check('K-N2a', ENG6, async ({ page }) => {
     if (Math.abs(ms - 1500) > 17) why(`the unfold lasted ${ms.toFixed(1)} ms, not 1500 +- 17 (${got.ticks} ticks)`)
     if (got.after !== 'run') why(`the unfold ended in '${got.after}', not 'run'`)
     if (got.whistles !== 1) why(`${got.whistles} whistle events, not 1`)
+  }
+})
+
+check('K-N2b', ENG6, async ({ page }) => {
+  for (const seed of seeds(5)) {
+    const got = await inPage(page, `
+      enterEngine('III', 6, arg)
+      const { c, away } = roomOf()
+      // waked as K-N2a's is: Still 7 u short of c, against the entrance axis; the wake tick is the unfold's first update
+      W.__still.pos.set(c.x - away.x * 7, 0, c.z - away.z * 7)
+      let n = 0
+      while (W.__boss().state === 'asleep' && n++ < 30) tick(1)
+      if (W.__boss().state !== 'unfold') return { bad: 'the state after the wake tick is ' + W.__boss().state }
+      let ticks = 0
+      while (W.__boss().state === 'unfold' && ticks < 300) { tick(1); ticks++ }
+      const runAt = (ticks + 1) * 1000 / 60
+      const L = W.__track().loopLen
+      const b0 = W.__boss(), lap0 = b0.lap
+      let windowSeen = false, moved = 0, prev = b0.s
+      // one lap and a bit (5.91 s at 11 u/s): no window opens before lap 1, and it never stops
+      const t0 = { x: b0.x, z: b0.z }
+      let wrapped = 0
+      for (let i = 0; i < 400 && W.__boss().lap < 1; i++) {
+        tick(1)
+        const b = W.__boss()
+        if (b.window) windowSeen = true
+        let d = b.s - prev
+        if (d < -L / 2) d += L
+        moved += d
+        if (b.s < prev) wrapped++
+        prev = b.s
+        if (b.state !== 'run') return { bad: 'left run to ' + b.state + ' on lap ' + b.lap }
+      }
+      const b1 = W.__boss()
+      return { runAt, state: b0.state, lap0, lap: b1.lap, windowSeen, moved, L, dir: b0.dir, path: b1.path, attack: b1.attack }`, seed)
+    const why = (m) => { throw new Error(`seed ${seed}: ${m}`) }
+    if (got.bad) why(got.bad)
+    if (Math.abs(got.runAt - 1500) > 17) why(`run came at ${got.runAt.toFixed(1)} ms, not 1500 +- 17`)
+    if (got.lap0 !== 0) why(`it starts on lap ${got.lap0}`)
+    if (got.windowSeen) why('a window opened before lap 1')
+    if (got.dir !== 1 || got.path !== 'loop') why(`dir ${got.dir}, path ${got.path}`)
+    // 11 u/s: to the end of lap 0 is one loop length (the lap turns over on a tick, so a tick's 0.183 u either side)
+    if (!(Math.abs(got.moved - got.L) <= 0.25)) why(`it moved ${got.moved.toFixed(3)} u round the loop in lap 0, not ${got.L.toFixed(3)} +- 0.25`)
+    if (got.lap !== 1) why(`the loop ended on lap ${got.lap}`)
+  }
+})
+
+// K-N3's setup, in the page: the Engine woken (Still at c, autos off), returned from `run` on
+const RUNNING = `
+  enterEngine('III', 6, arg)
+  const { c, away } = roomOf()
+  W.__still.pos.set(c.x - away.x * 7, 0, c.z - away.z * 7)
+  until(() => W.__boss() && W.__boss().state === 'run', 5)
+  W.__still.pos.set(c.x, 0, c.z)
+  const rot = () => W.__combat.boss.group.rotation.y
+  const inStrip = (s, x, z, grow) => {
+    const vx = s.bx - s.ax, vz = s.bz - s.az, len = Math.hypot(vx, vz)
+    if (len < 1e-6) return false
+    const along = ((x - s.ax) * vx + (z - s.az) * vz) / len, across = Math.abs((x - s.ax) * vz - (z - s.az) * vx) / len
+    return along >= -1e-9 && along <= len + 1e-9 && across <= s.halfW + grow
+  }
+  const dmg = 20 * W.__combat.curve.bossDmg
+  const loop = W.__track().loopLen
+`
+
+check('K-N3', ENG6, async ({ page }) => {
+  // 1. the honest rail, over 30 s of phase 1 with Still standing at c
+  for (const seed of [1, 2, 3]) {
+    const got = await inPage(page, RUNNING + `
+      const seen = new Map()
+      const bad = []
+      let prev = W.__boss(), wraps = [], ticks = 0, movingTicks = 0, lost = 0, maxLive = 0
+      const t = () => W.__combat.time
+      for (let i = 0; i < 1800; i++) {
+        W.__still.pos.set(c.x, 0, c.z)
+        lost += tick(1)
+        const b = W.__boss()
+        const segs = W.__engineSegs()
+        maxLive = Math.max(maxLive, segs.filter((s) => !s.done).length)
+        for (const s of segs) {
+          let r = seen.get(s.id)
+          if (!r) { r = { madeAt: s.madeAt, armMs: s.armMs, damage: s.damage, group: s.group, armedAt: null }; seen.set(s.id, r) }
+          if (r.armedAt === null && s.armIn <= 1e-6) r.armedAt = t()
+        }
+        // its nose, every tick it moves, must be inside an armed, not-done strip of its own (grown 0.05)
+        if (b.state === 'run' && prev.state === 'run') {
+          movingTicks++
+          const y = rot(), nx = b.x + Math.sin(y) * 1.5, nz = b.z + Math.cos(y) * 1.5
+          const ok = segs.some((s) => s.source === 'train' && !s.done && s.armIn <= 1e-6 && inStrip(s.shape, nx, nz, 0.05))
+          if (!ok && bad.length < 5) bad.push({ tick: i, s: b.s, nose: [nx, nz], strips: segs.filter((s) => !s.done).map((s) => [s.armIn, s.shape.ax, s.shape.az, s.shape.bx, s.shape.bz]) })
+          if (b.s < prev.s) wraps.push(t())
+        }
+        prev = b
+      }
+      const rows = [...seen.values()]
+      const armed = rows.filter((r) => r.armedAt !== null)
+      return {
+        n: rows.length, armed: armed.length, movingTicks, bad, lost, maxLive, wraps,
+        minGap: Math.min(...armed.map((r) => (r.armedAt - r.madeAt) * 1000)),
+        minArmMs: Math.min(...rows.map((r) => r.armMs)),
+        damages: [...new Set(rows.map((r) => r.damage))], dmg,
+        groups: [...new Set(rows.map((r) => r.group))].length,
+        sources: [...new Set(W.__engineSegs().map((s) => s.source))],
+      }`, seed)
+    console.log(`INFO K-N3 seed ${seed}: ${got.n} strips made, ${got.armed} armed, ${got.groups} lap groups, up to ${got.maxLive} live at once; least made-to-armed ${got.minGap.toFixed(2)} ms, least armMs ${got.minArmMs.toFixed(2)}; ${got.movingTicks} moving ticks checked; loop start passed at ${got.wraps.map((w) => w.toFixed(2)).join(', ')}`)
+    const why = (m) => { throw new Error(`seed ${seed}: ${m}`) }
+    if (got.armed < 100) why(`only ${got.armed} of ${got.n} strips armed in 30 s`)
+    if (got.minGap < 1300 - 1e-6) why(`a strip armed ${got.minGap.toFixed(4)} ms after it was made, under 1300`)
+    if (got.minArmMs < 1300 - 1e-6) why(`a strip was given armMs ${got.minArmMs.toFixed(4)}, under 1300`)
+    if (got.damages.length !== 1 || Math.abs(got.damages[0] - got.dmg) > 1e-9) why(`strip damage ${got.damages}, not 20 x bossDmg = ${got.dmg}`)
+    if (got.bad.length) why(`${got.bad.length}+ tick(s) with the nose outside every armed strip; first: ${JSON.stringify(got.bad[0])}`)
+    if (got.movingTicks < 1500) why(`it moved on only ${got.movingTicks} ticks`)
+    if (got.lost !== 0) why(`Still standing at c lost ${got.lost} HP`)
+    if (got.groups < 4) why(`${got.groups} lap groups in 30 s`)
+    if (got.wraps.length < 3) why(`the loop start passed ${got.wraps.length} times`)
+    for (let i = 1; i < got.wraps.length; i++) {
+      const gap = got.wraps[i] - got.wraps[i - 1]
+      if (Math.abs(gap - 5.91) > 0.05) why(`the loop start passed ${gap.toFixed(3)} s after the last, not 5.91 +- 0.05`)
+    }
+  }
+  // 2. Still on unlit rail 1 u beyond the frontier, held there 0.5 s, is not hit
+  const unlit = await inPage(page, RUNNING + `
+    until(() => W.__boss().lap >= 0 && W.__engineSegs().length > 4, 3)
+    tick(60)
+    const segs = W.__engineSegs().filter((s) => !s.done)
+    const last = segs[segs.length - 1].shape
+    const len = Math.hypot(last.bx - last.ax, last.bz - last.az)
+    const ux = (last.bx - last.ax) / len, uz = (last.bz - last.az) / len
+    const px = last.bx + ux, pz = last.bz + uz
+    // the frontier is where the last strip ends: a point 1 u past it, on the same straight when it has room
+    let hit = 0
+    for (let i = 0; i < 30; i++) { W.__still.pos.set(px, 0, pz); hit += tick(1) }
+    return { hit, p: [px, pz], last }`, 1)
+  if (unlit.hit !== 0) throw new Error(`Still 1 u beyond the frontier was hit for ${unlit.hit} within 0.5 s (${JSON.stringify(unlit)})`)
+  // 3. Still standing on the loop ahead is hit once, for that damage, and shoved; the same lap's strips never hit him twice
+  for (const ahead of [7, 11.5]) {
+    const hitOnce = await inPage(page, RUNNING + `
+      tick(30)
+      const b = W.__boss(), t = W.__track()
+      // the loop point arg.ahead u beyond the nose (dir +1)
+      const at = (u) => {
+        const w = ((u % loop) + loop) % loop
+        let i = t.vertexS.length - 1
+        while (t.vertexS[i] > w) i--
+        const a = t.loop[i], q = t.loop[(i + 1) % t.loop.length], len = Math.hypot(q.x - a.x, q.z - a.z)
+        const k = (w - t.vertexS[i]) / len
+        return { x: a.x + (q.x - a.x) * k, z: a.z + (q.z - a.z) * k }
+      }
+      const p = at(b.s + 1.5 + arg)
+      W.__still.pos.set(p.x, 0, p.z)
+      const keys = new Set()
+      let lost = 0, moved = 0, dead = 0
+      for (let i = 0; i < 240; i++) {
+        lost += tick(1)
+        for (const h of W.__hazards()) if (h.source === 'train' && h.hit.includes('still')) keys.add(h.shape.ax.toFixed(3) + ',' + h.shape.az.toFixed(3))
+        moved = Math.max(moved, Math.hypot(W.__still.pos.x - p.x, W.__still.pos.z - p.z))
+      }
+      return { lost, moved, hitStrips: keys.size, dmg }`, ahead)
+    if (Math.abs(hitOnce.lost - hitOnce.dmg) > 1e-6) throw new Error(`Still ${ahead} u ahead of the nose lost ${hitOnce.lost} HP, not one hit of ${hitOnce.dmg}`)
+    if (hitOnce.hitStrips !== 1) throw new Error(`Still ${ahead} u ahead was hit by ${hitOnce.hitStrips} strips, not 1`)
+    if (!(hitOnce.moved > 1)) throw new Error(`Still ${ahead} u ahead was shoved ${hitOnce.moved.toFixed(2)} u, under 1`)
   }
 })
 

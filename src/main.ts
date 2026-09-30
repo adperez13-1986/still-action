@@ -4798,6 +4798,8 @@ if (import.meta.env.DEV) {
         cut: b.cut ? { x: b.cut.x, z: b.cut.z } : null, posts: b.posts.map((p) => ({ x: p.x, z: p.z, lances: p.lances, cracked: p.cracked, r: p.circles[0].r })),
       }
     },
+    /** C4: the Engine's own hazards (its lit track), with the clocks Combat keeps; [] with no Engine. */
+    __engineSegs: () => (combat.boss instanceof Engine ? combat.boss.segments() : []),
     /** Flip the Arbiter's switch for this session (false: Home's second Assembler at 6); null restores it. */
     __arbiterAt6: (on: boolean | null) => { devArbiterAt6 = on },
     /** Posts built by __arena({ posts: true }), for the checks. */

@@ -451,6 +451,7 @@ const TELL_FRAG = /* glsl */ `
   uniform float uSweep;
   uniform float uSweepHalf;
   uniform float uPlain;
+  uniform vec3 uPulse;
   varying vec2 vUv;
   varying vec3 vPos;
   float h(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
@@ -474,8 +475,10 @@ const TELL_FRAG = /* glsl */ `
     if (uStrip > 0.5) {
       float along = vUv.y;
       float across = abs(vUv.x - 0.5) * 2.0;
-      // plain (the rail tell): noise and edge only. Only a body draws chevrons
-      pattern = cold || uPlain > 0.5 ? 0.0 : smoothstep(0.35, 0.0, abs(fract(along * 9.0 - uTime * 2.2 + across * 0.35) - 0.5));
+      // plain (the rail tell): noise and edge only, and only a body draws chevrons. A plain strip may ask for one slow swell
+      // running along it instead (uPulse: amount, length u, speed u/s; a strip's v is 12 u a unit). The default asks for none.
+      float swell = uPulse.x * pow(0.5 + 0.5 * sin(6.2832 * (along * 12.0 - uTime * uPulse.z) / max(0.1, uPulse.y)), 2.0);
+      pattern = cold ? 0.0 : uPlain > 0.5 ? swell : smoothstep(0.35, 0.0, abs(fract(along * 9.0 - uTime * 2.2 + across * 0.35) - 0.5));
       edge = smoothstep(0.7, 1.0, across);
       if (cold) {
         float dash = step(0.45, fract(along * 16.0));
@@ -558,6 +561,7 @@ export function tellMaterial(style: TellStyle, radius = 1, hot = EMBER, deep = E
       uSweep: { value: 0 },
       uSweepHalf: { value: 0.26 },
       uPlain: { value: opts.plain ? 1 : 0 },
+      uPulse: { value: new THREE.Vector3(0, 1, 0) },
     },
     transparent: true,
     depthWrite: false,

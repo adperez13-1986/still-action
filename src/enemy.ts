@@ -5,7 +5,7 @@ import { HIDES, hideMaterials } from './hide'
 import type { Terrain } from './terrain'
 import type { EliteMod } from './combat'
 import type { Brood } from './swarm'
-import type { HazardSource, HazardSpec } from './hazard'
+import type { Hazard, HazardSource, HazardSpec } from './hazard'
 import type { LaneDef } from './line'
 import type { Side } from './track'
 
@@ -106,6 +106,13 @@ export interface EnemyCtx {
   onLit?(x: number, z: number, r: number): boolean
   /** B4: the Line, for the Signalman. Absent on a level without lanes. Its times are the Line's clock (`t`), NOT `now`. */
   line?: SignalLine
+  /**
+   * C4: a hazard made by `owner` now, through the same path as its 'hazard' action (owner.dmgMul applied). For a body whose tell is
+   * many hazards in one tick (the Engine's lit track, its hold). Returns Combat's record.
+   */
+  addHazard?(owner: Enemy, spec: HazardSpec): Hazard
+  /** C4: ends `owner`'s unarmed, not-done hazards that pass `pick`, as the 'unhazard' action does. Returns how many. */
+  takeBack?(owner: Enemy, pick: (h: Hazard) => boolean): number
 }
 
 /** What the Signalman may ask of the Line (line.ts's `Line` satisfies it): the lanes, which are lit, when each next runs, and a call. */

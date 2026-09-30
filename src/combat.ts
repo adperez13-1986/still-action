@@ -517,6 +517,12 @@ export class Combat {
     emit: (ev) => this.emitEnemy(ev),
     nearLit: (x, z) => !!this.line?.nearLit(x, z, LINE.halfW + LINE.broodPad),
     onLit: (x, z, r) => !!this.line?.nearLit(x, z, LINE.halfW + r + LINE.stepOff.pad),
+    addHazard: (o, s) => this.addHazard(this.scaled(o, s)),
+    takeBack: (o, pick) => {
+      let n = 0
+      for (const h of this.live) if (h.spec.owner === o && !h.armed && !h.done && pick(h)) { this.endHazard(h); n++ }
+      return n
+    },
   }
 
   // Still's bolts are cold light; enemy shots are embers. Both leave trails.
@@ -627,7 +633,7 @@ export class Combat {
       }
       if (action?.kind === 'wave') this.startWave(action.center, action.gaps, action.damage * (e.dmgMul ?? 1), action.gapWidth, action.minGap)
       if (action?.kind === 'summon' && pack) this.summon(pack, action.points, action.maxAdds)
-      if (action?.kind === 'hazard') this.addHazard(e.dmgMul && e.dmgMul !== 1 ? { ...action.spec, damage: action.spec.damage * e.dmgMul } : action.spec)
+      if (action?.kind === 'hazard') this.addHazard(this.scaled(e, action.spec))
       if (action?.kind === 'unhazard') for (const h of this.live) if (h.spec.owner === e && h.spec.source === action.source && !h.armed) this.endHazard(h)
       if (action?.kind === 'pull') this.pull = { center: action.center, strength: action.strength, t: action.seconds }
       if (e instanceof Charger && e.sweep) this.trample(e)
@@ -2525,6 +2531,11 @@ export class Combat {
   }
 
   // --- floor hazards (design/content/SPEC.md §3.2) ---
+
+  /** A boss's hits scaled by the depth curve (curve.ts), whichever path makes the hazard. */
+  private scaled(e: Enemy, s: HazardSpec): HazardSpec {
+    return e.dmgMul && e.dmgMul !== 1 ? { ...s, damage: s.damage * e.dmgMul } : s
+  }
 
   /** A floor hazard, now: it telegraphs from this tick. Public for the Arbiter, slag, and dev checks. */
   addHazard(spec: HazardSpec): Hazard {

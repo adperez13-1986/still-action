@@ -1,10 +1,12 @@
 import * as THREE from 'three'
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { hideMaterials, HIDES } from './hide'
-import { haloTexture, type Vfx } from './vfx'
+import { haloTexture, tellMaterial, tellOrder, releaseTell, type Vfx } from './vfx'
 import { statusTint, CORE_ASLEEP, type EnemyAction, type EnemyCtx, type EnemyPhase } from './enemy'
 import type { Circle } from './dungeon'
-import { engineKit } from './line'
+import { engineKit, LINE, RAIL_TELL, RAIL_TOP, WASH_Y } from './line'
+import { Quads, UV_LEN } from './lane'
+import type { Hazard, HazardSpec } from './hazard'
 import { loopAt, loopS, type Side, type TrackArm, type TrackDef } from './track'
 import type { Terrain } from './terrain'
 import type { BossDef } from './areas'
@@ -17,7 +19,8 @@ import type { Boss, BossCue } from './boss'
  *
  *   asleep → unfold 1500 → run
  *
- * C3: the body, asleep and waking. It does not move yet (C4).
+ * C3: the body, asleep and waking. C4: the run, and the lit horizon it makes for itself: the honest rail (INV-E1), laid strip by strip
+ * ahead of the nose, each made at least 1.3 s before it arms, and drawn as the Line draws a train's rails (its hazards are the drawing).
  */
 /** SPEC §2.6, with the brief's changes. INV: no hit above 22 before dmgMul; no windup under 620 ms. */
 export const ENGINE = {
@@ -74,10 +77,89 @@ const FLICKER = { hz: 7, depth: 0.35 }
 const SOOT = new THREE.Color(0x2c2624)
 /** The whistle's steam: paler than the stack's smoke. */
 const STEAM = new THREE.Color(0x8a9096)
+/**
+ * A strip of the lit horizon is laid when its start is within lead + one tick (+ this hair) of the nose in time: the hair keeps the
+ * made-to-armed gap over 1300 ms by more than float noise, and costs the nose nothing (it arms exactly when the nose arrives).
+ */
+const LAY_HAIR = 0.0005
+/** A strip this far from the vertex it would end at is stretched to it, so no sliver of hazard is made (still straight). */
+const SLIVER = 0.4
+/** The horizon's look, in time: how it fades with distance ahead (armed / arming inside `nearMs` / further), and the ember it is drawn in. */
+const HORIZON = {
+  nearMs: 650,
+  /** Opacity scale of the Line's committed look (RAIL_TELL.rails[1], .wash[1]) per tier. */
+  rails: [1, 0.88, 0.7] as const, wash: [1.5, 1.2, 0.85] as const,
+  /** The swell running along it toward where the engine goes: how much, its length (u) and speed (u/s), on the rails and the wash. */
+  swell: { rails: 0.9, wash: 0.55, len: 6, speed: 15 },
+  /** Deep red, never the peach of EMBER under ACES + bloom (the firebox's colour). */
+  hot: new THREE.Color(ENGINE.fireHot), deep: new THREE.Color(0x4a0c06),
+  /** Capacity, per tier, in strips. */
+  cap: 24,
+}
 /** The headlamp, on the smokebox front, in the model's frame. */
 const LAMP = { y: 0.95, z: 0.2 }
 /** Where the cab's side slits are (line.ts rakeParts). */
 const SLIT = { x: 0.74, y: 0.55, z: -2.2 }
+
+/** One of its own hazards, and what the drawing and the checks need of it. */
+interface Seg {
+  id: number
+  h: Hazard
+  /** Combat's clock when it was made (s), and the armMs it was given. */
+  madeAt: number
+  armMs: number
+  lap: number
+  ax: number; az: number; bx: number; bz: number
+  /** The strip's v where it starts (the swell runs on it): travel distance in UV_LEN units. */
+  v: number
+}
+
+/** A third of the horizon by how soon its strips arm: a wash and the two rails of each, in the tell's ember. */
+class HorizonTier {
+  private readonly washMat = tellMaterial('strip', 1, HORIZON.hot, HORIZON.deep, { plain: true })
+  private readonly railMat = tellMaterial('strip', 1, HORIZON.hot, HORIZON.deep, { plain: true })
+  readonly wash = new Quads(HORIZON.cap, this.washMat)
+  readonly rails = new Quads(HORIZON.cap * 2, this.railMat)
+
+  constructor(private readonly tier: number) {
+    const { swell } = HORIZON
+    ;(this.washMat.uniforms.uPulse!.value as THREE.Vector3).set(swell.wash, swell.len, swell.speed)
+    ;(this.railMat.uniforms.uPulse!.value as THREE.Vector3).set(swell.rails, swell.len, swell.speed)
+    this.wash.mesh.name = 'horizon-wash'
+    this.rails.mesh.name = 'horizon-rails'
+    this.wash.mesh.visible = this.rails.mesh.visible = false
+  }
+
+  /** The strips of this tier, as the Line draws a train's rail: the wash exactly halfW, rails at the gauge; `flick` dips them. */
+  set(list: readonly Seg[], flick: number) {
+    const n = Math.min(list.length, HORIZON.cap)
+    for (let i = 0; i < n; i++) {
+      const g = list[i]!
+      const len = Math.hypot(g.bx - g.ax, g.bz - g.az) || 1
+      const ox = ((g.bz - g.az) / len) * (LINE.gauge / 2)
+      const oz = (-(g.bx - g.ax) / len) * (LINE.gauge / 2)
+      this.wash.set(i, g.ax, g.az, g.bx, g.bz, ENGINE.halfW, WASH_Y, g.v)
+      this.rails.set(2 * i, g.ax + ox, g.az + oz, g.bx + ox, g.bz + oz, RAIL_TELL.railHalf, RAIL_TOP + 0.004, g.v)
+      this.rails.set(2 * i + 1, g.ax - ox, g.az - oz, g.bx - ox, g.bz - oz, RAIL_TELL.railHalf, RAIL_TOP + 0.004, g.v)
+    }
+    this.wash.mesh.geometry.setDrawRange(0, n * 6)
+    this.rails.mesh.geometry.setDrawRange(0, n * 12)
+    this.wash.mesh.visible = this.rails.mesh.visible = n > 0
+    this.railMat.opacity = RAIL_TELL.rails[1] * HORIZON.rails[this.tier]! * flick
+    this.washMat.opacity = RAIL_TELL.wash[1] * HORIZON.wash[this.tier]! * flick
+    // the soonest on top, the rails over the wash, as every tell is ordered
+    const order = tellOrder(this.tier * 400)
+    this.wash.mesh.renderOrder = order
+    this.rails.mesh.renderOrder = order + 0.2
+  }
+
+  dispose() {
+    this.wash.dispose()
+    this.rails.dispose()
+    releaseTell(this.washMat)
+    releaseTell(this.railMat)
+  }
+}
 
 export class Engine implements Boss {
   readonly kind = 'boss'
@@ -113,6 +195,8 @@ export class Engine implements Boss {
   s = 0
   dir: 1 | -1 = 1
   lap = 0
+  /** Its body's centre along the path, unbounded (s is this wrapped into the loop). */
+  u = 0
   window: { side: Side; arm: TrackArm; open: boolean; thrown: boolean; msOpen: number } | null = null
   wagon: { spur: number; x: number; z: number; settled: boolean; circles: Circle[] } | null = null
   /** The guess for the next steam: 1 leads him fully, 0 aims at him (arbiter.ts). */
@@ -140,6 +224,27 @@ export class Engine implements Boss {
   private readonly still = new THREE.Vector3(1e3, 0, 1e3)
   private fade = 1
 
+  // --- the run (C4) ---
+  /** Distance travelled since it woke, for the lap. */
+  private travelled = 0
+  /** The path coordinate where the first strip started: laps are counted from it. */
+  private origin = 0
+  /** The horizon is laid up to here (path u): the next strip starts at it. */
+  private laidTo = 0
+  private started = false
+  private nextId = 0
+  /** Its own strips, oldest first, until they are done. */
+  private segs: Seg[] = []
+  /** One hit set per lap (Combat's `group`): a lap's strips never hit him twice. */
+  private readonly groups = new Map<number, object>()
+  private clock = 0
+  /** The horizon's drawing: three tiers by how soon a strip arms, each a wash and the two rails of every strip. */
+  private readonly horizon = [0, 1, 2].map((k) => new HorizonTier(k))
+  /** The end mark where the horizon stops at a buffer or a wagon (the ram's star), or null. */
+  private endMark: { x: number; z: number; yaw: number } | null = null
+  private readonly endMat = tellMaterial('radial', 0.7, HORIZON.hot, HORIZON.deep)
+  private readonly endStar = new THREE.Mesh(new THREE.CircleGeometry(0.7, 20, 0, Math.PI), this.endMat)
+
   private readonly hide = hideMaterials('engine', { transparent: true })
   private readonly mat = this.hide.mat
   private readonly jointMat = this.hide.jointMat
@@ -157,10 +262,15 @@ export class Engine implements Boss {
     this.hp = def.hp
     this.track = track
     // placed on the loop, going dir +1, facing its travel
-    this.s = loopS(track, x, z)
+    this.s = this.u = loopS(track, x, z)
     const at = loopAt(track, this.s)
     this.pos.set(at.x, 0, at.z)
-    this.group.rotation.y = Math.atan2(at.dx, at.dz)
+    this.group.rotation.y = this.yaw()
+    // as the ram's star (lane.ts): laid flat, yawed with the travel; its half-disc is the half toward the body
+    this.endStar.rotation.order = 'YXZ'
+    this.endStar.rotation.x = -Math.PI / 2
+    this.endStar.visible = false
+    this.worldGroup.add(...this.horizon.flatMap((t) => [t.wash.mesh, t.rails.mesh]), this.endStar)
 
     // the crawl trains' engine, cloned (the shared geometry is never ours to dispose), its centre at the group's origin
     const kit = engineKit()
@@ -256,23 +366,142 @@ export class Engine implements Boss {
     this.still.copy(ctx.player)
     switch (this.state) {
       case 'unfold':
-        // the whistle at 0; the firebox lights; the horizon is laid from C4 on
+        // the whistle at 0; the firebox lights; the horizon is laid as soon as it can be honest (INV-E2): 1.3 s before it moves
         if (!this.whistled) {
           this.whistled = true
+          this.begin()
           ctx.emit({ kind: 'engine', e: this, what: 'whistle', at: this.pos.clone() })
         }
         this.lit = Math.min(1, this.timer / 600)
+        this.lay(dt, ctx)
         if (this.timer >= ENGINE.unfoldMs - 1e-6) this.go('run')
+        break
+      case 'run':
+        this.advance(dt)
+        this.lay(dt, ctx)
         break
       default:
         break
     }
+    this.segs = this.segs.filter((g) => !g.h.done)
     this.present(dt)
     return null
   }
 
-  /** Committed ends for the camera (C6). */
-  threats(_out: THREE.Vector3[]) {}
+  // --- the run (C4) ---
+
+  /** The body's yaw along its travel: the way the loop runs between a step behind it and a step ahead, so a corner turns it smoothly. */
+  private yaw(): number {
+    const ahead = loopAt(this.track, this.u + ENGINE.length / 2), back = loopAt(this.track, this.u - ENGINE.length / 2)
+    return Math.atan2(ahead.x - back.x, ahead.z - back.z) + (this.dir === 1 ? 0 : Math.PI)
+  }
+
+  /** The nose, in path u. */
+  private get nose() {
+    return this.u + (this.dir * ENGINE.length) / 2
+  }
+
+  /** Milliseconds until it moves: the rest of the unfold. (The holds of C5 and C7 add theirs.) */
+  private get standMs() {
+    return this.state === 'unfold' ? Math.max(0, ENGINE.unfoldMs - this.timer) : 0
+  }
+
+  /** The first strip starts at the nose: the horizon and the laps are counted from here. */
+  private begin() {
+    this.started = true
+    this.origin = this.laidTo = this.nose
+    this.travelled = 0
+    this.frontier = this.laidTo
+  }
+
+  private advance(dt: number) {
+    const ds = ENGINE.speed * dt
+    this.u += this.dir * ds
+    this.travelled += ds
+    this.lap = Math.floor(this.travelled / this.track.loopLen)
+    const L = this.track.loopLen
+    this.s = ((this.u % L) + L) % L
+    const at = loopAt(this.track, this.u)
+    this.pos.set(at.x, 0, at.z)
+  }
+
+  /** The vertex boundary next beyond `u` in direction `dir` (path u): a strip is straight, so it ends there. */
+  private edgeBeyond(u: number, dir: 1 | -1): number {
+    const { loopLen: L, vertexS } = this.track
+    const base = Math.floor(u / L) * L
+    const rel = u - base
+    if (dir === 1) {
+      for (const v of vertexS) if (v > rel + 1e-9) return base + v
+      return base + L
+    }
+    for (let i = vertexS.length - 1; i >= 0; i--) if (vertexS[i]! < rel - 1e-9) return base + vertexS[i]!
+    return base - L + vertexS[vertexS.length - 1]!
+  }
+
+  /**
+   * INV-E1, the honest rail. A strip is laid when its start comes within lead (+ this tick) of the nose in time, and it arms when the
+   * nose arrives: armMs is the time to the start (plus the time it stands still, INV-E2, plus the tick a new hazard loses). So every
+   * strip is made at least 1300 ms before it arms, and the nose never enters a point of track that is not in one of its own armed strips.
+   * Strips split at loop vertices and are at most `segment` long; a whole lap shares one hit set.
+   */
+  private lay(dt: number, ctx: EnemyCtx) {
+    if (!ctx.addHazard || !this.started || this.dead) return
+    const standS = this.standMs / 1000
+    const speed = ENGINE.speed
+    for (let guard = 0; guard < 32; guard++) {
+      const from = this.laidTo
+      const ahead = this.dir * (from - this.nose)
+      if (ahead / speed + standS > ENGINE.lead + dt + LAY_HAIR) break
+      const edge = this.edgeBeyond(from, this.dir)
+      let to = from + this.dir * ENGINE.segment
+      if (this.dir * (edge - to) < SLIVER) to = edge
+      const a = loopAt(this.track, from), b = loopAt(this.track, to)
+      const len = Math.hypot(b.x - a.x, b.z - a.z)
+      const dx = (b.x - a.x) / len, dz = (b.z - a.z) / len
+      const lap = Math.floor((this.dir * (from - this.origin) + 1e-9) / this.track.loopLen)
+      let group = this.groups.get(lap)
+      if (!group) {
+        group = {}
+        this.groups.set(lap, group)
+        this.groups.delete(lap - 3)
+      }
+      const armMs = 1000 * (ahead / speed + standS + dt)
+      const spec: HazardSpec = {
+        source: 'train',
+        shape: { kind: 'strip', ax: a.x, az: a.z, bx: b.x, bz: b.z, halfW: ENGINE.halfW },
+        armMs, liveMs: (1000 * (len + ENGINE.length)) / speed,
+        damage: ENGINE.runDamage, cover: 'none', hurt: 'hazard', quiet: true, owner: this, sparesOwner: true, cancelOnDeath: true,
+        group, shove: { dx, dz, along: LINE.shove.along, across: LINE.shove.across },
+      }
+      this.segs.push({
+        id: this.nextId++, h: ctx.addHazard(this, spec), madeAt: ctx.now, armMs, lap,
+        ax: a.x, az: a.z, bx: b.x, bz: b.z, v: (this.dir * from) / UV_LEN,
+      })
+      this.laidTo = to
+    }
+    this.frontier = this.laidTo
+  }
+
+  /** For the checks (main.ts __engineSegs): its own hazards, with the clocks Combat keeps. */
+  segments() {
+    return this.segs.map((g) => ({
+      id: g.id, madeAt: g.madeAt, armMs: g.armMs, armIn: g.h.armIn, liveLeft: g.h.liveLeft, done: g.h.done, source: g.h.spec.source,
+      shape: { ...g.h.spec.shape }, damage: g.h.spec.damage, group: g.lap,
+    }))
+  }
+
+  /** The horizon stops here (a buffer, a settled wagon): the tell ends in the ram's end star, the half-disc toward the body. */
+  markEnd(kind: 'open' | 'buffer' | 'wagon', x = 0, z = 0, yaw = 0) {
+    this.frontierEnd = kind
+    this.endMark = kind === 'open' ? null : { x, z, yaw }
+  }
+
+  /** Committed ends for the camera: where the lit horizon ends. */
+  threats(out: THREE.Vector3[]) {
+    if (this.dead || this.asleep || !this.started || this.segs.length === 0) return
+    const p = loopAt(this.track, this.laidTo)
+    out.push(new THREE.Vector3(p.x, 0, p.z))
+  }
 
   /** Smoke from the stack while it is awake. */
   dress(vfx: Vfx) {
@@ -310,6 +539,9 @@ export class Engine implements Boss {
       m.emissive.setRGB(this.flash * 0.4, this.flash * 0.15, this.flash * 0.1)
     }
     this.group.position.set(this.pos.x, 0, this.pos.z)
+    this.group.rotation.y = this.yaw()
+    this.clock += dt
+    this.drawHorizon()
     // behind it from the camera (which looks from +x +z), he'd be lost: its solid parts thin out until he's clear
     const bx = this.still.x - this.pos.x
     const bz = this.still.z - this.pos.z
@@ -320,6 +552,28 @@ export class Engine implements Boss {
     for (const m of [this.mat, this.jointMat]) {
       m.opacity = this.fade
       m.depthWrite = this.fade > 0.99
+    }
+  }
+
+  /**
+   * Its drawing is its own hazards (drawn = hit): every strip not done, as the Line draws a train's rails, in three tiers by how soon
+   * it arms (armed and under it, inside 650 ms, further), with a slow flicker over all of it and a swell running the way it goes.
+   */
+  private drawHorizon() {
+    const tiers: Seg[][] = [[], [], []]
+    if (!this.asleep && !this.dead) {
+      for (const g of this.segs) if (!g.h.done) tiers[g.h.armIn <= 0 ? 0 : g.h.armIn <= HORIZON.nearMs ? 1 : 2]!.push(g)
+    }
+    // it only ever dips, like the firebox: a slow wander and a quicker shimmer
+    const flick = 1 - 0.18 * (0.5 + 0.5 * Math.sin(this.clock * 2 * Math.PI * 2.3)) - 0.1 * (0.5 + 0.5 * Math.sin(this.clock * 2 * Math.PI * 7.1 + 1.7))
+    this.horizon.forEach((t, k) => t.set(tiers[k]!, flick))
+    const e = this.endMark
+    this.endStar.visible = !!e && !this.dead
+    if (e) {
+      this.endStar.position.set(e.x, RAIL_TOP + 0.006, e.z)
+      this.endStar.rotation.y = e.yaw
+      this.endMat.opacity = 0.85 * flick
+      this.endStar.renderOrder = tellOrder(0) + 0.3
     }
   }
 
@@ -344,5 +598,8 @@ export class Engine implements Boss {
       if (o instanceof THREE.Mesh) o.geometry.dispose()
     })
     for (const m of [this.mat, this.jointMat, this.coreMat, this.lampMat, this.slitHalo, this.lampHalo]) m.dispose()
+    for (const t of this.horizon) t.dispose()
+    this.endStar.geometry.dispose()
+    releaseTell(this.endMat)
   }
 }
