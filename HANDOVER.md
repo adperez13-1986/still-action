@@ -1,7 +1,47 @@
-# Handover — 29 Sep 2026 (16:30)
+# Handover — 30 Sep 2026 (morning)
 
 For the next session. Read this, then `DESIGN.md` (the settled decisions), then the design
 folder for whatever you're touching. Don't re-derive any of them.
+
+## Start here (30 Sep, morning: B7 + B8 done, stage B complete, all dark)
+
+**He's at the office:** no LAN dev server (localhost-only checks were OK'd for this session). Nothing running.
+**B7 committed (7063785), NOT pushed** (I told him nothing is pushed without his word; it's all dark, K-90/K-90L/K-90F PASS,
+so live is unchanged by it). Ask him to OK the push.
+
+**His two B7 answers, taken as my recs because he said "just continue":** the Handcar gets its **own page** (not Iron Crawler,
+so rams keep both band-I names), and **only unmet pages change role**. How: `LINE_DONORS` in notebook.ts (signal: signal-jammer,
+thermal-scanner, glitch-node; handcar: feedback-loop, phase-drone; sleepers: conduit-spider, strain-siphon, void-leech). At boot
+`setLinePages` gives each Line body the donor already stamped `r` for it, else the first donor he never met, else none (met
+unwritten, like the mender). The first meeting stamps `NotebookEntry.r` (optional, no save version). If he'd rather pick the
+pages himself, only LINE_DONORS changes.
+
+**B7 also:** ambience `line` (the quarter's air + rail ticks + far buffer knocks, synthesized); card caption road word
+(`ROUTE_WORD.III = 'the Line first'`, PLACEHOLDER); DEV hooks `__ambience`, `__caption`, `__linePage`, `__setLinePages`, `__hides`.
+Review caught a harness bug in K-E10 (dead mites leave `pack.members`, so it counted 0 deaths; the game counted 6, correctly).
+
+**B8 (whole stage headless), all at 7063785:**
+
+| check | result | note |
+|---|---|---|
+| tsc, vite build | clean | dist 5,381,866 B (+26,692 vs ba443ce; cap 5,600,000) |
+| baseline K-90, K-90L | PASS | flag-off game and flag-off Line unchanged |
+| fights K-90F | PASS | combat baseline unchanged |
+| k9 (18), area3 (8), home (4) | all PASS | stage R, stage A, warm beam card |
+| stageb (38) | 37 PASS, K-W3d FAIL | K-W3d = Parry's dead-slot design finding, known, thresholds were for R3 alone |
+| K-T13 at B8 | PASS | bot A trains 21.0 / 19.9% of kills (step 4 / 7), 2+ kills 10 / 8%, free 0; bot C earned 15.6 / 16.0%. Identical to B4-after-fix (a4bac5f); B3's numbers were double-counted, no clean B2 figure exists |
+
+Heard-log over scripted Line levels (III-4 and III-5, seeds 1-3; scratch script, not in repo): `semaphore` fires at every
+Signalman once Still stands within `laneReach` (3.7 u) of a lane (the lesson call ignores that, so it fires on waking at 4);
+`pump` + `latch` once per Handcar that locks; `aim`/`rev` as before. `gravelRise` is K-E8's (6 per brood). The ambience's
+`railTick`/`farShunt` never reach heardLog: headless audio never runs. **Nothing new has ever been heard: phone only.**
+
+**Next: stage C, the Engine** (the Line's boss; today the Line ends in a stand-in Assembler). Needs a verifier brief
+first (`design/area3/STAGE-C.md`, from SPEC + BOTH-ROADS + CURVE9). Phone list for stage B is STAGE-B §5.
+
+**His to write (PLACEHOLDER):** Signalman / Handcar / Sleepers names and WHAT words ('a signalman', 'a handcar', 'sleepers'),
+their notebook lines, `ROUTE_WORD.III`, Parry Clamp's card line, the warm-beam card copy. Still open from 29 Sep: his feel on
+Parry catch / the lunge / the switch.
 
 ## Start here (29 Sep, 16:30: stage B through B6, two whole-game changes live)
 
