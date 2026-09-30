@@ -1,7 +1,31 @@
-# Handover — 30 Sep 2026 (morning)
+# Handover — 30 Sep 2026 (evening)
 
 For the next session. Read this, then `DESIGN.md` (the settled decisions), then the design
 folder for whatever you're touching. Don't re-derive any of them.
+
+## Start here (30 Sep, evening: stage C done, the Engine complete, all dark, all pushed)
+
+**Nothing running, nothing uncommitted, main = origin (a55f0c6).** Stages R, B and C are all built and dark: the 9-depth run with
+both roads, the Line's bodies and dressing, and the Engine. Live is unchanged (K-90/K-90L/K-90F PASS at every step).
+Results table: `design/area3/STAGE-C-RESULTS.md`. How it was built: verifier brief (STAGE-C.md), one Sonnet 5.5 engineer per 1-2
+steps, balancer for the steam/cinder numbers (ENGINE-N17.md); I read every diff, reran checks and looked at every screenshot.
+
+**The Engine, in one breath:** a locomotive on a loop in the roundhouse, lighting the rail >= 1.3 s ahead of itself; every 3rd
+junction a lever window (cold ring, board "LEFT POINTS · NOW"): a cast within 3 u throws it, it derails in the siding (open, x1.5);
+steam leads him, cut at walls; the cinder if he stays out of range (8.1 s, 5.6 s in phase 2); phase 2 at 55%: reversals, a loose
+wagon it derails on, levers thrown back on him. Death: a cold husk.
+
+**First, at home:** dev server (`npx vite --host`), then on the Poco `?roads=1&line=1&engine=1` for a full 9-depth run. Ask how it
+felt before numbers. Phone questions: does the lever read at phone size; the horizon; the derail as a payoff; the sounds (none ever
+heard); **the kill time** (a scripted bot needs 150-182 s, SPEC guessed 85-100 s: if it drags, the dials are HP and the window
+cadence); the spark flecks (may read salmon); the body's sheen vs the old roof patch; the wagon.
+
+**Going live is his call:** LINE_ENABLED, ENGINE_ON_LINE and BOTH_ROADS flip together (BOTH-ROADS §5). Before that he should play
+it on the dev server. Save v3 migration already exists.
+
+**His to write (all PLACEHOLDER):** the Engine's name, openWord, phase-2 banner, BOARD words, notebook line; Signalman / Handcar /
+Sleepers names, WHAT words, lines; ROUTE_WORD.III; Parry Clamp's card line; the warm-beam card copy. Still open from 29 Sep: his feel
+on Parry catch / the lunge / the switch. K-W3d (Parry a dead slot) is the one standing check failure, a design finding.
 
 ## Start here (30 Sep, morning: B7 + B8 done, stage B complete, all dark)
 
