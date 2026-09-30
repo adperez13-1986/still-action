@@ -6,7 +6,8 @@
  */
 import { assert, assertEq, evalJson, suite } from './lib.mjs'
 
-const RUN = '?depth=1&save=memory'
+// the 6-depth game, pinned with roads=0 (the live game is 9 depths since 30 Sep)
+const RUN = '?depth=1&save=memory&roads=0&line=0&engine=0'
 const { check, run } = suite()
 
 /** In the page: to `depth` with its boss down; stepped outside the warm beam, then into it. */

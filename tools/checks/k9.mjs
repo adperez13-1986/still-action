@@ -1,7 +1,8 @@
 /**
  * The stage R checks (design/area3/STAGE-R.md §4): `node tools/checks/k9.mjs [K-9B ...]` runs all of them, or
  * the ids listed. K-90 is baseline.mjs's. Each step of the brief registers its own; an id can have several
- * parts, one per boot it needs. `ON` is the 9-depth page, `OFF` the flag-off one (§4.0).
+ * parts, one per boot it needs. `ON` is the 9-depth page, `OFF` the 6-depth one, pinned with roads=0 (the live game is 9
+ * depths since 30 Sep; §4.0).
  */
 import { spawnSync } from 'node:child_process'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
@@ -9,8 +10,11 @@ import { REPO, assert, assertClose, assertEq, evalJson, hash, suite } from './li
 
 const BASELINE = JSON.parse(readFileSync(REPO + 'tools/checks/baseline/flagoff.json', 'utf8'))
 
-const ON = '?depth=1&save=memory&roads=1'
-const OFF = '?depth=1&save=memory'
+// the live game is 9 depths since 30 Sep; the checks pin the page they mean: ON is 9 depths with the Line and the engine
+// off (roads=1&line=0&engine=0, the page they ran before), OFF the 6-depth game (roads=0&line=0&engine=0)
+const ON9 = '?depth=1&save=memory&roads=1'
+const ON = ON9 + '&line=0&engine=0'
+const OFF = '?depth=1&save=memory&roads=0&line=0&engine=0'
 const { check, task, run } = suite()
 
 // --- K-9B: the flag's plumbing (R1); K-9B9 below is its depth-9 boot, from R4 ---------------------------------------------------------
@@ -29,10 +33,10 @@ check('K-9B', ON, async ({ page }) => {
   assertEq("ON __roadOf(1..9, 'III')", got.roadIII, ['III', 'III', 'III', 'III', 'III', 'III', 'II', 'II', 'II'])
 })
 // K-9B9 (from R4): the depth-9 boot is its own id, because the place at 7-9 is R4's lookAt (lead's call, 29 Sep)
-check('K-9B9', '?depth=9&roads=1&save=memory', async ({ page }) => {
+check('K-9B9', '?depth=9&roads=1&save=memory&line=0&engine=0', async ({ page }) => {
   assertEq('?depth=9&roads=1 boots with __run.depth', await evalJson(page, () => window.__run.depth), 9)
 })
-check('K-9B', '?depth=9&save=memory', async ({ page }) => {
+check('K-9B', '?depth=9&save=memory&roads=0&line=0&engine=0', async ({ page }) => {
   const got = await evalJson(page, () => ({ depth: window.__run.depth, runDepths: window.__runDepths }))
   assertEq('?depth=9 (flag off) boots with __run.depth', got.depth, 6)
   assertEq('?depth=9 (flag off) __runDepths', got.runDepths, 6)
@@ -47,12 +51,13 @@ check('K-9B', OFF, async ({ page }) => {
   assertEq("OFF __roadOf(7, 'II')", got.road7, 'II')
   assertEq("OFF __openAt(1..7, 'II')", got.open, [true, false, false, true, false, false, false])
   assertEq("OFF __openAt(1..7, 'III')", got.openIII, [true, false, false, false, false, false, false])
-  // the shipped switches: BOTH_ROADS, LINE_ENABLED and ENGINE_ON_LINE all stay false on main
+  // the shipped switches (area III live, 30 Sep): BOTH_ROADS, LINE_ENABLED and ENGINE_ON_LINE are true, PORTER_ENABLED stays false
   const src = readFileSync(REPO + 'src/areas.ts', 'utf8')
   const count = (re) => (src.match(re) ?? []).length
-  assertEq('grep -c "BOTH_ROADS = false" src/areas.ts', count(/BOTH_ROADS = false/g), 1)
-  assert(count(/export const LINE_ENABLED = false/g) === 1, 'LINE_ENABLED is not = false')
-  assert(count(/export const ENGINE_ON_LINE = false/g) === 1, 'ENGINE_ON_LINE is not = false')
+  assertEq('grep -c "BOTH_ROADS = true" src/areas.ts', count(/BOTH_ROADS = true/g), 1)
+  assert(count(/export const LINE_ENABLED = true/g) === 1, 'LINE_ENABLED is not = true')
+  assert(count(/export const ENGINE_ON_LINE = true/g) === 1, 'ENGINE_ON_LINE is not = true')
+  assert(count(/export const PORTER_ENABLED = false/g) === 1, 'PORTER_ENABLED is not = false')
 })
 
 // --- K-96a: the hours at the end, pure (R2) ---------------------------------------------------
@@ -169,7 +174,7 @@ async function planCheck(page, engine) {
   }
 }
 check('K-92a', ON, ({ page }) => planCheck(page, false))
-check('K-92a', ON + '&engine=1', ({ page }) => planCheck(page, true))
+check('K-92a', ON9 + '&line=0&engine=1', ({ page }) => planCheck(page, true))
 check('K-92a', OFF, async ({ page }) => {
   const got = await evalJson(page, () => ({
     W: [1, 2, 3, 4, 5, 6].map((d) => window.__plan(d, 'II').place), L: [1, 2, 3, 4, 5, 6].map((d) => window.__plan(d, 'III').place),
@@ -518,7 +523,7 @@ check('K-93', ON, async ({ page }) => {
   assertEq('ON W: place at 7 (6 to 7 directly)', got.seen[7].place, 'sidings')
   assertEq('ON W: __descend() after the kill at 9', got.seen.descendAt9, false)
 })
-check('K-93', ON + '&line=1', async ({ page }) => {
+check('K-93', ON9 + '&line=1&engine=0', async ({ page }) => {
   const got = await evalJson(page, WALK, { order: 'III', upTo: 9 })
   assertEq('ON L: problems on the way down', got.bad, [])
   assertEq('ON L: place at 4', got.seen[4].place, 'sidings')
@@ -590,7 +595,7 @@ check('K-96c', OFF, async ({ page }) => {
 })
 
 // --- K-9C: a resume at 7, on a real save (R8) ----------------------------------------------------
-check('K-9C', '?roads=1', async ({ page }) => {
+check('K-9C', '?roads=1&line=0&engine=0', async ({ page }) => {
   // a fresh context, no ?depth: the first boot is a real run, and it writes localStorage
   const got = await evalJson(page, WALK, { order: 'II', upTo: 7, stopAt7: true, keepSave: true })
   assertEq('walking W to 7: problems', got.bad, [])
@@ -619,7 +624,9 @@ task('K-9D', async () => {
     if (r.status !== 0) throw new Error(`${cmd.join(' ')} exited ${r.status}: ${(r.stdout + r.stderr).slice(-400)}`)
   }
   const src = readFileSync(REPO + 'src/areas.ts', 'utf8')
-  for (const name of ['BOTH_ROADS', 'LINE_ENABLED', 'ENGINE_ON_LINE']) assert(new RegExp(`export const ${name} = false`).test(src), `${name} is not = false`)
+  // area III is live (30 Sep): the three are true, the Porter stays false
+  for (const name of ['BOTH_ROADS', 'LINE_ENABLED', 'ENGINE_ON_LINE']) assert(new RegExp(`export const ${name} = true`).test(src), `${name} is not = true`)
+  assert(/export const PORTER_ENABLED = false/.test(src), 'PORTER_ENABLED is not = false')
   const bytes = distBytes(REPO + 'dist')
   console.log(`INFO K-9D: dist is ${bytes} bytes (${bytes >= 5352326 ? '+' : ''}${bytes - 5352326} against BOTH-ROADS §2's 5,352,326; cap 5,600,000)`)
   assert(bytes <= 5600000, `dist is ${bytes} bytes, over the 5,600,000 cap`)

@@ -7,16 +7,17 @@
  *   ENG6   the 6-depth run with the Engine flag: `enterEngine('III', 6, s)`
  *   ENG9   the 9-depth run: `enterEngine('III', 6, s)` (Line first) and `enterEngine('II', 9, s)` (Works first)
  *   ARENA  a clean test floor with the Engine on it: `__arena()`, `__spawn('boss', 9, 0, false, 'engine')` (the track round the origin)
- *   OFF, ON  stageb.mjs's: the 6-depth page, and the 9-depth page
+ *   OFF, ON  stageb.mjs's: the 6-depth page (roads=0, the live game is 9 depths since 30 Sep), and the 9-depth page
  */
 import { readFileSync } from 'node:fs'
 import { REPO, assert, assertEq, evalJson, suite } from './lib.mjs'
 
-const ENG6 = '?depth=1&save=memory&line=1&engine=1'
+// area III went live 30 Sep (roads, Line and engine default on): each page pins what it means, as it ran before
+const ENG6 = '?depth=1&save=memory&line=1&engine=1&roads=0'
 const ENG9 = '?depth=1&save=memory&roads=1&line=1&engine=1'
-const ARENA = '?depth=1&save=memory&line=1&engine=1'
-const OFF = '?depth=1&save=memory'
-const ON = '?depth=1&save=memory&roads=1'
+const ARENA = '?depth=1&save=memory&line=1&engine=1&roads=0'
+const OFF = '?depth=1&save=memory&roads=0&line=0&engine=0'
+const ON = '?depth=1&save=memory&roads=1&line=0&engine=0'
 
 const { check, run } = suite()
 /** The wagon's tub, half its length (engine.ts ENGINE.wagon.halfLen, typed again here on purpose). */
@@ -1768,7 +1769,7 @@ const resumeCheck = (query, order, roads, expectDay) => check('K-N22', query, as
 })
 // 9 depths: Line-first road (III at 6 holds the light); 6 depths: the Engine at 6 is the last (first dark, snapped by day.enter)
 resumeCheck('?roads=1&line=1&engine=1', 'III', true, 'held')
-resumeCheck('?line=1&engine=1', 'III', false, 'dark')
+resumeCheck('?line=1&engine=1&roads=0', 'III', false, 'dark')
 
 
 // --- The dressing (C9) -----------------------------------------------------------------------------------------------------
@@ -1884,7 +1885,7 @@ const moodCheck = (query, cases) => check('K-N20', query, async ({ page }) => {
 // the Engine's level: roundhouse; the Line's other levels stay 'line'; the stand-in's station (no engine flag) is 'line' whatever (stageb K-E12 holds the rest)
 moodCheck(ENG6, [['III', 4, 'line', false], ['III', 5, 'line', false], ['III', 6, 'roundhouse', true]])
 moodCheck(ENG9, [['III', 5, 'line', false], ['III', 6, 'roundhouse', true], ['II', 8, 'line', false], ['II', 9, 'roundhouse', true]])
-moodCheck('?depth=1&save=memory&roads=1&line=1', [['III', 6, 'line', false], ['II', 9, 'line', false]])
+moodCheck('?depth=1&save=memory&roads=1&line=1&engine=0', [['III', 6, 'line', false], ['II', 9, 'line', false]])
 
 /** In the page: the audio log's names since a mark, counted. */
 const HEARD = `

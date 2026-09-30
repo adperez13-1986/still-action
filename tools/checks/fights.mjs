@@ -7,7 +7,7 @@
  *   node tools/checks/fights.mjs capture-names                 writes tools/checks/baseline/names.json (the roster, flag-off)
  *   node tools/checks/fights.mjs compare-names                 reruns it and deep-equals it (stageb.mjs K-E10 does the same)
  *
- * One page, `?depth=1&save=memory`, frame loop held (`__hold(true)`). Each scenario runs in ONE evaluate: Math.random is
+ * One page, `?depth=1&save=memory&roads=0&line=0&engine=0`, frame loop held (`__hold(true)`). Each scenario runs in ONE evaluate: Math.random is
  * seeded with mulberry32(seed) (restored in `finally`), then `__arena()`, `__combat.time = 0`, the setup, and `__step` in
  * 1/60 s ticks with Still's HP put back to 100 before each tick (so no ending triggers; the HP he lost is read after it).
  * `compare` PASSes when every scenario outside `--may-differ` is equal; a listed one prints INFO either way. A stage that
@@ -18,7 +18,8 @@ import { REPO, evalJson, firstDiff, openPage, startVite } from './lib.mjs'
 
 const FILE = REPO + 'tools/checks/baseline/fights.json'
 const NAMES = REPO + 'tools/checks/baseline/names.json'
-const QUERY = '?depth=1&save=memory'
+// pinned to the 6-depth game with roads=0 (the live game is 9 depths since 30 Sep)
+const QUERY = '?depth=1&save=memory&roads=0&line=0&engine=0'
 const SEEDS = [1, 2, 3, 4, 5]
 /** F1-F10 are the brief's. F11-F14 are B0's additions (see fight()): the same fights where the brief's never reach what they guard. */
 const IDS = ['F1', 'F2', 'F3', 'F4', 'F5', 'F6', 'F7', 'F8', 'F9', 'F10', 'F11', 'F12', 'F13', 'F14']

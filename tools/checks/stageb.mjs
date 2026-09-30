@@ -6,17 +6,19 @@
  * The short forms of STAGE-B.md §4, as queries (every one is ?save=memory and a dev run straight into a level):
  *   ARENA  a clean test floor: `__hold(true); __arena()`, Math.random seeded as fights.mjs does
  *   LINE4  the flag-off Line, sidings: `__run.route = 'III'; __enter(4, s)`; LINE5 the same at 5 (the station)
- *   ON     the 9-depth page
+ *   ON     the 9-depth page (roads=1, Line and engine pinned off)
+ *   (LINE4 and the other "flag-off" pages are the 6-depth game, pinned with roads=0; the live game is 9 depths since 30 Sep)
  */
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { REPO, assert, assertEq, evalJson, suite } from './lib.mjs'
 
-const ARENA = '?depth=1&save=memory'
-const LINE = '?depth=1&save=memory&line=1'
-const ON = '?depth=1&save=memory&roads=1'
-const OFF = '?depth=1&save=memory'
+// area III went live 30 Sep (roads, Line and engine default on): each page pins what it means, as it ran before
+const ARENA = '?depth=1&save=memory&roads=0&line=0&engine=0'
+const LINE = '?depth=1&save=memory&line=1&engine=0&roads=0'
+const ON = '?depth=1&save=memory&roads=1&line=0&engine=0'
+const OFF = '?depth=1&save=memory&roads=0&line=0&engine=0'
 const LINE4 = LINE
 
 const { check, task, run } = suite()

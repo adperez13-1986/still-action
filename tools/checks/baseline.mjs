@@ -4,8 +4,9 @@
  *   node tools/checks/baseline.mjs capture   writes tools/checks/baseline/flagoff.json
  *   node tools/checks/baseline.mjs compare   reruns it and deep-equals it against the file
  *
- * It runs against the page with NO flags (?depth=1&save=memory), so it records what the game is today: 6
- * depths, today's curve, day and generator output on both routes. `capture` was run on the untouched src/
+ * It runs against the 6-depth page, pinned with roads=0&line=0&engine=0 (the live game is 9 depths since 30 Sep),
+ * so it records what the game was: 6 depths,
+ * today's curve, day and generator output on both routes. `capture` was run on the untouched src/
  * before any stage R change; every later step must still `compare` PASS. The file is deterministic, so a
  * second capture is byte-identical to the first.
  *
@@ -22,7 +23,7 @@ import { REPO, evalJson, firstDiff, hash, openPage, startVite } from './lib.mjs'
 
 const FILE = REPO + 'tools/checks/baseline/flagoff.json'
 const LEVELS = REPO + 'tools/levels.json'
-const QUERY = '?depth=1&save=memory'
+const QUERY = '?depth=1&save=memory&roads=0&line=0&engine=0'
 const ROUTES = ['II', 'III']
 /** The flag-off Line: route III's generated depths 4 (sidings) and 5 (station). K-90L's, not K-90's (STAGE-B.md B0). */
 const LINE_PATHS = ['gen.III.4', 'gen.III.5', 'genLookHash.III.4', 'genLookHash.III.5', 'genLineHash']

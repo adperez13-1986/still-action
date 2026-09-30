@@ -8,7 +8,7 @@
  */
 import { assert, assertClose, assertEq, evalJson, suite } from './lib.mjs'
 
-const LINE = '?depth=1&save=memory&line=1'
+const LINE = '?depth=1&save=memory&line=1&engine=0&roads=0'
 const { check, run } = suite()
 
 /** In the page: a fresh save with `patch`, a non-dev run, the road unchosen. */
@@ -103,7 +103,7 @@ check('K-X4', LINE, async ({ page }) => {
   assertEq('__snapshot().route', got.snapRoute, 'III')
 })
 // a reload needs a real save: a fresh context, no ?depth, no ?save=memory
-check('K-X5', '?line=1', async ({ page }) => {
+check('K-X5', '?line=1&engine=0&roads=0', async ({ page }) => {
   const before = await page.evaluate(`(() => {
     window.__setSave({ roads: ['II', 'III'] })
     // the strain comes first: the crossroads' beam save is what a reload brings back
