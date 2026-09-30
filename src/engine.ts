@@ -4,11 +4,11 @@ import { hideMaterials, HIDES } from './hide'
 import { haloTexture, tellMaterial, tellOrder, releaseTell, trackingDim, COLD, COLD_DEEP, type Vfx } from './vfx'
 import { statusTint, CORE_ASLEEP, type EnemyAction, type EnemyCtx, type EnemyPhase } from './enemy'
 import type { Circle } from './dungeon'
-import { engineKit, LINE, RAIL_TELL, RAIL_TOP, WASH_Y } from './line'
-import { Quads, UV_LEN } from './lane'
+import { engineKit, wagonKit, LINE, RAIL_TELL, RAIL_TOP, WASH_Y } from './line'
+import { LaneTell, Quads, UV_LEN, type LaneLook } from './lane'
 import { inShape, type Hazard, type HazardSpec } from './hazard'
 import { ARBITER } from './arbiter'
-import { loopAt, loopS, TRACK, type Side, type TrackArm, type TrackDef } from './track'
+import { loopAt, loopS, TRACK, type Pt, type Side, type TrackArm, type TrackDef } from './track'
 import type { Terrain } from './terrain'
 import type { BossDef } from './areas'
 import type { Boss, BossCue } from './boss'
@@ -29,7 +29,15 @@ import type { Boss, BossCue } from './boss'
  * strip from where it stands at the lock; 700 ms later the jet. The cinder: out of that reach for 5 s (3.5 in phase 2) and the stack
  * lobs a shell where he'll be, the Arbiter's (source 'shell': its landing sound and dust are main's, its ring is drawn as its shell's).
  *
+ * C7: phase 2, below 55% HP. The reversal: every 8-12 s, in `run` with no window open, it stands 650 ms and judders (every unarmed strip
+ * of its own is taken back at the start, none is laid), turns to run the other way round, and stands 1300 ms while the loop ahead is
+ * lit again (INV-E2). The loose wagon: every 14 s a tub rolls down a spur (a LaneTell down it for 1200 ms, then the roll) and settles on
+ * the loop as a solid; the lit horizon ends at its near face, and the engine driving into it derails in place, open, the wagon smashed.
+ * The lever thrown back: a window that closes unthrown with Still standing in that arm's strip (grown 0.8) is thrown by the engine itself.
+ *
  *   run ─(window thrown, the frontier reaches the junction)→ siding ─(centre at the stop)→ derailed 1600 → backing → hold 1300 → run
+ *   run ─(p2, reversal due, no window open)→ judder 650 → hold 1300 (dir flipped) → run
+ *   run ─(the nose meets a settled wagon)→ derailed 1600 (in place, the wagon smashed) → run
  *   attack: none ─→ steamTrack 250 → steamLock 700 → none | none ─→ cinderAim 620 → (launch; 1000 flight) → none
  */
 /** SPEC §2.6, with the brief's changes. INV: no hit above 22 before dmgMul; no windup under 620 ms. */
@@ -67,8 +75,14 @@ export const ENGINE = {
   cinder: { windupMs: 620, flightMs: 1000, r: 1.6, damage: 12, leadS: 1.0, leadMax: 5.5, peak: 3.2 },
   phase2At: 0.55,
   reverse: { judderMs: 650, everyS: [8, 12] as const },
-  /** SPEC's, plus `r`/`at` (line.ts SIDING.wagonR / wagonAt) and `halfLen` (its tub, line.ts WAGON.l / 2). */
-  wagon: { tellMs: 1200, speed: 7, damage: 12, halfW: 1.2, everyS: 14, firstS: 4, r: 0.75, at: 0.5, halfLen: 0.95 },
+  /**
+   * SPEC's, plus `r`/`at` (line.ts SIDING.wagonR / wagonAt) and `halfLen` (its tub, line.ts WAGON.l / 2). A wagon is picked only where its
+   * spur meets the loop at least speed × (lead + (tellMs + the roll) / 1000) ahead of the nose (33.8 u); `clear` keeps a reversal from
+   * turning it to face a wagon it stands beside.
+   */
+  wagon: { tellMs: 1200, speed: 7, damage: 12, halfW: 1.2, everyS: 14, firstS: 4, r: 0.75, at: 0.5, halfLen: 0.95, clear: 6 },
+  /** The lever thrown back: how far past the arm's strip (halfW) Still's centre may stand. */
+  throwBack: { grow: 0.8 },
   husk: { r: 0.8, at: 0.7, color: 0x202124 },
   seeThrough: { opacity: 0.45, reach: 3.0, half: 1.6 },
   /** The firebox while derailed: deeper and redder than CORE, flickering, never FIRE_HOT's peach. */
@@ -92,6 +106,8 @@ const FIRE = new THREE.Color(ENGINE.fireHot)
 /** The flicker: 7 to `flickerHz` Hz, wandering, dipping the brightness by up to `depth` and never lifting it (INV-C1). */
 const FLICKER = { hz: 7, depth: 0.35 }
 const SOOT = new THREE.Color(0x2c2624)
+/** A smashed wagon's chunks: the tub's dark iron. */
+const TUB_IRON = new THREE.Color(0x3a3836)
 /** The whistle's steam, and the jet's puffs: paler than the stack's smoke, still grey (pale puffs under ACES + bloom clip to a slab). */
 const STEAM = new THREE.Color(0x8a9096)
 /** The steam's rails and the cinder's ring lie over the sleepers (0.14) and under the rail heads (0.26): the height of the horizon's wash. */
@@ -103,6 +119,12 @@ const angleDiff = (a: number, b: number) => {
   while (d > Math.PI) d -= Math.PI * 2
   while (d < -Math.PI) d += Math.PI * 2
   return d
+}
+/** Distance from (x, z) to the segment a-b. */
+const distToSpur = (a: Pt, b: Pt, x: number, z: number) => {
+  const ex = b.x - a.x, ez = b.z - a.z, l2 = ex * ex + ez * ez
+  const k = Math.max(0, Math.min(1, ((x - a.x) * ex + (z - a.z) * ez) / l2))
+  return Math.hypot(x - (a.x + ex * k), z - (a.z + ez * k))
 }
 /**
  * A strip of the lit horizon is laid when its start is within lead + one tick (+ this hair) of the nose in time: the hair keeps the
@@ -127,6 +149,17 @@ const HORIZON = {
 }
 /** The lever's turn (about z, in its own frame): at rest leaning back, thrown over; and how fast it swings. */
 const LEVER = { rest: 0.55, thrown: -0.55, rate: 12 }
+/** The judder (C7): the body shudders, and its wheels throw sparks (vfx.hotSparks: deep red to orange, flickering). Metres, rad, hertz. */
+const JUDDER = { shake: 0.05, yaw: 0.012, hz: 40, burst: 8, perDress: 20, turnS: 0.35 }
+/** The wagon's tell is the ram's lane 4 u long: tracking (faint core) for this share of the tell, then locked and filling. */
+const WAGON_TELL = { trackFrac: 0.25, coreHalf: 0.78, settleFrom: 0.7 }
+/**
+ * The wagon's lane, lit past the ram's (lane.ts RAM_LOOK 0.18/0.3, 0.55/0.9): it is short (4 u), lies under a siding's sleepers and rails,
+ * and the ram's look left it a pale wash beside the horizon. The rails are not drawn (trackWash): the wash, core and star carry it.
+ */
+const WAGON_LOOK: LaneLook = { wash: [0.34, 0.44], core: [0.85, 1], cap: [0.34, 0.44] }
+/** After a reversal the windows count from the nose at once (a start waits a lap first): this is the hair that keeps the nose's own place out. */
+const WINDOW_EPS = 1e-6
 /** The headlamp, on the smokebox front, in the model's frame. */
 const LAMP = { y: 0.95, z: 0.2 }
 /** Where the cab's side slits are (line.ts rakeParts). */
@@ -142,10 +175,29 @@ interface Seg {
   /** Which hit set it belongs to (a number per group, counting up). */
   group: number
   ax: number; az: number; bx: number; bz: number
+  /** Path u where the strip starts. */
+  u0: number
   /** The strip's v where it starts (the swell runs on it): travel distance in UV_LEN units. */
   v: number
   /** How fast the leading end moves over it, u/s. */
   speed: number
+}
+
+/** The loose wagon (C7): the public part is what the DEV hook and the checks read. */
+export interface WagonState {
+  spur: number
+  /** Where the tub is now: the spur's outer end during the tell, rolling, then on the loop. */
+  x: number; z: number
+  settled: boolean
+  /** Its two solid circles on the loop once settled (dead = true when smashed). */
+  circles: Circle[]
+  stage: 'tell' | 'roll' | 'settled'
+  /** The spur: outer end, its end on the loop, length, unit direction outward to in. */
+  ox: number; oz: number; lx: number; lz: number; len: number; ux: number; uz: number
+  /** The spur's end on the loop as a loop parameter, and the loop's straight there (dir +1). */
+  s: number; sx: number; sz: number
+  /** Its roll hazard, armed at the end of the tell. */
+  h: Hazard
 }
 
 /** The lit horizon's drawing: a wash and the two rails of every strip not done, one mesh each, dimming with the time left to arm. */
@@ -245,7 +297,7 @@ export class Engine implements Boss {
   /** Its body's centre along the path, unbounded (s is this wrapped into the loop). */
   u = 0
   window: { side: Side; arm: TrackArm; open: boolean; thrown: boolean; msOpen: number } | null = null
-  wagon: { spur: number; x: number; z: number; settled: boolean; circles: Circle[] } | null = null
+  wagon: WagonState | null = null
   /** The guess for the next steam: 1 leads him fully, 0 aims at him (arbiter.ts). */
   guess: number = ENGINE.guess.first
   /** Where the laid horizon ends ahead of the nose, in path u, and what ends it. */
@@ -358,6 +410,23 @@ export class Engine implements Boss {
   private readonly cinderRingMat = tellMaterial('radial', ENGINE.cinder.r)
   private readonly cinderRing = new THREE.Mesh(new THREE.RingGeometry(ENGINE.cinder.r - 0.1, ENGINE.cinder.r, 48), this.cinderRingMat)
 
+  // --- phase 2 (C7) ---
+  /** Ms until the next reversal is due, and until a wagon may next be picked (Infinity in phase 1). */
+  private reverseIn = Infinity
+  private wagonIn = Infinity
+  /** Phase 2's own seeded stream (phase 1's gaps and guesses never draw from it). */
+  private phaseSeed = 13
+  /** After a reversal it turns on the spot: the yaw still to turn, rad, running down to 0. */
+  private spin = 0
+  /** Junction counting for the windows starts this far past the nose that began the run (a lap at the start, a hair after a reversal). */
+  private windowWait = 0
+  /** The wagon's tell: the ram's lane with no rails (trackWash), down its spur. */
+  readonly wagonTell = new LaneTell(WAGON_LOOK, { hot: HORIZON.hot, deep: HORIZON.deep })
+  private readonly tub: THREE.Mesh
+  /** Where the last wagon was smashed, for the chunks (dress); and the judder's first-frame burst. */
+  private smashAt: { x: number; z: number } | null = null
+  private judderBurst = false
+
   private readonly hide = hideMaterials('engine', { transparent: true })
   private readonly mat = this.hide.mat
   private readonly jointMat = this.hide.jointMat
@@ -376,6 +445,11 @@ export class Engine implements Boss {
   constructor(readonly def: BossDef, x: number, z: number, _face: THREE.Vector3, track: TrackDef) {
     this.hp = def.hp
     this.track = track
+    this.windowWait = track.loopLen
+    this.wagonTell.trackWash = true
+    const wk = wagonKit()
+    this.tub = new THREE.Mesh(wk.tub, wk.grate)
+    this.tub.visible = false
     // placed on the loop, going dir +1, facing its travel
     this.s = this.u = this.originBody = loopS(track, x, z)
     const at = loopAt(track, this.s)
@@ -389,7 +463,7 @@ export class Engine implements Boss {
     this.ring.visible = this.disc.visible = false
     this.cinderRing.rotation.x = -Math.PI / 2
     this.cinderRing.visible = false
-    this.worldGroup.add(this.horizon.wash.mesh, this.horizon.rails.mesh, this.endStar, this.disc, this.ring, this.gazeWash.mesh, this.gaze.mesh, this.cinderRing)
+    this.worldGroup.add(this.horizon.wash.mesh, this.horizon.rails.mesh, this.endStar, this.disc, this.ring, this.gazeWash.mesh, this.gaze.mesh, this.cinderRing, this.wagonTell.group, this.tub)
 
     // the crawl trains' engine, cloned (the shared geometry is never ours to dispose), its centre at the group's origin
     const kit = engineKit()
@@ -469,7 +543,7 @@ export class Engine implements Boss {
     const w = this.window
     if (w?.open) return `${BOARD[w.side]} · ${BOARD.now}`
     const j = this.nextEligible()
-    if (!j) return ''
+    if (!j || this.wagonBlocks(j.u) || this.dir * (this.laidTo - j.u) > 1e-6) return ''
     const secs = this.secondsToOpen(j.p)
     if (secs > 9) return ''
     return `${BOARD[j.arm.side]} · ${Math.max(1, Math.ceil(secs - 1e-9))}`
@@ -495,6 +569,8 @@ export class Engine implements Boss {
     if (this.hp <= 0 && !this.dead) {
       this.dead = true
       this.state = 'dead'
+      // a dead engine leaves no wagon standing on its loop
+      this.smashWagon()
       return true
     }
     return false
@@ -517,6 +593,11 @@ export class Engine implements Boss {
     this.lastDt = dt
     this.flash = Math.max(0, this.flash - dt * 5)
     this.justPhase2 = false
+    // phase 2 (C7): below 55% for one update the flag is up, and the reversal and wagon clocks start; then they run down
+    if (this.phase2) {
+      this.reverseIn -= ms
+      if (!this.wagon) this.wagonIn -= ms
+    } else if (this.started && !this.dead && this.hp < this.maxHp * ENGINE.phase2At) this.enterPhase2(ctx)
     // it looks at Still, never the decoy: every boss ignores the lure
     this.still.copy(ctx.player)
     // a cast threw the lever since the last tick (onCast has no ctx): its event
@@ -538,8 +619,19 @@ export class Engine implements Boss {
         break
       case 'run':
         this.advance(dt)
+        // the nose has met a settled wagon: it derails where it stands, and the wagon is smashed
+        if (this.meetsWagon(ctx)) break
         this.tickWindow(dt, ctx)
         this.lay(dt, ctx)
+        if (this.reverseDue()) this.startJudder(ctx)
+        break
+      case 'judder':
+        // it stands and shudders; nothing is laid. Then it turns round and stands again while the new way is lit
+        if (this.timer >= ENGINE.reverse.judderMs - 1e-6) {
+          this.flip(ctx)
+          // the way ahead is laid in this same update, as after backing out: its first strip is then made a full `lead` before the hold ends
+          this.lay(dt, ctx)
+        }
         break
       case 'siding': {
         // driving up the arm it was thrown into, to where its nose meets the buffer
@@ -554,8 +646,11 @@ export class Engine implements Boss {
         // open for its window; the way back is lit in the last 1300 ms of it (INV-E2)
         this.lay(dt, ctx)
         if (this.timer >= ENGINE.derailMs - 1e-6) {
-          this.go('backing')
-          ctx.emit({ kind: 'engine', e: this, what: 'back', at: this.pos.clone(), side: this.branch!.arm.side })
+          // off an arm it backs out; derailed at a wagon it is on the loop already and runs on
+          if (this.branch) {
+            this.go('backing')
+            ctx.emit({ kind: 'engine', e: this, what: 'back', at: this.pos.clone(), side: this.branch.arm.side })
+          } else this.go('run')
         }
         break
       case 'backing': {
@@ -572,6 +667,7 @@ export class Engine implements Boss {
         break
     }
     this.fight(dt, terrain, ctx)
+    this.wagonStep(terrain, ctx)
     this.segs = this.segs.filter((g) => !g.h.done)
     // what Combat sees of it: a windup while it aims, a strike on the tick the jet arms or the cinder leaves, recover while derailed
     this.phase = this.strikeTick ? 'strike' : this.attack !== 'none' ? 'windup' : this.state === 'derailed' ? 'recover' : 'approach'
@@ -615,7 +711,7 @@ export class Engine implements Boss {
     // out of reach: only ever awake (this runs from the unfold on), and it resets the moment he is within it
     this.outMs = d > st.range ? this.outMs + ms : 0
     this.atkT += ms
-    const may = this.state === 'run' || this.state === 'hold' || this.state === 'siding' || this.state === 'backing'
+    const may = this.state === 'run' || this.state === 'hold' || this.state === 'judder' || this.state === 'siding' || this.state === 'backing'
     if (!may && (this.attack === 'steamTrack' || this.attack === 'cinderAim')) this.attack = 'none'
     switch (this.attack) {
       case 'none': {
@@ -847,14 +943,15 @@ export class Engine implements Boss {
     const b = this.branch
     if (b && this.mv === this.dir && this.dir * (u - b.uJ) > -1e-9) return b.uJ + this.dir * (b.arm.len - TRACK.bufferR)
     const { loopLen: L, vertexS } = this.track
-    const base = Math.floor(u / L) * L
-    const rel = u - base
+    // vertices are compared as absolute places, not against `u` folded into one lap: a `u` a hair under a whole lap (float noise on a value that
+    // was itself laid to a vertex) folds to the end of the lap, where no vertex is ahead, and the "next" edge came out as `u` itself: a strip of no length, laid again and again
+    const k0 = Math.floor(u / L)
     if (this.mv === 1) {
-      for (const v of vertexS) if (v > rel + 1e-9) return base + v
-      return base + L
+      for (const k of [k0, k0 + 1]) for (const v of vertexS) if (k * L + v > u + 1e-9) return k * L + v
+      return (k0 + 2) * L
     }
-    for (let i = vertexS.length - 1; i >= 0; i--) if (vertexS[i]! < rel - 1e-9) return base + vertexS[i]!
-    return base - L + vertexS[vertexS.length - 1]!
+    for (const k of [k0, k0 - 1]) for (let i = vertexS.length - 1; i >= 0; i--) if (k * L + vertexS[i]! < u - 1e-9) return k * L + vertexS[i]!
+    return (k0 - 2) * L + vertexS[vertexS.length - 1]!
   }
 
   /**
@@ -869,16 +966,26 @@ export class Engine implements Boss {
     const standS = this.standMs / 1000
     const speed = this.speedNow
     const mv = this.mv
+    // a settled wagon on the loop ends the horizon at its near face (C7)
+    let wf = this.wagonFace()
     for (let guard = 0; guard < 32; guard++) {
       const from = this.laidTo
       if (this.layEnd !== null && mv * (from - this.layEnd) > -1e-9) break
+      if (wf !== null && mv * (from - wf) > -1e-9) break
       const ahead = mv * (from - this.leadEnd)
       if (ahead / speed + standS > ENGINE.lead + dt + LAY_HAIR) break
-      if (this.window && Math.abs(from - this.winU) < 1e-6) this.decide()
+      if (this.window && Math.abs(from - this.winU) < 1e-6) {
+        this.decide(ctx)
+        // turned into an arm: the wagon is on the loop, not on this road
+        wf = this.wagonFace()
+      }
       let to = from + mv * ENGINE.segment
       const edge = this.edgeBeyond(from)
       if (mv * (edge - to) < SLIVER) to = edge
       if (this.layEnd !== null && mv * (to - this.layEnd) > 0) to = this.layEnd
+      if (wf !== null && mv * (to - wf) > 0) to = wf
+      // never a strip of no length (see edgeBeyond): nothing more can be laid from here
+      if (mv * (to - from) < 1e-6) break
       const a = this.at(from), b = this.at(to)
       const len = Math.hypot(b.x - a.x, b.z - a.z)
       const dx = (b.x - a.x) / len, dz = (b.z - a.z) / len
@@ -898,16 +1005,21 @@ export class Engine implements Boss {
       }
       this.segs.push({
         id: this.nextId++, h: ctx.addHazard(this, spec), madeAt: ctx.now, armMs, group: this.groupNo,
-        ax: a.x, az: a.z, bx: b.x, bz: b.z, v: (mv * from) / UV_LEN, speed,
+        ax: a.x, az: a.z, bx: b.x, bz: b.z, u0: from, v: (mv * from) / UV_LEN, speed,
       })
       this.laidTo = to
     }
     this.frontier = this.laidTo
-    // it stops at the buffer: the lit rail ends in the ram's end star
+    // it stops at the buffer, or at the wagon's near face: the lit rail ends in the ram's end star
     if (this.branch && this.heading === 1 && this.layEnd !== null && mv * (this.laidTo - this.layEnd) > -1e-9 && this.frontierEnd !== 'buffer') {
       const p = this.at(this.layEnd), a = this.branch.arm
       this.markEnd('buffer', p.x, p.z, Math.atan2(a.buffer.x - a.junction.x, a.buffer.z - a.junction.z))
-    }
+    } else if (wf !== null && mv * (this.laidTo - wf) > -1e-9) {
+      if (this.frontierEnd !== 'wagon') {
+        const p = loopAt(this.track, wf)
+        this.markEnd('wagon', p.x, p.z, Math.atan2(mv * p.dx, mv * p.dz))
+      }
+    } else if (this.frontierEnd === 'wagon') this.markEnd('open')
   }
 
   // --- the levers (C5) ---
@@ -930,7 +1042,7 @@ export class Engine implements Boss {
     const { loopLen: L } = this.track
     const offs = this.junctionOffsets()
     const pNose = this.dir * this.nose
-    const pFrom = this.dir * this.origin + L
+    const pFrom = this.dir * this.origin + this.windowWait
     const count = (hi: number) => offs.reduce((n, o) => n + Math.max(0, Math.floor((hi - o.off) / L + 1e-9) - Math.ceil((pFrom - o.off) / L - 1e-9) + 1), 0)
     for (let k = Math.floor(pNose / L) - 1; k <= Math.floor(pNose / L) + 8; k++) {
       for (const o of offs) {
@@ -959,17 +1071,32 @@ export class Engine implements Boss {
     if (this.state !== 'run' || this.heading !== 1) return
     const j = this.nextEligible()
     if (!j || this.secondsToOpen(j.p) > 1e-9) return
+    // the horizon has already gone past this junction (it was laid while the engine stood, after a derail at a wagon just short of it): the window
+    // could never be honest, so the junction goes by without one and the count goes on
+    if (this.dir * (this.laidTo - j.u) > 1e-6) {
+      this.decided = j.p
+      return
+    }
+    // a wagon (rolling or settled) nearer than the junction stops the horizon short of it: the window would never close
+    if (this.wagonBlocks(j.u)) return
     this.window = { side: j.arm.side, arm: j.arm, open: true, thrown: false, msOpen: 0 }
     this.winU = j.u
     ctx.emit({ kind: 'engine', e: this, what: 'window', at: this.pos.clone(), side: j.arm.side })
   }
 
-  /** The frontier has reached the junction: the window closes, and thrown, everything turns into the arm. */
-  private decide() {
+  /**
+   * The frontier has reached the junction: the window closes, and thrown, everything turns into the arm. In phase 2 a window that closes
+   * unthrown with Still standing in that arm's strip (grown by ENGINE.throwBack.grow) is thrown by the engine itself: its frontier is at
+   * the junction now, so the arm is lit as far ahead as any rail.
+   */
+  private decide(ctx: EnemyCtx) {
     const w = this.window!
     this.decided = this.dir * this.winU
     this.window = null
-    if (!w.thrown) return
+    if (!w.thrown) {
+      if (!this.phase2 || !this.stillInArm(w.arm)) return
+      ctx.emit({ kind: 'engine', e: this, what: 'throwBack', at: this.pos.clone(), side: w.arm.side })
+    }
     this.branch = { uJ: this.winU, arm: w.arm }
     this.layEnd = this.winU + this.dir * (w.arm.len - TRACK.bufferR)
     this.newGroup()
@@ -1016,6 +1143,222 @@ export class Engine implements Boss {
     this.go('hold')
   }
 
+  // --- phase 2 (C7) ---
+
+  /** Phase 2's seeded stream (never Math.random: the same fight gives the same rhythm). */
+  private nextPhase() {
+    this.phaseSeed = (this.phaseSeed * 16807) % 2147483647
+    return this.phaseSeed / 2147483647
+  }
+
+  /** The seeded gap to the next reversal, ms. */
+  private reverseGap() {
+    const [lo, hi] = ENGINE.reverse.everyS
+    return 1000 * (lo + (hi - lo) * this.nextPhase())
+  }
+
+  /** Below 55%: the flag for this one update, the event, and the reversal and wagon clocks. */
+  private enterPhase2(ctx: EnemyCtx) {
+    this.phase2 = true
+    this.justPhase2 = true
+    this.reverseIn = this.reverseGap()
+    this.wagonIn = ENGINE.wagon.firstS * 1000
+    ctx.emit({ kind: 'engine', e: this, what: 'phase2', at: this.pos.clone() })
+  }
+
+  /** Still's centre inside the arm's strip (junction to buffer, halfW) grown by the thrown-back reach. */
+  private stillInArm(arm: TrackArm): boolean {
+    const ux = (arm.buffer.x - arm.junction.x) / arm.len, uz = (arm.buffer.z - arm.junction.z) / arm.len
+    const dx = this.still.x - arm.junction.x, dz = this.still.z - arm.junction.z
+    const along = dx * ux + dz * uz, across = Math.abs(dx * uz - dz * ux)
+    return along >= 0 && along <= arm.len && across <= ENGINE.halfW + ENGINE.throwBack.grow
+  }
+
+  /**
+   * A reversal is due and may start: in `run` on the loop, no window open (one open is never cut: it waits for the window to close), no
+   * steam or cinder in the air, and no wagon rolling (a settled one is fine, unless it stands beside it).
+   */
+  private reverseDue(): boolean {
+    if (!this.phase2 || this.reverseIn > 0 || this.state !== 'run' || this.heading !== 1 || this.branch || this.window || this.attack !== 'none') return false
+    const w = this.wagon
+    if (!w) return true
+    return w.stage === 'settled' && Math.hypot(w.x - this.pos.x, w.z - this.pos.z) >= ENGINE.wagon.clear
+  }
+
+  /**
+   * The judder: it stands, and every strip of its own that has not armed is taken back (the ones it is on stay live), so nothing it lit
+   * for the way it was going can arm while it stands. Nothing is laid until it has turned.
+   */
+  private startJudder(ctx: EnemyCtx) {
+    ctx.takeBack?.(this, (h) => h.spec.source === 'train')
+    this.laidTo = this.frontier = this.nose
+    this.markEnd('open')
+    this.go('judder')
+    this.judderBurst = true
+    ctx.emit({ kind: 'engine', e: this, what: 'judder', at: this.pos.clone(), ms: ENGINE.reverse.judderMs })
+  }
+
+  /** It turns round on the spot and stands `lead` while the loop the other way is lit (INV-E2); the windows count from here, on the other arms. */
+  private flip(ctx: EnemyCtx) {
+    this.dir = (this.dir === 1 ? -1 : 1) as 1 | -1
+    this.heading = 1
+    this.originBody = this.u
+    this.origin = this.laidTo = this.nose
+    this.frontier = this.laidTo
+    this.windowWait = WINDOW_EPS
+    this.decided = -Infinity
+    this.window = null
+    this.layEnd = null
+    this.newGroup()
+    this.markEnd('open')
+    this.place()
+    this.spin = Math.PI
+    this.reverseIn = this.reverseGap()
+    this.go('hold')
+    ctx.emit({ kind: 'engine', e: this, what: 'flip', at: this.pos.clone() })
+  }
+
+  // --- the loose wagon (C7) ---
+
+  /**
+   * The wagon's near face, in path u: of its two ends, the one the leading end reaches first going `mv`, taken at the image of the loop
+   * nearest the leading end (a tick's overshoot still finds the face it just met, not the one a lap on).
+   */
+  private faceNear(mv: 1 | -1, ref: number): number | null {
+    const w = this.wagon
+    if (!w) return null
+    const L = this.track.loopLen
+    const sFace = w.s - mv * ENGINE.wagon.halfLen
+    const r = ref - mv
+    const k = mv === 1 ? Math.ceil((r - sFace) / L - 1e-9) : Math.floor((r - sFace) / L + 1e-9)
+    return sFace + k * L
+  }
+
+  /** Where the lit horizon must end, going the way it goes: a settled wagon's near face; null off the loop or with none. */
+  private wagonFace(): number | null {
+    const w = this.wagon
+    if (!w || w.stage !== 'settled' || this.branch) return null
+    return this.faceNear(this.mv, this.leadEnd)
+  }
+
+  /** A wagon (in its tell, rolling or settled) stands on the loop nearer the nose than the junction at dir * u = uJ. */
+  private wagonBlocks(uJ: number): boolean {
+    if (!this.wagon || this.branch) return false
+    const f = this.faceNear(this.dir, this.nose)
+    return f !== null && this.dir * (f - this.nose) < this.dir * (uJ - this.nose)
+  }
+
+  /** The nose has met a settled wagon: it derails where it stands (open, x1.5), the wagon smashed, and the way on is lit in the last 1300 ms of it. */
+  private meetsWagon(ctx: EnemyCtx): boolean {
+    const wf = this.wagonFace()
+    if (wf === null || this.mv * (this.nose - wf) < -1e-9) return false
+    this.u = wf - (this.dir * ENGINE.length) / 2
+    this.place()
+    this.go('derailed')
+    this.laidTo = this.frontier = this.nose
+    this.layEnd = null
+    this.newGroup()
+    ctx.emit({ kind: 'engine', e: this, what: 'derail', at: this.pos.clone() })
+    const at = this.smashWagon()
+    if (at) ctx.emit({ kind: 'engine', e: this, what: 'wagonSmash', at })
+    return true
+  }
+
+  /** The wagon's life, once a tick: picked when due, its tell, the roll, settling on the loop. */
+  private wagonStep(terrain: Terrain, ctx: EnemyCtx) {
+    if (this.dead || !this.started) return
+    const wg = this.wagon
+    if (!wg) {
+      const may = this.state === 'run' || this.state === 'hold'
+      if (this.phase2 && this.wagonIn <= 0 && may && !this.branch && this.heading === 1 && !this.window) this.pickWagon(ctx)
+      return
+    }
+    if (wg.stage === 'tell') {
+      if (wg.h.armIn > 1e-6) return
+      wg.stage = 'roll'
+    }
+    if (wg.stage === 'roll') {
+      const k = Math.min(1, Math.max(0, 1 - wg.h.liveLeft / Math.max(1, wg.h.spec.liveMs)))
+      wg.x = wg.ox + wg.ux * wg.len * k
+      wg.z = wg.oz + wg.uz * wg.len * k
+      if (wg.h.done || wg.h.liveLeft <= 1e-6) this.settleWagon(terrain, ctx)
+    }
+  }
+
+  /**
+   * When one is due and it can be honest: the spur whose end on the loop is at least speed × (lead + tell + roll) ahead of the nose (33.8 u
+   * at 11 u/s) along its way, and of those the one farther from Still; none: it waits. A wagon is also never picked with a window open.
+   */
+  private pickWagon(ctx: EnemyCtx) {
+    if (!ctx.addHazard) return
+    const t = this.track, w = ENGINE.wagon, L = t.loopLen
+    let best = -1, bestD = -1
+    t.spurs.forEach((sp, i) => {
+      const len = Math.hypot(sp.onLoop.x - sp.outer.x, sp.onLoop.z - sp.outer.z)
+      const need = ENGINE.speed * (ENGINE.lead + (w.tellMs + (1000 * len) / w.speed) / 1000)
+      const ahead = ((this.dir * (loopS(t, sp.onLoop.x, sp.onLoop.z) - this.nose)) % L + L) % L
+      if (ahead < need) return
+      const d = distToSpur(sp.outer, sp.onLoop, this.still.x, this.still.z)
+      if (d > bestD) { bestD = d; best = i }
+    })
+    if (best < 0) return
+    const sp = t.spurs[best]!
+    const len = Math.hypot(sp.onLoop.x - sp.outer.x, sp.onLoop.z - sp.outer.z)
+    const ux = (sp.onLoop.x - sp.outer.x) / len, uz = (sp.onLoop.z - sp.outer.z) / len
+    const s = loopS(t, sp.onLoop.x, sp.onLoop.z)
+    const straight = loopAt(t, s)
+    // one strip down the spur, armed at the end of the tell and live for the roll; its whole drawing is the LaneTell
+    const h = ctx.addHazard(this, {
+      source: 'wagon', shape: { kind: 'strip', ax: sp.outer.x, az: sp.outer.z, bx: sp.onLoop.x, bz: sp.onLoop.z, halfW: w.halfW },
+      armMs: w.tellMs, liveMs: (1000 * len) / w.speed, damage: w.damage, cover: 'none', hurt: 'hazard', quiet: true,
+      owner: this, sparesOwner: true, cancelOnDeath: true,
+    })
+    this.wagon = {
+      spur: best, x: sp.outer.x, z: sp.outer.z, settled: false, circles: [], stage: 'tell',
+      ox: sp.outer.x, oz: sp.outer.z, lx: sp.onLoop.x, lz: sp.onLoop.z, len, ux, uz, s, sx: straight.dx, sz: straight.dz, h,
+    }
+    ctx.emit({ kind: 'engine', e: this, what: 'wagon', at: new THREE.Vector3(sp.outer.x, 0, sp.outer.z) })
+  }
+
+  /** The roll is over: it stands on the loop, two solid circles along the straight, and the horizon ends at its near face. */
+  private settleWagon(terrain: Terrain, ctx: EnemyCtx) {
+    const wg = this.wagon!, w = ENGINE.wagon
+    wg.stage = 'settled'
+    wg.settled = true
+    wg.x = wg.lx
+    wg.z = wg.lz
+    for (const sign of [-1, 1]) {
+      const c: Circle = { x: wg.lx + sign * w.at * wg.sx, z: wg.lz + sign * w.at * wg.sz, r: w.r }
+      terrain.add(c)
+      wg.circles.push(c)
+    }
+    // whatever it had lit that starts past the wagon's face and has not armed is taken back (a strip that straddles the face stays: it was made in time)
+    const wf = this.wagonFace()
+    if (wf !== null) {
+      const mv = this.mv
+      ctx.takeBack?.(this, (h) => {
+        const g = this.segs.find((x) => x.h === h)
+        return !!g && mv * (g.u0 - wf) >= -1e-9
+      })
+      if (mv * (this.laidTo - wf) > 0) this.laidTo = this.frontier = wf
+    }
+    ctx.emit({ kind: 'engine', e: this, what: 'wagonSettle', at: new THREE.Vector3(wg.x, 0, wg.z) })
+  }
+
+  /** Gone (smashed by the engine, or with it): its circles stop being solid, and the next is 14 s off. Returns where it stood. */
+  private smashWagon(): THREE.Vector3 | null {
+    const wg = this.wagon
+    if (!wg) return null
+    for (const c of wg.circles) c.dead = true
+    const at = new THREE.Vector3(wg.x, 0, wg.z)
+    if (wg.stage === 'settled') this.smashAt = { x: wg.x, z: wg.z }
+    this.tub.visible = false
+    this.wagon = null
+    this.wagonIn = ENGINE.wagon.everyS * 1000
+    if (this.frontierEnd === 'wagon') this.markEnd('open')
+    return at
+  }
+
   /** For the checks (main.ts __engineSegs): its own hazards, with the clocks Combat keeps. */
   segments() {
     return this.segs.map((g) => ({
@@ -1037,6 +1380,8 @@ export class Engine implements Boss {
       const p = this.at(this.laidTo)
       out.push(new THREE.Vector3(p.x, 0, p.z))
     }
+    // the wagon's landing on the loop while its tell runs
+    if (this.wagon && this.wagon.stage !== 'settled') out.push(new THREE.Vector3(this.wagon.lx, 0, this.wagon.lz))
     // and the steam's end (tracking, then locked), the cinder's landing while it is aimed
     if (this.attack === 'steamTrack') out.push(this.gazeEnd.clone())
     else if (this.attack === 'steamLock' && this.jetSeg) out.push(new THREE.Vector3(this.jetSeg.bx, 0, this.jetSeg.bz))
@@ -1051,6 +1396,15 @@ export class Engine implements Boss {
     // the whistle: a burst of steam from the stack for the first 400 ms of the unfold, then its smoke
     if (this.state === 'unfold' && this.timer < 400) vfx.smokePuff(this.chimney.getWorldPosition(new THREE.Vector3()), 4, STEAM)
     else if (this.dressN % 2 === 0) vfx.smokePuff(this.chimney.getWorldPosition(new THREE.Vector3()), 1, SOOT)
+    // the judder throws sparks off the wheels; a smashed wagon flies apart
+    if (this.state === 'judder') this.judderSparks(vfx)
+    if (this.smashAt) {
+      const at = new THREE.Vector3(this.smashAt.x, 0.5, this.smashAt.z)
+      vfx.chunks(at, 16, TUB_IRON, 6, 0.16)
+      vfx.dust(at, 12, 1.4, undefined, 4)
+      vfx.smokePuff(at, 3)
+      this.smashAt = null
+    }
     // the jet goes on billowing for a beat after it fires; a cinder in the air sheds embers and a thread of smoke
     if (this.jetFx > 0 && this.jetSeg) {
       const j = this.jetSeg
@@ -1063,6 +1417,26 @@ export class Engine implements Boss {
       vfx.embers(at, 1, 0.08, FIRE)
       if (this.dressN % 2 === 0) vfx.smokePuff(at, 1)
     } else this.flight = null
+  }
+
+  /**
+   * The judder's sparks, off the wheels sideways and back (vfx.hotSparks: deep red to orange, flickering, short-lived): a burst as it
+   * starts to shake, then a few from the six wheels at every dressing (about 11 a second) while it stands.
+   */
+  private judderSparks(vfx: Vfx) {
+    const first = this.judderBurst
+    this.judderBurst = false
+    const n = first ? JUDDER.burst * 6 : JUDDER.perDress
+    const yaw = this.group.rotation.y
+    const wheels = [0.98, 0.06, -0.86]
+    const at = new THREE.Vector3(), dir = new THREE.Vector3()
+    for (let i = 0; i < n; i++) {
+      const side = first ? (i % 2 ? 1 : -1) : Math.random() < 0.5 ? -1 : 1
+      const z = wheels[first ? i % 3 : Math.floor(Math.random() * 3)]!
+      this.group.localToWorld(at.set(side * 0.66, 0.28, z))
+      dir.set(Math.cos(yaw) * side, 0, -Math.sin(yaw) * side)
+      vfx.hotSparks(at, 1, first ? 7 : 5.5, dir, 0.7)
+    }
   }
 
   /** The tick the jet arms: a burst of steam down the strip. The tick the cinder leaves: the stack coughs smoke and embers. */
@@ -1107,10 +1481,18 @@ export class Engine implements Boss {
       m.color.lerp(WHITE, this.flash * 0.5)
       m.emissive.setRGB(this.flash * 0.4, this.flash * 0.15, this.flash * 0.1)
     }
-    this.group.position.set(this.pos.x, 0, this.pos.z)
-    this.group.rotation.y = this.yaw()
+    // the judder shudders the body (the hazards and the checks read `pos`, never this); a reversal's turn runs down after it
     this.clock += dt
+    const shake = this.state === 'judder' ? Math.min(1, this.timer / 120) : 0
+    this.spin = Math.max(0, this.spin - (dt * Math.PI) / JUDDER.turnS)
+    this.group.position.set(
+      this.pos.x + shake * JUDDER.shake * Math.sin(this.clock * JUDDER.hz * 6.2832),
+      0,
+      this.pos.z + shake * JUDDER.shake * Math.sin(this.clock * JUDDER.hz * 5.3 + 1.3),
+    )
+    this.group.rotation.y = this.yaw() + this.spin + shake * JUDDER.yaw * Math.sin(this.clock * JUDDER.hz * 4.4)
     this.drawHorizon()
+    this.drawWagon(dt)
     this.drawWindow(dt)
     this.drawAim(dt)
     // behind it from the camera (which looks from +x +z), he'd be lost: its solid parts thin out until he's clear
@@ -1177,6 +1559,48 @@ export class Engine implements Boss {
     this.cinderRing.visible = this.cinderRingMat.opacity > 0.002
     this.cinderRing.position.set(this.lead.x, ATTACK_Y, this.lead.z)
     this.cinderRing.renderOrder = tellOrder(this.attack === 'cinderAim' ? ENGINE.cinder.windupMs - this.atkT : 2000)
+  }
+
+  /**
+   * The wagon: its tub (waiting at the spur's outer end through the tell, rolling in, then settled across the loop) and its tell, the
+   * ram's lane down the spur with no rails (trackWash): faint chevrons first, then locked and filling to the roll, ending in a star on the loop.
+   */
+  private drawWagon(dt: number) {
+    const wg = this.wagon
+    const w = ENGINE.wagon
+    this.tub.visible = !!wg && !this.dead
+    const base = { coreHalf: WAGON_TELL.coreHalf, hitHalf: w.halfW, bodyR: 0, end: 'prop' as const }
+    if (!wg) {
+      this.wagonTell.update(dt, { ...base, stage: 'off', x: 0, z: 0, aim: 0, len: 0, fill: 0, from: 0 })
+      return
+    }
+    const aim = Math.atan2(wg.ux, wg.uz)
+    if (wg.stage === 'tell') {
+      const f = Math.min(1, Math.max(0, 1 - wg.h.armIn / w.tellMs))
+      const locked = f >= WAGON_TELL.trackFrac
+      this.wagonTell.update(dt, {
+        ...base, stage: locked ? 'locked' : 'tracking', x: wg.ox, z: wg.oz, aim, len: wg.len,
+        fill: locked ? (f - WAGON_TELL.trackFrac) / (1 - WAGON_TELL.trackFrac) : 0, from: 0,
+        dim: locked ? 1 : trackingDim(), order: tellOrder(Math.max(0, wg.h.armIn)),
+      })
+    } else if (wg.stage === 'roll') {
+      const k = Math.min(1, Math.max(0, Math.hypot(wg.x - wg.ox, wg.z - wg.oz) / wg.len))
+      this.wagonTell.update(dt, { ...base, stage: 'rush', x: wg.x, z: wg.z, aim, len: wg.len * (1 - k), fill: 1, from: wg.len * k, order: tellOrder(0) })
+    } else this.wagonTell.update(dt, { ...base, stage: 'off', x: wg.x, z: wg.z, aim, len: 0, fill: 0, from: 0 })
+    // over the sleepers, as the steam's and the horizon's are
+    this.wagonTell.group.position.y = ATTACK_Y
+    // the tub: along the spur while it rolls, turning across the loop as it comes to rest
+    let yaw = aim
+    if (wg.stage !== 'tell') {
+      let d = angleDiff(Math.atan2(wg.sx, wg.sz), aim)
+      if (d > Math.PI / 2) d -= Math.PI
+      else if (d < -Math.PI / 2) d += Math.PI
+      const k = wg.stage === 'settled' ? 1 : Math.min(1, Math.hypot(wg.x - wg.ox, wg.z - wg.oz) / wg.len)
+      const t = Math.min(1, Math.max(0, (k - WAGON_TELL.settleFrom) / (1 - WAGON_TELL.settleFrom)))
+      yaw = aim + d * t * t * (3 - 2 * t)
+    }
+    this.tub.position.set(wg.x, 0, wg.z)
+    this.tub.rotation.y = yaw
   }
 
   /** The window's ring and disc on the floor, and the levers turning: the open one's knob bright, a thrown one over. */
@@ -1249,5 +1673,8 @@ export class Engine implements Boss {
     releaseTell(this.gazeWashMat)
     this.cinderRing.geometry.dispose()
     releaseTell(this.cinderRingMat)
+    // the tub's geometry and material are the rake's (line.ts wagonKit): never ours to free. Its circles stop being solid.
+    this.smashWagon()
+    this.wagonTell.dispose()
   }
 }

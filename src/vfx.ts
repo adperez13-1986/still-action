@@ -85,6 +85,34 @@ const SMOKE_FRAG = /* glsl */ `
   }
 `
 
+/**
+ * The threat's sparks (C7, the Engine's judder): a ragged hot core, deep red at its rim and orange at its heart, flickering on its own beat
+ * (it only ever dips: 9 to 25 Hz), never white. The additive pool's sparks are lightened toward white by up to half at birth and glow smooth,
+ * which under ACES + bloom reads as a flat peach dot; these carry their colour as given and break up in time.
+ */
+const HOT_FRAG = /* glsl */ `
+  varying float vAlpha;
+  varying vec3 vColor;
+  varying float vSeed;
+  uniform float uTime;
+  float h(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+  float n(vec2 p) {
+    vec2 i = floor(p), f = fract(p); vec2 u = f * f * (3.0 - 2.0 * f);
+    return mix(mix(h(i), h(i + vec2(1, 0)), u.x), mix(h(i + vec2(0, 1)), h(i + vec2(1, 1)), u.x), u.y);
+  }
+  void main() {
+    vec2 p = gl_PointCoord - 0.5;
+    float d = length(p) * 2.0;
+    float rag = n(p * 6.0 + vSeed * 31.0 + uTime * 4.0);
+    float core = smoothstep(1.0, 0.3, d + (rag - 0.5) * 0.7);
+    float beat = 9.0 + vSeed * 16.0;
+    float flick = 1.0 - 0.55 * (0.5 + 0.5 * sin(6.2832 * (uTime * beat + vSeed * 7.0)));
+    float a = pow(core, 1.1) * vAlpha * flick;
+    if (a < 0.01) discard;
+    gl_FragColor = vec4(mix(vColor * 0.45, vColor * 0.95, smoothstep(0.0, 0.8, core)), a);
+  }
+`
+
 class Pool {
   readonly points: THREE.Points
   private readonly parts: Particle[]
@@ -244,12 +272,18 @@ class Debris {
 
 const rnd = (a: number, b: number) => a + Math.random() * (b - a)
 
+/** The threat sparks' colours, rim to heart: a deep red a shade past the firebox's (engine.ts fireHot) to an orange with less blue than EMBER (0xff6a3a goes salmon when it is thin). */
+const HOT_RIM = new THREE.Color(0xff2006)
+const HOT_HEART = new THREE.Color(0xff4a0a)
+
 export class Vfx {
+  /** Made on first use: a level that never throws these sparks has no extra draw call. */
+  private hot: Pool | null = null
   private readonly glow = new Pool(1800, GLOW_FRAG, THREE.AdditiveBlending)
   private readonly smoke = new Pool(700, SMOKE_FRAG, THREE.NormalBlending)
   private readonly debris = new Debris(260)
 
-  constructor(scene: THREE.Scene) {
+  constructor(private readonly scene: THREE.Scene) {
     scene.add(this.smoke.points, this.glow.points, this.debris.mesh)
   }
 
@@ -259,6 +293,10 @@ export class Vfx {
     const px = pixelHeight / ((camera.top - camera.bottom) / camera.zoom)
     this.glow.material.uniforms.uPx!.value = px
     this.smoke.material.uniforms.uPx!.value = px
+    if (this.hot) {
+      this.hot.material.uniforms.uPx!.value = px
+      this.hot.update(dt)
+    }
     this.glow.update(dt)
     this.smoke.update(dt)
     this.debris.update(dt)
@@ -274,6 +312,28 @@ export class Vfx {
         x: at.x, y: at.y, z: at.z,
         vx: Math.sin(a) * s, vy: rnd(1.5, 5), vz: Math.cos(a) * s,
         max: rnd(0.25, 0.55), size: rnd(0.08, 0.16), gravity: 16, drag: 2.5,
+        r: c.r, g: c.g, b: c.b,
+      })
+    }
+  }
+
+  /**
+   * Sparks in the threat language (HOT_FRAG): short-lived, flickering, deep red to orange, thrown mostly along `dir` if given. Nothing is
+   * lightened toward white; `speed` is the fastest, and the smallest are a third of it.
+   */
+  hotSparks(at: THREE.Vector3, count: number, speed = 5, dir?: THREE.Vector3, spread = 0.8) {
+    if (!this.hot) {
+      this.hot = new Pool(320, HOT_FRAG, THREE.AdditiveBlending)
+      this.scene.add(this.hot.points)
+    }
+    for (let i = 0; i < count; i++) {
+      const a = dir ? Math.atan2(dir.x, dir.z) + rnd(-spread, spread) : rnd(0, Math.PI * 2)
+      const s = speed * rnd(0.35, 1)
+      const c = HOT_RIM.clone().lerp(HOT_HEART, Math.random())
+      this.hot.spawn({
+        x: at.x, y: at.y, z: at.z,
+        vx: Math.sin(a) * s, vy: rnd(1.2, 4), vz: Math.cos(a) * s,
+        max: rnd(0.22, 0.5), size: rnd(0.2, 0.36), gravity: 14, drag: 2,
         r: c.r, g: c.g, b: c.b,
       })
     }

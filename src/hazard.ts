@@ -200,8 +200,8 @@ export class HazardTell {
 
   constructor(private readonly spec: HazardSpec) {
     const s = spec.shape
-    // a train's segment: the lane's rail tell and the rake are its whole drawing (drawn = hit)
-    if (spec.source === 'train') return
+    // a train's segment: the lane's rail tell and the rake are its whole drawing (drawn = hit). So is the loose wagon's (C7): its LaneTell
+    if (spec.source === 'train' || spec.source === 'wagon') return
     const y = spec.raise ?? DECAL_Y
     if (s.kind === 'circle') {
       this.group.position.set(s.x, y, s.z)
@@ -276,7 +276,7 @@ export class HazardTell {
 
   update(dt: number, h: LiveHazard) {
     const s = this.spec
-    if (s.source === 'train') return
+    if (s.source === 'train' || s.source === 'wagon') return
     if (this.shell) {
       const k = Math.min(1, Math.max(0, 1 - h.armIn / Math.max(1, s.armMs)))
       this.shellAt(k, this.shell.position)

@@ -343,10 +343,16 @@ interface RakeKit {
   fire: THREE.MeshBasicMaterial
 }
 let rakeKit: RakeKit | null = null
+const at = (g: THREE.BufferGeometry, x: number, y: number, z: number) => g.translate(x, y, z)
+const wheel = (x: number, z: number) => at(new THREE.CylinderGeometry(0.28, 0.28, 0.1, 12).rotateZ(Math.PI / 2), x, 0.28, z)
+/** One ore tub 1.9 × 0.9 × 1.5 (top 1.1) centred at z on the rake's axis, with its four wheels and coupling. */
+const tub = (z: number) => [
+  at(new THREE.BoxGeometry(1.5, 0.9, 1.9), 0, 0.65, z),
+  wheel(-0.5, z - 0.6), wheel(0.5, z - 0.6), wheel(-0.5, z + 0.6), wheel(0.5, z + 0.6),
+  at(new THREE.BoxGeometry(0.12, 0.12, 0.34), 0, 0.4, z + 1.1),
+]
 function rakeParts(): RakeKit {
   if (rakeKit) return rakeKit
-  const at = (g: THREE.BufferGeometry, x: number, y: number, z: number) => g.translate(x, y, z)
-  const wheel = (x: number, z: number) => at(new THREE.CylinderGeometry(0.28, 0.28, 0.1, 12).rotateZ(Math.PI / 2), x, 0.28, z)
   // the engine, 2.6 long: boiler r 0.55 × 1.8 (top 1.4), the cab 0.8 × 1.2 × 1.4 behind it, the chimney to 1.7
   const engine = mergeGeometries([
     at(new THREE.BoxGeometry(1.3, 0.16, 2.6), 0, 0.36, -1.3),
@@ -355,12 +361,7 @@ function rakeParts(): RakeKit {
     at(new THREE.CylinderGeometry(0.12, 0.14, 0.5, 10), 0, 1.45, -0.35),
     ...[-0.45, -1.25, -2.05].flatMap((z) => [wheel(-0.5, z), wheel(0.5, z)]),
   ].map((g) => g.toNonIndexed()))!
-  // two ore tubs 1.9 × 0.9 × 1.5 (top 1.1), 0.3 apart behind the engine, coupled
-  const tub = (z: number) => [
-    at(new THREE.BoxGeometry(1.5, 0.9, 1.9), 0, 0.65, z),
-    wheel(-0.5, z - 0.6), wheel(0.5, z - 0.6), wheel(-0.5, z + 0.6), wheel(0.5, z + 0.6),
-    at(new THREE.BoxGeometry(0.12, 0.12, 0.34), 0, 0.4, z + 1.1),
-  ]
+  // two ore tubs (tub), 0.3 apart behind the engine, coupled
   const wagons = mergeGeometries([...tub(-2.6 - 0.3 - 0.95), ...tub(-2.6 - 0.3 - 1.9 - 0.3 - 0.95)].map((g) => g.toNonIndexed()))!
   // the firebox: a slit 0.3 × 0.12 in each side of the cab, its ember core
   const firebox = mergeGeometries([at(new THREE.BoxGeometry(0.02, 0.12, 0.3), -0.71, 0.55, -2.2), at(new THREE.BoxGeometry(0.02, 0.12, 0.3), 0.71, 0.55, -2.2)])!
@@ -379,6 +380,17 @@ function rakeParts(): RakeKit {
 export function engineKit(): { engine: THREE.BufferGeometry; firebox: THREE.BufferGeometry } {
   const { engine, firebox } = rakeParts()
   return { engine, firebox }
+}
+
+let wagonTub: THREE.BufferGeometry | null = null
+/**
+ * One tub of the rake and the rake's `grate` material (C7: the Engine's loose wagon, no ember). The tub stands at the origin, its
+ * length along +z, and is built once; the geometry and the material are shared, so never disposed.
+ */
+export function wagonKit(): { tub: THREE.BufferGeometry; grate: THREE.MeshStandardMaterial } {
+  const { grate } = rakeParts()
+  wagonTub ??= mergeGeometries(tub(0).map((g) => g.toNonIndexed()))!
+  return { tub: wagonTub, grate }
 }
 
 /** Only for a level built without its rail stream (never, in the generator). */

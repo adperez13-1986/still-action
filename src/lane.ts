@@ -146,8 +146,15 @@ export class LaneTell {
   /** Seconds since the lock stamped its end mark. */
   private stampT = 0
 
-  constructor(look: LaneLook = RAM_LOOK) {
+  /** `hue`: the tell's two colours where they are not the ember's (the Engine's wagon lane is in its own deep red). */
+  constructor(look: LaneLook = RAM_LOOK, hue?: { hot: THREE.Color; deep: THREE.Color }) {
     this.look = look
+    if (hue) {
+      for (const m of this.mats) {
+        ;(m.uniforms.uHot!.value as THREE.Color).copy(hue.hot)
+        ;(m.uniforms.uDeep!.value as THREE.Color).copy(hue.deep)
+      }
+    }
     // the half-disc past the end: the lane's tip is as wide as the rails, rounded
     this.cap = new THREE.Mesh(new THREE.CircleGeometry(1, 16, Math.PI, Math.PI), this.capMat)
     this.cap.rotation.x = -Math.PI / 2

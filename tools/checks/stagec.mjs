@@ -1,6 +1,6 @@
 /**
  * The stage C checks (design/area3/STAGE-C.md §4): `node tools/checks/stagec.mjs [K-N1a ...]` runs all of them, or the ids
- * listed. Each step adds its own checks here, on lib.mjs's `suite()`, as stageb.mjs does (C1-C6: K-N1a, K-N1b, K-N2a, K-N2b, K-N3, K-N4-K-N7, K-N8, K-N17, K-N18). The baselines
+ * listed. Each step adds its own checks here, on lib.mjs's `suite()`, as stageb.mjs does (C1-C7: K-N1a, K-N1b, K-N2a, K-N2b, K-N3, K-N4-K-N8, K-N10-K-N13, K-N17, K-N18). The baselines
  * (K-90, K-90L, K-90F) are baseline.mjs's and fights.mjs's; stage C never re-captures them.
  *
  * The short forms of STAGE-C.md §4, as queries (every one is ?save=memory and a dev run straight into a level):
@@ -18,6 +18,8 @@ const OFF = '?depth=1&save=memory'
 const ON = '?depth=1&save=memory&roads=1'
 
 const { check, run } = suite()
+/** The wagon's tub, half its length (engine.ts ENGINE.wagon.halfLen, typed again here on purpose). */
+const ENGINE_WAGON_HALF = 0.95
 
 /**
  * The in-page toolkit every check body starts with (it is source, spliced in front of the body by `inPage`).
@@ -458,7 +460,7 @@ const WATCH = `
   }
   const honesty = () => {
     const rows = [...seen.values()], armed = rows.filter((r) => r.armedAt !== null)
-    return { n: rows.length, armed: armed.length, movingTicks, bad, minGap: Math.min(...armed.map((r) => (r.armedAt - r.madeAt) * 1000)), minArmMs: Math.min(...rows.map((r) => r.armMs)) }
+    return { n: rows.length, armed: armed.length, movingTicks, bad, minGap: armed.reduce((m, r) => Math.min(m, (r.armedAt - r.madeAt) * 1000), Infinity), minArmMs: rows.reduce((m, r) => Math.min(m, r.armMs), Infinity) }
   }
 `
 const honestOk = (why, h) => {
@@ -970,7 +972,8 @@ check('K-N17', ENG9, async ({ page }) => {
 })
 
 // The cinder's period at c (camp): the time between two cinderAim starts, in each phase. A launch resets both clocks, so it is
-// max(outrun.afterMs[phase], cooldownMs) + windupMs (8.12 s in phase 1 and 5.62 s in phase 2 as ENGINE stands), and phase 2 must be shorter:
+// max(outrun.afterMs[phase], cooldownMs) + windupMs (8.12 s in phase 1 and 5.62 s in phase 2 as ENGINE stands), and phase 2 must be shorter
+// (phase 2 is reached by HP below phase2At as in the game; its wagon is stopped, as a derail into one drops an aim in progress and delays the next):
 // afterMs[1] going dead again (a cooldown that swallows it) would show as the two equal.
 check('K-N17', ENG6, async ({ page }) => {
   const means = []
@@ -979,18 +982,22 @@ check('K-N17', ENG6, async ({ page }) => {
       enterEngine('III', 6, 1, { steam: true, cinder: true })
       wake()
       const { c } = roomOf()
-      W.__combat.boss.phase2 = arg.phase2
+      // phase 2 is reached as in the game, by HP below phaseAt (C7); phase 1's HP is held at full
+      const hold = W.__combat.boss.maxHp * (arg.phase2 ? 0.5 : 1)
       const starts = []
       let prev = 'none'
       for (let i = 0; i < 90 * 60; i++) {
-        W.__combat.boss.hp = W.__combat.boss.maxHp
+        W.__combat.boss.hp = hold
         W.__still.pos.set(c.x, 0, c.z)
         tick(1)
+        // phase 2 has begun on that first tick; its wagon (a derail drops a cinder being aimed and holds the next) is not what is measured
+        if (i === 0 && arg.phase2) W.__combat.boss.wagonIn = 1e9
         const a = W.__boss().attack
         if (prev === 'none' && a === 'cinderAim') starts.push(i)
         prev = a
       }
-      return { starts, E: { after: W.__ENGINE0.afterMs, cool: W.__ENGINE.outrun.cooldownMs, wind: W.__ENGINE.cinder.windupMs } }`, { phase2 })
+      return { starts, phase2: W.__combat.boss.phase2, E: { after: W.__ENGINE0.afterMs, cool: W.__ENGINE.outrun.cooldownMs, wind: W.__ENGINE.cinder.windupMs } }`, { phase2 })
+    if (got.phase2 !== phase2) throw new Error(`phase 2 is ${got.phase2} after holding HP at ${phase2 ? 'half' : 'full'}`)
     const E = got.E
     if (got.starts.length < 4) throw new Error(`phase ${phase2 ? 2 : 1}: only ${got.starts.length} cinders in 90 s`)
     const want = (Math.max(E.after[phase2 ? 1 : 0], E.cool) + E.wind) / 1000
@@ -1067,6 +1074,339 @@ check('K-N18', ARENA, async ({ page }) => {
   // the same seed, the same guesses
   if (JSON.stringify(runs[0]) !== JSON.stringify(runs[1])) throw new Error(`two runs of the same seed differ: ${runs[0].map((r) => r.guess)} vs ${runs[1].map((r) => r.guess)}`)
   console.log(`INFO K-N18: guesses used ${t.map((r) => r.guess).join(', ')}; first lead ${ahead.toFixed(2)} ahead; stopped answers ${JSON.stringify(t[3].answers)}; the 5th lock caught him standing (lost ${next.lost.toFixed(1)}); two runs identical`)
+})
+
+// --- Phase 2 (C7) ------------------------------------------------------------------------------------------------------
+
+/**
+ * In the page, phase 2 reached as in the game: the Engine's HP put below 55% and two ticks (the flag goes up on the first). `toPhase2`
+ * then optionally stops the reversal clock, or the wagon's, by poking the clocks it started (the private fields, which a DEV page can reach).
+ * `loopParam(x, z)`: the loop parameter nearest a point (track.ts loopS, again here); `ahead(b, x, z)`: how far along its way, in u, the point is from the nose.
+ */
+const PHASE2 = `
+  const toPhase2 = (o = {}) => {
+    const B = W.__combat.boss
+    B.hp = B.maxHp * 0.5
+    tick(2)
+    if (!B.phase2) throw new Error('phase 2 did not begin')
+    if (o.noReverse) B.reverseIn = 1e9
+    if (o.noWagon) B.wagonIn = 1e9
+    return B
+  }
+  const loopParam = (x, z) => {
+    const t = W.__track()
+    let best = Infinity, bs = 0
+    for (let i = 0; i < t.loop.length; i++) {
+      const a = t.loop[i], q = t.loop[(i + 1) % t.loop.length], ex = q.x - a.x, ez = q.z - a.z, len = Math.hypot(ex, ez)
+      const u = Math.max(0, Math.min(len, ((x - a.x) * ex + (z - a.z) * ez) / len))
+      const d = Math.hypot(x - (a.x + ex / len * u), z - (a.z + ez / len * u))
+      if (d < best) { best = d; bs = t.vertexS[i] + u }
+    }
+    return bs
+  }
+  const aheadOf = (b, x, z) => {
+    const L = W.__track().loopLen
+    return ((((loopParam(x, z) - (b.s + b.dir * 1.5)) * b.dir) % L) + L) % L
+  }
+  const events = (from, what) => W.__enemyLog.slice(from).filter((x) => x.ev.kind === 'engine' && (!what || x.ev.what === what))
+`
+
+check('K-N10', ENG6, async ({ page }) => {
+  for (const seed of [1, 2]) {
+    const got = await inPage(page, RUNNING + PHASE2 + `
+      const B = W.__combat.boss
+      const logAt = W.__enemyLog.length
+      const out = { flags: [], banners: [] }
+      const banner = () => { const e = document.querySelector('#banner'); return e ? { text: e.textContent, shown: e.classList.contains('show') } : null }
+      const step = (n, keep) => { for (let i = 0; i < n; i++) { W.__still.pos.set(c.x, 0, c.z); B.hp = keep(B.hp); tick(1); out.flags.push(B.justPhase2 ? 1 : 0) } }
+      // 1. phase 1 for 20 s, HP exactly at the line (55% is not below it): no phase 2, no reversal, no wagon
+      const line = B.maxHp * 0.55
+      step(60 * 20, () => line)
+      out.p1 = { phase2: B.phase2, just: out.flags.some((f) => f), events: events(logAt).map((x) => x.ev.what).filter((w) => ['phase2', 'judder', 'flip', 'wagon'].includes(w)) }
+      out.flags.length = 0
+      // 2. a hair below it: the flag is up for exactly one tick, the event once, the banner is the boss's words
+      const t0 = W.__combat.time
+      step(1, () => line - 0.01)
+      out.banner1 = banner()
+      step(60 * 20, (hp) => hp)
+      out.flagTicks = out.flags.reduce((a, f) => a + f, 0)
+      out.firstFlag = out.flags.indexOf(1)
+      out.phase2 = B.phase2
+      const ev = events(logAt)
+      out.phase2Events = ev.filter((x) => x.ev.what === 'phase2').length
+      out.copy = W.__BOSS_COPY.engine.phase2
+      // the clocks start with it: the first wagon 4 s after, the first reversal 8-12 s after (when it can be, in run with no window open)
+      const t1 = ev.find((x) => x.ev.what === 'phase2')
+      out.t2 = t1 ? t1.t : null
+      out.wagonAt = (ev.find((x) => x.ev.what === 'wagon') || {}).t
+      out.judderAt = (ev.find((x) => x.ev.what === 'judder') || {}).t
+      out.logKeys = Object.keys(ev[0] || {})
+      return out`, seed)
+    const why = (m) => { throw new Error(`seed ${seed}: ${m}`) }
+    if (got.p1.phase2 || got.p1.just || got.p1.events.length) why(`with HP exactly at 55% for 20 s: phase2 ${got.p1.phase2}, just ${got.p1.just}, events ${got.p1.events}`)
+    if (got.flagTicks !== 1 || got.firstFlag !== 0) why(`justPhase2 was up on ${got.flagTicks} tick(s), the first at index ${got.firstFlag}, not exactly one at the tick HP went below 55%`)
+    if (!got.phase2) why('phase2 is not set')
+    if (got.phase2Events !== 1) why(`${got.phase2Events} phase2 events, not 1`)
+    if (!got.banner1 || got.banner1.text !== got.copy || !got.banner1.shown) why(`the banner on that tick is ${JSON.stringify(got.banner1)}, not "${got.copy}" shown`)
+    if (got.wagonAt === undefined || got.judderAt === undefined) why(`in 20 s of phase 2: wagon at ${got.wagonAt}, judder at ${got.judderAt}`)
+    const wagonS = got.wagonAt - got.t2, judderS = got.judderAt - got.t2
+    if (Math.abs(wagonS - 4) > 0.05) why(`the first wagon came ${wagonS.toFixed(3)} s after phase 2 began, not 4.00`)
+    if (judderS < 8 - 0.05) why(`the first reversal came ${judderS.toFixed(3)} s after phase 2 began, under 8`)
+    console.log(`INFO K-N10 seed ${seed}: banner "${got.copy}"; the first wagon ${wagonS.toFixed(2)} s and the first reversal ${judderS.toFixed(2)} s after phase 2 began`)
+  }
+})
+
+check('K-N11', ENG6, async ({ page }) => {
+  for (const seed of [1, 2]) {
+    // A. 200 s of reversals with Still at c: the judder, its takeBack, the flip and the hold
+    const a = await inPage(page, RUNNING + WATCH + PHASE2 + `
+      const B = toPhase2({ noWagon: true })
+      const logAt = W.__enemyLog.length
+      const revs = []
+      let cur = null, after = null, prevDir = W.__boss().dir
+      let winMax = 0
+      for (let i = 0; i < 60 * 200; i++) {
+        W.__still.pos.set(c.x, 0, c.z)
+        const before = W.__engineSegs()
+        const pb = W.__boss()
+        tick(1); observe(pb.state)
+        const b = W.__boss(), segs = W.__engineSegs()
+        if (b.window) winMax = Math.max(winMax, b.window.msOpen)
+        if (pb.state !== 'judder' && b.state === 'judder') {
+          cur = {
+            i0: i, dirBefore: pb.dir, judderTicks: 0, holdTicks: 0, bad: 0,
+            unarmed: before.filter((g) => g.source === 'train' && !g.done && g.armIn > 1e-6).map((g) => g.id), maxId: Math.max(-1, ...before.map((g) => g.id)),
+            keptArmed: segs.filter((g) => g.source === 'train' && !g.done && g.armIn <= 1e-6).length, madeDuring: 0, armedFromUnarmed: 0, alive: 0,
+          }
+          revs.push(cur)
+        }
+        if (cur) {
+          if (b.state === 'judder') cur.judderTicks++
+          // nothing it lit for the way it was going arms while it stands, nor is anything new laid
+          for (const g of segs) {
+            if (cur.unarmed.includes(g.id)) { cur.alive++; if (g.armIn <= 1e-6) cur.armedFromUnarmed++ }
+            if (b.state === 'judder' && g.id > cur.maxId) cur.madeDuring++
+          }
+          if (b.state === 'hold' && pb.state !== 'judder' && cur.holdTicks === 0 && pb.state === 'hold') cur.bad++
+          if (pb.state === 'judder' && b.state === 'hold') { cur.dirAfter = b.dir; cur.holdTicks = 0; cur.holdFrom = i; cur.maxIdAtFlip = Math.max(-1, ...segs.map((g) => g.id)) }
+          if (b.state === 'hold' && cur.holdFrom !== undefined) cur.holdTicks++
+          if (cur.holdFrom !== undefined && b.state !== 'hold') { cur.holdEnd = b.state; cur = null }
+        }
+      }
+      return { revs: revs.map((r) => ({ ...r, unarmed: r.unarmed.length })), honest: honesty(), winMax, windows: events(logAt, 'window').length }`, seed)
+    const why = (m) => { throw new Error(`seed ${seed}: ${m}`) }
+    if (a.winMax > 1400) why(`a window stayed open ${a.winMax.toFixed(0)} ms, past its 1400`)
+    if (a.windows < 10) why(`only ${a.windows} windows opened in 200 s of reversals`)
+    if (a.revs.length < 12) why(`${a.revs.length} reversals in 200 s of phase 2`)
+    a.revs.forEach((r, n) => {
+      const w = `reversal ${n}`
+      // the last may be cut by the end of the 200 s
+      if (r.dirAfter === undefined || r.holdEnd === undefined) return
+      if (Math.abs(r.judderTicks * 1000 / 60 - 650) > 17) why(`${w}: it stood ${(r.judderTicks * 1000 / 60).toFixed(1)} ms in judder, not 650 +- 17`)
+      if (r.dirAfter !== -r.dirBefore) why(`${w}: dir ${r.dirBefore} became ${r.dirAfter}`)
+      if (r.holdTicks !== undefined && Math.abs(r.holdTicks * 1000 / 60 - 1300) > 17) why(`${w}: hold lasted ${(r.holdTicks * 1000 / 60).toFixed(1)} ms, not 1300 +- 17`)
+      if (r.holdEnd !== 'run') why(`${w}: hold ended in '${r.holdEnd}', not run`)
+      if (r.armedFromUnarmed) why(`${w}: ${r.armedFromUnarmed} strip(s) unarmed at the judder's start were armed after it`)
+      if (r.alive) why(`${w}: ${r.alive} strip(s) unarmed at the judder's start were still there on later ticks (not taken back)`)
+      if (r.madeDuring) why(`${w}: ${r.madeDuring} strip(s) were laid during the judder`)
+      if (r.keptArmed < 1) why(`${w}: no armed strip stayed live under it (${r.keptArmed}); the ones it stands on are to stay`)
+    })
+    honestOk(why, a.honest)
+    const dirs = a.revs.map((r) => r.dirAfter)
+    for (let i = 1; i < dirs.length; i++) if (dirs[i] === dirs[i - 1]) why(`two reversals in a row both gave dir ${dirs[i]}`)
+    console.log(`INFO K-N11 seed ${seed}: ${a.revs.length} reversals and ${a.windows} windows in 200 s; judder ${[...new Set(a.revs.map((r) => (r.judderTicks * 1000 / 60).toFixed(0)))]} ms, hold ${[...new Set(a.revs.filter((r) => r.holdEnd !== undefined).map((r) => (r.holdTicks * 1000 / 60).toFixed(0)))]} ms; ${a.honest.armed} strips armed, least made-to-armed ${a.honest.minGap.toFixed(2)} ms`)
+
+    // B. a window open when a reversal comes due is not cut: it waits, and afterwards the windows go on, on the other arms
+    const b = await inPage(page, RUNNING + WATCH + PHASE2 + NEAR_LEVER + `
+      const B = toPhase2({ noWagon: true })
+      B.reverseIn = 1e9
+      if (untilWindow(40, () => W.__still.pos.set(c.x, 0, c.z)) < 0) return { bad: 'no window' }
+      const dir0 = W.__boss().dir
+      B.reverseIn = 0
+      let openTicks = 0, msMax = 0, judderAt = -1, closedAt = -1, notRun = 0, prevS = W.__boss().state
+      for (let i = 0; i < 400; i++) {
+        W.__still.pos.set(c.x, 0, c.z)
+        const ps = W.__boss().state
+        tick(1); observe(ps)
+        const bb = W.__boss()
+        if (bb.window) { openTicks++; msMax = Math.max(msMax, bb.window.msOpen); if (bb.state !== 'run') notRun++ }
+        else if (closedAt < 0) closedAt = i
+        if (bb.state === 'judder' && judderAt < 0) judderAt = i
+        if (judderAt >= 0 && bb.state === 'run') break
+      }
+      B.reverseIn = 1e9
+      const dir1 = W.__boss().dir
+      // then the next window is on the other arms: throw it, and it runs up the b arm, derails, and backs out the same way round
+      if (untilWindow(40, () => W.__still.pos.set(c.x, 0, c.z)) < 0) return { bad: 'no window after the reversal' }
+      const side = W.__boss().window.side
+      const spot = leverPos(side)
+      W.__still.pos.set(spot.x, 0, spot.z)
+      W.__fire('arms')
+      const thrown = W.__boss().window ? W.__boss().window.thrown : null
+      const paths = new Set()
+      let derailedAt = -1
+      for (let i = 0; i < 60 * 14; i++) {
+        W.__still.pos.set(spot.x, 0, spot.z)
+        const ps = W.__boss().state
+        tick(1); observe(ps)
+        const bb = W.__boss()
+        paths.add(bb.path)
+        if (bb.state === 'derailed' && derailedAt < 0) derailedAt = i
+        if (derailedAt >= 0 && bb.state === 'run') break
+      }
+      const bb = W.__boss()
+      return { openTicks, msMax, judderAt, closedAt, notRun, dir0, dir1, side, thrown, paths: [...paths], derailedAt, dirEnd: bb.dir, stateEnd: bb.state, honest: honesty() }`, seed)
+    if (b.bad) why(b.bad)
+    if (b.notRun) why(`the Engine left run on ${b.notRun} tick(s) with a window open`)
+    if (b.msMax < 1400 - 17) why(`the window that was open when the reversal came due ran only ${b.msMax.toFixed(1)} ms, not its 1400`)
+    if (b.judderAt < b.closedAt) why(`the judder began at tick ${b.judderAt}, before the window closed at ${b.closedAt}`)
+    if (b.judderAt < 0) why('the reversal never began after the window closed')
+    if (b.dir1 !== -b.dir0) why(`dir ${b.dir0} became ${b.dir1}`)
+    if (!b.thrown) why('the lever did not throw on the reversed road')
+    if (!b.paths.includes(`${b.side}-b`)) why(`after the reversal a thrown ${b.side} lever ran it up ${b.paths}, not the b arm`)
+    if (b.derailedAt < 0 || b.stateEnd !== 'run' || b.dirEnd !== b.dir1) why(`the b-arm derail: derailed at ${b.derailedAt}, ended in ${b.stateEnd} dir ${b.dirEnd}`)
+    honestOk(why, b.honest)
+    console.log(`INFO K-N11 seed ${seed}: a reversal due with a window open waited (${b.msMax.toFixed(0)} ms open, judder ${b.judderAt - b.closedAt} ticks after it closed); then the ${b.side} lever on dir ${b.dir1}: ${b.paths.filter((p) => p !== 'loop')}`)
+  }
+})
+
+// K-N12 runs 300 s of phase 2 at three phases of the wagon clock against the window clock (firstS 4, 6.1, 8.3): a window whose junction lies past the wagon
+// must not open (the horizon would never reach it), and which windows that is depends on where the two clocks meet.
+check('K-N12', ENG6, async ({ page }) => {
+  for (const [seed, firstS] of [[1, 4], [2, 6.1], [3, 8.3]]) {
+    const a = await inPage(page, RUNNING + WATCH + PHASE2 + `
+      const firstS0 = W.__ENGINE.wagon.firstS
+      W.__ENGINE.wagon.firstS = ${firstS}
+      const B = toPhase2({ noReverse: true })
+      W.__ENGINE.wagon.firstS = firstS0
+      const terrain = W.__level().terrain
+      const wagons = []
+      let cur = null, railMax = 0, winMax = 0
+      const logAt = W.__enemyLog.length
+      for (let i = 0; i < 60 * 300; i++) {
+        W.__still.pos.set(c.x, 0, c.z)
+        const ps = W.__boss().state
+        tick(1); observe(ps)
+        const b = W.__boss(), w = b.wagon
+        railMax = Math.max(railMax, B.wagonTell.railMat.opacity)
+        if (b.window) winMax = Math.max(winMax, b.window.msOpen)
+        if (w && !cur) {
+          const h = W.__hazards().filter((x) => x.source === 'wagon' && !x.done)[0]
+          const sp = W.__track().spurs[w.spur]
+          cur = {
+            i0: i, ahead: aheadOf(b, sp.onLoop.x, sp.onLoop.z), trackWash: B.wagonTell.trackWash, stages: [w.stage], armIn0: h ? h.armIn : null, damage: h ? h.damage : null,
+            dmgMul: b.dmgMul, armedTick: -1, tubVisible: B.tub.visible, dirAtPick: b.dir, sp,
+          }
+          wagons.push(cur)
+        }
+        if (cur) {
+          const h = W.__hazards().filter((x) => x.source === 'wagon')[0]
+          if (w) {
+            if (cur.stages[cur.stages.length - 1] !== w.stage) cur.stages.push(w.stage)
+            if (cur.armedTick < 0 && h && h.armIn <= 1e-6) cur.armedTick = i - cur.i0
+            if (w.stage === 'settled' && !cur.settled) {
+              cur.settled = { x: w.x, z: w.z, blocked: terrain.blocked(w.x, w.z, 0), i: i - cur.i0 }
+            }
+            if (b.frontierEnd === 'wagon') cur.endSeen = true
+            cur.tubVisible = cur.tubVisible && B.tub.visible
+          }
+          if (b.state === 'derailed' && ps !== 'derailed') {
+            const hp0 = B.hp
+            B.hit(10)
+            const took = hp0 - B.hp
+            B.hp = hp0
+            cur.derail = { open: b.open, wagonGone: !w, x: b.x, z: b.z, took, dist: cur.settled ? Math.hypot(b.x - cur.settled.x, b.z - cur.settled.z) : null,
+              blockedAfter: cur.settled ? terrain.blocked(cur.settled.x, cur.settled.z, 0) : null, circlesDead: null, frontierEnd: b.frontierEnd, ticks: 0, tubVisible: B.tub.visible, dir: b.dir, i: i - cur.i0 }
+          }
+          if (cur.derail && b.state === 'derailed') cur.derail.ticks++
+          if (cur.derail && b.state === 'run' && ps === 'derailed') { cur.derail.endState = b.state; cur.derail.dirEnd = b.dir; cur.derail.wagonNull = !b.wagon; cur = null }
+        }
+      }
+      return { curNow: cur && { stages: cur.stages, derail: cur.derail && Object.keys(cur.derail), i0: cur.i0 }, last: { t: W.__combat.time, b: W.__boss() && W.__boss().state, hp: B.hp, alive: !B.dead }, wagons: wagons.map((w) => ({ ...w, sp: undefined })), railMax, winMax, honest: honesty(), events: events(logAt).map((x) => x.ev.what + '@' + x.t.toFixed(1)) }`, seed)
+    const why = (m) => { throw new Error(`seed ${seed}: ${m}`) }
+    // a wagon never rolls onto a point less than 33.8 u ahead of the nose (least allowed by ENGINE.wagon: speed x (lead + tell + roll)), whether or not it was seen out
+    // a window is never left open for a junction the horizon cannot reach (a wagon nearer than it, or one the horizon went past while it stood at a derail): none outlasts its 1400 ms
+    if (a.winMax > 1400) why(`a window stayed open ${a.winMax.toFixed(0)} ms, past its 1400`)
+    a.total = a.wagons.length
+    a.wagons.forEach((w, n) => { if (w.ahead < 33.8 - 1e-6) why(`wagon ${n}: its spur meets the loop ${w.ahead.toFixed(3)} u ahead of the nose when picked, under 33.8`) })
+    a.wagons = a.wagons.filter((w) => w.derail && w.derail.endState)
+    if (a.wagons.length < 12) why(`${a.wagons.length} wagons in 300 s of phase 2 (${a.total} began; ${JSON.stringify(a.last)} ${JSON.stringify(a.curNow)}; events ${a.events.filter((e) => /^(wagon|wagonSettle|wagonSmash|derail|judder)@/.test(e)).join(',')})`)
+    if (a.railMax !== 0) why(`the wagon's tell had rail opacity ${a.railMax} at some tick, not 0 at every stage`)
+    a.wagons.forEach((w, n) => {
+      const t = `wagon ${n}`
+      if (!w.trackWash) why(`${t}: its LaneTell has no trackWash`)
+      if (Math.abs(w.armIn0 + 1000 / 60 - 1200) > 0.01) why(`${t}: the roll hazard was made with armMs ${(w.armIn0 + 1000 / 60).toFixed(3)}, not 1200`)
+      if (Math.abs((w.armedTick + 1) * 1000 / 60 - 1200) > 17) why(`${t}: the roll armed ${((w.armedTick + 1) * 1000 / 60).toFixed(1)} ms after it was made, not 1200 +- 17`)
+      if (Math.abs(w.damage - 12 * w.dmgMul) > 1e-9) why(`${t}: damage ${w.damage}, not 12 x bossDmg = ${12 * w.dmgMul}`)
+      if (w.stages.join() !== 'tell,roll,settled') why(`${t}: its stages were ${w.stages}, not tell, roll, settled`)
+      if (!w.tubVisible) why(`${t}: its tub was not drawn at every tick of its life`)
+      if (!w.settled || !w.settled.blocked) why(`${t}: nothing solid at its centre once settled (${JSON.stringify(w.settled)})`)
+      if (!w.endSeen) why(`${t}: the horizon never ended at it (frontierEnd never 'wagon')`)
+      const d = w.derail
+      if (!d) why(`${t}: the engine never met it`)
+      if (!d.open) why(`${t}: the engine was not open on meeting it`)
+      if (!d.wagonGone || d.blockedAfter) why(`${t}: after the meeting the wagon is ${d.wagonGone ? 'gone' : 'still there'} and its centre ${d.blockedAfter ? 'still solid' : 'clear'}`)
+      if (d.tubVisible) why(`${t}: its tub is still drawn after it was smashed`)
+      if (Math.abs(d.ticks * 1000 / 60 - 1600) > 17) why(`${t}: derailed ${(d.ticks * 1000 / 60).toFixed(1)} ms, not 1600 +- 17`)
+      if (Math.abs(d.took - 15) > 1e-9) why(`${t}: a hit of 10 took ${d.took} off it, not 15`)
+      if (Math.abs(d.dist - (1.5 + ENGINE_WAGON_HALF)) > 0.05) why(`${t}: the engine stopped ${d.dist.toFixed(3)} u from the wagon's centre, not ${(1.5 + ENGINE_WAGON_HALF).toFixed(2)} (nose at its near face)`)
+      if (d.endState !== 'run' || d.dirEnd !== d.dir) why(`${t}: after the derail: ${d.endState}, dir ${d.dirEnd} (was ${d.dir})`)
+    })
+    honestOk(why, a.honest)
+    console.log(`INFO K-N12 seed ${seed}: ${a.wagons.length} wagons; picked ${a.wagons.length ? Math.min(...a.wagons.map((w) => w.ahead)).toFixed(1) : '-'}-${Math.max(...a.wagons.map((w) => w.ahead)).toFixed(1)} u ahead (least allowed 33.8); armed at ${[...new Set(a.wagons.map((w) => ((w.armedTick + 1) * 1000 / 60).toFixed(0)))]} ms; settled ${[...new Set(a.wagons.map((w) => (w.settled.i * 1000 / 60).toFixed(0)))]} ms after the pick; derailed ${[...new Set(a.wagons.map((w) => (w.derail.ticks * 1000 / 60).toFixed(0)))]} ms`)
+  }
+})
+
+check('K-N13', ENG6, async ({ page }) => {
+  // Still parked beside a window's arm, across = how far off its centre line (on the lever's side, 2 u along it from the junction), until it closes
+  for (const [phase2, across, thrownBack] of [[true, 1.9, true], [true, 2.0 + 0.2, false], [false, 1.9, false]]) {
+    for (const seed of [1, 2]) {
+      const got = await inPage(page, RUNNING + WATCH + PHASE2 + NEAR_LEVER + `
+        const P = ${JSON.stringify({ phase2, across })}
+        const B = P.phase2 ? toPhase2({ noReverse: true, noWagon: true }) : W.__combat.boss
+        const logAt = W.__enemyLog.length
+        // off the loop's own strips as well: the point is ahead of the junction, on the lever's side, well inside the arm's length
+        const hold = () => {
+          const w = W.__boss().window
+          if (!w) return
+          const arm = W.__track().arms.find((a) => a.side === w.side && a.dir === W.__boss().dir), lv = W.__track().levers[w.side]
+          const ux = (arm.buffer.x - arm.junction.x) / arm.len, uz = (arm.buffer.z - arm.junction.z) / arm.len
+          const sign = ((lv.x - arm.junction.x) * uz - (lv.z - arm.junction.z) * ux) >= 0 ? 1 : -1
+          W.__still.pos.set(arm.junction.x + ux * 2 + uz * sign * P.across, 0, arm.junction.z + uz * 2 - ux * sign * P.across)
+        }
+        const pos = () => W.__still.pos.set(c.x, 0, c.z)
+        if (untilWindow(40, pos) < 0) return { bad: 'no window' }
+        const side = W.__boss().window.side
+        let closed = -1, state = null, path = null
+        for (let i = 0; i < 300; i++) {
+          hold()
+          const ps = W.__boss().state
+          tick(1); observe(ps)
+          const b = W.__boss()
+          if (!b.window && closed < 0) closed = i
+          if (closed >= 0 && i >= closed + 45) { state = b.state; path = b.path; break }
+        }
+        const evs = events(logAt).filter((x) => x.ev.what === 'throwBack' || x.ev.what === 'throw')
+        const lv = W.__world.scene.getObjectByName('lever:' + side)
+        const pivot = lv && lv.getObjectByName('pivot')
+        return { side, closed, state, path, evs: evs.map((x) => x.ev.what + ':' + x.ev.side), lever: pivot ? pivot.rotation.z : null, honest: honesty(), phase2: B.phase2 }`, seed)
+      const why = (m) => { throw new Error(`${phase2 ? 'phase 2' : 'phase 1'}, ${across} off the arm, seed ${seed}: ${m}`) }
+      if (got.bad) why(got.bad)
+      if (got.phase2 !== phase2) why(`phase2 is ${got.phase2}`)
+      if (thrownBack) {
+        if (!['siding', 'derailed', 'backing'].includes(got.state) && got.path === 'loop') why(`the window closed unthrown with him in the arm's strip grown by 0.8 and it did not throw (state ${got.state}, path ${got.path})`)
+        if (got.evs.join() !== `throwBack:${got.side}`) why(`events ${got.evs}, not one throwBack on the ${got.side}`)
+        if (got.path !== `${got.side}-a` && got.state === 'run') why(`the route was ${got.path}`)
+        if (!(got.lever < 0)) why(`the ${got.side} lever's pivot is at ${got.lever}, not thrown (negative)`)
+      } else {
+        if (got.state !== 'run' || got.path !== 'loop') why(`nothing was to be thrown, and the Engine is ${got.state} on ${got.path}`)
+        if (got.evs.length) why(`events ${got.evs}`)
+        if (!(got.lever > 0)) why(`the ${got.side} lever moved (pivot ${got.lever})`)
+      }
+      honestOk(why, got.honest)
+    }
+  }
+  console.log('INFO K-N13: phase 2, 1.9 off the arm (inside 1.2 + 0.8): thrown back with the lever over, the arm lit as any rail; 2.2 off, or the same place in phase 1: nothing')
 })
 
 process.exit(await run(process.argv.slice(2)))

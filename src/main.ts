@@ -4790,7 +4790,7 @@ if (import.meta.env.DEV) {
           kind: 'engine', hp: b.hp, maxHp: b.maxHp, phase2: b.phase2, open: b.open, state: b.state, attack: b.attack, s: b.s, dir: b.dir, lap: b.lap,
           x: b.pos.x, z: b.pos.z, path: b.path === 'loop' ? 'loop' : `${b.path.side}-${b.path.kind}`,
           window: b.window ? { side: b.window.side, open: b.window.open, thrown: b.window.thrown, msOpen: b.window.msOpen } : null,
-          wagon: b.wagon ? { x: b.wagon.x, z: b.wagon.z, settled: b.wagon.settled } : null,
+          wagon: b.wagon ? { x: b.wagon.x, z: b.wagon.z, settled: b.wagon.settled, stage: b.wagon.stage, spur: b.wagon.spur } : null,
           board: b.board(), guess: b.guess, frontier: b.frontier, frontierEnd: b.frontierEnd, dmgMul: b.dmgMul ?? 1,
           // C6: the aim point of the steam (frozen at its lock) or the cinder, the last steam line, and his last answers
           lead: { x: b.lead.x, z: b.lead.z }, jetSeg: b.jetSeg ? { ...b.jetSeg } : null, answers: [...b.answers],
@@ -4803,7 +4803,7 @@ if (import.meta.env.DEV) {
       }
     },
     /** C5: the Engine's numbers (mutable for a check) and the board's words. */
-    __ENGINE: ENGINE, __BOARD: BOARD,
+    __ENGINE: ENGINE, __BOARD: BOARD, __BOSS_COPY: BOSS_COPY,
     /** C4: the Engine's own hazards (its lit track), with the clocks Combat keeps; [] with no Engine. */
     __engineSegs: () => (combat.boss instanceof Engine ? combat.boss.segments() : []),
     /** Flip the Arbiter's switch for this session (false: Home's second Assembler at 6); null restores it. */
