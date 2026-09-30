@@ -25,6 +25,7 @@ import { Thief, type ThiefEvent, type ThiefWorld } from './thief'
 import { Mender } from './mender'
 import { Charger, CHARGER, PLATE as RAM_PLATE } from './charger'
 import { Handcar, HANDCAR, handcarSpot } from './handcar'
+import { makeTrack } from './track'
 import { HIDES, debrisColor } from './hide'
 import { Mite, BROOD, type Brood } from './swarm'
 import * as sfx from './audio'
@@ -4888,6 +4889,8 @@ if (import.meta.env.DEV) {
     /** Put any hour on the world now (look checks). */
     __applyDay: (k: keyof typeof DAY, hour?: HomeHour) => applyDay(world, k, hour),
     __bossFor: bossFor,
+    /** C1: the roundhouse's track as numbers (track.ts), for the geometry check. */
+    __makeTrack: makeTrack,
     __areaOf: (d: number, route: RouteId = 'II') => areaOf(d, route).id,
     /** The run's length (6, or 9 with ?roads=1), and the road helpers: a depth's step and road (the road takes the ORDER), and whether it's an open field. */
     __runDepths: RUN_DEPTHS,

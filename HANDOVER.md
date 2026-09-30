@@ -28,7 +28,7 @@ Review caught a harness bug in K-E10 (dead mites leave `pack.members`, so it cou
 | baseline K-90, K-90L | PASS | flag-off game and flag-off Line unchanged |
 | fights K-90F | PASS | combat baseline unchanged |
 | k9 (18), area3 (8), home (4) | all PASS | stage R, stage A, warm beam card |
-| stageb (38) | 37 PASS, K-W3d FAIL | K-W3d = Parry's dead-slot design finding, known, thresholds were for R3 alone |
+| stageb (37) | 36 PASS, K-W3d FAIL | K-W3d = Parry's dead-slot design finding, known, thresholds were for R3 alone |
 | K-T13 at B8 | PASS | bot A trains 21.0 / 19.9% of kills (step 4 / 7), 2+ kills 10 / 8%, free 0; bot C earned 15.6 / 16.0%. Identical to B4-after-fix (a4bac5f); B3's numbers were double-counted, no clean B2 figure exists |
 
 Heard-log over scripted Line levels (III-4 and III-5, seeds 1-3; scratch script, not in repo): `semaphore` fires at every
@@ -36,8 +36,8 @@ Signalman once Still stands within `laneReach` (3.7 u) of a lane (the lesson cal
 `pump` + `latch` once per Handcar that locks; `aim`/`rev` as before. `gravelRise` is K-E8's (6 per brood). The ambience's
 `railTick`/`farShunt` never reach heardLog: headless audio never runs. **Nothing new has ever been heard: phone only.**
 
-**Stage C, the Engine: brief done** (`design/area3/STAGE-C.md`, 5f97e5c, verifier; steps C0-C10, checks K-N*). A Sonnet
-engineer is on C0 + C1 (check scaffold, `src/track.ts`); C2 (the roundhouse arena) next. **His calls before C5-C9 (brief §9),
+**Stage C, the Engine: brief done** (`design/area3/STAGE-C.md`, 5f97e5c, verifier; steps C0-C10, checks K-N*). C0 + C1 committed
+(check scaffold `tools/checks/stagec.mjs`, `src/track.ts`, K-N1a PASS); C2 (the roundhouse arena) next. **His calls before C5-C9 (brief §9),
 verifier's defaults in brackets:** lever cadence (every 3rd junction, ~8.9 s, alternating sides; SPEC's "every lap alternating"
 is geometrically impossible); accept leading steam (250 ms aim with the Arbiter's lead-guess, 700 ms locked) and the new
 **cinder** (a lobbed ring after 5 s out of steam range, so camping inside the loop isn't safe); husk position on resume (where it
