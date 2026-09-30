@@ -10,7 +10,7 @@ Round done in `design/autos/` (BRIEF, 1-/2- per voice, sims, **PITCHES.md = the 
 agree (the planted shot IS Archero); no to removing autos (never-melt finish 31% -> 0%) and no to a fifth
 button. Recommendation: trial the **bank / "follow-through"** (each press adds 3 auto beats, cap 6) as a pause
 switch, log fixes first (PITCHES §Recommendation). Second trial if he still names standing still: the
-translator's package. **Nothing built yet: his pick.** Side finding: ~1 in 5 pushes held <240 ms, maybe
+translator's package. **His pick (30 Sep): the bank first.** Brief `design/autos/BUILD-1.md`; a Sonnet 5.5 engineer is building it (uncommitted until reviewed). Side finding: ~1 in 5 pushes held <240 ms, maybe
 accidental (PITCHES last section). My 67% auto-share figure was wrong (64% never-melt / 34% investor).
 
 ## Start here (30 Sep, 19:00, at home: screens fix live)
