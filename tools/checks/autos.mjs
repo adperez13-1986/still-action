@@ -354,4 +354,38 @@ check('K-A9', RUN, async ({ page }) => {
   assertEq('switch on, bank empty, a body at 12 u: the core is the eye', Math.abs(got.far.core - got.far.eye) < 1e-9, true)
 })
 
+// the switch applies at once, flipped from the pause screen mid-depth (his ask, 30 Sep), and marks that depth mixed
+check('K-A10', RUN, async ({ page }) => {
+  const got = await evalJson(page, `() => {
+    const W = window, C = W.__combat
+    W.__run.dev = false
+    W.__enter(2, 1)
+    W.__followThrough(false)
+    W.__step(0.2)
+    const last = () => W.__run.stats[W.__run.stats.length - 1]
+    const before = { on: C.followThrough, mixed: !!last().followThroughMixed }
+    const flip = () => {
+      W.__pause.loadout(W.__hud.slots, () => {})
+      const b = [...document.querySelectorAll('#pause .rule')].find((x) => x.textContent.startsWith('follow-through'))
+      b.click()
+      W.__pause.hide()
+    }
+    flip()
+    const on = { on: C.followThrough, bank: C.bank, mixed: !!last().followThroughMixed, label: last().followThrough }
+    flip()
+    const off = { on: C.followThrough }
+    flip()
+    // the next depth starts clean: the switch as left (on), not mixed
+    W.__enter(3, 1)
+    W.__step(0.2)
+    const next = { on: C.followThrough, mixed: !!last().followThroughMixed, label: last().followThrough }
+    flip()
+    return { before, on, off, next }
+  }`)
+  assertEq('before the flip', got.before, { on: false, mixed: false })
+  assertEq('flipped on mid-depth: on now, bank empty, the depth mixed, its start value kept', got.on, { on: true, bank: 0, mixed: true, label: false })
+  assertEq('flipped off again: off now', got.off, { on: false })
+  assertEq('the next depth: the switch as left, not mixed', got.next, { on: true, mixed: false, label: true })
+})
+
 process.exit(await run(process.argv.slice(2)))

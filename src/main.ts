@@ -1567,6 +1567,8 @@ interface DepthStats {
    * with the bank empty (always 0 with the switch off).
    */
   followThrough?: boolean
+  /** The switch was flipped during this depth: its numbers are half one rule, half the other. */
+  followThroughMixed?: boolean
   autoDmgReal?: { hand: number; eye: number }
   kills?: { part: number; auto: number; other: number }
   fightS?: number
@@ -2263,8 +2265,9 @@ pause.setSwitch('parry catch', () => parryCatchOn, (on) => {
 })
 /**
  * The follow-through trial (design/autos/BUILD-1.md; the bank, BANK in combat.ts). On, a part cast that fired banks auto beats and
- * each auto beat spends one: no press, no auto. A pause switch, kept per device, off by default; it takes effect from the next
- * depth, as parry catch does. The words are PLACEHOLDER (his to write). Off is today's game exactly.
+ * each auto beat spends one: no press, no auto. A pause switch, kept per device, off by default. It takes effect at once, bank
+ * empty (his ask, 30 Sep: a trial he flips mid-run shouldn't wait a depth); the depth it was flipped on is logged `followThroughMixed`,
+ * to leave out when judging. The words are PLACEHOLDER (his to write). Off is today's game exactly.
  */
 const FOLLOW_KEY = 'still-action.followThrough'
 let followThroughOn = (() => {
@@ -2276,13 +2279,18 @@ let followThroughOn = (() => {
 })()
 pause.setSwitch('follow-through', () => followThroughOn, (on) => {
   followThroughOn = on
+  if (run.phase === 'crawl' && combat.followThrough !== on) {
+    applyFollowThrough(on)
+    const st = run.stats[run.stats.length - 1]
+    if (st) st.followThroughMixed = true
+  }
   try {
     localStorage.setItem(FOLLOW_KEY, on ? '1' : '0')
   } catch {
     // private window: it holds for this session
   }
 })
-/** The switch's state applied to Combat, bank empty: at each level, and by the DEV hook. */
+/** The switch's state applied to Combat, bank empty: at each level, when it's flipped mid-depth, and by the DEV hook. */
 function applyFollowThrough(on: boolean) {
   combat.followThrough = on
   combat.bank = 0

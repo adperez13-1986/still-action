@@ -11,7 +11,7 @@ agree (the planted shot IS Archero); no to removing autos (never-melt finish 31%
 button. Recommendation: trial the **bank / "follow-through"** (each press adds 3 auto beats, cap 6) as a pause
 switch, log fixes first (PITCHES §Recommendation). Second trial if he still names standing still: the
 translator's package. **His pick (30 Sep): the bank first. BUILT + LIVE:** pause switch "follow-through" (PLACEHOLDER words), off by default,
-from the next depth. Brief + as-built notes `design/autos/BUILD-1.md`; checks `tools/checks/autos.mjs` (K-A2..A9, K-A1 =
+applies at once (his ask; the depth it was flipped on logs `followThroughMixed`: leave it out when judging). Brief + as-built notes `design/autos/BUILD-1.md`; checks `tools/checks/autos.mjs` (K-A2..A9, K-A1 =
 fights compare). The core dims in a fight with the bank empty (subtle: ask if the gaps read as Still waiting or a bug).
 New log fields every run: autoDmgReal, kills, fightS, bankBeats, emptyBeats, taps[].leftMs. **Next: his run with it
 on; judge by PITCHES pass lines** (40+ presses a fight-minute, emptyBeats < 20%, hpLost d1-3 within 20%).

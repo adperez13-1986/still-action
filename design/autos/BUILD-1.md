@@ -72,3 +72,5 @@ paths. **Do not commit.** Do not change HAND / EYE / cooldown numbers.
   the bank, and a dim core down every corridor would read as Still switched off. Outside the crawl it's always lit.
   K-A9 checks both (negative-tested).
 - K-A1 is `fights.mjs compare` (PASS). All suites as in "Done when"; stageb only K-W3d, as before.
+- 30 Sep, his ask: the switch applies at once (bank empty), not from the next depth; that depth logs
+  `followThroughMixed: true`, to leave out when judging. K-A10 (negative-tested).
