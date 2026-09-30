@@ -3,6 +3,16 @@
 For the next session. Read this, then `DESIGN.md` (the settled decisions), then the design
 folder for whatever you're touching. Don't re-derive any of them.
 
+## Start here (30 Sep, evening: the autos round, waiting on his pick)
+
+**His ask:** auto attack feels Vampire Survivors / Archero; he wants more active; "don't blindly agree".
+Round done in `design/autos/` (BRIEF, 1-/2- per voice, sims, **PITCHES.md = the outcome**). All four: partly
+agree (the planted shot IS Archero); no to removing autos (never-melt finish 31% -> 0%) and no to a fifth
+button. Recommendation: trial the **bank / "follow-through"** (each press adds 3 auto beats, cap 6) as a pause
+switch, log fixes first (PITCHES §Recommendation). Second trial if he still names standing still: the
+translator's package. **Nothing built yet: his pick.** Side finding: ~1 in 5 pushes held <240 ms, maybe
+accidental (PITCHES last section). My 67% auto-share figure was wrong (64% never-melt / 34% investor).
+
 ## Start here (30 Sep, 19:00, at home: screens fix live)
 
 **His report:** paused in the final boss, resume was below the bottom edge and the pause screen couldn't scroll: no way back.
