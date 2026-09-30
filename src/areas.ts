@@ -29,13 +29,13 @@ export const FIRST_RUN_IN_MAZE = true
  * The Line and its crossroads. False: no crossroads and no alternate, the route is always 'II', save.roads never
  * gains 'III'; with BOTH_ROADS the Line is still area 3 (Works first).
  */
-export const LINE_ENABLED = false
+export const LINE_ENABLED = true
 /** The Engine as the Line's boss at 6. False: route III's depth 6 is the quarter's square with the Arbiter. */
-export const ENGINE_ON_LINE = false
+export const ENGINE_ON_LINE = true
 /** The Porter (stage D). */
 export const PORTER_ENABLED = false
 /** Both roads in one run (design/area3/BOTH-ROADS.md §4). DEV override ?roads=1. */
-export const BOTH_ROADS = false
+export const BOTH_ROADS = true
 /** How the road is chosen: the crossroads room, or (the fallback) alternating by save.lastRoad. */
 export const ROAD_CHOICE: 'crossroads' | 'alternate' = 'crossroads'
 
