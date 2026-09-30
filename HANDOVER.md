@@ -6,8 +6,7 @@ folder for whatever you're touching. Don't re-derive any of them.
 ## Start here (30 Sep, morning: B7 + B8 done, stage B complete, all dark)
 
 **He's at the office:** no LAN dev server (localhost-only checks were OK'd for this session). Nothing running.
-**B7 committed (7063785), NOT pushed** (I told him nothing is pushed without his word; it's all dark, K-90/K-90L/K-90F PASS,
-so live is unchanged by it). Ask him to OK the push.
+**Pushed on his word (30 Sep)** through b3ee661: B7, the stage C brief, C0 + C1. All dark; live unchanged.
 
 **His two B7 answers, taken as my recs because he said "just continue":** the Handcar gets its **own page** (not Iron Crawler,
 so rams keep both band-I names), and **only unmet pages change role**. How: `LINE_DONORS` in notebook.ts (signal: signal-jammer,
@@ -37,8 +36,7 @@ Signalman once Still stands within `laneReach` (3.7 u) of a lane (the lesson cal
 `railTick`/`farShunt` never reach heardLog: headless audio never runs. **Nothing new has ever been heard: phone only.**
 
 **Stage C, the Engine: brief done** (`design/area3/STAGE-C.md`, 5f97e5c, verifier; steps C0-C10, checks K-N*). C0 + C1 committed
-(check scaffold `tools/checks/stagec.mjs`, `src/track.ts`, K-N1a PASS); C2 (the roundhouse arena) next. **His calls before C5-C9 (brief §9),
-verifier's defaults in brackets:** lever cadence (every 3rd junction, ~8.9 s, alternating sides; SPEC's "every lap alternating"
+(check scaffold `tools/checks/stagec.mjs`, `src/track.ts`, K-N1a PASS); C2 (the roundhouse arena) next. **His calls (brief §9): on 30 Sep he said "go with your defaults", so every bracketed default below is DECIDED:** lever cadence (every 3rd junction, ~8.9 s, alternating sides; SPEC's "every lap alternating"
 is geometrically impossible); accept leading steam (250 ms aim with the Arbiter's lead-guess, 700 ms locked) and the new
 **cinder** (a lobbed ring after 5 s out of steam range, so camping inside the loop isn't safe); husk position on resume (where it
 slept); the Engine's page under unmet-only (`raging-hull`, fallback `echo-shell`; his save has likely met raging-hull);
