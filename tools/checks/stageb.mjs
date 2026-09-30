@@ -1,15 +1,17 @@
 /**
  * The stage B checks (design/area3/STAGE-B.md §4): `node tools/checks/stageb.mjs [K-W3a ...]` runs all of them, or the ids
  * listed. B0 registers none: each later step adds its own here, on lib.mjs's `suite()`, as k9.mjs and area3.mjs do. The fight
- * baseline (K-90F) is fights.mjs's, K-90 and K-90L are baseline.mjs's; K-E10 will read baseline/names.json.
+ * baseline (K-90F) is fights.mjs's, K-90 and K-90L are baseline.mjs's; K-E10 reads baseline/names.json.
  *
  * The short forms of STAGE-B.md §4, as queries (every one is ?save=memory and a dev run straight into a level):
  *   ARENA  a clean test floor: `__hold(true); __arena()`, Math.random seeded as fights.mjs does
  *   LINE4  the flag-off Line, sidings: `__run.route = 'III'; __enter(4, s)`; LINE5 the same at 5 (the station)
  *   ON     the 9-depth page
  */
-import { readFileSync } from 'node:fs'
-import { REPO, assert, evalJson, suite } from './lib.mjs'
+import { spawnSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
+import { readFileSync, readdirSync, statSync } from 'node:fs'
+import { REPO, assert, assertEq, evalJson, suite } from './lib.mjs'
 
 const ARENA = '?depth=1&save=memory'
 const LINE = '?depth=1&save=memory&line=1'
@@ -17,7 +19,7 @@ const ON = '?depth=1&save=memory&roads=1'
 const OFF = '?depth=1&save=memory'
 const LINE4 = LINE
 
-const { check, run } = suite()
+const { check, task, run } = suite()
 
 /**
  * The in-page toolkit every check body starts with (it is source, spliced in front of the body by `inPage`).
@@ -1697,6 +1699,438 @@ check('K-E17', ON, async ({ page }) => {
   assert(g.ballast >= 3, `only ${g.ballast} ballast packs at step 7 over 40 levels: the check proves too little`)
   assert(g.elite === 0, `${g.elite} of ${g.ballast} ballast packs have an elite: ${g.bad.slice(0, 5)}`)
   console.log(`INFO K-E17: ${g.ballast} ballast packs in ${g.packs} (Line at 7, seeds 1..40), none an elite`)
+})
+
+// --- The dressing (B7): hides, notebook pages, the card, the ambience, the sounds, the build ---------------------------------
+/** The palette rule (hide.ts header, STAGE-B K-E9): no saturated orange-red body (ember is the threat's), nothing pale (Still is the pale one). */
+check('K-E9', LINE4, async ({ page }) => {
+  const got = await inPage(page, `
+    ${SIG_KIT}
+    ${HC_KIT}
+    const hsl = (hex) => {
+      const r = ((hex >> 16) & 255) / 255, g = ((hex >> 8) & 255) / 255, b = (hex & 255) / 255
+      const max = Math.max(r, g, b), min = Math.min(r, g, b), l = (max + min) / 2, d = max - min
+      if (d === 0) return { h: 0, s: 0, l }
+      const s = d / (1 - Math.abs(2 * l - 1))
+      const h = (max === r ? ((g - b) / d) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4) * 60
+      return { h: (h + 360) % 360, s, l }
+    }
+    const hides = {}
+    for (const k of ['signal', 'handcar', 'enamel', 'sleepers']) {
+      const h = W.__hides[k]
+      hides[k] = h ? { body: hsl(h.body), joint: hsl(h.joint) } : null
+    }
+    const end = begin(1)
+    try {
+      const L = (c) => c.getHSL({}).l
+      const out = { hides, sig: null, hand: null }
+      // one Signalman windup: the lamp's lightness at every tick, spawn to the end of its recover
+      const sig = withRig({ stillOff: 2, sigD: 9 }, (r) => {
+        const s = spawnSig(r)
+        const pin = () => W.__still.pos.set(r.still.x, 0, r.still.z)
+        const Lcore = L(new (s.lampColor().constructor)(0xff5a3c))
+        let max = 0, min = 1, windup = 0
+        for (let i = 0; i < 300; i++) {
+          tick(1, pin)
+          const l = L(s.lampColor())
+          max = Math.max(max, l); min = Math.min(min, l)
+          if (s.phase === 'windup') windup++
+        }
+        return { max, min, windup, coreL: Lcore }
+      })
+      if (sig.bad) return sig
+      out.sig = sig
+      // one Handcar lock: the seam, sampled from the windup through the lock and the rush
+      const hand = withHrig((r) => {
+        const h = r.h
+        h.hp = 1e6
+        h.reload = 0
+        const s = P(r, 6, 0)
+        const pin = pinAt(s)
+        pin()
+        const Lcore = L(new (h.seamColorNow().constructor)(0xff5a3c))
+        let max = 0, locked = 0, windup = 0
+        for (let i = 0; i < 240; i++) {
+          tick(1, pin)
+          max = Math.max(max, L(h.seamColorNow()))
+          if (h.phase === 'windup') windup++
+          if (h.locked) locked++
+          if (h.phase === 'recover') break
+        }
+        return { max, locked, windup, coreL: Lcore }
+      })
+      if (hand.bad) return hand
+      out.hand = hand
+      return out
+    } finally { end() }`)
+  bad(got)
+  for (const [k, h] of Object.entries(got.hides)) {
+    assert(h, `HIDES.${k} does not exist`)
+    for (const part of ['body', 'joint']) {
+      const c = h[part]
+      assert(!(c.s > 0.35 && c.h >= 0 && c.h <= 40), `HIDES.${k}.${part} is saturated orange-red (h ${c.h.toFixed(0)}, s ${c.s.toFixed(2)}): ember is the threat's`)
+      assert(c.l <= 0.45, `HIDES.${k}.${part} is pale (l ${c.l.toFixed(2)} > 0.45): Still is the pale one`)
+    }
+  }
+  assert(got.sig.windup > 20, `the Signalman's windup lasted ${got.sig.windup} ticks: the lamp check proves nothing`)
+  assert(got.sig.max - got.sig.min > 0.01, `the lamp's lightness never moved (${got.sig.min} .. ${got.sig.max}): the check proves nothing`)
+  assert(got.sig.max <= got.sig.coreL + 1e-6, `INV-C1: the lamp's lightness went ${got.sig.max.toFixed(6)}, over CORE's ${got.sig.coreL.toFixed(6)}`)
+  assert(got.hand.windup > 20 && got.hand.locked > 10, `the Handcar's windup ${got.hand.windup} ticks, locked ${got.hand.locked}: the seam check proves nothing`)
+  assert(got.hand.max <= got.hand.coreL + 1e-6, `INV-C1: the seam's lightness went ${got.hand.max.toFixed(6)}, over CORE's ${got.hand.coreL.toFixed(6)}`)
+  console.log(`INFO K-E9: four hides in palette; lamp lightness peaked ${got.sig.max.toFixed(3)} and seam ${got.hand.max.toFixed(3)} against CORE's ${got.sig.coreL.toFixed(3)}`)
+})
+
+// K-E10: the notebook's Line pages (STAGE-B section 2.9, as amended 30 Sep: the Handcar has a page of its own, and only pages he has never met may change role)
+const NAMES = JSON.parse(readFileSync(REPO + 'tools/checks/baseline/names.json', 'utf8'))
+const KINDS = ['chaser', 'ranged', 'charger', 'swarm']
+/** In the page: every kind at d 1..9, as `__namesFor` gives it now. */
+const NAMES_NOW = `
+  const namesNow = () => {
+    const out = {}
+    for (const k of ${JSON.stringify(KINDS)}) { out[k] = {}; for (let d = 1; d <= 9; d++) out[k][d] = W.__namesFor(k, d) }
+    return out
+  }
+  const pagesNow = () => ({ signal: W.__linePage('signal'), handcar: W.__linePage('handcar'), sleepers: W.__linePage('sleepers') })
+  const entry = (r) => ({ f: '2026-09-01', m: 1, k: 0, d: 1, ...(r ? { r } : {}) })
+  const seed = (nb) => { W.__setSave({ notebook: nb }); W.__setLinePages(true); return { pages: pagesNow(), ranged: W.__namesFor('ranged', 1), charger: W.__namesFor('charger', 1), swarm: W.__namesFor('swarm', 4) } }
+`
+check('K-E10', LINE4, async ({ page }) => {
+  const got = await inPage(page, `
+    ${NAMES_NOW}
+    try {
+      W.__setSave(null)
+      W.__setLinePages(true)
+      const fresh = { pages: pagesNow(), names: namesNow() }
+      // only a page he has never met can change role
+      const cases = {
+        signalMet: seed({ 'signal-jammer': entry() }),
+        signalR: seed({ 'signal-jammer': entry('signal') }),
+        signalAllMet: seed({ 'signal-jammer': entry(), 'thermal-scanner': entry(), 'glitch-node': entry() }),
+        signalSecondR: seed({ 'signal-jammer': entry(), 'thermal-scanner': entry('signal') }),
+        signalWrongR: seed({ 'signal-jammer': entry('handcar') }),
+        handcarMet: seed({ 'feedback-loop': entry() }),
+        sleepersR: seed({ 'conduit-spider': entry(), 'strain-siphon': entry('sleepers') }),
+      }
+      // off: every lookup is today's, whatever the notebook holds
+      W.__setSave({ notebook: { 'conduit-spider': entry(), 'strain-siphon': entry('sleepers') } })
+      W.__setLinePages(false)
+      const off = { pages: pagesNow(), names: namesNow() }
+      const { WHAT } = await import('/src/notebook.ts')
+      return { fresh, cases, off, what: WHAT }
+    } finally { W.__setSave(null); W.__setLinePages(true) }`)
+  const chosen = { signal: 'signal-jammer', handcar: 'feedback-loop', sleepers: 'conduit-spider' }
+  assertEq('on, an empty notebook: the pages', got.fresh.pages, chosen)
+  for (const k of KINDS) for (let d = 1; d <= 9; d++) {
+    const now = got.fresh.names[k][d]
+    assert(now.length >= 2, `${k} at ${d} has ${now.length} name(s), under 2`)
+    for (const id of Object.values(chosen)) assert(!now.includes(id), `${k} at ${d} still offers the Line's page ${id}`)
+    // every other page stays where it was, in its order (a chosen page leaves its archetype and nothing else moves)
+    assertEq(`${k} at ${d}: the other pages`, now, NAMES.names[k][d].filter((id) => !Object.values(chosen).includes(id)))
+  }
+  const c = got.cases
+  assertEq('signal-jammer met without r: the Signalman takes the next unmet page', c.signalMet.pages.signal, 'thermal-scanner')
+  assert(c.signalMet.ranged.includes('signal-jammer') && !c.signalMet.ranged.includes('thermal-scanner'), `signal-jammer met without r must stay a sentinel: ${c.signalMet.ranged}`)
+  assertEq('signal-jammer met as the Signalman: still its page', c.signalR.pages.signal, 'signal-jammer')
+  assert(!c.signalR.ranged.includes('signal-jammer') && c.signalR.ranged.includes('thermal-scanner') && c.signalR.ranged.includes('glitch-node'), `the Signalman's met page leaves the sentinels and no other donor does: ${c.signalR.ranged}`)
+  assertEq('every signal donor met: no page', c.signalAllMet.pages.signal, null)
+  assert(['signal-jammer', 'thermal-scanner', 'glitch-node'].every((id) => c.signalAllMet.ranged.includes(id)), `with no page left every donor stays a sentinel: ${c.signalAllMet.ranged}`)
+  assertEq('the second donor met as the Signalman: its page', c.signalSecondR.pages.signal, 'thermal-scanner')
+  assert(c.signalSecondR.ranged.includes('signal-jammer'), 'a donor met as a sentinel stays one beside a Signalman page')
+  assertEq("an r for another role is ignored", c.signalWrongR.pages.signal, 'thermal-scanner')
+  assertEq('feedback-loop met: the Handcar takes phase-drone', c.handcarMet.pages.handcar, 'phase-drone')
+  assert(c.handcarMet.charger.includes('iron-crawler') && c.handcarMet.charger.includes('overload-core'), `rams keep both band I names (the Handcar has a page of its own): ${c.handcarMet.charger}`)
+  assertEq('conduit-spider met, strain-siphon met as Sleepers: its page', c.sleepersR.pages.sleepers, 'strain-siphon')
+  assert(c.sleepersR.swarm.includes('conduit-spider') && !c.sleepersR.swarm.includes('strain-siphon'), `Sleepers page leaves the mites, the met conduit-spider stays: ${c.sleepersR.swarm}`)
+  assertEq('off: no Line pages', got.off.pages, { signal: null, handcar: null, sleepers: null })
+  for (const k of KINDS) for (let d = 1; d <= 9; d++) assertEq(`off: ${k} at ${d}`, got.off.names[k][d], NAMES.names[k][d])
+  for (const [role, word] of Object.entries(NAMES.what)) assertEq(`WHAT.${role}`, got.what[role], word)
+  for (const role of ['signal', 'handcar', 'sleepers']) assert(typeof got.what[role] === 'string' && got.what[role].length > 0, `WHAT.${role} is missing`)
+  console.log(`INFO K-E10: on, ${JSON.stringify(chosen)}; every kind keeps >= 2 names at every depth (fewest: ${Math.min(...KINDS.flatMap((k) => Object.values(got.fresh.names[k]).map((n) => n.length)))}); off equals names.json`)
+})
+check('K-E10', OFF, async ({ page }) => {
+  const got = await inPage(page, `
+    ${NAMES_NOW}
+    const { WHAT } = await import('/src/notebook.ts')
+    return { pages: pagesNow(), names: namesNow(), roster: W.__roster().map((r) => [r.id, r.name, r.role, r.band, r.mod ?? null]), what: WHAT }`)
+  assertEq('OFF: no Line pages', got.pages, { signal: null, handcar: null, sleepers: null })
+  for (const k of KINDS) for (let d = 1; d <= 9; d++) assertEq(`OFF: ${k} at ${d} equals names.json`, got.names[k][d], NAMES.names[k][d])
+  assertEq('OFF: the roster', got.roster, NAMES.roster)
+  for (const [role, word] of Object.entries(NAMES.what)) assertEq(`OFF: WHAT.${role}`, got.what[role], word)
+})
+check('K-E10', LINE4, async ({ page }) => {
+  // meeting a Signalman, a Handcar and a Sleepers brood on a non-dev run writes their pages, each with its role
+  const got = await inPage(page, `
+    ${SIG_KIT}
+    ${HC_KIT}
+    ${NAMES_NOW}
+    const end = begin(1)
+    const nbOf = () => W.__notebook()
+    try {
+      W.__setSave(null)
+      W.__setLinePages(true)
+      W.__run.dev = false
+      const out = { pages: pagesNow(), steps: {} }
+      const sig = withRig({ stillOff: 2, sigD: 9 }, (r) => {
+        const s = spawnSig(r)
+        tick(10)
+        out.steps.signalMet = nbOf()
+        s.hit(1e9)
+        tick(5)
+        out.steps.signalFelled = nbOf()
+        return {}
+      })
+      if (sig.bad) return sig
+      const hand = withHrig((r) => {
+        tick(10)
+        out.steps.handcarMet = nbOf()
+        r.h.hit(1e9)
+        tick(5)
+        out.steps.handcarFelled = nbOf()
+        return {}
+      })
+      if (hand.bad) return hand
+      W.__hold(true)
+      W.__run.route = 'III'
+      W.__enter(4, 1)
+      W.__emptyLevel()
+      const pin = () => W.__still.pos.set(W.__still.pos.x, 0, W.__still.pos.z)
+      const cx = W.__still.pos.x + 16, cz = W.__still.pos.z
+      const members = []
+      for (let i = 0; i < 6; i++) { const a = (i / 6) * Math.PI * 2 + 0.3; members.push({ kind: 'swarm', x: cx + Math.cos(a) * 0.5, z: cz + Math.sin(a) * 0.5 }) }
+      const pack = W.__pack(members, true, undefined, 'ballast')
+      tick(10)
+      out.steps.sleepersMet = nbOf()
+      tick(120)
+      // its own list: a dead member is spliced out of pack.members (combat.ts), so counting there finds none
+      const risen = [...pack.members]
+      for (const m of risen) m.hit(1e9)
+      tick(5)
+      out.steps.sleepersFelled = nbOf()
+      out.sleepersDead = risen.filter((m) => m.dead).length
+      return out
+    } finally { W.__run.dev = true; W.__setSave(null); W.__setLinePages(true); end() }`)
+  bad(got)
+  assertEq('the pages a fresh notebook hands out', got.pages, { signal: 'signal-jammer', handcar: 'feedback-loop', sleepers: 'conduit-spider' })
+  for (const [step, id, role] of [['signal', 'signal-jammer', 'signal'], ['handcar', 'feedback-loop', 'handcar'], ['sleepers', 'conduit-spider', 'sleepers']]) {
+    const met = got.steps[step + 'Met'][id]
+    assert(met, `meeting the ${step} wrote no ${id} page (${Object.keys(got.steps[step + 'Met'])})`)
+    assert(met.r === role && met.m === 1, `the ${id} page after meeting the ${step}: ${JSON.stringify(met)}, want r ${role}, m 1`)
+    const felled = got.steps[step + 'Felled'][id]
+    assert(felled && felled.r === role, `the ${id} page after the ${step} fell: ${JSON.stringify(felled)}`)
+    assert(felled.k >= 1, `the ${step} fell and ${id} counts ${felled.k} felled`)
+  }
+  assert(got.sleepersDead >= 1 && got.steps.sleepersFelled['conduit-spider'].k === got.sleepersDead,
+    `${got.sleepersDead} sleepers died and conduit-spider counts ${got.steps.sleepersFelled['conduit-spider'].k}`)
+  console.log(`INFO K-E10: the three pages written on first meeting with r set (${Object.keys(got.steps.sleepersFelled)}); ${got.sleepersDead} mites felled`)
+
+  // no page left: the body is met and felled unwritten, like the mender; the pages off: its level's name, no r
+  const un = await inPage(page, `
+    ${SIG_KIT}
+    ${NAMES_NOW}
+    const end = begin(1)
+    const nbOf = () => W.__notebook()
+    try {
+      W.__run.dev = false
+      W.__setSave(null)
+      W.__setSave({ notebook: { 'signal-jammer': entry(), 'thermal-scanner': entry(), 'glitch-node': entry() } })
+      W.__setLinePages(true)
+      const out = { page: W.__linePage('signal') }
+      const before = JSON.stringify(nbOf())
+      const a = withRig({ stillOff: 2, sigD: 9 }, (r) => {
+        const s = spawnSig(r)
+        tick(10)
+        out.met = JSON.stringify(nbOf()) === before
+        s.hit(1e9)
+        tick(5)
+        out.felled = JSON.stringify(nbOf()) === before
+        return {}
+      })
+      if (a.bad) return a
+      W.__setSave(null)
+      W.__setLinePages(false)
+      const b = withRig({ stillOff: 2, sigD: 9 }, (r) => {
+        const s = spawnSig(r)
+        tick(10)
+        out.offNames = W.__names()
+        out.offBook = nbOf()
+        return {}
+      })
+      if (b.bad) return b
+      return out
+    } finally { W.__run.dev = true; W.__setSave(null); W.__setLinePages(true); end() }`)
+  bad(un)
+  assertEq('every signal donor met: the Signalman has no page', un.page, null)
+  assert(un.met, 'meeting a Signalman with no page left wrote or changed a page (it must go unwritten, like the mender)')
+  assert(un.felled, 'felling a Signalman with no page left counted on a page (it must count nothing)')
+  assert(un.offBook[un.offNames.ranged] && un.offBook[un.offNames.ranged].m === 1, `pages off: the Signalman should be met under its level's name ${un.offNames.ranged}: ${Object.keys(un.offBook)}`)
+  assert(Object.values(un.offBook).every((e) => e.r === undefined), 'pages off: a page was stamped with a Line role')
+})
+
+// K-E11: the card's road (INV-K1: a card without `route` captions as before)
+// K-E12: the Line's room tone
+const PLACES_SRC = readFileSync(REPO + 'src/areas.ts', 'utf8')
+/** In the page: the mood the frame loop passes once it has run a few frames in this level. */
+const MOOD = `
+  // a few frames first, so a mood left from the last level cannot pass for this one; then poll (the frame loop runs between awaits)
+  const settle = async (want) => {
+    await new Promise((r) => setTimeout(r, 200))
+    for (let i = 0; i < 150; i++) {
+      if (W.__ambience() === want) return want
+      await new Promise((r) => setTimeout(r, 20))
+    }
+    return W.__ambience()
+  }
+  const moodAt = async (route, depth) => {
+    W.__hold(true)
+    W.__run.route = route
+    W.__enter(depth, 1)
+    W.__step(0.5)
+    const look = W.__look()
+    const want = look.ambience
+    return { route, depth, place: look.place, mood: want, boss: !!W.__boss(), settled: await settle(want) }
+  }
+`
+check('K-E12', LINE4, async ({ page }) => {
+  // the two places carry the mood in their table (the room tone is the place's, boss or crawl)
+  for (const id of ['sidings', 'station']) {
+    const block = new RegExp(`const ${id}: PlaceDef = \\{\\n([\\s\\S]*?)\\n\\}\\n`).exec(PLACES_SRC)
+    assert(block && block[1].includes("ambience: { crawl: 'line', boss: 'line' }"), `${id}'s ambience is not { crawl: 'line', boss: 'line' }`)
+  }
+  const got = await inPage(page, `
+    ${MOOD}
+    const out = []
+    for (const [route, depth] of [['III', 4], ['III', 5], ['II', 1], ['II', 3], ['II', 4], ['II', 5], ['II', 6]]) out.push(await moodAt(route, depth))
+    return out`)
+  const want = { 'III4': 'line', 'III5': 'line', 'II1': 'crawl', 'II3': 'boss', 'II4': 'works', 'II5': 'quarter' }
+  for (const m of got) {
+    const key = m.route + m.depth
+    const w = key === 'II6' ? (m.boss ? 'square' : 'quarter') : want[key]
+    assert(m.mood === w, `${key} (${m.place}): __look().ambience is ${m.mood}, want ${w}`)
+    assert(m.settled === w, `${key} (${m.place}): after __step(0.5) the frame loop passed ${m.settled}, want ${w}`)
+  }
+  console.log(`INFO K-E12: 6-depth run: ${got.map((m) => `${m.route}${m.depth} ${m.settled}`).join(', ')}`)
+})
+check('K-E12', ON, async ({ page }) => {
+  const got = await inPage(page, `
+    ${MOOD}
+    const out = []
+    for (const route of ['III', 'II']) for (let depth = 4; depth <= 9; depth++) out.push(await moodAt(route, depth))
+    return out`)
+  // route III = the Line first (4-6), then the Works (7-9); route II = the Works first, then the Line
+  const works = { 0: 'works', 1: 'quarter', 2: 'square' }
+  for (const m of got) {
+    const lineFirst = m.route === 'III'
+    const onLine = lineFirst ? m.depth <= 6 : m.depth >= 7
+    const w = onLine ? 'line' : works[(m.depth - 4) % 3]
+    assert(m.mood === w, `order ${m.route}, depth ${m.depth} (${m.place}): __look().ambience is ${m.mood}, want ${w}`)
+    assert(m.settled === w, `order ${m.route}, depth ${m.depth} (${m.place}): after __step(0.5) the frame loop passed ${m.settled}, want ${w}`)
+    if (m.depth % 3 === 0) assert(m.boss, `order ${m.route}, depth ${m.depth}: no boss level, so the boss mood was not tested`)
+  }
+  console.log(`INFO K-E12: 9-depth run: ${got.map((m) => `${m.route}${m.depth} ${m.settled}`).join(', ')}`)
+})
+
+// K-S1: a train's sounds (B3's, unchanged by the dressing): the hum at t0, the horn at +800, the wheels at +2000, and never a third hum
+check('K-S1', LINE4, async ({ page }) => {
+  const got = await inPage(page, `
+    ${LINE_LEVEL}
+    const end = begin(1)
+    try {
+      let lane = null, seed = 0
+      while (!lane && ++seed <= 16) lane = line(4, seed)
+      if (!lane) return { bad: 'no seed 1..16 has a room lane with a train more than 4 s off' }
+      const lineHum = () => W.__hums()
+      W.__trainLog.length = 0
+      const slip = W.__train(lane.id)
+      if (slip === null) return { bad: 'the train was refused' }
+      const t0 = W.__trains().find((tr) => tr.lane === lane.id).t0
+      let maxOne = 0
+      for (let i = 0; i < 220; i++) { tick(1); maxOne = Math.max(maxOne, lineHum()) }
+      const one = W.__trainLog.filter((x) => x.lane === lane.id).map((x) => ({ t: x.t, kind: x.kind }))
+      // three or more at once: the hums stop at two
+      tick(360)
+      W.__trainLog.length = 0
+      let accepted = 0
+      for (const l of W.__lanes()) if (W.__train(l.id) !== null) accepted++
+      let maxMany = 0
+      for (let i = 0; i < 200; i++) { tick(1); maxMany = Math.max(maxMany, lineHum()) }
+      return { one, t0, maxOne, accepted, maxMany, seed }
+    } finally { end() }`)
+  bad(got)
+  const at = (kind) => got.one.findIndex((x) => x.kind === kind)
+  assert(at('coming') >= 0 && at('commit') > at('coming') && at('arrive') > at('commit'), `the train log is out of order: ${got.one.map((x) => x.kind)}`)
+  const t = (kind) => got.one[at(kind)].t
+  assert(Math.abs(t('coming') - got.t0) <= 2 / 60, `coming was logged ${(t('coming') - got.t0) * 1000} ms from t0`)
+  const commit = (t('commit') - t('coming')) * 1000, arrive = (t('arrive') - t('coming')) * 1000
+  assert(Math.abs(commit - 800) <= 17, `the commit came ${commit.toFixed(1)} ms after coming, not 800 +- 17`)
+  assert(Math.abs(arrive - 2000) <= 17, `the arrival came ${arrive.toFixed(1)} ms after coming, not 2000 +- 17`)
+  assert(got.maxOne >= 1, `no hum was ever counted for a train (${got.maxOne}): the hum cap proves nothing`)
+  assert(got.maxMany <= 2, `${got.maxMany} rail hums at once, over the cap of 2`)
+  if (got.accepted >= 3) assert(got.maxMany === 2, `${got.accepted} trains called and the most hums at once was ${got.maxMany}, not the cap of 2`)
+  console.log(`INFO K-S1: seed ${got.seed}: coming, commit +${commit.toFixed(1)} ms, arrive +${arrive.toFixed(1)} ms; ${got.accepted} trains together, at most ${got.maxMany} hums`)
+})
+
+// K-S4: no sound file added (the dressing is synthesized). The tree at ba443ce has 53 tracked files in public/sfx: 52 sounds and the licence.
+task('K-S4', async () => {
+  const git = (...args) => {
+    const r = spawnSync('git', args, { cwd: REPO, encoding: 'utf8' })
+    if (r.status !== 0) throw new Error(`git ${args.join(' ')}: ${r.stderr}`)
+    return r.stdout
+  }
+  const diff = git('diff', '--stat', 'ba443ce', '--', 'public/sfx').trim()
+  assert(diff === '', `public/sfx changed since ba443ce:\n${diff}`)
+  const files = git('ls-files', 'public/sfx').split('\n').filter(Boolean)
+  const then = git('ls-tree', '-r', '--name-only', 'ba443ce', '--', 'public/sfx').split('\n').filter(Boolean)
+  assert(files.length === then.length, `${files.length} tracked files in public/sfx, ${then.length} at ba443ce`)
+  const oggs = files.filter((f) => f.endsWith('.ogg')).length
+  assert(oggs === 52, `${oggs} sound files in public/sfx, not 52`)
+  const untracked = git('ls-files', '--others', '--exclude-standard', 'public/sfx').trim()
+  assert(untracked === '', `untracked files in public/sfx:\n${untracked}`)
+})
+
+// K-Z1: the build. Kit and textures are copied verbatim from public/ (which has not changed since ba443ce), so "byte for byte" is checked there.
+const walk = (dir) => readdirSync(dir, { withFileTypes: true }).flatMap((d) => (d.isDirectory() ? walk(dir + '/' + d.name) : [dir + '/' + d.name]))
+const sha = (f) => createHash('sha1').update(readFileSync(f)).digest('hex')
+task('K-Z1', async () => {
+  const r = spawnSync('npx', ['vite', 'build'], { cwd: REPO, encoding: 'utf8' })
+  if (r.status !== 0) throw new Error(`npx vite build exited ${r.status}: ${(r.stdout + r.stderr).slice(-400)}`)
+  const total = walk(REPO + 'dist').reduce((n, f) => n + statSync(f).size, 0)
+  assert(total <= 5600000, `dist is ${total} bytes, over the 5,600,000 cap`)
+  for (const dir of ['kaykit', 'textures']) {
+    const rel = (base, f) => f.slice((REPO + base + '/').length)
+    const src = walk(REPO + 'public/' + dir).map((f) => rel('public', f)).sort()
+    const out = walk(REPO + 'dist/' + dir).map((f) => rel('dist', f)).sort()
+    assertEq(`dist/${dir}: the files`, out, src)
+    for (const f of src) assert(sha(REPO + 'dist/' + f) === sha(REPO + 'public/' + f), `dist/${f} differs from public/${f}`)
+    const d = spawnSync('git', ['diff', '--stat', 'ba443ce', '--', 'public/' + dir], { cwd: REPO, encoding: 'utf8' })
+    assert(d.status === 0 && d.stdout.trim() === '', `public/${dir} changed since ba443ce:\n${d.stdout}`)
+  }
+  console.log(`INFO K-Z1: dist is ${total} bytes (${total >= 5355174 ? '+' : ''}${total - 5355174} against 5,355,174 at ba443ce; cap 5,600,000)`)
+})
+
+// K-E11 runs last: it ends the run at 4, which leaves the page in the ending
+check('K-E11', LINE4, async ({ page }) => {
+  const got = await evalJson(page, () => {
+    const W = window
+    W.__run.dev = false
+    W.__setSave(null)
+    W.__run.route = 'III'
+    W.__enter(4, 1)
+    W.__end('home')
+    const cards = W.__save().cards
+    const card = cards[cards.length - 1]
+    const base = { date: '2026-09-25', end: 'home', depth: 3 }
+    return {
+      n: cards.length, card, cap: W.__caption(card), plain: W.__caption({ date: card.date, end: card.end, depth: card.depth }),
+      inv: W.__caption(base), invII: W.__caption({ ...base, route: 'II' }), invIII: W.__caption({ ...base, route: 'III' }),
+    }
+  })
+  assert(got.n === 1 && got.card, `${got.n} card(s) after the ending, not 1`)
+  assertEq("the Line run's card records its road", got.card.route, 'III')
+  assert(got.cap.startsWith(got.plain + ' · ') && got.cap.length > got.plain.length + 3, `the Line card's caption is "${got.cap}", the plain one "${got.plain}": no road word after it`)
+  assertEq('INV-K1: a card without route captions as before', got.inv, '25 Sep · home · depth 3')
+  assertEq("INV-K1: the Works' road adds no word", got.invII, got.inv)
+  assert(got.invIII.startsWith(got.inv + ' · ') && got.invIII === got.cap.replace(got.plain, got.inv), `route III captions "${got.invIII}", not "${got.inv} · <road word>"`)
+  console.log(`INFO K-E11: the card reads "${got.cap}"`)
 })
 
 process.exit(await run(process.argv.slice(2)))

@@ -336,8 +336,7 @@ const quarter: PlaceDef = {
  * and broken tile underfoot, brick retaining walls, crates and barrels for cover, dead signal
  * gantries standing in the fog. Straight rails cross it wall to wall. INV: no bed, cot, crib,
  * cradle, toy, swing or pram in any list.
- * The room tone stays area II's (the Works', then the quarter's) until the Line's own lands
- * (stage B4).
+ * Its room tone is the Line's own: the quarter's open air with rails in it (ambience 'line').
  */
 const sidings: PlaceDef = {
   id: 'sidings',
@@ -353,7 +352,7 @@ const sidings: PlaceDef = {
     arenaCover: 'barrier_column',
   },
   surfaces: { paving: 'Gravel023', rock: 'Bricks097', wood: 'Planks023A', ground: 'Ground108', grate: 'Metal063' },
-  ambience: { crawl: 'works', boss: 'works' },
+  ambience: { crawl: 'line', boss: 'line' },
   footsteps: 'stone',
   music: 'II',
   gen: {
@@ -381,7 +380,7 @@ const station: PlaceDef = {
     arenaCover: 'barrier_column',
   },
   surfaces: { paving: 'Tiles093', rock: 'Bricks097', wood: 'Planks023A', ground: 'Gravel023', grate: 'Metal063' },
-  ambience: { crawl: 'quarter', boss: 'square' },
+  ambience: { crawl: 'line', boss: 'line' },
   footsteps: 'stone',
   music: 'II',
   gen: {

@@ -1,6 +1,7 @@
 import { PARTS } from './abilities'
 import { STARTER_POOL, keepWhites } from './pool'
 import type { HomeHour, RouteId } from './areas'
+import type { LineRole } from './notebook'
 
 /**
  * The one save: everything a run leaves behind, under one versioned key.
@@ -54,6 +55,11 @@ export interface NotebookEntry {
   d: number
   /** Elites only: leader names seen (D2 names), newest last, at most LEADERS_MAX. */
   l?: string[]
+  /**
+   * A Line page (notebook.ts LINE_DONORS): first met as that body, so it stays that body's on every later boot.
+   * Optional, no save version: an entry without it is a page met as its own name.
+   */
+  r?: LineRole
 }
 
 /** The kept thing. INV: written at commit, before the terminal phase runs. */

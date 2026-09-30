@@ -34,7 +34,7 @@ import { HandRing } from './handring'
 import { Sightline } from './sightline'
 import { createCameraRig } from './camera'
 import { updateMusic, musicNow } from './music'
-import { updateAmbience } from './ambience'
+import { updateAmbience, type AmbienceMood } from './ambience'
 import { Loot, LOOT, dropChance, rollPart, rollPicks, leanOf, PEDESTALS, type GroundPart, type PickKind, type PickSet } from './loot'
 import { createPauseScreen } from './pause'
 import { createOverlay } from './ending'
@@ -54,10 +54,10 @@ import {
 } from './areas'
 import { createWorkshop, MARKS_MAX, type ArrivalKind, type InteractId, type Workshop } from './workshop'
 import { createDrawings, HANDS, CARD_ASPECT, type Moment } from './crayon'
-import { composeCard } from './cards'
+import { composeCard, caption } from './cards'
 import { openSave, freshTally, localDate, drawerFor, trimCards, CARD_KEEP, CARD_LINES, LEADERS_MAX, type EndingKind, type RunSnapshot, type RunTally, type Save } from './save'
 import { poolView, markFound, hookCandidates, toggleTurn, hang, applyHookDefault, startPart, partName, historyLine, type PoolView } from './pool'
-import { assignNames, elitePage, meet, addLeader, ROSTER, ROSTER_BY_ID, WHAT, BOSS_PAGE, FRAGMENT_PAGE, LOBBER_PAGE, HEAP_PAGE, THIEF_PAGE, namesFor } from './notebook'
+import { assignNames, elitePage, meet, addLeader, ROSTER, ROSTER_BY_ID, WHAT, BOSS_PAGE, FRAGMENT_PAGE, LOBBER_PAGE, HEAP_PAGE, THIEF_PAGE, namesFor, roleOf, linePage, linePagesActive, setLinePages, type LineRole } from './notebook'
 import type { DropSource } from './loot'
 
 const canvas = document.querySelector<HTMLCanvasElement>('#view')!
@@ -89,6 +89,8 @@ const CROSSROADS_PARAM = devParam('crossroads') === '1'
  */
 const store = openSave({ memory: DEPTH_PARAM !== null || params.get('save') === 'memory' })
 const save = store.data
+// the Line's pages (INV-N1): on only where the Line can generate, so the shipped game's names never change; once, before the first assignNames
+setLinePages(flag('line') || RUN_DEPTHS === 9 || ROUTE_PARAM === 'III', save.notebook)
 
 const world = createWorld(canvas, { arena: false })
 /** The kids' drawings: captured off the canvas at each ending, kept in IndexedDB. */
@@ -1961,11 +1963,16 @@ function metPack(pack: Pack) {
       if (meet(save.notebook, id, depth, run.met)) wrote = true
       addLeader(save.notebook[id]!, pack.elite.name)
       continue
-    } else id = pageOf(e, pack) ?? run.names[e.kind]
+    } else {
+      const own = pageOf(e, pack)
+      // null: a Line body with no page left to take, met unwritten like the mender
+      id = own === null ? undefined : own ?? run.names[e.kind]
+    }
     if (!id) continue
     if (meet(save.notebook, id, depth, run.met)) {
       wrote = true
       firsts.push({ id, e })
+      stampLine(id)
     }
   }
   // one label per name, over the member of it nearest him
@@ -1979,20 +1986,35 @@ function metPack(pack: Pack) {
   if (wrote || pack.elite) store.write()
 }
 
-/** Felled: counted on its page, written with the next event write. Adds count for nothing. */
-/** A body's own page when it has one whatever the level's names are: a Lobber's, a slag heap's mites'. */
-function pageOf(e: Enemy, pack: Pack): string | undefined {
+/** A body's own page when it has one whatever the level's names are: a Lobber's, a slag heap's mites', the Line's three. */
+function pageOf(e: Enemy, pack: Pack): string | null | undefined {
   if (e.variant === 'lobber') return LOBBER_PAGE
   if (e.kind === 'swarm' && pack.brood?.heap) return HEAP_PAGE
+  const role: LineRole | undefined = e.variant === 'signal' ? 'signal' : e.variant === 'handcar' ? 'handcar' : e.kind === 'swarm' && pack.brood?.ballast ? 'sleepers' : undefined
+  // null: the Line's pages are on and every donor was met as something else, so this body is unwritten (never its level's name); off, it keeps its level's name as today
+  if (role && linePagesActive()) return linePage(role)
   return undefined
 }
 
-function felled(kind: Archetype, pack: Pack, wasElite: boolean, summoned: boolean, weight: number, own?: string) {
+/**
+ * A Line page written for the first time is stamped with its role (`r`), so the next boot finds it again as that body's
+ * (notebook.ts setLinePages) and a page he met as a sentinel is never re-labelled under him (INV-N2).
+ */
+function stampLine(id: string) {
+  const e = save.notebook[id]
+  if (!e || e.r) return
+  for (const role of ['signal', 'handcar', 'sleepers'] as const) if (linePage(role) === id) e.r = role
+}
+
+/** Felled: counted on its page, written with the next event write. Adds count for nothing. */
+function felled(kind: Archetype, pack: Pack, wasElite: boolean, summoned: boolean, weight: number, own?: string | null) {
   if (run.dev || summoned) return
   let id: string | undefined
   // the boss is still combat's on the tick it's felled: bossDown clears it after
   if (kind === 'boss') id = combat.boss?.def.roster ?? BOSS_PAGE
   else if (own && !wasElite) id = own
+  // a Line body with no page: felled unwritten, like the mender
+  else if (own === null && !wasElite) id = undefined
   else if (wasElite && pack.elite) id = elitePage(pack.elite.mod, run.depth)
   // a Many's halves weigh nothing and weren't summoned
   else if (weight === 0) id = FRAGMENT_PAGE
@@ -2001,7 +2023,7 @@ function felled(kind: Archetype, pack: Pack, wasElite: boolean, summoned: boolea
   const e = id ? save.notebook[id] : undefined
   if (e) e.k += 1
   else if (id) {
-    meet(save.notebook, id, run.depth, run.met)
+    if (meet(save.notebook, id, run.depth, run.met)) stampLine(id)
     save.notebook[id]!.k += 1
   }
 }
@@ -2016,7 +2038,7 @@ function notebookPages(): NotebookPage[] {
     .map(([id, e]) => {
       const r = ROSTER_BY_ID.get(id)!
       return {
-        name: r.name, what: WHAT[r.role], line: r.line,
+        name: r.name, what: WHAT[roleOf(r).role], line: r.line,
         facts: `met ${e.m} time${e.m === 1 ? '' : 's'} \u00b7 felled ${e.k} \u00b7 first met ${day(e.f)} \u00b7 deepest depth ${e.d}`,
         leaders: e.l?.length ? `led by ${e.l.join(', ')}` : null,
       }
@@ -4130,6 +4152,9 @@ function placeNow(): PlaceDef {
   return level?.house ? PLACES[WALK_PLACE] : lookAt(run.depth, routeNow(), flag('engine'))
 }
 
+/** The mood the frame loop last passed to updateAmbience (DEV: __ambience). */
+let moodLast: AmbienceMood = 'crawl'
+
 /** The room tone for where he is: the place's, a boss level's own. */
 function moodNow() {
   const place = placeNow()
@@ -4425,7 +4450,8 @@ function frame(nowMs: number) {
   world.camera.lookAt(camTarget)
   updateExitMark()
 
-  updateAmbience(home ? 'workshop' : moodNow())
+  moodLast = home ? 'workshop' : moodNow()
+  updateAmbience(moodLast)
   const bossAwake = !!combat.boss && !combat.boss.dead && awake.includes(combat.boss)
   const place = placeNow()
   updateMusic({
@@ -4735,6 +4761,14 @@ if (import.meta.env.DEV) {
     __roster: () => ROSTER.map((r) => ({ ...r })),
     __namesFor: (kind: Exclude<Archetype, 'boss'>, depth: number) => namesFor(kind, depth).map((r) => r.id),
     __assignNames: (depth: number, seed: number) => assignNames(depth, seed, save.notebook),
+    /** B7: the page a Line body takes now (null: off, or none left), and the switch re-run against the live notebook, for the unmet-only rule. */
+    __linePage: (role: LineRole) => linePage(role),
+    __setLinePages: (on: boolean) => setLinePages(on, save.notebook),
+    /** B7: the mood the frame loop last passed to updateAmbience, and a card's caption without a card. */
+    __ambience: () => moodLast,
+    __caption: (c: { date: string; end: EndingKind; depth: number; route?: RouteId }) => caption(c),
+    /** B7: the hides, for the palette check (K-E9). */
+    __hides: HIDES,
     __openNotebook: () => openNotebook(),
     __adds: () => combat.adds(),
     /** The Arbiter's state for checks (null for any other boss). */

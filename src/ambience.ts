@@ -20,11 +20,14 @@ import { beatClock } from './music'
  * wind instead of drafts, no water and no machinery, a curtain flapping in the wind
  * somewhere, and now and then something far off, a door knocking or a shutter.
  *
+ * The Line (the sidings and the station, area III) is the same open air with rails in it: in place of the
+ * curtain, a cooling rail's tick now and then, and in place of the far-off door, a far buffer knocking.
+ *
  * And home, the Workshop: the stone goes, and a small wooden room is left with
  * a clock ticking in it and Grace's tone under everything, never ending.
  */
-/** 'square': the quarter's open air round the Arbiter, and quieter still. */
-export type AmbienceMood = 'crawl' | 'boss' | 'workshop' | 'works' | 'quarter' | 'square'
+/** 'square': the quarter's open air round the Arbiter, and quieter still. 'line': the quarter's air over rails. */
+export type AmbienceMood = 'crawl' | 'boss' | 'workshop' | 'works' | 'quarter' | 'square' | 'line'
 
 interface Engine {
   ctx: AudioContext
@@ -61,6 +64,9 @@ interface Engine {
   thumpBeat: number
   nextCurtain: number
   nextFar: number
+  /** The Line's: the next run of rail ticks, and the next far buffer knock. */
+  nextRail: number
+  nextShunt: number
 }
 
 let engine: Engine | null = null
@@ -208,7 +214,7 @@ function build(a: NonNullable<ReturnType<typeof ambienceContext>>): Engine {
   const t = ctx.currentTime
   return {
     ...a, out: stone, room, worksRoom, airRoom, toneLp: lp, draftBp: bp, toneGain, draft, foundry, stone, home, wood, rainBed, nextDrop: t, nextTick: t + 1, tickN: 0,
-    nextDrip: t + 1.5, nextClank: t + 5, nextGust: t + 2, nextSteam: t + 3, thumpBeat: -1, nextCurtain: t + 6, nextFar: t + 10,
+    nextDrip: t + 1.5, nextClank: t + 5, nextGust: t + 2, nextSteam: t + 3, thumpBeat: -1, nextCurtain: t + 6, nextFar: t + 10, nextRail: t + 4, nextShunt: t + 12,
   }
 }
 
@@ -237,7 +243,7 @@ function clockTick(e: Engine, when: number) {
 }
 
 /** The reverb the mood is in: the Works' iron room, or the stone one. */
-const roomOf = (e: Engine) => (mood === 'works' ? e.worksRoom : mood === 'quarter' || mood === 'square' ? e.airRoom : e.room)
+const roomOf = (e: Engine) => (mood === 'works' ? e.worksRoom : mood === 'quarter' || mood === 'square' || mood === 'line' ? e.airRoom : e.room)
 
 function drip(e: Engine) {
   const { ctx } = e
@@ -369,6 +375,49 @@ function farOff(e: Engine) {
   }
 }
 
+/** A cooling rail ticking: a short run of 2-5 thin sine ticks, 2.4-3.2 kHz, 30 ms each, the gaps opening as it settles. */
+function railTick(e: Engine) {
+  const { ctx } = e
+  const n = 2 + Math.floor(Math.random() * 4)
+  const pan = ctx.createStereoPanner()
+  pan.pan.value = Math.random() * 1.4 - 0.7
+  pan.connect(e.airRoom)
+  const dry = ctx.createGain()
+  dry.gain.value = 0.5
+  pan.connect(dry).connect(e.out)
+  let at = ctx.currentTime + 0.02
+  for (let i = 0; i < n; i++) {
+    const o = ctx.createOscillator()
+    o.type = 'sine'
+    o.frequency.value = 2400 + Math.random() * 800
+    const g = ctx.createGain()
+    g.gain.setValueAtTime(0.0001, at)
+    g.gain.linearRampToValueAtTime(0.014, at + 0.002)
+    g.gain.exponentialRampToValueAtTime(0.0001, at + 0.03)
+    o.connect(g).connect(pan)
+    o.start(at)
+    o.stop(at + 0.05)
+    at += 0.25 + i * 0.12 + Math.random() * 0.3
+  }
+}
+
+/** A buffer knocking, a long way down the line: the recorded metal slowed and muffled, mostly echo; now and then it knocks twice. */
+function farShunt(e: Engine) {
+  const { ctx } = e
+  const lp = ctx.createBiquadFilter()
+  lp.type = 'lowpass'
+  lp.frequency.value = 400
+  const pan = ctx.createStereoPanner()
+  pan.pan.value = Math.random() * 1.4 - 0.7
+  lp.connect(pan)
+  pan.connect(e.airRoom)
+  const dry = ctx.createGain()
+  dry.gain.value = 0.2
+  pan.connect(dry).connect(e.out)
+  e.play('metalHeavy', lp, 0.2, 0.35 + Math.random() * 0.05)
+  if (Math.random() < 1 / 3) e.play('metalHeavy', lp, 0.14, 0.35 + Math.random() * 0.05, 0.6)
+}
+
 /** The forge, somewhere past the walls, at `when`: a low sine falling, and a plate struck far off, mostly echo. */
 function thump(e: Engine, when: number) {
   const { ctx } = e
@@ -425,9 +474,20 @@ function tick() {
   e.nextTick = t + 1
   const boss = mood === 'boss'
   const works = mood === 'works'
-  const air = mood === 'quarter' || mood === 'square'
+  const line = mood === 'line'
+  const air = mood === 'quarter' || mood === 'square' || line
   if (works) forge(e)
-  if (air) {
+  if (line) {
+    // open air over rails: no water, no machinery; wind, a rail ticking as it cools, a buffer knocking far off
+    if (t >= e.nextRail) {
+      railTick(e)
+      e.nextRail = t + 6 + Math.random() * 6
+    }
+    if (t >= e.nextShunt) {
+      farShunt(e)
+      e.nextShunt = t + 18 + Math.random() * 12
+    }
+  } else if (air) {
     // open air: no water, no machinery; wind, a curtain, and something far off
     if (t >= e.nextCurtain) {
       curtain(e)
@@ -499,7 +559,7 @@ export function updateAmbience(next: AmbienceMood) {
     const t = engine.ctx.currentTime
     // the Works hums with the foundry at 0.6, over half the stone's tone
     engine.foundry.gain.setTargetAtTime(next === 'boss' ? 1 : next === 'works' ? 0.6 : 0, t, 1.5)
-    const open = next === 'quarter' || next === 'square'
+    const open = next === 'quarter' || next === 'square' || next === 'line'
     engine.toneGain.gain.setTargetAtTime(next === 'works' || open ? 0.035 : 0.07, t, 1.5)
     // the quarter: the hum lower, and the drafts a wider, lower wind
     engine.toneLp.frequency.setTargetAtTime(open ? 180 : 260, t, 1.5)

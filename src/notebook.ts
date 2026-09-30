@@ -12,7 +12,7 @@ import { localDate, LEADERS_MAX } from './save'
  * From design/meta/SPEC.md §7.3 (ids are still's ALL_ENEMIES keys).
  */
 
-export type RosterRole = 'hulk' | 'sentinel' | 'ram' | 'mites' | 'elite' | 'fragment' | 'boss' | 'lobber' | 'heap' | 'thief' | 'mender' | 'reserved'
+export type RosterRole = 'hulk' | 'sentinel' | 'ram' | 'mites' | 'elite' | 'fragment' | 'boss' | 'lobber' | 'heap' | 'thief' | 'mender' | 'reserved' | 'signal' | 'handcar' | 'sleepers'
 export interface RosterEntry {
   id: RosterId
   name: string
@@ -101,12 +101,57 @@ function rng(seed: number) {
   return () => (s = (s * 16807) % 2147483647) / 2147483647
 }
 
+/** The Line's three new bodies, each of which needs a page of its own (the Engine's and the Porter's wait for stages C and D). */
+export type LineRole = 'signal' | 'handcar' | 'sleepers'
+/**
+ * The pages a Line body may take, all blank-line pages of a name he may not have met yet (never `raging-hull` or
+ * `drifting-frame`, which stages C and D will take). Only a page he has never met can change role (INV-N2): a page he
+ * has met as a sentinel stays a sentinel, so no page he already holds is re-labelled under him.
+ */
+export const LINE_DONORS: Record<LineRole, readonly RosterId[]> = {
+  signal: ['signal-jammer', 'thermal-scanner', 'glitch-node'],
+  handcar: ['feedback-loop', 'phase-drone'],
+  sleepers: ['conduit-spider', 'strain-siphon', 'void-leech'],
+}
+const LINE_ROLES = Object.keys(LINE_DONORS) as LineRole[]
+
+let linePagesOn = false
+const chosen: Record<LineRole, RosterId | null> = { signal: null, handcar: null, sleepers: null }
+
+/**
+ * INV-N1: while off, every roster lookup is exactly today's (namesFor, WHAT, the pages' order). main sets it once at
+ * boot: on when the Line can generate, off otherwise, so the shipped game's names never change (K-E10 OFF).
+ * On, each Line role takes a donor page: the one already met as that body (`r`), else the first donor never met,
+ * else none (the body is then met and felled unwritten, like the mender). It is chosen here and kept, so a name
+ * never changes role during a session.
+ */
+export function setLinePages(on: boolean, notebook: Save['notebook']): void {
+  linePagesOn = on
+  for (const role of LINE_ROLES) {
+    const donors = LINE_DONORS[role]
+    chosen[role] = !on ? null
+      : donors.find((id) => notebook[id]?.r === role) ?? donors.find((id) => !(id in notebook)) ?? null
+  }
+}
+
+/** True while the Line's pages are in play, so a Line body without a page is unwritten rather than named by its level. */
+export const linePagesActive = () => linePagesOn
+
+/** A Line body's page, or null: off, or every donor already met as something else. */
+export const linePage = (role: LineRole): RosterId | null => chosen[role]
+
+/** A page's role and band now: the Line body's role, band 'any', for a chosen donor; its own otherwise. */
+export function roleOf(r: RosterEntry): { role: RosterRole; band: RosterEntry['band'] } {
+  if (linePagesOn) for (const role of LINE_ROLES) if (chosen[role] === r.id) return { role, band: 'any' }
+  return { role: r.role, band: r.band }
+}
+
 /** What an archetype may be called at a depth: its role, in the depth's band or any; with no band match, any of its role. */
 export function namesFor(kind: Exclude<Archetype, 'boss'>, depth: number): RosterEntry[] {
   const role = ROLE_OF[kind]
   const band = bandOf(depth)
-  const inBand = ROSTER.filter((r) => r.role === role && (r.band === band || r.band === 'any'))
-  return inBand.length ? inBand : ROSTER.filter((r) => r.role === role)
+  const inBand = ROSTER.filter((r) => { const o = roleOf(r); return o.role === role && (o.band === band || o.band === 'any') })
+  return inBand.length ? inBand : ROSTER.filter((r) => roleOf(r).role === role)
 }
 
 /**
@@ -164,4 +209,5 @@ export const WHAT: Record<RosterRole, string> = {
   // PLACEHOLDER words for the content pages
   hulk: 'a hulk', sentinel: 'a sentinel', ram: 'a ram', mites: 'mites', elite: 'an elite', boss: 'the boss', fragment: 'pieces of one',
   lobber: 'a lobber', heap: 'a slag heap', thief: 'a thief', mender: 'a mender', reserved: '',
+  signal: 'a signalman', handcar: 'a handcar', sleepers: 'sleepers',
 }

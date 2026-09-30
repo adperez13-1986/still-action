@@ -1,3 +1,4 @@
+import type { RouteId } from './areas'
 import type { EndingKind, RunCard } from './save'
 
 /**
@@ -18,10 +19,14 @@ const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', '
 /** PLACEHOLDER words, Adrian's. */
 const END_WORD: Record<EndingKind, string> = { broken: 'broke', stopped: 'stopped', home: 'home' }
 
-/** "25 Sep · home · depth 3" */
-export function caption(c: Pick<RunCard, 'date' | 'end' | 'depth'>): string {
+/** The road a card was walked, when it says: null keeps the caption as it was before roads (INV-K1). PLACEHOLDER, Adrian's words. */
+const ROUTE_WORD: Record<RouteId, string | null> = { II: null, III: 'the Line first' }
+
+/** "25 Sep · home · depth 3", and a road's word after it for a card that has one ("... · the Line first"). */
+export function caption(c: Pick<RunCard, 'date' | 'end' | 'depth' | 'route'>): string {
   const [, m, d] = c.date.split('-').map(Number)
-  return `${d} ${MONTHS[(m ?? 1) - 1]} · ${END_WORD[c.end]} · depth ${c.depth}`
+  const road = c.route ? ROUTE_WORD[c.route] : null
+  return `${d} ${MONTHS[(m ?? 1) - 1]} · ${END_WORD[c.end]} · depth ${c.depth}${road ? ` · ${road}` : ''}`
 }
 
 /** A tiny deterministic wobble per card, so no two lines are drawn quite the same. */
