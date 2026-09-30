@@ -3,6 +3,17 @@
 For the next session. Read this, then `DESIGN.md` (the settled decisions), then the design
 folder for whatever you're touching. Don't re-derive any of them.
 
+## Start here (30 Sep, 19:00, at home: screens fix live)
+
+**His report:** paused in the final boss, resume was below the bottom edge and the pause screen couldn't scroll: no way back.
+**Fixed + pushed (21a4fbf):** #pause scrolls (auto-margin centring, touch-action pan-y), actions wrap and are pinned to its bottom,
+tighter cards under 520 px tall; the same fault hid take/leave on compare and close on the notebook. Pickup card under 350 px tall:
+choices in a row. **New check `node tools/checks/screens.mjs`** (K-S1..12): every overlay at 4 landscape phone sizes with worst-case
+content; negative-tested against the old CSS. Add any new overlay to its SCREENS table.
+Reload resumes the run at the depth's last beam (save.ts), so the boss fight restarts, not the run.
+Dev server running this session (`npx vite --host`, LAN 10.0.0.79:5173): stop it at session end.
+Everything below from "30 Sep, late" still stands (the phone questions, his words to write).
+
 ## Start here (30 Sep, late: AREA III IS LIVE; next session is at home)
 
 **State:** main = origin, all pushed and deployed, nothing running, nothing uncommitted. **Area III is live** on his word
