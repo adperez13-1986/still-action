@@ -3,19 +3,24 @@
 For the next session. Read this, then `DESIGN.md` (the settled decisions), then the design
 folder for whatever you're touching. Don't re-derive any of them.
 
-## Start here (1 Oct, afternoon: weight W0-W4 live, W5 next; he OK'd localhost-only checks for this session)
+## Start here (1 Oct, evening: "weight" DONE and live, waiting on his phone run)
 
-**Brief: `design/lean/WEIGHT.md`** (verifier; e7ea3c9): steps W0-W5, checks K-L1..L12 in a new `tools/checks/lean.mjs`, numbers in
-a new `src/weight.ts` with presets **B** (default, `3-balancer.md` r3: packs x1.4 d1-2 / x1.65 d4+, boss x1.3, torso/legs x1.8,
-head/arms x1.2, vent x1.4, dash x2, Cleaver 180 deg + 1.2 u shove) and **D** (fallback, smaller area). Bigger packs dropped
-(r3: they lose to HP for the median too), so no frame-rate measurement needed. My change to the brief: cards show weighed
-numbers while it's on (W3, K-L3g). R3 answered (3-balancer "R3 answer"): keep packHpDeep x1.65 on the live curve (19/72/92). **W0 done + pushed (0620020)**: the switch shows on the pause
-screen but does nothing until W1-W3. **W1 (timing) done + pushed** (freeze on contact only, cocked pose,
-quiet autos). **For W4:** in S1 five struck hulks bloom into one white blob (existing hit flash x bloom): W4 must not add
-brightness in crowds; consider the per-hit flash shrinking with bodies struck. k9 can flake when run alongside other suites
-(timeouts); rerun alone. W2 (full effect on ready casts) done + pushed. W3 (Ask 1 numbers, cards weighed) done + pushed: the switch is now a real trial (timing + full effect + numbers); only W4's per-slot sounds/drama and W5's whole-trial check are left. Cards don't show the Cleaver's cone or the dash's width (no such row, before or after). W4 (per-slot sounds, gather, flinch, break heft; crowd flash capped 1/sqrt n, K-L13) done + pushed. The flinch is likely invisible at game camera (~10 deg on a 60 px body); the gather lasts 67 ms. Nothing has been heard. Next: W5 (whole trial headless, K-L12 freeze budget), one fresh Sonnet engineer each, push each
-reviewed step. If a session dies mid-step: review the uncommitted diff against WEIGHT.md before keeping it, me reviewing every diff and screenshot; push each reviewed step
-(he wants work live, the switch keeps it off by default).
+**The "weight" trial is complete and live (W0-W5, 0620020..47036ef)**, a pause switch "weight" (PLACEHOLDER word), off by default.
+Brief `design/lean/WEIGHT.md`, round outcome `design/lean/PITCHES.md`, numbers `design/lean/3-balancer.md` (preset B in
+`src/weight.ts`; D = smaller-area fallback, one constant `WEIGHT_PRESET`). On: freeze only on contact (formula in WEIGHT_FEEL),
+autos quiet, cocked pose; every ready cast carries the push's effects (no strain); packs x1.4 d1-2 / x1.65 d4+, boss x1.3, torso/legs
+x1.8, head/arms x1.2, vent x1.4, dash x2, Cleaver 180 deg + shove; per-slot sounds; a crowd's hit flash capped 1/sqrt(n); cards show
+weighed numbers. Pack/boss HP apply from the next level after flipping; that depth logs `weightMixed` (leave out when judging).
+**My review fixes along the way:** dash contact cleared on level reset; card reach to one decimal; crowd flash cap (K-L13); trains
+scale with the weight's pack HP (else bodies survive trains and loiter in lit strips: K-T5 under WEIGHT=1).
+**Checks:** `node tools/checks/lean.mjs` (K-L1..L13, K-L12w); `WEIGHT=1 node tools/checks/<suite>.mjs` runs any suite with the trial on
+(report only: baseline/fights/stagec K-N9/stageb K-T15/K-E3 differ by design). Off = today: every suite unchanged.
+**Ask him first (feel before numbers):** does a five-body Cleaver feel different from a jab; does the freeze read as weight or lag;
+the sounds (none ever heard); haptics; does the 180 Cleaver / big vent crowd the screen (else preset D). Then his log: `kills.part`
+share d1-2 >= 45% (36% now), hpLost d1-3 within 20% of runs 9-17, `freezeMs` per fight-minute, `breaksBy`. Watch: with weight on,
+trains take 28-30% of the bot's kills on the Line (21% off), and the hesitant bot's area-II kill time rose 4.9 -> 6.2 s.
+**Next build (his call after the run): "tap push"** (PITCHES: tap on a cooling button pushes, 300 ms queue, 250 ms mash guard; strain
+untouched by his word). Small leftovers: flinch likely invisible at game camera; card has no cone/width row.
 
 ## Start here (1 Oct, later: "weight" brief + balancer r3 running)
 
