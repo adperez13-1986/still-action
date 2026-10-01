@@ -3,6 +3,15 @@
 For the next session. Read this, then `DESIGN.md` (the settled decisions), then the design
 folder for whatever you're touching. Don't re-derive any of them.
 
+## Start here (1 Oct, evening: first log with "weight" + "tap push" read)
+
+He sent `~/Downloads/still-playtest-2026-10-01 (1).json`, again no words. Read in **`design/lean/TRIAL-1.md`**. Two runs, both home
+(9 depths, road II), weight + tap push + follow-through all on. Every log line passes: part kill share d1-2 62-79% (off 19-54%),
+hpLost d1-3 -18% vs runs 9-17 (easy edge), freeze 3-10% of fight time, parts ~85% of it; tap push: 38/38 pushes by tap, 0 guarded,
+0 dead, 0 thumb rolls, 0.4-0.8 pushes a fight, strain at boss 2-6. Pushes didn't rise, so the strain retune stays parked.
+**Ask him first:** how it felt (the questions in the two sections below). If his feel agrees, his call: both on by default + retire
+the hold, or keep testing. If he wants it harder: pack HP d1-2 is the dial, not the parts. Nothing built.
+
 ## Start here (1 Oct, night: "weight" AND "tap push" both done and live, waiting on his phone runs)
 
 Two independent pause switches, both off by default, both built + reviewed + pushed:
