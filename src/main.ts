@@ -3841,6 +3841,24 @@ hud.onPress((p) => {
 })
 
 /**
+ * "tap push" (design/lean/TAP-PUSH.md): the touch-down's answer, counted on the open depth and heard at once. A push's own strain is still
+ * charged in onFire (`pushes` too); this adds the gesture's share. A queued cast and a ready press carry no price, so no answer for them.
+ */
+hud.onAnswer((a) => {
+  if (run.phase !== 'crawl') return
+  const st = run.stats[run.stats.length - 1]
+  if (!st) return
+  if (a.kind === 'push') st.tapPushes++
+  else if (a.kind === 'queued') {
+    st.queued++
+    sfx.queued(0.35)
+  } else if (a.kind === 'guarded') {
+    st.guarded++
+    sfx.deadTap(0.35)
+  } else st.queueDropped++
+})
+
+/**
  * The only way strain goes up: pushes, parts that cost strain, bargains. It clamps
  * at the max and starts the stop the moment strain reaches it, so every path can end the run.
  */

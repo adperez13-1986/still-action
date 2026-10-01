@@ -1610,6 +1610,7 @@ export function denied() {
  * short, no body and no tail, under the auto so a mash never clutters the fight.
  */
 export function deadTap(pan: number) {
+  heard('deadTap')
   const c = live()
   if (!c) return
   const t = c.currentTime
@@ -1617,6 +1618,20 @@ export function deadTap(pan: number) {
   const d = out(c, 'abilities', pan)
   hiss(c, d, t, 0.012, 0.09, 'highpass', 5200, 4200, 0.8, 0.001)
   tone(c, d, 'triangle', t, vary(2300, 0.04), 1750, 0.018, 0.035, 0.001)
+}
+
+/**
+ * "tap push" (design/lean/TAP-PUSH.md), a touch taken and queued: a soft, cold, short tick, not the dead tap's steel latch. A triangle
+ * around 1.4 kHz, ~25 ms, quiet, and limited like the latch so a mash never clutters the fight. Unheard until the phone.
+ */
+export function queued(pan: number) {
+  heard('queued')
+  const c = live()
+  if (!c) return
+  const t = c.currentTime
+  if (limited('queued', 0.04, t)) return
+  const d = out(c, 'abilities', pan)
+  tone(c, d, 'triangle', t, vary(1400, 0.03), 1250, 0.025, 0.05, 0.002)
 }
 
 /** A shot destroyed on the Ward: a ting. */

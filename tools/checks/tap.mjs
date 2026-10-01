@@ -65,6 +65,9 @@ const READ = `(slot) => {
     heard: W.__heard.map((h) => h.name),
     st: { pushes: st.pushes, deadTaps: st.deadTaps, quiets: st.quiets, tapPush: st.tapPush, tapPushes: st.tapPushes, queued: st.queued, queueDropped: st.queueDropped, guarded: st.guarded },
     taps: W.__run.taps.length,
+    phase: W.__run.phase,
+    near: el.classList.contains('near'),
+    owedShown: getComputedStyle(el.querySelector('.owed')).display !== 'none',
   }
 }`
 
@@ -99,6 +102,14 @@ async function touch(page, slot, holdS = 0) {
 }
 
 const setup = (page, on) => evalJson(page, `() => (${SETUP})(${on})`)
+/** Two animation frames: the HUD's per-frame update has run on the held clock (the classes it owns, `near`, are then current). */
+const frames = (page) => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))))
+/** Held-clock time to pass between two touches that must not see each other: the guard rolls from the last touch, 250 ms. */
+const gap = (page, s = 0.26) => evalJson(page, `(s) => window.__step(s)`, s)
+const step = (page, s) => evalJson(page, `(s) => window.__step(s)`, s)
+const read = (page, slot) => evalJson(page, READ, slot)
+const lastTap = (page) => evalJson(page, `() => window.__taps().at(-1) ?? null`)
+const nVib = (r, v) => r.vib.filter((x) => JSON.stringify(x) === JSON.stringify(v)).length
 const cool = (page, slot, ms) => evalJson(page, `(a) => window.__cool(a[0], a[1])`, [slot, ms])
 const cooldownOf = (page, slot) => evalJson(page, `(slot) => window.__hud.slots.find((s) => s.slot === slot).def.cooldownMs`, slot)
 
@@ -429,7 +440,8 @@ check('K-P9', RUN, async ({ page }) => {
     assert(!('nbMs' in taps[2]) && !('nbSlot' in taps[2]), `${mode}: a 1100 ms gap should carry no nbMs: ${JSON.stringify(taps[2])}`)
     assert(!('nbMs' in taps[3]) && !('nbSlot' in taps[3]), `${mode}: the same slot twice should carry no nbMs: ${JSON.stringify(taps[3])}`)
     assert(!('nbMs' in taps[0]), `${mode}: the first press after a 1100 ms wait should carry no nbMs: ${JSON.stringify(taps[0])}`)
-    for (const t of taps) assert(!('tp' in t), `${mode}: no tap carries tp before the gesture is wired: ${JSON.stringify(t)}`)
+    // tp marks an answer that came from the tap push path: every touch on a filled button with the switch on, none with it off
+    for (const t of taps) assert(on ? t.tp === true : !('tp' in t), `${mode}: tp should be ${on ? 'true on every tap' : 'absent'}: ${JSON.stringify(t)}`)
   }
 
   // strainAtBoss: the strain on the first tick the boss is awake, once
@@ -460,6 +472,387 @@ check('K-P9', RUN, async ({ page }) => {
   assertEq('strainAtBoss: the strain on the first awake tick', boss.first, 7)
   assertEq('strainAtBoss: strain 9 later, still the first', boss.second, 7)
   assertEq('a depth without a boss has no strainAtBoss key', boss.next, false)
+})
+
+
+
+// ---- K-P4: a push by a real touch ------------------------------------------------------------------------------------------------------
+
+check('K-P4', RUN, async ({ page }) => {
+  await setup(page, true)
+  const cd = await cooldownOf(page, 'arms')
+  await cool(page, 'arms', 2000)
+  const pre = await read(page, 'arms')
+  const p = await press(page, 'arms')
+  const d = await p.read()
+  assertEq('a touch on a cooling button (2000 left): strain +2 at the touch-down', d.strain, pre.strain + 2)
+  assertEq('pushes +1 between down and up', d.st.pushes, pre.st.pushes + 1)
+  assertEq('tapPushes +1 between down and up', d.st.tapPushes, pre.st.tapPushes + 1)
+  assert(Math.abs(d.readyIn.arms - cd) <= 17, `the cooldown restarted at the touch: readyIn ${d.readyIn.arms}, wanted ~${cd} (+-17)`)
+  assertEq('the push signature: vibration [14,26,14]', d.vib.at(-1), [14, 26, 14])
+  assert(d.cls.includes('kick'), `the rim kicks at the touch: classes ${d.cls.join(' ')}`)
+  assert(!d.cls.includes('arming'), 'a push has no ring')
+  await p.step(0.5)
+  const held = await p.read()
+  assertEq('held a further 0.5 s: strain still +2 (no second push, no hold)', held.strain, pre.strain + 2)
+  assertEq('held: one push', held.st.pushes, pre.st.pushes + 1)
+  await p.up()
+  const tap = await lastTap(page)
+  assertEq('the up logs the push', [tap.slot, tap.result, tap.leftMs, tap.tp, tap.ready], ['arms', 'push', 2000, true, false])
+  const after = await read(page, 'arms')
+  assertEq('letting go does nothing more', [after.strain, after.st.pushes], [pre.strain + 2, pre.st.pushes + 1])
+
+  // a hot button (the cooldown done, the heat on) pushes the same way
+  await gap(page)
+  await cool(page, 'arms', 0)
+  await evalJson(page, `() => window.__hud.heat('arms', 2000)`)
+  const hot0 = await read(page, 'arms')
+  const hp = await press(page, 'arms')
+  const h = await hp.read()
+  assertEq('a hot button (2000 of heat left) pushes: strain +2', h.strain, hot0.strain + 2)
+  assertEq('a hot push counts: pushes +1, tapPushes +1', [h.st.pushes, h.st.tapPushes], [hot0.st.pushes + 1, hot0.st.tapPushes + 1])
+  assertEq('a hot push: the signature', h.vib.at(-1), [14, 26, 14])
+  await hp.up()
+  assertEq('a hot push logs push', (await lastTap(page)).result, 'push')
+})
+
+// ---- K-P5: the queue fires free --------------------------------------------------------------------------------------------------------
+
+check('K-P5', RUN, async ({ page }) => {
+  await setup(page, true)
+  const cd = await cooldownOf(page, 'arms')
+
+  // 280 left: queued (inside the window, not on its edge: a frame can re-sync the hud clock by float dust, and 300.0000001 is a push;
+  // the exact edge is K-P3's, on the pure function). Released early; the ready arrives and it fires once, free
+  await cool(page, 'arms', 280)
+  const pre = await read(page, 'arms')
+  let p = await press(page, 'arms')
+  const d = await p.read()
+  assertEq('queued: strain unchanged at the touch-down', d.strain, pre.strain)
+  assert(d.readyIn.arms <= 300 && d.readyIn.arms > 0, `queued: nothing fired yet, readyIn ${d.readyIn.arms}`)
+  assertEq('queued: pushes unchanged', d.st.pushes, pre.st.pushes)
+  assert(d.cls.includes('arming') && d.cls.includes('queued'), `queued: classes arming and queued, got ${d.cls.join(' ')}`)
+  assertEq('queued: the ring full (--arm 360 deg; update() may have reformatted it by the time of the read)', parseFloat(d.arm), 360)
+  assert(d.heard.includes('queued'), `queued: the tick was asked for, heard ${d.heard.join(',')}`)
+  assertEq('queued +1', d.st.queued, pre.st.queued + 1)
+  assert(!d.cls.includes('kick'), 'a queued touch does not kick the rim')
+  await p.up()
+  const tap = await lastTap(page)
+  assertEq('the up logs queued', [tap.result, tap.leftMs, tap.tp], ['queued', 280, true])
+  const mid = await read(page, 'arms')
+  assert(mid.cls.includes('queued'), 'letting go keeps the queue pending')
+  assertEq('letting go fires nothing', mid.strain, pre.strain)
+  // 0.32, not 0.3: 300 left is 18 ticks of the held clock to within float dust, and the 19th is the one that always sees it ready
+  await step(page, 0.32)
+  const fired = await read(page, 'arms')
+  assert(fired.readyIn.arms > cd - 40 && fired.readyIn.arms <= cd + 1, `the queue fired once as the button readied: readyIn ${fired.readyIn.arms}, wanted ~${cd}`)
+  assertEq('fired: the 12 ms buzz, once', [nVib(fired, 12), fired.vib.at(-1)], [nVib(pre, 12) + 1, 12])
+  assertEq('fired: not a push (pushes +0)', fired.st.pushes, pre.st.pushes)
+  assertEq('fired: free (strain unchanged)', fired.strain, pre.strain)
+  assert(!fired.cls.includes('queued'), `fired: the queued class is gone, got ${fired.cls.join(' ')}`)
+  await step(page, 0.3)
+  const later = await read(page, 'arms')
+  assertEq('fired once, not again', nVib(later, 12), nVib(pre, 12) + 1)
+
+  // the same with the mouse held through the ready: one fire, and the up does nothing
+  await gap(page)
+  await cool(page, 'arms', 280)
+  const pre2 = await read(page, 'arms')
+  p = await press(page, 'arms')
+  const q2 = await p.read()
+  assert(q2.cls.includes('queued'), 'held: queued')
+  await p.step(0.35)
+  const f2 = await p.read()
+  assertEq('held through the ready: one fire', nVib(f2, 12), nVib(pre2, 12) + 1)
+  assertEq('held through the ready: free and not a push', [f2.strain, f2.st.pushes], [pre2.strain, pre2.st.pushes])
+  await p.up()
+  const u2 = await read(page, 'arms')
+  assertEq('the up does nothing more: no second fire, strain unchanged', [nVib(u2, 12), u2.strain, u2.readyIn.arms > 0], [nVib(pre2, 12) + 1, pre2.strain, true])
+  assertEq('held through the ready: logged queued', (await lastTap(page)).result, 'queued')
+
+  // the honest price: <= 300 ms left is free to touch
+  await gap(page)
+  await cool(page, 'arms', 280)
+  await frames(page)
+  const n300 = await read(page, 'arms')
+  assertEq('300 left: the button is near and the push price is hidden', [n300.near, n300.owedShown], [true, false])
+  await cool(page, 'arms', 301)
+  await frames(page)
+  const n301 = await read(page, 'arms')
+  assertEq('301 left: not near, the push price shown', [n301.near, n301.owedShown], [false, true])
+  await cool(page, 'arms', 2000)
+  await frames(page)
+  const n2000 = await read(page, 'arms')
+  assertEq('2000 left: not near, the push price shown', [n2000.near, n2000.owedShown], [false, true])
+})
+
+// ---- K-P6: the mash guard --------------------------------------------------------------------------------------------------------------
+
+check('K-P6', RUN, async ({ page }) => {
+  await setup(page, true)
+  const cd = await cooldownOf(page, 'arms')
+
+  // a ready Cleaver touched: cast. Then the guard, rolling from the last touch
+  let t = await touch(page, 'arms')
+  assertEq('a ready touch casts', [t.tap.result, t.tap.tp], ['cast', true])
+  await step(page, 0.2)
+  const pre = await read(page, 'arms')
+  const p = await press(page, 'arms')
+  const g = await p.read()
+  assert(g.cls.includes('arming'), `guarded: the arc shows, classes ${g.cls.join(' ')}`)
+  assertEq('guarded: the small arc (--arm 120 deg; the clock is held, so it has not pulled back)', parseFloat(g.arm), 120)
+  assert(g.heard.filter((h) => h === 'deadTap').length === pre.heard.filter((h) => h === 'deadTap').length + 1, `guarded: the dry click was asked for, heard ${g.heard.join(',')}`)
+  assertEq('guarded: strain, pushes, readyIn unchanged', [g.strain, g.st.pushes, g.readyIn.arms], [pre.strain, pre.st.pushes, pre.readyIn.arms])
+  assertEq('guarded +1', g.st.guarded, pre.st.guarded + 1)
+  assert(!g.cls.includes('kick') && !g.cls.includes('queued'), 'a guarded touch does not kick or queue')
+  await p.up()
+  assertEq('the up logs guarded', [(await lastTap(page)).result, (await lastTap(page)).tp], ['guarded', true])
+
+  // the guard rolls: 50 ms after the guarded touch is still guarded (250 after the fire), 260 ms after it pushes
+  await step(page, 0.05)
+  t = await touch(page, 'arms')
+  assertEq('50 ms after a guarded touch (250 after the fire): still guarded (it rolls)', t.tap.result, 'guarded')
+  assertEq('...and it cost nothing', t.up.strain, pre.strain)
+  await step(page, 0.26)
+  const pre3 = await read(page, 'arms')
+  t = await touch(page, 'arms')
+  assertEq('260 ms after the last touch: push', t.tap.result, 'push')
+  assertEq('...strain +2', t.down.strain, pre3.strain + 2)
+
+  // a sustained mash pays once: 4 taps at 120 ms: push, guarded, guarded, guarded
+  await gap(page)
+  await cool(page, 'arms', 2000)
+  const m0 = await read(page, 'arms')
+  const results = []
+  for (let i = 0; i < 4; i++) {
+    if (i) await step(page, 0.12)
+    results.push((await touch(page, 'arms')).tap.result)
+  }
+  assertEq('a mash of 4 taps at 120 ms', results, ['push', 'guarded', 'guarded', 'guarded'])
+  const m1 = await read(page, 'arms')
+  assertEq('the mash paid exactly once (+2), one push', [m1.strain, m1.st.pushes], [m0.strain + 2, m0.st.pushes + 1])
+
+  // the guard also counts a fire that was not a touch: a queued fire, then a touch 100 ms after it (310 after the queue's touch)
+  await gap(page)
+  await cool(page, 'arms', 200)
+  const q0 = await read(page, 'arms')
+  await touch(page, 'arms')
+  assertEq('queued at 200 left', (await lastTap(page)).result, 'queued')
+  await step(page, 0.21)
+  const qf = await read(page, 'arms')
+  assertEq('the queue fired once', nVib(qf, 12), nVib(q0, 12) + 1)
+  await step(page, 0.1)
+  t = await touch(page, 'arms')
+  assertEq('a touch 100 ms after a queued fire (310 after its own touch): guarded by the fire', t.tap.result, 'guarded')
+  assertEq('...and it cost nothing', t.up.strain, q0.strain)
+
+  // a pending queue touched again: guarded, the ring stays full and cold, and it fires once
+  await gap(page)
+  await cool(page, 'arms', 200)
+  const r0 = await read(page, 'arms')
+  await touch(page, 'arms')
+  assertEq('queued again at 200 left', (await lastTap(page)).result, 'queued')
+  const qp = await press(page, 'arms')
+  const qd = await qp.read()
+  assertEq('a touch on a pending queue: the ring stays full (360 deg, whichever way update() writes it)', parseFloat(qd.arm), 360)
+  assert(qd.cls.includes('queued'), 'a touch on a pending queue: still queued')
+  assertEq('it is guarded and counted', [qd.st.guarded, qd.st.queued], [r0.st.guarded + 1, r0.st.queued + 1])
+  assertEq('...with the click, no arc and no price', [qd.strain, qd.st.pushes], [r0.strain, r0.st.pushes])
+  await qp.up()
+  assertEq('logged guarded', (await lastTap(page)).result, 'guarded')
+  await step(page, 0.3)
+  const qe = await read(page, 'arms')
+  assertEq('the pending queue fired exactly once, free', [nVib(qe, 12), qe.strain], [nVib(r0, 12) + 1, r0.strain])
+  assert(qe.readyIn.arms > cd - 150 && qe.readyIn.arms <= cd + 1, `the queue's fire restarted the cooldown: ${qe.readyIn.arms}`)
+})
+
+// ---- K-P8: strain exactly +2 a push ----------------------------------------------------------------------------------------------------
+
+task('K-P8', async () => {
+  const { readFileSync } = await import('node:fs')
+  const src = readFileSync(HERE + '../../src/main.ts', 'utf8')
+  for (const line of ['const STRAIN_PER_PUSH = 2', 'const STRAIN_MAX = 20', 'const QUIET_STRAIN = 2']) assert(src.includes(line), `src/main.ts no longer has "${line}"`)
+})
+
+check('K-P8', RUN, async ({ page }) => {
+  await setup(page, true)
+  const SLOTS = ['head', 'torso', 'arms', 'legs']
+  const log = []
+  // a sequence: every touch is read at the touch-down (no step), so the strain it moved is its own
+  const go = async (slot, coolMs) => {
+    await gap(page)
+    if (coolMs !== null) await cool(page, slot, coolMs)
+    const pre = await read(page, slot)
+    const p = await press(page, slot)
+    const d = await p.read()
+    await p.up()
+    const tap = await lastTap(page)
+    log.push({ slot, result: tap.result, dStrain: d.strain - pre.strain, dQuiets: d.st.quiets - pre.st.quiets })
+    return d
+  }
+  // K-P5 and K-P6's kinds of touch: casts, queued, guarded, pushes
+  await go('arms', 0)
+  await go('arms', 300)
+  await go('arms', 2000)
+  await go('arms', 2000)
+  await step(page, 0.1)
+  await go('arms', null)
+  await step(page, 0.05)
+  await go('arms', null)
+  // six more pushes on the other three parts (none costs strain of its own)
+  for (const slot of ['head', 'torso', 'legs', 'head', 'torso', 'legs']) await go(slot, 2000)
+  const pushes = log.filter((l) => l.result === 'push')
+  assert(pushes.length >= 8, `the sequence made ${pushes.length} pushes, wanted >= 8: ${JSON.stringify(log)}`)
+  for (const l of log) assertEq(`${l.slot} ${l.result}: strain moved by exactly 2 per push and nothing otherwise`, l.dStrain, l.result === 'push' ? 2 : 0)
+  assertEq('quiets unchanged by any touch', log.map((l) => l.dQuiets), log.map(() => 0))
+})
+
+check('K-P8', RUN + '&p8=1', async ({ page }) => {
+  // strain 18, a tap push: the push lands at 20 and then he stops, as today
+  await setup(page, true)
+  await cool(page, 'arms', 2000)
+  await evalJson(page, `() => { window.__run.strain = 18 }`)
+  const p = await press(page, 'arms')
+  const d = await p.read()
+  assertEq('strain 18 + a tap push: 20, the stop begun', [d.strain, d.phase], [20, 'stopping'])
+  assertEq('the push still landed (pushes +1)', d.st.pushes, 1)
+  await p.up()
+})
+
+// ---- K-P9 (P1): the counters -----------------------------------------------------------------------------------------------------------
+
+check('K-P9', RUN, async ({ page }) => {
+  // on: one push, one queued, one guarded (the counters are the open depth's: read as differences from before)
+  await setup(page, true)
+  const before = await read(page, 'arms')
+  await cool(page, 'arms', 2000)
+  await touch(page, 'arms')
+  await cool(page, 'torso', 200)
+  await touch(page, 'torso')
+  await touch(page, 'torso')
+  const on = await read(page, 'arms')
+  const dOn = (k) => on.st[k] - before.st[k]
+  assertEq('on: tapPushes 1, queued 1, guarded 1, pushes 1, queueDropped 0, deadTaps 0', ['tapPushes', 'queued', 'guarded', 'pushes', 'queueDropped', 'deadTaps'].map(dOn), [1, 1, 1, 1, 0, 0])
+  const taps = await evalJson(page, `() => window.__taps()`)
+  assertEq('on: push / queued / guarded', taps.map((t) => t.result), ['push', 'queued', 'guarded'])
+  for (const t of taps) assertEq(`on: ${t.result} carries tp`, t.tp, true)
+
+  // off: the same touches are a push (held 0.2 s) / dead / dead, every new counter 0, no tp
+  await setup(page, false)
+  const before2 = await read(page, 'arms')
+  await cool(page, 'arms', 2000)
+  await touch(page, 'arms', 0.2)
+  await cool(page, 'torso', 200)
+  await touch(page, 'torso')
+  await touch(page, 'torso')
+  const off = await read(page, 'arms')
+  const dOff = (k) => off.st[k] - before2.st[k]
+  assertEq('off: every new counter 0, deadTaps 2, pushes 1', ['tapPushes', 'queued', 'queueDropped', 'guarded', 'deadTaps', 'pushes'].map(dOff), [0, 0, 0, 0, 2, 1])
+  const offTaps = await evalJson(page, `() => window.__taps()`)
+  assertEq('off: push / dead / dead', offTaps.map((t) => t.result), ['push', 'dead', 'dead'])
+  for (const t of offTaps) assert(!('tp' in t), `off: no tp on ${JSON.stringify(t)}`)
+})
+
+// ---- K-P10: the queue's edges ----------------------------------------------------------------------------------------------------------
+
+check('K-P10', RUN, async ({ page }) => {
+  await setup(page, true)
+  const cd = await cooldownOf(page, 'arms')
+  /** A fresh queue at left 200 on the Cleaver; returns the read just before the touch. */
+  const queue = async () => {
+    await evalJson(page, `() => window.__tapPush(true)`)
+    await gap(page)
+    await evalJson(page, `() => window.__hud.heat('arms', 0)`)
+    await cool(page, 'arms', 200)
+    const pre = await read(page, 'arms')
+    await touch(page, 'arms')
+    const q = await read(page, 'arms')
+    assert(q.cls.includes('queued') && parseFloat(q.arm) === 360, `a fresh queue is pending: ${JSON.stringify([q.cls, q.arm, q.readyIn.arms, q.st])}`)
+    return pre
+  }
+  const dropped = async (what, pre, act) => {
+    await act()
+    const r = await read(page, 'arms')
+    assertEq(`${what}: queueDropped +1 at once`, r.st.queueDropped, pre.st.queueDropped + 1)
+    assert(!r.cls.includes('queued'), `${what}: the queued class is gone, got ${r.cls.join(' ')}`)
+    await step(page, 0.5)
+    const e = await read(page, 'arms')
+    assertEq(`${what}: nothing fired (no new vibration, strain unchanged)`, [e.vib.length, e.strain], [r.vib.length, pre.strain])
+    assert(!e.cls.includes('arming'), `${what}: the ring is gone, got ${e.cls.join(' ')}`)
+    return e
+  }
+
+  // (a) a heat lands on it
+  let pre = await queue()
+  const a = await dropped('(a) heat', pre, () => evalJson(page, `() => window.__hud.heat('arms', 2000)`))
+  assert(a.readyIn.arms === 0, '(a) the cooldown ran out under the heat; it did not fire')
+
+  // (b) a swap
+  pre = await queue()
+  await dropped('(b) swap', pre, () => evalJson(page, `() => window.__equip('piston')`))
+  await evalJson(page, `() => window.__equip('scrap-cleaver')`)
+
+  // (c) the pause opened, then resumed
+  pre = await queue()
+  await dropped('(c) pause', pre, async () => {
+    await evalJson(page, `() => { window.__hud.enabled = false }`)
+    await step(page, 0.4)
+    await evalJson(page, `() => { window.__hud.enabled = true }`)
+  })
+
+  // (d) the switch flipped off
+  pre = await queue()
+  await dropped('(d) switch off', pre, () => evalJson(page, `() => window.__tapPush(false)`))
+
+  // (e) a rider readies it: it fires on the next step, free
+  pre = await queue()
+  await evalJson(page, `() => window.__hud.ready('arms', 'cold')`)
+  const e0 = await read(page, 'arms')
+  assertEq('(e) a rider readying it does not drop the queue', e0.st.queueDropped, pre.st.queueDropped)
+  await step(page, 0.02)
+  const e1 = await read(page, 'arms')
+  assert(e1.readyIn.arms > cd - 40 && e1.readyIn.arms <= cd + 1, `(e) it fired on the next step: readyIn ${e1.readyIn.arms}`)
+  assertEq('(e) free: strain unchanged, not a push, one buzz', [e1.strain, e1.st.pushes, nVib(e1, 12)], [pre.strain, pre.st.pushes, nVib(pre, 12) + 1])
+
+  // (f) heat 200 on a cooled button: queued, fires free when the heat ends
+  await gap(page)
+  await cool(page, 'arms', 0)
+  await evalJson(page, `() => window.__hud.heat('arms', 200)`)
+  const f0 = await read(page, 'arms')
+  const t = await touch(page, 'arms')
+  assertEq('(f) a touch in the last 300 ms of a heat queues', [t.tap.result, t.tap.leftMs], ['queued', 200])
+  assertEq('(f) free to touch: strain unchanged', t.down.strain, f0.strain)
+  await step(page, 0.25)
+  const f1 = await read(page, 'arms')
+  assert(f1.readyIn.arms > cd - 150 && f1.readyIn.arms <= cd + 1, `(f) it fired when the heat ended: readyIn ${f1.readyIn.arms}`)
+  assertEq('(f) free and not a push', [f1.strain, f1.st.pushes, nVib(f1, 12)], [f0.strain, f0.st.pushes, nVib(f0, 12) + 1])
+})
+
+// ---- K-P13: the DEV path is the gesture's after ----------------------------------------------------------------------------------------
+
+check('K-P13', RUN, async ({ page }) => {
+  const results = {}
+  for (const on of [false, true]) {
+    await setup(page, on)
+    const cd = await cooldownOf(page, 'arms')
+    const fire = async (what, ms, pushed) => {
+      await cool(page, 'arms', ms)
+      const pre = await read(page, 'arms')
+      await evalJson(page, `(a) => window.__fire('arms', a)`, pushed)
+      const post = await read(page, 'arms')
+      return { what, dStrain: post.strain - pre.strain, dPushes: post.st.pushes - pre.st.pushes, restarted: post.readyIn.arms > cd - 40, dVib: post.vib.length - pre.vib.length }
+    }
+    const out = [
+      await fire('__fire on a cooling button', 2000, undefined),
+      await fire('__fire(push) on a cooling button', 2000, true),
+      await fire('__fire on a ready button', 0, undefined),
+    ]
+    assertEq(`${on ? 'on' : 'off'}: __fire on a cooling button does nothing`, out[0], { what: out[0].what, dStrain: 0, dPushes: 0, restarted: false, dVib: 0 })
+    assertEq(`${on ? 'on' : 'off'}: __fire(push) pushes, +2`, [out[1].dStrain, out[1].dPushes, out[1].restarted], [2, 1, true])
+    assertEq(`${on ? 'on' : 'off'}: __fire on a ready button casts`, [out[2].dStrain, out[2].dPushes, out[2].restarted], [0, 0, true])
+    results[on] = out
+  }
+  assertEq('the DEV path gives the same results with the switch on and off', results.true, results.false)
 })
 
 process.exit(await run(process.argv.slice(2)))

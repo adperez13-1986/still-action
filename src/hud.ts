@@ -102,10 +102,17 @@ interface ButtonState {
   /** The cooldown left when the press went down, game ms. */
   leftAtDown: number
   pushed: boolean
-  /** What the press already did: cast on the way down, or waiting out the last BUFFER_MS to cast. */
-  pressed: 'cast' | 'refused' | 'buffered' | null
-  /** Let go inside the buffer: cast when it comes up. */
+  /** What the press already did: cast on the way down, or waiting out the last BUFFER_MS to cast. 'answered': the "tap push" path took it at the touch-down. */
+  pressed: 'cast' | 'refused' | 'buffered' | 'answered' | null
+  /** Let go inside the buffer: cast when it comes up. With "tap push" on: a queued touch, firing the moment the button readies. */
   queued: boolean
+  /** "tap push": game ms of this button's last successful fire (both modes), and of its last touch-down (the guard rolls from either). -Infinity at start. */
+  firedAt: number
+  touchedAt: number
+  /** "tap push": this press's answer, set at the touch-down, read at the up. Null: today's path (switch off, or an empty or disabled button). */
+  answer: TapAnswer | 'refused' | null
+  /** "tap push": a pending queue's deadline, game ms (down + the left on the button + TAP.queueSlackMs). */
+  queueBy: number
   /** The last dead tap (game ms), and the arc it drew: from this angle, held, then pulled back. */
   deadAt: number
   arc: { from: number; at: number; hold: number } | null
@@ -249,9 +256,14 @@ export interface Hud {
   stateCue: (slot: SlotName, id: StateId | null, lit: boolean) => void
   /**
    * The "tap push" trial (design/lean/TAP-PUSH.md; the words are PLACEHOLDER): on, a touch on a cooling button answers at once instead
-   * of waiting for a hold. P0: the flag exists and nothing reads it yet, so on behaves as off.
+   * of waiting for a hold: it pushes, queues or is guarded, inside the touch-down. Off is today's hold.
    */
   tapPush: boolean
+  /**
+   * "tap push": one listener, called synchronously at the touch-down for a push, a queued touch and a guarded one, and wherever a pending
+   * queue drops without firing (a heat, a swap, the pause, the switch flipped, a refusal). Never called with the switch off.
+   */
+  onAnswer: (cb: (a: { slot: SlotName; kind: 'push' | 'queued' | 'guarded' | 'queueDropped'; leftMs: number }) => void) => void
   /** Dev only: a cooling state for checks, `ms` left on a slot's cooldown from now. */
   devCool: (slot: SlotName, ms: number) => void
   /** Dev only: the path a tap (false) or a push (true) takes once the gesture is recognised. */
@@ -401,13 +413,17 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
     el.style.right = `calc(env(safe-area-inset-right, 0px) + ${PAD + ARC_R * Math.cos(th) - BTN / 2}px)`
     el.style.bottom = `calc(env(safe-area-inset-bottom, 0px) + ${PAD + ARC_R * Math.sin(th) - BTN / 2}px)`
     root.appendChild(el)
-    const b: ButtonState = { el, cdEl: el.querySelector<HTMLElement>('.cd')!, slot, def: null, icon: null, readyAt: 0, hotUntil: 0, hotMs: 0, pointerId: null, downAt: 0, downWall: 0, readyAtDown: true, leftAtDown: 0, pushed: false, pressed: null, queued: false, deadAt: -Infinity, arc: null, nbMs: undefined, nbSlot: undefined, wasReady: true, cue: '' }
+    const b: ButtonState = { el, cdEl: el.querySelector<HTMLElement>('.cd')!, slot, def: null, icon: null, readyAt: 0, hotUntil: 0, hotMs: 0, pointerId: null, downAt: 0, downWall: 0, readyAtDown: true, leftAtDown: 0, pushed: false, pressed: null, queued: false, firedAt: -Infinity, touchedAt: -Infinity, answer: null, queueBy: 0, deadAt: -Infinity, arc: null, nbMs: undefined, nbSlot: undefined, wasReady: true, cue: '' }
     paint(b)
     return b
   })
 
   const listeners: ((def: AbilityDef, pushed: boolean) => FireResult)[] = []
   const pressListeners: ((p: Press) => void)[] = []
+  const answerListeners: ((a: { slot: SlotName; kind: 'push' | 'queued' | 'guarded' | 'queueDropped'; leftMs: number }) => void)[] = []
+  const emit = (b: ButtonState, kind: 'push' | 'queued' | 'guarded' | 'queueDropped', leftMs: number) => {
+    for (const cb of answerListeners) cb({ slot: b.slot, kind, leftMs })
+  }
 
   /** Strain points still in the air as pips. The meter shows strain minus these. */
   let pending = 0
@@ -555,9 +571,43 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
         }
         lastDown = { slot: b.slot, wall: e.timeStamp }
       }
-      // on the press, not the release: a thumb rests on a button about half a second
-      if (b.readyAtDown) b.pressed = fire(b, false) ? 'cast' : 'refused'
-      else if (b.readyAt - state.clock <= BUFFER_MS && state.clock >= b.hotUntil) b.pressed = 'buffered'
+      b.answer = null
+      const sinceFire = state.clock - b.firedAt
+      const sinceTouch = state.clock - b.touchedAt
+      if (b.def) b.touchedAt = state.clock
+      if (!state.tapPush || !b.def || !state.enabled) {
+        // on the press, not the release: a thumb rests on a button about half a second
+        if (b.readyAtDown) b.pressed = fire(b, false) ? 'cast' : 'refused'
+        else if (b.readyAt - state.clock <= BUFFER_MS && state.clock >= b.hotUntil) b.pressed = 'buffered'
+        return
+      }
+      // "tap push" (design/lean/TAP-PUSH.md): the touch is answered here, at once, as exactly one of cast / push / queued / guarded. No hold
+      const a = tapAnswer({ ready: b.readyAtDown, leftMs: b.leftAtDown, sinceFireMs: sinceFire, sinceTouchMs: sinceTouch, queued: b.queued })
+      b.pressed = 'answered'
+      if (a === 'cast') {
+        // a pending queue meets a ready press (a rider readied it between frames): the press is the cast, the queue never fires on its own
+        const hadQueue = b.queued
+        b.queued = false
+        b.answer = fire(b, false) ? 'cast' : 'refused'
+        if (hadQueue) { clearQueue(b); emit(b, 'queueDropped', 0) }
+      } else if (a === 'push') {
+        b.answer = fire(b, true) ? 'push' : 'refused'
+        if (b.answer === 'push') {
+          kick(b)
+          emit(b, 'push', b.leftAtDown)
+        }
+      } else if (a === 'queued') {
+        b.queued = true
+        b.queueBy = b.downAt + b.leftAtDown + TAP.queueSlackMs
+        b.answer = 'queued'
+        // the ring full and cold now, in this handler: the touch was taken, it costs nothing
+        showQueue(b)
+        emit(b, 'queued', b.leftAtDown)
+      } else {
+        b.answer = 'guarded'
+        guardTap(b)
+        emit(b, 'guarded', b.leftAtDown)
+      }
     })
     for (const t of ['pointerup', 'pointercancel'] as const) {
       b.el.addEventListener(t, (e) => {
@@ -565,7 +615,9 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
         b.pointerId = null
         b.el.classList.remove('press')
         let result: Press['result']
-        if (b.pushed) result = 'push'
+        // "tap push": the answer was given at the touch-down; letting go does nothing more
+        if (b.answer !== null) result = b.answer
+        else if (b.pushed) result = 'push'
         else if (b.pressed === 'cast' || b.pressed === 'refused') result = b.pressed
         else if (b.pressed === 'buffered' || isReadyAt(b, state.clock)) {
           // let go inside the buffer: it still fires when the button comes up
@@ -577,7 +629,7 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
           if (b.def && state.enabled) deadTap(b)
         }
         if (!b.def || !state.enabled) return
-        const p: Press = { slot: b.slot, ms: e.timeStamp - b.downWall, ready: b.readyAtDown, result, leftMs: Math.round(b.leftAtDown), at: Math.round(b.downAt), ...(b.nbMs !== undefined ? { nbMs: b.nbMs, nbSlot: b.nbSlot! } : {}) }
+        const p: Press = { slot: b.slot, ms: e.timeStamp - b.downWall, ready: b.readyAtDown, result, leftMs: Math.round(b.leftAtDown), at: Math.round(b.downAt), ...(b.nbMs !== undefined ? { nbMs: b.nbMs, nbSlot: b.nbSlot! } : {}), ...(b.answer !== null ? { tp: true as const } : {}) }
         for (const cb of pressListeners) cb(p)
       })
     }
@@ -599,6 +651,49 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
     }
   }
 
+  /** "tap push", a queued touch taken: the ring full and cold at once, held until the fire. */
+  function showQueue(b: ButtonState) {
+    b.el.style.setProperty('--arm', '360deg')
+    b.el.classList.add('arming', 'queued')
+  }
+
+  /** The queue's ring lets go: it fades whole, still cold (qfade holds the colour for the fade), and the arc, if any, is left to update(). */
+  function clearQueue(b: ButtonState) {
+    b.el.classList.remove('queued')
+    b.el.classList.add('qfade')
+    setTimeout(() => b.el.classList.remove('qfade'), 220)
+  }
+
+  /**
+   * A pending queue that will not fire: cleared, the ring faded, and counted. Only with the switch on and a queue pending. Called wherever the
+   * button's readiness stops being the one the touch queued for (a heat, a swap, a new loadout, a restarted cooldown, the pause, the switch flipped).
+   */
+  function dropQueue(b: ButtonState) {
+    if (!state.tapPush || !b.queued) return
+    b.queued = false
+    clearQueue(b)
+    emit(b, 'queueDropped', 0)
+  }
+
+  /** "tap push", a push the instant it fires: the price on the rim, 220 ms (there is no ring to show it). */
+  function kick(b: ButtonState) {
+    b.el.classList.remove('kick')
+    void b.el.offsetWidth
+    b.el.classList.add('kick')
+    setTimeout(() => b.el.classList.remove('kick'), 220)
+  }
+
+  /**
+   * "tap push", a guarded touch: the same dead arc a dead tap draws (small, pulling back over DEAD_BACK_MS), "already done". A pending queue
+   * keeps its full cold ring and answers with the click alone.
+   */
+  function guardTap(b: ButtonState) {
+    if (b.queued) return
+    b.arc = { from: 120, at: state.clock, hold: 0 }
+    b.el.style.setProperty('--arm', '120deg')
+    b.el.classList.add('arming')
+  }
+
   /** Ready: its cooldown done, and not hot. */
   const isReadyAt = (b: ButtonState, now: number) => now >= b.readyAt && now >= b.hotUntil
 
@@ -615,6 +710,7 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
     // a live part (a planted anchor) keeps its button ready for the second press; a hot one
     // pushed out of its heat still waits the heat out before it's ready again
     b.readyAt = Math.max(r.cooldown === 'hold' ? state.clock : state.clock + b.def.cooldownMs, b.hotUntil)
+    b.firedAt = state.clock
     navigator.vibrate?.(pushed ? [14, 26, 14] : 12)
     return true
   }
@@ -627,13 +723,21 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
     get integrity() { return state.integrity },
     set integrity(v: number) { state.integrity = v },
     get tapPush() { return state.tapPush },
-    set tapPush(v: boolean) { state.tapPush = v },
+    set tapPush(v: boolean) {
+      // a gesture, applied at once: every pending queue goes (counted, if the switch was on); a buffered release of the old path is just forgotten
+      for (const b of buttons) {
+        if (state.tapPush) dropQueue(b)
+        else b.queued = false
+      }
+      state.tapPush = v
+    },
     get breakRule() { return state.breakRule },
     set breakRule(v: boolean) { state.breakRule = v },
     get enabled() { return state.enabled },
     set enabled(v: boolean) {
       state.enabled = v
       if (!v) {
+        for (const b of buttons) dropQueue(b)
         state.moveX = 0
         state.moveZ = 0
         knob.style.transform = ''
@@ -662,14 +766,26 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
           setTimeout(() => b.el.classList.remove('hint'), 900)
         }
         b.wasReady = ready
+        // "tap push": the last 300 ms of a wait is free to touch (it queues), so it owes no push price, and is not counted as brink
+        const near = state.tapPush && !ready && Math.max(b.readyAt, b.hotUntil) - now <= TAP.queueMs
+        if (b.el.classList.contains('near') !== near) b.el.classList.toggle('near', near)
         // the last push is honest: it still fires, but the rim goes dim and slow instead of bright
-        const cost = (ready ? 0 : 2) + (b.def.strain ?? 0)
+        const cost = (ready || near ? 0 : 2) + (b.def.strain ?? 0)
         const last = cost > 0 && state.strain + cost >= 20
         b.el.classList.toggle('last', last)
         if (last) brink = true
 
-        // a buffered press fires as a cast the moment the button comes up, held or let go
-        if (ready && (b.queued || (b.pointerId !== null && b.pressed === 'buffered'))) {
+        if (state.tapPush) {
+          // a queued touch fires as a ready cast (never a push) the moment the button readies, or is dropped if it never does
+          if (b.queued) {
+            if (ready) {
+              b.queued = false
+              clearQueue(b)
+              if (!fire(b, false)) emit(b, 'queueDropped', 0)
+            } else if (now > b.queueBy) dropQueue(b)
+          }
+        } else if (ready && (b.queued || (b.pointerId !== null && b.pressed === 'buffered'))) {
+          // a buffered press fires as a cast the moment the button comes up, held or let go
           b.queued = false
           b.pressed = fire(b, false) ? 'cast' : 'refused'
         }
@@ -685,7 +801,8 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
         // the hold's clock: a ring closing over PUSH_HOLD_MS, the push firing as it closes.
         // Let go early and the dead-tap arc pulls back from where it got to.
         let arm = 0
-        if (b.pointerId !== null && (b.pushed || (!ready && pushing))) arm = b.pushed ? 360 : Math.min(360, ((now - b.downAt) / PUSH_HOLD_MS) * 360)
+        if (state.tapPush && b.queued) arm = 360
+        else if (b.pointerId !== null && (b.pushed || (!ready && pushing))) arm = b.pushed ? 360 : Math.min(360, ((now - b.downAt) / PUSH_HOLD_MS) * 360)
         else if (b.arc) {
           const t = now - b.arc.at - b.arc.hold
           if (t < DEAD_BACK_MS) arm = b.arc.from * Math.min(1, 1 - t / DEAD_BACK_MS)
@@ -710,6 +827,7 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
 
     onFire(cb) { listeners.push(cb) },
     onPress(cb) { pressListeners.push(cb) },
+    onAnswer(cb) { answerListeners.push(cb) },
 
     get loadout() { return buttons.flatMap((b) => (b.def ? [b.def] : [])) },
     get slots() { return buttons.map((b) => ({ slot: b.slot, def: b.def })) },
@@ -721,6 +839,7 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
       // a filled slot keeps its cooldown fraction; a newly filled one arrives ready.
       // `forceFrac` overrides it: swapping out a live anchor hands on a full cooldown, not a free button.
       const frac = forceFrac ?? (old ? Math.max(0, b.readyAt - now) / old.cooldownMs : 0)
+      dropQueue(b)
       b.def = def
       b.readyAt = now + frac * def.cooldownMs
       paint(b)
@@ -732,7 +851,10 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
 
     resetLoadout(parts) {
       for (const b of buttons) {
+        dropQueue(b)
         b.def = parts.find((p) => p.slot === b.slot) ?? null
+        b.firedAt = -Infinity
+        b.touchedAt = -Infinity
         b.readyAt = 0
         b.hotUntil = 0
         paint(b)
@@ -857,6 +979,7 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
     },
     startCooldown(slot) {
       const b = buttons.find((x) => x.slot === slot)!
+      dropQueue(b)
       if (b.def) b.readyAt = state.clock + b.def.cooldownMs
     },
     setClass(slot, cls, on) {
@@ -909,6 +1032,7 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
     heat(slot, ms) {
       const b = buttons.find((x) => x.slot === slot)!
       if (!b.def) return
+      dropQueue(b)
       b.hotUntil = state.clock + ms
       b.hotMs = ms
       if (!hinted('heat')) {

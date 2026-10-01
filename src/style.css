@@ -175,6 +175,18 @@ html, body {
   filter: drop-shadow(0 0 3px rgba(255, 106, 58, .5));
 }
 .btn.arming .arm { opacity: 1; transition: none; }
+/* tap push: a queued press, taken: the ring full and cold (it costs nothing) until it fires; qfade keeps it cold through the fade */
+.btn.queued .arm, .btn.qfade .arm {
+  background:
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='48' height='48'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.55' numOctaves='3'/><feColorMatrix values='1.6 0 0 0 -.15  1.6 0 0 0 -.15  1.6 0 0 0 -.15  0 0 0 0 1'/></filter><rect width='48' height='48' filter='url(%23n)'/></svg>"),
+    conic-gradient(#8fb8e8 var(--arm, 0deg), #0e1a2a 0deg);
+  filter: drop-shadow(0 0 3px rgba(143, 184, 232, .6));
+}
+/* tap push: the push, the instant it fires: the price on the rim */
+.btn.kick { animation: kick .22s ease-out; }
+@keyframes kick { 0% { border-color: var(--strain); box-shadow: 0 0 0 3px rgba(200, 69, 47, .75), 0 0 22px rgba(200, 69, 47, .5); } }
+/* tap push: the last 300 ms of a wait queues for nothing, so no push price is owed */
+.btn.near .pips .owed { display: none; }
 
 /* --- meters --- */
 .meter {
