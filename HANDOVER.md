@@ -3,16 +3,19 @@
 For the next session. Read this, then `DESIGN.md` (the settled decisions), then the design
 folder for whatever you're touching. Don't re-derive any of them.
 
-## Start here (1 Oct, night: BUILD LAYER design round, round 2 running)
+## Start here (1 Oct, night: BUILD LAYER round DONE, awaiting his two calls)
 
-His pick: dig into the build layer next. His answers: **everything open** (slots, autos, leanings, riders, states, temper,
-mastery, pedestals); builds should change **what parts do together + how you fight**; **no reference game**. Brief:
-`design/buildlayer/BRIEF.md` (+ a Corrections section: riders cut, pedestals off, dropsim stale, suites pin trials off).
-**Round 1 done**: all four `1-*.md` + the balancer's `build-sim.mjs`. All agree: one core/root a run replaces "both autos
-for everyone"; the auto sets the state, parts cash it. Balancer's key finding: today's temper (4 melts to III = +27-37% packs,
-+68-84% boss) beats every build; flatten it. **Round 2**: `2-claude.md` done (Wake + Breaker trial, pick at the d1 exit,
-flatten temper, scrap out, measure first). Running: balancer, translator, verifier writing `2-<voice>.md`. If a session dies:
-rerun the missing round-2 voices (each reads BRIEF + all four 1-*.md), then write `PITCHES.md` for him. Nothing built.
+His pick: dig into the build layer. His answers: everything open; builds change **what parts do together + how you fight**; no
+reference game. **Outcome: `design/buildlayer/PITCHES.md`** (BRIEF with Corrections, 1-/2- per voice, `build-sim.mjs` with
+modes fight / pool / r2). All four agree: **one core a run replaces the hand + eye** (no button), marks enemies every beat,
+**parts spend the marks** (spenders, shapers, keystones; no feeders); button shows a spend count; **flatten temper** in the same
+trial (today 4x III = +27-37% packs / +68-84% boss beats every build); drop filter 0.4-0.5 of elite/Plenty/gift drops from the core
+(pedestals stay off); cut lean tags, rider code, mastery as is; scrap out; **measure first** (B0: suites to live defaults,
+dropsim to 9 depths + live drops). Wake ("beside, not behind", anti-kiting) is in. Lead-settled: flat per mark (not x2), control =
+pause switch "builds" on by default, late want = 2 keystones per core (one socket, swap) + max 2 visible core upgrades.
+**His two calls:** (1) the second core: Ram (my rec) / Breaker (sim fails packs) / Sight (it's the eye); (2) pick at run start
+(my rec) or after d1. Then build B0-B6 (table in PITCHES) like stage C: Sonnet engineer per step, I review every diff. Nothing built.
+Note: 2-translator/2-verifier swapped trial picks with me in round 2; I took the reasons, not a re-poll.
 
 ## Start here (1 Oct, night: weight + tap push ON BY DEFAULT; his verdict on the game as a whole)
 
