@@ -3,6 +3,14 @@
 For the next session. Read this, then `DESIGN.md` (the settled decisions), then the design
 folder for whatever you're touching. Don't re-derive any of them.
 
+## Start here (1 Oct, morning: design round "lean on the parts" under way)
+
+His reply to TRIAL-1: the bank "felt the same". New ask: instead of the autos, make **enemies tougher and parts stronger**,
+**part animations more dramatic**, and drop the hold-to-push ("too troublesome": every cast the full effect incl. the push's,
+always costing strain). Brief `design/lean/BRIEF.md`; round 1 running (balancer, translator, verifier; `1-claude.md` written).
+Then round 2, then `design/lean/PITCHES.md` and back to him. If a session dies mid-round: check which `design/lean/1-*`/`2-*`
+files exist and run only the missing voices. Nothing built.
+
 ## Start here (1 Oct, morning: first follow-through log read)
 
 He sent `~/Downloads/still-playtest-2026-10-01.json` (3 runs with follow-through on) but no words yet. Read in
