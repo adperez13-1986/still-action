@@ -3,13 +3,30 @@
 For the next session. Read this, then `DESIGN.md` (the settled decisions), then the design
 folder for whatever you're touching. Don't re-derive any of them.
 
-## Start here (1 Oct, morning: design round "lean on the parts" under way)
+## Start here (1 Oct, morning: design round "lean on the parts", PAUSED mid round 2)
 
 His reply to TRIAL-1: the bank "felt the same". New ask: instead of the autos, make **enemies tougher and parts stronger**,
 **part animations more dramatic**, and drop the hold-to-push ("too troublesome": every cast the full effect incl. the push's,
-always costing strain). Brief `design/lean/BRIEF.md`; round 1 running (balancer, translator, verifier; `1-claude.md` written).
-Then round 2, then `design/lean/PITCHES.md` and back to him. If a session dies mid-round: check which `design/lean/1-*`/`2-*`
-files exist and run only the missing voices. Nothing built.
+always costing strain). Brief `design/lean/BRIEF.md`. **Round 1 done** (all four `1-*.md`, sim `design/lean/lean-sim.mjs`,
+runs in ~6 s). **Round 2: only `2-claude.md` written.** He left for the office and asked to pause; I stopped the three agents
+before they wrote anything. **To resume:** spawn fresh balancer / translator / verifier with BRIEF §Round 2 plus these points:
+- balancer: (a) Part B shows V4 at pushes x1.5 drops median Made-it 74 -> 56 (Stopped 28%); quiet -3 only to 64: the retune
+  that keeps today's finish rates at 0.75 pushes a fight, and is V4 safe to trial with strain unchanged? (b) model pack size
+  (more bodies) instead of / alongside pack HP. (c) one drama-budget formula with the translator's/verifier's.
+- translator: (a) reconcile gesture-vs-decision with the verifier (ready presses median 207 ms, long cooling presses already
+  push) and the dead taps (30, all < 190 ms). (b) push breaks a windup 3.4% of the time: what should the push buy? (c) one
+  hitstop formula (balancer 30 + 8 x cd s cap 100 global freeze, merge 200 ms; translator 50 + 12/body cap 100). (d) one
+  near-ready guard: 250 / 300 / 400 ms.
+- verifier: (a) one switch "lean" or two ("weight" + "tap push"), and log Stopped given (a) above. (b) code + a "no freeze on a
+  miss" check for the translator's timing fixes (still.ts:687 pose winds back after damage; main.ts:3716 hitstop on press;
+  main.ts:338 80 ms every kill). (c) what more bodies per pack needs (addPack, curve, k9 pins, Poco perf).
+Then write `design/lean/PITCHES.md` and bring it to him. **Where round 1 landed:** all four: no strain on every cast (V1 +0.5:
+median Stopped 74%); V4 = every ready cast carries the push's effects (break + threat aim + pushed look; Patient Lens, Overrun,
+Lure, Plumb Line keep push-only extras) + a tap on a cooling button pushes at once (+2), near-ready taps queue free; drama: fix
+timing first (freeze on impact, not on press; no freeze on miss; auto kills smaller), per-slot flavours, no new particles;
+balancer's Ask 1 numbers: packs x1.25 HP, bosses x1.1, torso/legs x1.5, area on vent/dash/Cleaver (never-melt pack time 1.00,
+part kills 38 -> 45%). Verifier found: push breaks almost never fire (pressure bodies don't wind up); stale comment
+combat.ts:468; autos.mjs reuses id K-A7 (lines 167, 271). Nothing built.
 
 ## Start here (1 Oct, morning: first follow-through log read)
 
