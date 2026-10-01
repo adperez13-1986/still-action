@@ -9,6 +9,11 @@
 //      for a committed chooser, a tier chooser (ignores links) and a random picker. Formation at d3 / d6,
 //      keystone sightings, take rates per part and per slot, "done" (nothing left to want) by d6.
 // Every name here is a PLACEHOLDER.
+//
+// Dials (env): TUNE=first|proposed (default proposed: the numbers 1-balancer.md argues for), SHORT=1 (fewer rows),
+//   KSCALE, CASH_TAX, CASH_CD, FEED_TAX, FEED_N, BURST (fight); FLOOR, RARE_P, GIFT_KEY, MATCHES=0,0.5,
+//   MATCH_WHERE=rare|all (the drive match at the gift and Plenty only, or at every pedestal set), POOLS=trial,full (pool).
+// Both halves at defaults take ~1 min: node design/buildlayer/build-sim.mjs all 8000
 
 const MODE = process.argv[2] ?? 'all'
 const RUNS = Number(process.argv[3] ?? 20000)
@@ -28,6 +33,15 @@ const DRIVES = {
   wake:   { name: 'Wake (moving, brushes many)', dmg: 4, up: 0.80, pick: 'brush', p: 0.5, cap: 3, life: 3, K: 5 },
   tether: { name: 'Tether (holds one at 3-6 u)', dmg: 10, up: 0.65, pick: 'focus', cap: 5, life: 2, K: 5 },
 }
+// TUNE=first: the numbers above with KSCALE 1, CASH_CD 1. TUNE=proposed (default): what this file argues for.
+// One-body drives carry their marks on a kill (the next body starts marked), or their chains are boss-only.
+const TUNE = process.env.TUNE ?? 'proposed'
+if (TUNE === 'proposed') {
+  Object.assign(DRIVES.strike, { K: 10, carry: true })
+  Object.assign(DRIVES.sight, { K: 14 })
+  Object.assign(DRIVES.wake, { K: 6 })
+  Object.assign(DRIVES.tether, { K: 7, carry: true })
+}
 const TEMPER = { today: { dmg: [1, 1.3, 1.6], cd: [1, 0.85, 0.72] }, flat: { dmg: [1, 1.15, 1.3], cd: [1, 0.92, 0.85] } }
 // Parts as weighed today (weight preset B): Focusing Lens 26x1.2, Pressure Vent 15x1.8 (radius x1.4), Scrap Cleaver
 // 18x1.2 (180 deg), Kickstart 12x1.8 (width x2). hits: back = the bolt's priority target; all = each body w.p. p;
@@ -39,8 +53,12 @@ const P = {
   cleaver: { slot: 'arms', dmg: 22, cd: 2.6, hits: 'arc', p2: 0.9, p3: 0.45 },
   kick: { slot: 'legs', dmg: 22, cd: 8, hits: 'all', p: 0.7 },
 }
-const cash = (b) => ({ ...P[b], dmg: P[b].dmg * 0.8, role: 'cash' })
-const feed = (b) => ({ ...P[b], dmg: P[b].dmg * 0.6, role: 'feed' })
+// The price of a link (env to sweep): a cashier keeps CASH_TAX of the white's damage, a feeder FEED_TAX and adds FEED_N marks.
+const CASH_TAX = Number(process.env.CASH_TAX ?? 0.9), FEED_TAX = Number(process.env.FEED_TAX ?? (TUNE === 'proposed' ? 1 : 0.85)), FEED_N = Number(process.env.FEED_N ?? 1)
+const BURST = Number(process.env.BURST ?? 0.6)
+const KSCALE = Number(process.env.KSCALE ?? 1), CASH_CD = Number(process.env.CASH_CD ?? (TUNE === 'proposed' ? 0.75 : 1))
+const cash = (b) => ({ ...P[b], dmg: P[b].dmg * CASH_TAX, cd: P[b].cd * CASH_CD, role: 'cash' })
+const feed = (b) => ({ ...P[b], dmg: P[b].dmg * FEED_TAX, role: 'feed' })
 const chillVent = { slot: 'torso', dmg: 18, cd: 6.5, hits: 'all', p: 0.95, role: 'pair-set' }
 const payCleaver = { ...P.cleaver, role: 'pair-pay' }
 
@@ -48,7 +66,7 @@ function fight(drive, parts, opt) {
   const D = DRIVES[drive], boss = opt.kind === 'boss'
   const hps = boss ? [1170] : opt.kind === 'early' ? [42, 42, 42, 28] : opt.kind === 'heavy' ? [120, 64, 64, 64] : [64, 64, 64, 64, 43]
   const bodies = hps.map((hp, i) => ({ hp, back: !boss && i === hps.length - 1, m: 0, mt: 0, chill: 0, dead: false }))
-  const cap = D.marks ? D.cap + (opt.deep ? 2 : 0) : 0
+  const cap = D.cap ? D.cap + (opt.deep ? 2 : 0) : 0
   const T = TEMPER[opt.temper ?? 'today']
   const ps = parts.map((p) => { const r = p.rank ?? 0; return { ...p, dmg: p.dmg * T.dmg[r], cd: p.cd * T.cd[r], t: rng() * p.cd, wait: -1, held: 0 } })
   const st = { t: 0, auto: 0, part: 0, bonus: 0, made: 0, spent: 0 }
@@ -56,7 +74,7 @@ function fight(drive, parts, opt) {
   const mark = (b, n = 1) => { if (!cap || b.dead) return; const add = Math.min(n, cap - b.m); st.made += Math.max(0, add); b.m += Math.max(0, add); b.mt = D.life }
   const die = (b) => {
     b.dead = true
-    if (opt.carry && b.m > 0) { const n = alive()[0]; if (n) mark(n, b.m) }
+    if ((opt.carry || D.carry) && b.m > 0) { const n = alive()[0]; if (n) mark(n, b.m) }
   }
   const hurt = (b, d, src, bonus = 0) => {
     if (b.dead) return
@@ -72,10 +90,12 @@ function fight(drive, parts, opt) {
   }
   const strike = (p, b) => {
     let bonus = 0, d = p.dmg
-    if (p.role === 'cash' && b.m > 0) { bonus = b.m * D.K; st.spent += b.m; b.m = 0 }
+    if (p.role === 'cash' && b.m > 0) { bonus = b.m * D.K * KSCALE; st.spent += b.m; b.m = 0 }
     if (p.role === 'pair-pay' && b.chill > 0) { d *= 2; b.chill = 0 }
     hurt(b, d, 'part', bonus)
-    if (p.role === 'feed') mark(b)
+    // echo key: a cash hit also spends the marks of the most-marked other body (bonus only, never the part's own damage)
+    if (opt.echo && p.role === 'cash' && bonus) { const o = alive().filter((x) => x !== b && x.m > 0).sort((x, y) => y.m - x.m)[0]; if (o) { const eb = o.m * D.K * KSCALE; st.spent += o.m; o.m = 0; hurt(o, 0, 'part', eb) } }
+    if (p.role === 'feed') mark(b, FEED_N)
     if (p.role === 'pair-set') b.chill = 4
   }
   let t = 0, beat = rng() * BEAT
@@ -102,7 +122,7 @@ function fight(drive, parts, opt) {
       beat = BEAT
       const a = alive(); if (!a.length) break
       const am = boss ? 0.5 : 1 // bosses take half from the autos (BOSS_AUTO_MUL)
-      if (!D.marks) { // today's hand (p .7, 10) and eye (p .25, 8, a second body .3)
+      if (D.marks === false) { // today's hand (p .7, 10) and eye (p .25, 8, a second body .3)
         const r = rng()
         if (r < 0.7) hurt(a[0], 10 * am, 'auto')
         else if (r < 0.95) { const c = [...a.filter((b) => b.back), ...a.filter((b) => !b.back)]; hurt(c[0], 8 * am, 'auto'); if (c[1] && rng() < 0.3) hurt(c[1], 8 * am, 'auto') }
@@ -111,7 +131,11 @@ function fight(drive, parts, opt) {
       if (rng() > D.up) continue
       const hit = D.pick === 'focus' ? [a[0]] : D.pick === 'line' ? [a[0], ...(a[1] && rng() < 0.5 ? [a[1]] : []), ...(a[2] && rng() < 0.2 ? [a[2]] : [])]
         : a.filter(() => rng() < D.p)
-      for (const b of hit) { hurt(b, D.dmg * am, 'auto'); mark(b) }
+      for (const b of hit) {
+        hurt(b, D.dmg * am, 'auto'); mark(b)
+        // burst key: a drive hit that fills a body to its cap spends them at once, at BURST of a cashier's rate (a spender at beat speed)
+        if (opt.burst && !b.dead && b.m >= cap) { const eb = b.m * D.K * KSCALE * BURST; st.spent += b.m; b.m = 0; hurt(b, 0, 'part', eb) }
+      }
     }
   }
   st.t = t
@@ -125,45 +149,61 @@ function measure(drive, parts, opt, n) {
   return acc
 }
 
+// Each drive's natural chain: where its cashiers and feeder sit (a single-target drive cashes with single-target
+// parts; a drive that marks many cashes with the blast). c1 = one cashier, c2 = cashier + feeder, c3 = two cashiers + feeder.
+const CHAINS = {
+  strike: { c1: ['lens', 'vent', 'C:cleaver', 'kick'], c2: ['lens', 'F:vent', 'C:cleaver', 'kick'], c3: ['C:lens', 'F:vent', 'C:cleaver', 'kick'] },
+  sight: { c1: ['C:lens', 'vent', 'cleaver', 'kick'], c2: ['C:lens', 'F:vent', 'cleaver', 'kick'], c3: ['C:lens', 'F:vent', 'cleaver', 'C:kick'] },
+  wake: { c1: ['lens', 'C:vent', 'cleaver', 'kick'], c2: ['lens', 'C:vent', 'cleaver', 'F:kick'], c3: ['lens', 'C:vent', 'C:cleaver', 'F:kick'] },
+  tether: { c1: ['lens', 'vent', 'C:cleaver', 'kick'], c2: ['C:lens', 'vent', 'C:cleaver', 'kick'], c3: ['C:lens', 'F:vent', 'C:cleaver', 'kick'] },
+}
+const build = (ids, rank = 0) => ids.map((x) => { const [k, b] = x.includes(':') ? x.split(':') : ['', x]; const p = k === 'C' ? cash(b) : k === 'F' ? feed(b) : { ...P[b] }; return { ...p, rank: p.rank ?? rank } })
+
 function partA() {
   const W = [P.lens, P.vent, P.cleaver, P.kick]
-  const rows = [
-    ['4 whites, rank I', W, {}],
-    ['Cleaver III (melted), today temper', [P.lens, P.vent, { ...P.cleaver, rank: 2 }, P.kick], {}],
-    ['Cleaver III (melted), flat temper', [P.lens, P.vent, { ...P.cleaver, rank: 2 }, P.kick], { temper: 'flat' }],
-    ['all four III, today temper', W.map((p) => ({ ...p, rank: 2 })), {}],
-    ['all four III, flat temper', W.map((p) => ({ ...p, rank: 2 })), { temper: 'flat' }],
-    ['1 cashier (arms)', [P.lens, P.vent, cash('cleaver'), P.kick], {}],
-    ['cashier + feeder (torso)', [P.lens, feed('vent'), cash('cleaver'), P.kick], {}],
-    ['2 cashiers + feeder', [cash('lens'), feed('vent'), cash('cleaver'), P.kick], {}],
-    ['2 cashiers + feeder + carry key', [cash('lens'), feed('vent'), cash('cleaver'), P.kick], { carry: true }],
-    ['2 cashiers + feeder + deep key', [cash('lens'), feed('vent'), cash('cleaver'), P.kick], { deep: true }],
-    ['3 cashiers, no feeder', [cash('lens'), P.vent, cash('cleaver'), cash('kick')], {}],
-    ['chain at II vs whites III (flat)', [{ ...cash('lens'), rank: 1 }, { ...feed('vent'), rank: 1 }, { ...cash('cleaver'), rank: 1 }, { ...P.kick, rank: 2 }], { temper: 'flat' }],
-    ['ref: whites III (flat), same drive', W.map((p) => ({ ...p, rank: 2 })), { temper: 'flat' }],
-  ]
   const kinds = ['early', 'deep', 'heavy', 'boss']
-  console.log('A. FIGHT. Median player (hesitation 1.8 s). Cells: kill time s (DPS vs the 4-whites row of that drive, +%).')
-  console.log('   early = 4 bodies 42/42/42/28 (d1-2, weight x1.4); deep = 5 x 64/43 (d5); heavy = 120 leader + 3 x 64; boss = 1170.')
-  console.log('   marks: made / spent a fight; bonus = share of damage from spent marks (spill included).\n')
+  const N = { early: 2000, deep: 2000, heavy: 2000, boss: 300 }
+  console.log(`A. FIGHT. Median player (hesitation ${HESIT} s). cashier keeps ${CASH_TAX}, feeder ${FEED_TAX} (+${FEED_N} mark).`)
+  console.log('   Cells: DPS vs the 4-whites row of that drive (+%). early = 4 bodies 42/42/42/28 (d1-2); deep = 5 x 64/43 (d5);')
+  console.log('   heavy = 120 leader + 3 x 64; boss = 1170. bonus = share of all damage that came from spent marks (spill included).\n')
+  const cell = (dk, parts, o, base) => kinds.map((k) => { const m = measure(dk, parts, { ...o, kind: k }, N[k]); return { k, m, g: base ? base[k] / m.t - 1 : 0 } })
+  const fmt = (cs) => cs.map(({ k, g }) => `${k} ${g >= 0 ? '+' : ''}${Math.round(g * 100)}%`.padEnd(13)).join('')
+  const out = {}
   for (const dk of ['strike', 'sight', 'wake', 'tether']) {
-    console.log(`  ${DRIVES[dk].name}`)
-    const base = {}
-    for (const k of kinds) base[k] = measure(dk, W, { kind: k }).t
+    const C = CHAINS[dk]
+    const base = {}; for (const k of kinds) base[k] = measure(dk, W, { kind: k }, N[k]).t
+    const rows = [
+      ['one white melted to III (today)', [P.lens, P.vent, { ...P.cleaver, rank: 2 }, P.kick], {}],
+      ['one white melted to III (flat)', [P.lens, P.vent, { ...P.cleaver, rank: 2 }, P.kick], { temper: 'flat' }],
+      ['all four III (today)', W.map((p) => ({ ...p, rank: 2 })), {}],
+      ['all four III (flat)', W.map((p) => ({ ...p, rank: 2 })), { temper: 'flat' }],
+      ['c1: one cashier', build(C.c1), {}],
+      ['c2: cashier + feeder', build(C.c2), {}],
+      ['c3: two cashiers + feeder', build(C.c3), {}],
+      ['c3 + carry key (marks pass on a kill)', build(C.c3), { carry: true }],
+      ['c3 + deep key (cap +2)', build(C.c3), { deep: true }],
+      ['c3 + echo key (a cash spends two bodies)', build(C.c3), { echo: true }],
+      ['c3 + burst key (the drive spends at cap)', build(C.c3), { burst: true }],
+      ['c1 + burst key', build(C.c1), { burst: true }],
+      ['c3 all at II (flat)', build(C.c3, 1), { temper: 'flat' }],
+      ['c3 all at III (flat)', build(C.c3, 2), { temper: 'flat' }],
+    ].filter((r) => !process.env.SHORT || ['all four III (flat)', 'c1: one cashier', 'c2: cashier + feeder', 'c3: two cashiers + feeder', 'c3 + echo key (a cash spends two bodies)', 'c3 + burst key (the drive spends at cap)', 'c1 + burst key'].includes(r[0]))
+    console.log(`  ${DRIVES[dk].name}   (whites: early ${base.early.toFixed(1)} s, deep ${base.deep.toFixed(1)} s, heavy ${base.heavy.toFixed(1)} s, boss ${base.boss.toFixed(0)} s)`)
+    out[dk] = {}
     for (const [name, parts, o] of rows) {
-      const cells = kinds.map((k) => { const m = measure(dk, parts, { ...o, kind: k }); return { k, m } })
-      const txt = cells.map(({ k, m }) => `${k} ${m.t.toFixed(1)} (${m.t ? (base[k] / m.t - 1 >= 0 ? '+' : '') + Math.round((base[k] / m.t - 1) * 100) : 0}%)`).join('  ')
-      const dm = cells[1].m
-      console.log(`    ${name.padEnd(36)} ${txt}   deep marks ${dm.made.toFixed(1)}/${dm.spent.toFixed(1)} bonus ${pct(dm.bonus / (dm.part + dm.auto))} auto ${pct(dm.auto / (dm.part + dm.auto))}`)
+      const cs = cell(dk, parts, o, base), dm = cs[1].m
+      out[dk][name] = cs
+      console.log(`    ${name.padEnd(40)} ${fmt(cs)} deep marks made ${dm.made.toFixed(1)} spent ${dm.spent.toFixed(1)}, bonus ${pct(dm.bonus / (dm.part + dm.auto))}`)
     }
+    // off-build: the same chain worn with a drive that leaves none of its marks
+    const off = cell('old', build(C.c3), {}, (() => { const b = {}; for (const k of kinds) b[k] = measure('old', W, { kind: k }, N[k]).t; return b })())
+    console.log(`    ${'c3 worn off-build (no marks)'.padEnd(40)} ${fmt(off)}`)
   }
-  // the off-build case: a cashier worn with today's autos (no marks), and the old chill pair
-  console.log('\n  Off-build and the old pair (today\'s hand + eye, no marks):')
-  const ob = {}; for (const k of kinds) ob[k] = measure('old', W, { kind: k }).t
-  for (const [name, parts] of [['4 whites', W], ['1 cashier, no marks (off-build)', [P.lens, P.vent, cash('cleaver'), P.kick]],
-    ['old pair: Chill Vent + Cleaver x2', [P.lens, chillVent, payCleaver, P.kick]], ['Cleaver III, today temper', [P.lens, P.vent, { ...P.cleaver, rank: 2 }, P.kick]]]) {
-    console.log(`    ${name.padEnd(36)} ` + kinds.map((k) => { const m = measure('old', parts, { kind: k }); return `${k} ${m.t.toFixed(1)} (${Math.round((ob[k] / m.t - 1) * 100)}%)` }).join('  '))
-  }
+  console.log('\n  The old button-to-button pair (today\'s hand + eye; Chill Vent sets, Scrap Cleaver pays x2 used up):')
+  const ob = {}; for (const k of kinds) ob[k] = measure('old', W, { kind: k }, N[k]).t
+  console.log(`    ${'old chill pair'.padEnd(40)} ${fmt(cell('old', [P.lens, chillVent, payCleaver, P.kick], {}, ob))}`)
+  console.log(`    ${'today\'s autos vs a drive (whites)'.padEnd(40)} early ${ob.early.toFixed(1)} s, deep ${ob.deep.toFixed(1)} s, boss ${ob.boss.toFixed(0)} s`)
+  return out
 }
 
 // ------------------------------------------------------------------ B. POOL
@@ -190,6 +230,13 @@ const POOLS = {
 // (dropsim: ~29 floor offers in 4 crawl depths of 6), elites = curve heavies (1,1,2,3,3,3), each a rare roll at 10%,
 // Plenty raised 35% of crawl depths (3 pedestals, rare 10%, +4 strain), an exit set of 3 (empty slots first).
 // d3: the gift (one rare-eligible + two, a second pick for +4 strain); d6: two floor drops (one rare-eligible).
+// MATCH_P: share of pedestal sets with one pedestal from his drive. RARE_P: an elite's rare roll. GIFT_KEY: the gift's first
+// pedestal is one of his keystones (if one is left).
+// FLOOR: ordinary floor offers a crawl depth, before elites. Temper is on by default and pays ordinary kills x0.4, so ~2.5, not
+// dropsim's ~5 (side rooms and crates are unchanged).
+const FLOOR = Number(process.env.FLOOR ?? 2.5)
+const RARE_P = Number(process.env.RARE_P ?? 0.1), GIFT_KEY = Number(process.env.GIFT_KEY ?? 0.5)
+const MATCHES = (process.env.MATCHES ?? '0,0.5').split(',').map(Number)
 const CRAWL = [1, 2, 4, 5, 7, 8], HEAVIES = { 1: 1, 2: 1, 4: 2, 5: 3, 7: 3, 8: 3 }
 const pois = (l) => { let k = 0, p = Math.exp(-l), s = p; const u = rng(); while (u > s && k < 40) { k++; p *= l / k; s += p } return k }
 function run(pool, chooser, drives, match, log) {
@@ -197,28 +244,30 @@ function run(pool, chooser, drives, match, log) {
   const worn = { head: null, torso: null, arms: null, legs: null }
   const linked = (p) => p && p.drive.includes(drive)
   const val = (p) => !p ? -1 : chooser === 'tier' ? (p.rare ? 3 : p.role === 'plain' ? 1 : 2)
-    : p.role === 'key' ? (linked(p) ? (Object.values(worn).some((w) => w && w.role === 'key' && linked(w)) ? 0.5 : 4) : 0.5)
+    : p.role === 'key' ? (linked(p) ? (Object.values(worn).some((w) => w && w !== p && w.role === 'key' && linked(w)) ? 0.5 : 4) : 0.5)
       : linked(p) ? 2 + (p.drive.length > 1 ? -0.3 : 0) : p.role === 'plain' ? 1 : 0.8
   const draw = (slots, rareOk, from) => {
     const on = new Set(Object.values(worn).filter(Boolean).map((p) => p.id))
     const c = (from ?? pool).filter((p) => !on.has(p.id) && slots.includes(p.slot) && (rareOk || !p.rare))
     return c.length ? c[Math.floor(rng() * c.length)] : null
   }
-  const offer = (p) => { if (!p) return; log.off[p.id] = (log.off[p.id] ?? 0) + 1; if (p.role === 'key' && linked(p)) log.keySeen = true }
-  const take = (p) => { log.took[p.id] = (log.took[p.id] ?? 0) + 1; worn[p.slot] = p }
+  const offer = (p) => { if (!p) return; log.off[p.id] = (log.off[p.id] ?? 0) + 1; if (p.role === 'key' && linked(p)) log.ownKeyOff = (log.ownKeyOff ?? 0) + 1; if (p.role === 'key' && linked(p) && log.dep < 6) log.keyBy6 = true }
+  const take = (p) => { log.took[p.id] = (log.took[p.id] ?? 0) + 1; worn[p.slot] = p; if (p.role === 'key' && linked(p)) log.ownKeyTook = (log.ownKeyTook ?? 0) + 1; if (log.dep > 6) log.late = (log.late ?? 0) + 1 }
   const wornSlots = () => SLOTS.filter((s) => worn[s])
   const floor = (rareOk) => {
     const p = draw(wornSlots(), rareOk); offer(p); if (!p) return
     const go = chooser === 'random' ? rng() < 0.5 : val(p) > val(worn[p.slot])
     if (go) take(p)
   }
-  const pedestals = (n, rareOk) => {
+  const pedestals = (n, rareOk, giftKey = false) => {
+    const setMatch = ((process.env.MATCH_WHERE ?? 'rare') !== 'rare' || rareOk) && rng() < match
     const empty = SLOTS.filter((s) => !worn[s]), set = []
     for (let i = 0; i < n; i++) {
       const used = set.map((p) => p.slot), open = empty.filter((s) => !used.includes(s))
       const slots = open.length ? open : SLOTS.filter((s) => !used.includes(s))
-      const wantLink = match && i === 0 && chooser !== 'none'
-      const p = (wantLink && draw(slots, rareOk, pool.filter((q) => q.drive.includes(drive)))) || draw(slots, rareOk && i === 0)
+      const wantLink = setMatch && i === 0
+      const wantKey = giftKey && i === 0
+      const p = (wantKey && draw(SLOTS, true, pool.filter((q) => q.role === 'key' && q.drive.includes(drive)))) || (wantLink && draw(slots, rareOk, pool.filter((q) => q.drive.includes(drive)))) || draw(slots, rareOk && i === 0)
       if (p && !set.includes(p)) { set.push(p); offer(p) }
     }
     if (!set.length) return null
@@ -233,13 +282,14 @@ function run(pool, chooser, drives, match, log) {
   }
   take(draw(SLOTS, false, pool.filter((p) => p.role !== 'key')))
   for (let d = 1; d <= 9; d++) {
-    if (d === 3) { log.d3 = state(); const g = pedestals(3, true); if (g && chooser !== 'random') { /* second pick: only a linked one */ } }
+    log.dep = d
+    if (d === 3) { log.d3 = state(); const g = pedestals(3, true, rng() < GIFT_KEY); if (g && chooser !== 'random') { /* second pick: only a linked one */ } }
     if (d === 6) { log.d6 = state(); floor(false); floor(true) }
     if (d === 9) { log.d9 = state(); continue }
     if (!CRAWL.includes(d)) continue
-    const f = pois(4.5)
+    const f = pois(FLOOR)
     for (let i = 0; i < f; i++) floor(false)
-    for (let i = 0; i < HEAVIES[d]; i++) floor(rng() < 0.1)
+    for (let i = 0; i < HEAVIES[d]; i++) floor(rng() < RARE_P)
     if (rng() < 0.35) pedestals(3, true)
     pedestals(3, false)
   }
@@ -251,10 +301,11 @@ function partB() {
   console.log('   chain d6 = 3+ linked incl. a cashier and a feeder at the Arbiter; keyed = chain + a keystone; done d6 = all 4 slots linked + key.\n')
   for (const [pname, mk] of Object.entries(POOLS)) {
     const pool = mk(), drives = [...new Set(pool.flatMap((p) => p.drive))]
+    if (process.env.POOLS && !process.env.POOLS.split(',').some((x) => pname.startsWith(x))) continue
     console.log(`  ${pname}  (${pool.length} parts)`)
-    for (const match of [false, true]) {
+    for (const match of MATCHES) {
       for (const ch of ['committed', 'tier', 'random']) {
-        const A = { f3: 0, c6: 0, k6: 0, k9: 0, done6: 0, keySeen6: 0, n3: 0 }, off = {}, took = {}
+        const A = { f3: 0, c6: 0, k6: 0, k9: 0, done6: 0, keyBy6: 0, n3: 0, kOff: 0, kTook: 0, late: 0, offers: 0, seen: 0, takes: 0 }, off = {}, took = {}
         for (let r = 0; r < RUNS; r++) {
           const log = { off: {}, took: {} }
           run(pool, ch, drives, match, log)
@@ -265,12 +316,15 @@ function partB() {
           if (s6.linked >= 3 && s6.cash && s6.feed && s6.key) A.k6++
           if (s9.linked >= 3 && s9.cash && s9.key) A.k9++
           if (s6.all4 && s6.key) A.done6++
+          if (log.keyBy6) A.keyBy6++
+          A.offers += Object.values(log.off).reduce((a, b) => a + b, 0); A.seen += Object.keys(log.off).length; A.takes += Object.values(log.took).reduce((a, b) => a + b, 0)
+          A.kOff += log.ownKeyOff ?? 0; A.kTook += log.ownKeyTook ?? 0; if (log.late) A.late++
           for (const k in log.off) off[k] = (off[k] ?? 0) + log.off[k]
           for (const k in log.took) took[k] = (took[k] ?? 0) + log.took[k]
         }
         const r = (x) => pct(x / RUNS)
-        let line = `    match ${match ? 'on ' : 'off'} ${ch.padEnd(9)} formed d3 ${r(A.f3).padStart(4)}  chain d6 ${r(A.c6).padStart(4)}  keyed d6 ${r(A.k6).padStart(4)}  keyed d9 ${r(A.k9).padStart(4)}  done d6 ${r(A.done6).padStart(4)}  parts at d3 ${(A.n3 / RUNS).toFixed(1)}`
-        if (ch === 'committed' && !match) {
+        let line = `    match ${String(match).padEnd(4)} ${ch.padEnd(9)} formed d3 ${r(A.f3).padStart(4)}  chain d6 ${r(A.c6).padStart(4)}  keyed d6 ${r(A.k6).padStart(4)}  keyed d9 ${r(A.k9).padStart(4)}  done d6 ${r(A.done6).padStart(4)}  own key offered by d6 ${r(A.keyBy6).padStart(4)}  parts at d3 ${(A.n3 / RUNS).toFixed(1)}  own key taken when offered ${pct(A.kTook / Math.max(1, A.kOff))}  takes a part after d6 ${r(A.late)}  offers ${(A.offers / RUNS).toFixed(0)} (distinct ${(A.seen / RUNS).toFixed(0)}), takes ${(A.takes / RUNS).toFixed(1)}`
+        if (ch === 'committed' && match === MATCHES[0]) {
           // take rate when offered, per role (a committed player offered his own drive's part vs another's)
           const rate = (f) => { let o = 0, t = 0; for (const p of pool.filter(f)) { o += off[p.id] ?? 0; t += took[p.id] ?? 0 } return o ? t / o : 0 }
           line += `\n      take when offered: key ${pct(rate((p) => p.role === 'key'))}  cash ${pct(rate((p) => p.role === 'cash' && p.drive.length === 1))}  feed ${pct(rate((p) => p.role === 'feed'))}  guard ${pct(rate((p) => p.role === 'guard'))}  bridge ${pct(rate((p) => p.drive.length > 1))}  plain ${pct(rate((p) => p.role === 'plain'))}`
