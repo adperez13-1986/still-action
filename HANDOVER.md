@@ -3,6 +3,22 @@
 For the next session. Read this, then `DESIGN.md` (the settled decisions), then the design
 folder for whatever you're touching. Don't re-derive any of them.
 
+## Start here (1 Oct, night: "weight" AND "tap push" both done and live, waiting on his phone runs)
+
+Two independent pause switches, both off by default, both built + reviewed + pushed:
+- **"tap push"** (P0-P2, 2cd0e7a..0c5856c; brief `design/lean/TAP-PUSH.md`; checks `node tools/checks/tap.mjs` K-P1..P13; `TAP=1` runs
+  any suite with it on). His reason (1 Oct): "the hold makes intentional pushes more difficult." On: a touch on a cooling button with
+  > 300 ms left pushes on the touch-down (+2, a deep-red rim kick); <= 300 ms queues (cold ring, soft tick, fires free when ready); a
+  touch within 250 ms of that button's last fire or touch is guarded (a 150 ms "no" shake + click; a mash pays once). No touch is silent.
+  Captions PLACEHOLDER ('tap · break it' etc., once per save, so he likely sees none). Strain untouched (his call); watch `strainAtBoss`
+  and `tapPushes` (sim: Stopped by d3 16-24% if pushes rise x1.25-1.5; the parked retune is in PITCHES). My review changes: the
+  guard rolls; the guarded answer is a shake, not the ember arc (it read as a charging hold); K-P5 off the 300 ms edge (flaked).
+- **"weight"**: see the section below (unchanged).
+**Ask him first:** how each felt, separately if he tried them separately. Tap push: does every intentional push land; does the shake
+read as "already done"; any accidental pushes (log: pushes with nbMs < 40 = thumb rolls). Then his log.
+**Small known:** the first push of a session may not show its rim kick (first-cast compile hitch); the push kick is a 220 ms flash,
+easy to miss. Nothing heard headless.
+
 ## Start here (1 Oct, evening: "weight" DONE and live; "tap push" P0+P1 live, P2 next)
 
 **The "weight" trial is complete and live (W0-W5, 0620020..47036ef)**, a pause switch "weight" (PLACEHOLDER word), off by default.
