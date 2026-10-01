@@ -1,4 +1,4 @@
-// Lean sim (balancer, rounds 1-3). Run: node design/lean/lean-sim.mjs (r1) | ... r2 | ... r3 [fast]
+// Lean sim (balancer, rounds 1-3). Run: node design/lean/lean-sim.mjs (r1) | ... r2 | ... r3 [fast] | ... r3c (live curve)
 // r3 env CAND='[["name",{hp1,n1,hp,n,bossHp,pow}],...]' adds candidates to the detail + strain table.
 // Part A: the pack/boss Monte Carlo of design/autos/autos-sim2.mjs (same engine, same calibration: HAND_P .7,
 // EYE_P .25, hesitation 3.7 s never-melt / 1.3 s investor), extended with: enemy HP multipliers (packs, bosses),
@@ -142,7 +142,7 @@ const OPTS = [
   ['  same, never-melt presses 25% sooner', base({ hp: 1.25, bossHp: 1.1, area: true, hes: 0.75, mul: { head: 1.1, torso: 1.5, arms: 1.1, legs: 1.5 } })],
   ['pack x1.5 x1.8 row, never-melt 25% sooner', base({ hp: 1.5, bossHp: 1.2, area: true, hes: 0.75, mul: { head: 1.15, torso: 1.8, arms: 1.15, legs: 1.8 } })],
 ]
-const BASE = {}, R3 = process.argv[2] === 'r3'
+const BASE = {}, R3 = process.argv[2] === 'r3' || process.argv[2] === 'r3c' // r3c also skips r1/r2 parts
 if (!R3) for (const who of ['floor', 'invest']) { BASE[who] = { c1: measure(who, base({}), false), c13: measure(who, base({ hp: 1.3 }), false), b: measure(who, base({}), true) } }
 console.log('PART A. Cells never-melt / investor. pack x = pack kill time vs today (crawl HP 1.3 bucket); boss x; part share = part damage that mattered;')
 console.log('part kills = last hit by a part; casts per pack fight / per boss fight; finish at 9 = never-melt / median / investor (today 31/74/91).')
@@ -279,7 +279,7 @@ if (R2) {
 // New here: a real median player (rank I, hesitation 2.3 s, states x1.1; before, the median was the mean of the other
 // two); d1-2 fights at white for everyone (opt.early); depth-split packs (d1-2: hp1/n1, d4+: hp/n); area 2.
 // Finish uses body-seconds^0.8 on crawl checks (honest for pack size), kill time on bosses. Strain untouched.
-if (R3) {
+if (process.argv[2] === 'r3') {
   PLAYERS.median = { rank: 1, hesit: 2.3, stateMul: 1.1 }
   const WHO = ['floor', 'median', 'invest'], FAST = process.argv[3] === 'fast'
   const NP = FAST ? 600 : 2000, NB = FAST ? 100 : 250
@@ -373,4 +373,40 @@ if (R3) {
       console.log(`      ${vn.padEnd(16)} ${out.join(' | ')}`)
     }
   }
+}
+
+// ================= ROUND 3, live curve (node design/lean/lean-sim.mjs r3c) =================
+// r3 modelled every d4+ crawl check at curve hp 1.3. The live 9-depth curve (src/curve.ts DEPTH_CURVE_9) has hp
+// d4 1.1, d5 1.2, d7 1.2, d8 1.3 and boss HP d3 1.0, d6 1.2, d9 1.3. Here each check's ratio is measured on its own
+// curve base (pack HP = curve hp x packHpDeep), against today at that same base. Pick B's other dials unchanged.
+if (process.argv[2] === 'r3c') {
+  PLAYERS.median = { rank: 1, hesit: 2.3, stateMul: 1.1 }
+  const WHO = ['floor', 'median', 'invest']
+  const B4 = { mul: { head: 1.2, torso: 1.8, arms: 1.2, legs: 1.8 }, area: 2 }
+  const CRV = [1, 1, 1, 1.1, 1.2, 1.2, 1.2, 1.3, 1.3] // d1-9: crawl hp, boss depths (3, 6, 9) give boss HP
+  const BOSSD = [2, 5, 8]
+  const cache = new Map()
+  const M = (who, o, boss) => { const k = JSON.stringify([who, o, boss]); if (!cache.has(k)) cache.set(k, measure(who, o, boss, boss ? 250 : 2000)); return cache.get(k) }
+  // ratio at depth d for player who: deep = packHpDeep (single or per-depth array), early x1.4, boss x1.3
+  const ratio = (who, d, deep, curveMode, bossMul = 1.3) => {
+    const boss = BOSSD.includes(d), base = curveMode === 'r3' ? (d < 2 ? 1 : 1.3) : (boss ? 1 : CRV[d])
+    if (boss) { const bb = curveMode === 'r3' ? 1 : CRV[d]; const a = M(who, { hp: 1, bossHp: bb * bossMul, ...B4 }, true), z = M(who, { hp: 1, bossHp: bb, mul: {}, area: false }, true); return a.t / z.t }
+    const early = d < 2, k = early ? 1.4 : (Array.isArray(deep) ? deep[d] : deep)
+    const a = M(who, { hp: base * k, n: 4, bossHp: 1, ...B4, early }, false), z = M(who, { hp: base, n: 4, bossHp: 1, mul: {}, area: false, early }, false)
+    return a.bs / z.bs
+  }
+  const finish = (deep, curveMode, bossMul) => WHO.map((who, w) => CHECKS.reduce((acc, [, , scrap, lost], d) => acc * pAlive(lost[w] * ratio(who, d, deep, curveMode, bossMul) ** 0.8, 100 + scrap), 1))
+  const F = (a) => a.map((x) => Math.round(x * 100)).join('/')
+  const pk = (deep, d) => WHO.map((w) => { const base = CRV[d], m = M(w, { hp: base * (Array.isArray(deep) ? deep[d] : deep), n: 4, bossHp: 1, ...B4 }, false); return pct(m.partKills / m.kills) }).join('/')
+  const sh = (deep, d) => WHO.map((w) => { const base = CRV[d], m = M(w, { hp: base * (Array.isArray(deep) ? deep[d] : deep), n: 4, bossHp: 1, ...B4 }, false); return pct(m.part / (m.part + m.auto)) }).join('/')
+  console.log('Pick B (P4, d1-2 x1.4, boss x1.3). Finish bs never-melt/median/investor.')
+  console.log(`  r3 as modelled (every d4+ check at 1.3, boss base 900):  ${F(finish(1.65, 'r3'))}`)
+  console.log(`  live curve, packHpDeep 1.65:                            ${F(finish(1.65, 'live'))}   eff. pack HP d4/5/7/8 ${[3, 4, 6, 7].map((d) => (CRV[d] * 1.65).toFixed(2)).join('/')}`)
+  console.log(`    part share d4 ${sh(1.65, 3)} d8 ${sh(1.65, 7)}  part kills d4 ${pk(1.65, 3)} d8 ${pk(1.65, 7)}`)
+  console.log('  single packHpDeep on the live curve:')
+  for (const k of [1.65, 1.75, 1.85, 1.95, 2.05, 2.15]) console.log(`    x${k}: ${F(finish(k, 'live'))}   eff. d4/5/7/8 ${[3, 4, 6, 7].map((d) => (CRV[d] * k).toFixed(2)).join('/')}  share d4 ${sh(k, 3)} pk d4 ${pk(k, 3)}`)
+  // per-depth: restore r3's modelled effective HP 2.15 (= 1.3 x 1.65) at each crawl check
+  const per = CRV.map((c) => +(2.145 / c).toFixed(2))
+  console.log(`  per-depth, effective 2.15 everywhere (d4 ${per[3]}, d5/d7 ${per[4]}, d8 ${per[7]}): ${F(finish(per, 'live'))}`)
+  console.log('  boss x1.3 vs x1.2 on the live curve, packHpDeep 1.85:', F(finish(1.85, 'live', 1.3)), '|', F(finish(1.85, 'live', 1.2)))
 }

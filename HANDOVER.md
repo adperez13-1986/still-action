@@ -9,8 +9,7 @@ folder for whatever you're touching. Don't re-derive any of them.
 a new `src/weight.ts` with presets **B** (default, `3-balancer.md` r3: packs x1.4 d1-2 / x1.65 d4+, boss x1.3, torso/legs x1.8,
 head/arms x1.2, vent x1.4, dash x2, Cleaver 180 deg + 1.2 u shove) and **D** (fallback, smaller area). Bigger packs dropped
 (r3: they lose to HP for the median too), so no frame-rate measurement needed. My change to the brief: cards show weighed
-numbers while it's on (W3, K-L3g). Open: balancer asked about R3 (r3 modelled d4+ at curve hp 1.3; live d4 is 1.1, d5/d7 1.2):
-its answer goes in 3-balancer.md "R3 answer"; update WEIGHT's packHpDeep if it says so. **Next: his OK for localhost-only checks
+numbers while it's on (W3, K-L3g). R3 answered (3-balancer "R3 answer"): keep packHpDeep x1.65 on the live curve (19/72/92). **Next: his OK for localhost-only checks
 (127.0.0.1) at the office, then a Sonnet 5.5 engineer on W0**, me reviewing every diff and screenshot; push each reviewed step
 (he wants work live, the switch keeps it off by default).
 

@@ -99,3 +99,19 @@ Stopped doesn't move with the enemies (boss fight length for the median is 0.98)
    size once.
 2. **Median calibration** (hesitation 2.3, rank I) is a guess: no median run is logged.
 3. **Area 2's real body counts** (the sim gives ~1.85 bodies a cast) need the translator's geometry check.
+
+## R3 answer: the live curve (WEIGHT.md §6 R3)
+
+`node design/lean/lean-sim.mjs r3c`. Each check is measured on its own live base (d4 1.1, d5/d7 1.2, d8 1.3; bosses
+1.0/1.2/1.3), against today at that same base.
+
+| pick B, packHpDeep | effective d4/5/7/8 | finish bs |
+|---|---|---|
+| x1.65, r3 as modelled (all 1.3) | 2.15 everywhere | 20/72/92 |
+| **x1.65, live curve** | 1.81/1.98/1.98/2.15 | **19/72/92** |
+| x1.75 / x1.85 live | 1.93-2.41 | 17/71/92 · 15/69/91 |
+| per-depth to 2.15 everywhere | 2.15 | 16/70/91 |
+
+**No material move. Keep packHpDeep x1.65, single number.** The finish model is relative: HP lost at each depth is
+calibrated on that depth's live curve, and x1.65 is x1.65 against today's d4 whatever its base. The "1.82 vs 2.15" is
+an absolute difference, not extra softness. Restoring 2.15 per depth would toughen d4-7 past the target.

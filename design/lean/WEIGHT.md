@@ -555,7 +555,8 @@ Sound, haptics and the felt freeze can't be judged headless (no AudioContext run
   - S4-S6 decide. D is one constant away (`WEIGHT_PRESET`).
 - **R3. The sim's 1.3 bucket.**
   - Live d4 (curve 1.1) and d5 / d7 in 9 depths (1.2) come out softer than 3-balancer modelled: d4 is 1.82 against 2.15.
-  - The balancer's call, not code's.
+  - **Answered (3-balancer "R3 answer"):** keep x1.65, one number. The finish model is relative to each depth's own curve, so
+    the live curve gives 19/72/92 (vs 20/72/92 modelled). Topping d4-7 back to 2.15 would overshoot the target (16/70/91).
 - **R4. Breakpoints move with every multiplier.**
   - x1.4 was chosen so the white Lens still one-shots a sentinel (K-L3f).
   - Any change to `slotDmg.head` or `packHpEarly` must rerun it.
