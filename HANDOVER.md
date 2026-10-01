@@ -3,6 +3,15 @@
 For the next session. Read this, then `DESIGN.md` (the settled decisions), then the design
 folder for whatever you're touching. Don't re-derive any of them.
 
+## Start here (1 Oct, night: BUILD LAYER design round, round 1 running)
+
+His pick: dig into the build layer next. His answers: **everything open** (slots, autos, leanings, riders, states, temper,
+mastery, pedestals); builds should change **what parts do together + how you fight**; **no reference game**. Brief:
+`design/buildlayer/BRIEF.md`. Round 1: `1-claude.md` done (my lean: a **core** per run replaces the hand + eye, each a
+different verb leaving a condition in the world; parts pay or shape it; scrap shared; trial = Ram + Trail). Running: the
+balancer, translator, verifier writing `1-<voice>.md` (balancer may add `build-sim.mjs`). If a session dies: rerun the missing
+voices with the brief, then round 2 (`2-<voice>.md`, each reads all four), then `PITCHES.md` to him. Nothing built.
+
 ## Start here (1 Oct, night: weight + tap push ON BY DEFAULT; his verdict on the game as a whole)
 
 **Done + pushed:** both switches on by default (his word, after TRIAL-1): unset key = on, `'0'` = off; the switches stay on the pause
