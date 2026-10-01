@@ -1,4 +1,5 @@
-// Lean sim (balancer, round 1). Run: node design/lean/lean-sim.mjs
+// Lean sim (balancer, rounds 1-3). Run: node design/lean/lean-sim.mjs (r1) | ... r2 | ... r3 [fast]
+// r3 env CAND='[["name",{hp1,n1,hp,n,bossHp,pow}],...]' adds candidates to the detail + strain table.
 // Part A: the pack/boss Monte Carlo of design/autos/autos-sim2.mjs (same engine, same calibration: HAND_P .7,
 // EYE_P .25, hesitation 3.7 s never-melt / 1.3 s investor), extended with: enemy HP multipliers (packs, bosses),
 // part power as damage (per slot) or as area (more bodies per cast), and kill attribution (last hit).
@@ -31,7 +32,8 @@ const rng = () => ((seed = (seed * 16807) % 2147483647) / 2147483647)
 
 // opt: { hp, bossHp, mul: {head,torso,arms,legs}, area: bool }
 function fight(who, opt, boss) {
-  const P = PLAYERS[who]
+  // round 3: opt.early = d1-2, nobody has melted much yet: every player at white (rank 0, no states), own hesitation
+  const P = opt.early ? { ...PLAYERS[who], rank: 0, stateMul: 1 } : PLAYERS[who]
   const hpMul = boss ? opt.bossHp : opt.hp
   // round 2: opt.n bodies a pack (default 4: three 30s and a 20 at the back); more bodies = more 30s
   const n0 = opt.n ?? 4, pk = [...Array(n0 - 1).fill(30), 20]
@@ -41,6 +43,8 @@ function fight(who, opt, boss) {
     // area (no blue's identity borrowed: the head gets none, so Cracked Lens keeps pierce): vent radius x1.25 and dash
     // half-width x1.5 ~ p +0.25 a body; cleaver cone 120 -> 160 ~ 2nd body .5 -> .8, a 3rd at .3
     if (opt.area) { if (q.hits === 'each') q.p = Math.min(0.95, q.p + 0.25); if (q.hits === 'arc') { q.p2 = 0.8; q.p3 = 0.3 } }
+    // round 3: area 2 = vent radius x1.4, dash half-width x2, cleaver 180 deg ~ p +0.35, 2nd body .9, 3rd .45
+    if (opt.area === 2) { if (q.hits === 'each') q.p = Math.min(0.95, p.p + 0.35); if (q.hits === 'arc') { q.p2 = 0.9; q.p3 = 0.45 } }
     q.t = rng() * q.cd
     return q
   })
@@ -95,8 +99,8 @@ function fight(who, opt, boss) {
   st.t = t
   return st
 }
-function measure(who, opt, boss) {
-  const n = boss ? 300 : 2500, acc = { t: 0, auto: 0, part: 0, kills: 0, partKills: 0, casts: 0, bs: 0, hit: 0 }, frz = HS.map(() => 0)
+function measure(who, opt, boss, N) {
+  const n = N ?? (boss ? 300 : 2500), acc = { t: 0, auto: 0, part: 0, kills: 0, partKills: 0, casts: 0, bs: 0, hit: 0 }, frz = HS.map(() => 0)
   for (let i = 0; i < n; i++) { const s = fight(who, opt, boss); for (const k in acc) acc[k] += s[k]; s.frz.forEach((x, j) => (frz[j] += x)) }
   for (const k in acc) acc[k] /= n
   acc.frz = frz.map((x) => x / n)
@@ -138,14 +142,15 @@ const OPTS = [
   ['  same, never-melt presses 25% sooner', base({ hp: 1.25, bossHp: 1.1, area: true, hes: 0.75, mul: { head: 1.1, torso: 1.5, arms: 1.1, legs: 1.5 } })],
   ['pack x1.5 x1.8 row, never-melt 25% sooner', base({ hp: 1.5, bossHp: 1.2, area: true, hes: 0.75, mul: { head: 1.15, torso: 1.8, arms: 1.15, legs: 1.8 } })],
 ]
-const BASE = {}
-for (const who of ['floor', 'invest']) { BASE[who] = { c1: measure(who, base({}), false), c13: measure(who, base({ hp: 1.3 }), false), b: measure(who, base({}), true) } }
+const BASE = {}, R3 = process.argv[2] === 'r3'
+if (!R3) for (const who of ['floor', 'invest']) { BASE[who] = { c1: measure(who, base({}), false), c13: measure(who, base({ hp: 1.3 }), false), b: measure(who, base({}), true) } }
 console.log('PART A. Cells never-melt / investor. pack x = pack kill time vs today (crawl HP 1.3 bucket); boss x; part share = part damage that mattered;')
 console.log('part kills = last hit by a part; casts per pack fight / per boss fight; finish at 9 = never-melt / median / investor (today 31/74/91).')
 const ROWS = {}
 const R2 = process.argv[2] === 'r2'
 const R2_OPTS = ['today', 'pack x1.25, boss x1.1, area + torso/legs x1.5', 'n5, HP x1, parts x1', 'n5, HP x1, area + torso/legs x1.5', 'n6, HP x1, area + torso/legs x1.5', 'n5, HP x0.85, area + torso/legs x1.5', 'n5, HP x1.1, area + torso/legs x1.5']
 for (const [name, o] of OPTS) {
+  if (R3) break
   if (R2 && !R2_OPTS.includes(name)) continue
   const row = {}
   for (const who of ['floor', 'invest']) {
@@ -161,8 +166,8 @@ for (const [name, o] of OPTS) {
 }
 
 // ---- part power per second on one body (the 'weakest parts' table) ----
-if (!R2) console.log('\nOne-body DPS at white (damage / cooldown); the close strike is 10/0.62 = 16.1')
-if (!R2) for (const [n, d, cd] of [['Focusing Lens', 26, 4.2], ['Scrap Cleaver', 18, 2.6], ['Piston', 20, 3], ['Frayed Cleaver', 16, 2.6], ['Flare', 18, 4.2], ['Cracked Lens', 20, 4.6], ['Through-Line', 24, 6], ['Patient Lens (full)', 32, 7.5], ['Rusted Hook', 12, 3.2], ['Parry Clamp', 10, 3.6], ['Pressure Vent', 15, 6.5], ['Backdraft Vent', 12, 6.5], ['Chill Vent', 10, 6.5], ['Signal Flare', 12, 5], ['Lure', 18, 12], ['Skid Plates (8+10)', 18, 8], ['Kickstart', 12, 8], ['Plumb Line', 14, 9], ['Brace', 8, 9]]) process.stdout.write(`${n} ${(d / cd).toFixed(1)} · `)
+if (!R2 && !R3) console.log('\nOne-body DPS at white (damage / cooldown); the close strike is 10/0.62 = 16.1')
+if (!R2 && !R3) for (const [n, d, cd] of [['Focusing Lens', 26, 4.2], ['Scrap Cleaver', 18, 2.6], ['Piston', 20, 3], ['Frayed Cleaver', 16, 2.6], ['Flare', 18, 4.2], ['Cracked Lens', 20, 4.6], ['Through-Line', 24, 6], ['Patient Lens (full)', 32, 7.5], ['Rusted Hook', 12, 3.2], ['Parry Clamp', 10, 3.6], ['Pressure Vent', 15, 6.5], ['Backdraft Vent', 12, 6.5], ['Chill Vent', 10, 6.5], ['Signal Flare', 12, 5], ['Lure', 18, 12], ['Skid Plates (8+10)', 18, 8], ['Kickstart', 12, 8], ['Plumb Line', 14, 9], ['Brace', 8, 9]]) process.stdout.write(`${n} ${(d / cd).toFixed(1)} · `)
 console.log()
 
 // ---- Part B: strain over the 9-depth run ----
@@ -180,7 +185,7 @@ const LOST = [[55, 53, 51], [20, 18, 15], [88, 67, 47], [70, 55, 40], [63, 42, 3
 const lnorm = (m) => { const mu = Math.log(m) - SIG * SIG / 2; const z = Math.sqrt(-2 * Math.log(1 - rng())) * Math.cos(2 * Math.PI * rng()); return Math.exp(mu + SIG * z) }
 // v: { cast: strain per ready cast, push: strain per push, pushMul: pushes x, eager: accidental pushes a crawl depth, decay }
 function run(w, v, row) {
-  const who = w === 0 ? 'floor' : w === 2 ? 'invest' : null
+  const who = w === 0 ? 'floor' : w === 2 ? 'invest' : row.median ? 'median' : null
   const kx = (k) => (who ? row[who][k] : (row.floor[k] + row.invest[k]) / 2)
   const castMul = (boss) => { const k = boss ? 'bcasts' : 'casts'; const m = (row.floor[k] + row.invest[k]) / 2, b0 = (ROWS.today.floor[k] + ROWS.today.invest[k]) / 2; return (who ? row[who][k] : m) / b0 }
   let s = 0, kept = 0, pushes = 0, fights = 0
@@ -201,7 +206,7 @@ function run(w, v, row) {
     }
     if (d === 2 && rng() < 0.4) { s += 4; kept = Math.max(kept, 4) }
     if (s >= (v.cap ?? 20)) return { end: 'stopped', d, pushes, fights }
-    const x = kx(boss ? 'b' : d < 2 ? 'c1' : 'c13')
+    const x = kx(boss ? 'b' : d < 2 ? (v.bs ? 'bs1' : 'c1') : (v.bs ? 'bs13' : 'c13'))
     if (lnorm(LOST[d][w] * x ** 0.8) > 100 + SCRAP[d]) return { end: 'broke', d, pushes, fights }
   }
   return { end: 'made', d: 9, pushes, fights }
@@ -223,7 +228,7 @@ const VARIANTS = [
   ['V4 x1.5, quiet -3', { cast: 0, push: 2, pushMul: 1.5, decay: 3 }],
   ['V4 x2, quiet -3', { cast: 0, push: 2, pushMul: 2, decay: 3 }],
 ]
-if (!R2) for (const optName of ['today', process.env.LEAN_OPT ?? 'pack x1.25, boss x1.1, area + torso/legs x1.5']) {
+if (!R2 && !R3) for (const optName of ['today', process.env.LEAN_OPT ?? 'pack x1.25, boss x1.1, area + torso/legs x1.5']) {
   console.log(`\nPART B (enemies: ${optName}). Broke / Stopped / Made it, never-melt | median | investor; pushes a fight (median); Stopped at the bosses`)
   for (const [name, v] of VARIANTS) {
     const out = [0, 1, 2].map((w) => { const c = { broke: 0, stopped: 0, made: 0, pushes: 0, fights: 0, sBoss: 0 }; const N = 20000; for (let i = 0; i < N; i++) { const r = run(w, v, ROWS[optName]); c[r.end]++; c.pushes += r.pushes; c.fights += r.fights; if (r.end === 'stopped' && BOSS.includes(r.d)) c.sBoss++ } return { ...c, N } })
@@ -267,4 +272,105 @@ if (R2) {
   }
   const ex = HS[3].f
   console.log('  agreed contact ms (cd s; bodies 1/3/5): ' + [['Cleaver', 2.6], ['Lens', 4.2], ['Vent', 6.5], ['Kickstart', 8], ['Lure', 12]].map(([n, cd]) => `${n} ${[1, 3, 5].map((b) => ex('contact', cd, b)).join('/')}`).join(' · '))
+}
+
+// ================= ROUND 3 (node design/lean/lean-sim.mjs r3) =================
+// New target (DESIGN.md "The floor player", 1 Oct): never-melt finishes ~1 in 5; judge by median and investor first.
+// New here: a real median player (rank I, hesitation 2.3 s, states x1.1; before, the median was the mean of the other
+// two); d1-2 fights at white for everyone (opt.early); depth-split packs (d1-2: hp1/n1, d4+: hp/n); area 2.
+// Finish uses body-seconds^0.8 on crawl checks (honest for pack size), kill time on bosses. Strain untouched.
+if (R3) {
+  PLAYERS.median = { rank: 1, hesit: 2.3, stateMul: 1.1 }
+  const WHO = ['floor', 'median', 'invest'], FAST = process.argv[3] === 'fast'
+  const NP = FAST ? 600 : 2000, NB = FAST ? 100 : 250
+  const cache = new Map()
+  const M = (who, o, boss) => { const k = JSON.stringify([who, o, boss]); if (!cache.has(k)) cache.set(k, measure(who, o, boss, boss ? NB : NP)); return cache.get(k) }
+  const POW = {
+    P0: { mul: {}, area: false, txt: 'parts today' },
+    P1: { mul: { head: 1.1, torso: 1.5, arms: 1.1, legs: 1.5 }, area: true, txt: 'r1 pick: area 1, t/l x1.5, h/a x1.1' },
+    P2: { mul: { head: 1.15, torso: 1.8, arms: 1.15, legs: 1.8 }, area: true, txt: 'area 1, t/l x1.8, h/a x1.15' },
+    P3: { mul: { head: 1.1, torso: 1.5, arms: 1.1, legs: 1.5 }, area: 2, txt: 'area 2, t/l x1.5, h/a x1.1' },
+    P4: { mul: { head: 1.2, torso: 1.8, arms: 1.2, legs: 1.8 }, area: 2, txt: 'area 2, t/l x1.8, h/a x1.2' },
+    P5: { mul: { head: 1.1, torso: 2, arms: 1.1, legs: 2 }, area: 2, txt: 'area 2, t/l x2, h/a x1.1' },
+  }
+  // option: { hp1, n1 (d1-2), hp, n (d4+, x1.3 bucket on top), bossHp, pow }
+  const BASEO = { hp1: 1, n1: 4, hp: 1, n: 4, bossHp: 1, pow: 'P0' }
+  const rowOf = (o) => {
+    o = { ...BASEO, ...o }; const P = POW[o.pow], row = {}
+    for (const who of WHO) {
+      const c1 = M(who, { hp: o.hp1, n: o.n1, bossHp: 1, mul: P.mul, area: P.area, early: true }, false)
+      const c13 = M(who, { hp: o.hp * 1.3, n: o.n, bossHp: 1, mul: P.mul, area: P.area }, false)
+      const b = M(who, { hp: 1, bossHp: o.bossHp, mul: P.mul, area: P.area }, true)
+      const B1 = M(who, { hp: 1, n: 4, bossHp: 1, mul: {}, area: false, early: true }, false), B13 = M(who, { hp: 1.3, n: 4, bossHp: 1, mul: {}, area: false }, false), BB = M(who, { hp: 1, bossHp: 1, mul: {}, area: false }, true)
+      row[who] = { c1: c1.t / B1.t, c13: c13.t / B13.t, b: b.t / BB.t, bs1: c1.bs / B1.bs, bs13: c13.bs / B13.bs, pk1: c1.partKills / c1.kills, pk13: c13.partKills / c13.kills, sh1: c1.part / (c1.part + c1.auto), sh13: c13.part / (c13.part + c13.auto), shb: b.part / (b.part + b.auto), bpc: c13.hit / c13.casts, t1: c1.t, t13: c13.t }
+    }
+    return row
+  }
+  const finish = (row, mode = 'bs', e = 0.8) => WHO.map((who, w) => CHECKS.reduce((acc, [, k, scrap, lost]) => { const kk = k === 'b' ? 'b' : mode === 'kt' ? k : k === 'c1' ? 'bs1' : 'bs13'; return acc * pAlive(lost[w] * row[who][kk] ** e, 100 + scrap) }, 1))
+  const F = (a) => a.map((x) => Math.round(x * 100)).join('/')
+  const r2 = (x) => x.toFixed(2)
+  const T = (row, k) => WHO.map((w) => (k.startsWith('pk') || k.startsWith('sh') ? pct(row[w][k]) : r2(row[w][k]))).join('/')
+  const desc = (o) => { o = { ...BASEO, ...o }; return `d1-2 n${o.n1} x${o.hp1} | d4+ n${o.n} x${o.hp} | boss x${o.bossHp} | ${o.pow}` }
+  console.log('ROUND 3. Cells never-melt/median/investor. kill = pack kill time vs today; body-s = alive bodies x s vs today;')
+  console.log('pk = part kills (last hit); share = part damage that mattered; finish bs = body-s^0.8 model (kt = kill-time model; e.3 = body-s^0.3)')
+  for (const [k, P] of Object.entries(POW)) console.log(`  ${k}: ${P.txt}`)
+  const show = (name, o) => {
+    const r = rowOf(o), fb = finish(r), fk = finish(r, 'kt'), f3 = finish(r, 'bs', 0.3)
+    console.log(`  ${name.padEnd(30)} ${desc(o).padEnd(42)}\n      d1-2: kill ${T(r, 'c1')} body-s ${T(r, 'bs1')} pk ${T(r, 'pk1')}   d4+: kill ${T(r, 'c13')} body-s ${T(r, 'bs13')} pk ${T(r, 'pk13')} share ${T(r, 'sh13')} bodies/cast ${T(r, 'bpc')}   boss ${T(r, 'b')} share ${T(r, 'shb')}\n      finish bs ${F(fb)}  kt ${F(fk)}  e.3 ${F(f3)}`)
+    return { r, fb }
+  }
+
+  console.log('\n(1) Bigger packs, all with the r1 part power (P1). Same total = the pick\'s 4 x1.25 = 137.5 HP; today 110.')
+  const PK = [
+    ['today', { pow: 'P0' }],
+    ['r1 pick: 4 bodies x1.25', { hp1: 1.25, hp: 1.25, bossHp: 1.1, pow: 'P1' }],
+    ['+1 same total (x0.98)', { n1: 5, hp1: 0.98, n: 5, hp: 0.98, bossHp: 1.1, pow: 'P1' }],
+    ['+2 same total (x0.81)', { n1: 6, hp1: 0.81, n: 6, hp: 0.81, bossHp: 1.1, pow: 'P1' }],
+    ['+1 HP x1', { n1: 5, hp1: 1, n: 5, hp: 1, bossHp: 1.1, pow: 'P1' }],
+    ['+2 HP x1', { n1: 6, hp1: 1, n: 6, hp: 1, bossHp: 1.1, pow: 'P1' }],
+    ['+1 alongside x1.25', { n1: 5, hp1: 1.25, n: 5, hp: 1.25, bossHp: 1.1, pow: 'P1' }],
+    ['+2 alongside x1.25', { n1: 6, hp1: 1.25, n: 6, hp: 1.25, bossHp: 1.1, pow: 'P1' }],
+    ['+1 HP x1 from d4 (d1-2 pick)', { hp1: 1.25, n: 5, hp: 1, bossHp: 1.1, pow: 'P1' }],
+    ['+2 HP x1 from d4 (d1-2 pick)', { hp1: 1.25, n: 6, hp: 1, bossHp: 1.1, pow: 'P1' }],
+    ['+1 x1.25 from d4 (d1-2 pick)', { hp1: 1.25, n: 5, hp: 1.25, bossHp: 1.1, pow: 'P1' }],
+    ['+1 HP x1 from d4, area 2', { hp1: 1.25, n: 5, hp: 1, bossHp: 1.1, pow: 'P3' }],
+    ['+2 HP x1 from d4, area 2', { hp1: 1.25, n: 6, hp: 1, bossHp: 1.1, pow: 'P3' }],
+  ]
+  const R = {}
+  for (const [n, o] of PK) R[n] = show(n, o)
+
+  console.log('\n(2a) d1-2 alone (everyone at white). Pass lines: never-melt pk >= 45%, body-s <= 1.2 (hpLost within 20%).')
+  for (const pow of ['P1', 'P3', 'P4', 'P5']) for (const [n1, hp1] of [[4, 1], [4, 1.25], [4, 1.4], [4, 1.5], [4, 1.6], [5, 1], [5, 1.1]]) {
+    const r = rowOf({ hp1, n1, hp: 1.25, bossHp: 1.1, pow }), f = finish(r)
+    console.log(`   ${pow} d1-2 n${n1} x${hp1}`.padEnd(24) + ` kill ${T(r, 'c1')} body-s ${T(r, 'bs1')} pk ${T(r, 'pk1')} share ${T(r, 'sh1')}  (finish with d4+ x1.25: ${F(f)})`)
+  }
+  console.log('\n(2b) Grid, d1-2 fixed at n4 x1.4. Band: finish (bs) never-melt 17-23, median 70-75, investor >= 90; fodder guard: median d4+ kill <= 1.10.')
+  console.log('     Ranked by median+investor part share (d4+ and boss).')
+  const grid = []
+  for (const hp of [1.25, 1.4, 1.5, 1.65, 1.8, 2, 2.2]) for (const n of [4, 5]) for (const bossHp of [1.1, 1.2, 1.3, 1.4, 1.5]) for (const pow of ['P1', 'P2', 'P3', 'P4', 'P5']) {
+    const o = { hp1: 1.4, n1: 4, hp, n, bossHp, pow }, r = rowOf(o), f = finish(r)
+    const score = (r.median.sh13 + r.invest.sh13 + r.median.shb + r.invest.shb) / 4
+    grid.push({ o, r, f, score })
+  }
+  const inBand = (g) => g.f[0] >= 0.17 && g.f[0] <= 0.23 && g.f[1] >= 0.70 && g.f[1] <= 0.755 && g.f[2] >= 0.895
+  const hit = grid.filter((g) => inBand(g) && g.r.median.c13 <= 1.10).sort((a, b) => b.score - a.score || a.o.hp - b.o.hp)
+  const gl = (g) => console.log(`   ${desc(g.o).padEnd(42)} finish ${F(g.f)}  share d4+ ${T(g.r, 'sh13')} boss ${T(g.r, 'shb')}  pk d4+ ${T(g.r, 'pk13')}  kill d4+ ${T(g.r, 'c13')} body-s ${T(g.r, 'bs13')} boss ${T(g.r, 'b')}  score ${pct(g.score)}`)
+  console.log(`  ${hit.length} of ${grid.length} combos in the band (${grid.filter(inBand).length} before the fodder guard). Top 8:`)
+  hit.slice(0, 8).forEach(gl)
+  console.log('  best in band per power level and pack size:')
+  for (const p of Object.keys(POW)) for (const n of [4, 5]) { const g = hit.find((x) => x.o.pow === p && x.o.n === n); if (g) gl(g) }
+  console.log('  out of band for reference (fodder guard broken or band missed), best score overall:')
+  grid.filter((g) => !hit.includes(g) && g.f[2] >= 0.895 && g.f[1] >= 0.70).sort((a, b) => b.score - a.score).slice(0, 3).forEach(gl)
+  // candidates for the write-up, full detail + strain
+  const CAND = process.env.CAND ? JSON.parse(process.env.CAND) : []
+  const SHOW = [['r1 pick', { hp1: 1.25, hp: 1.25, bossHp: 1.1, pow: 'P1' }], ...hit.slice(0, 1).map((g, i) => [`grid #${i + 1}`, g.o]), ...CAND]
+  console.log('\n(3) Candidates in detail, and the strain clock (strain UNCHANGED; Broke/Stopped/Made, body-s Broke model)')
+  for (const [n, o] of SHOW) {
+    const { r } = show(n, o)
+    const row = { floor: r.floor, median: r.median, invest: r.invest }
+    for (const [vn, v] of [['pushes as today', { cast: 0, push: 2, pushMul: 1, bs: true }], ['tap push x1.25', { cast: 0, push: 2, pushMul: 1.25, bs: true }], ['tap push x1.5', { cast: 0, push: 2, pushMul: 1.5, bs: true }]]) {
+      const out = [0, 1, 2].map((w) => { const c = { broke: 0, stopped: 0, made: 0 }; const N = FAST ? 3000 : 12000; for (let i = 0; i < N; i++) c[run(w, v, row).end]++; return `${Math.round(100 * c.broke / N)}/${Math.round(100 * c.stopped / N)}/${Math.round(100 * c.made / N)}` })
+      console.log(`      ${vn.padEnd(16)} ${out.join(' | ')}`)
+    }
+  }
 }
