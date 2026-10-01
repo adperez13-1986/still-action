@@ -27,6 +27,7 @@ const SETUP = `(on) => {
   W.__hold(true)
   W.__arena()
   const C = W.__combat
+  delete C.hurtPlayer
   C.time = 0
   C.pressure = true
   C.counters = false
@@ -47,9 +48,25 @@ const HELPERS = `
   const C = W.__combat
   const last = () => W.__run.stats[W.__run.stats.length - 1]
   const snap = () => JSON.parse(JSON.stringify(last()))
-  const tick = (pin) => { C.hp = 100; W.__still.pos.set(0, 0, 0); if (pin) { pin.pos.set(pin.pos.x, 0, pin.pos.z); pin.knock.set(0, 0, 0) } W.__step(1 / 60) }
+  const tick = (...pins) => { C.hp = 100; W.__still.pos.set(0, 0, 0); for (const pin of pins) if (pin) { pin.pos.set(pin.pos.x, 0, pin.pos.z); pin.knock.set(0, 0, 0) } W.__step(1 / 60) }
   const wall = (hp = 1e6, x = 0, z = 2) => { const e = W.__spawn('chaser', x, z, true); e.hp = hp; return e }
   const fx = () => W.__fx()
+`
+
+/**
+ * In the page, after HELPERS (the timing checks): Still faces +z; \`vib\` records every navigator.vibrate call (the hud's 12 ms press buzz is one
+ * of them); \`walls(n, z)\` n hulks side by side at z, inside a 100 degree fan of the Cleaver (|x| <= 1 at 2 u); \`ring(n, r)\` n hulks round Still
+ * at r (the Vent). \`ms()\` is fx() as milliseconds: the freeze pending, the shake, the push signatures.
+ */
+const TIMING = `
+  W.__still.facing = 0
+  // no body hurts Still: a nick's own freeze (the game's, not the weight trial's) would sit in the numbers this check reads
+  C.hurtPlayer = () => {}
+  const vib = []
+  navigator.vibrate = (p) => { vib.push(p); return true }
+  const walls = (n, z = 2) => [0, -0.5, 0.5, -1, 1].slice(0, n).map((x) => wall(1e6, x, z))
+  const ring = (n, r = 2.5) => Array.from({ length: n }, (_, i) => wall(1e6, Math.sin((i / n) * Math.PI * 2) * r, Math.cos((i / n) * Math.PI * 2) * r))
+  const ms = () => { const f = fx(); return { ms: f.hitstop * 1000, shake: f.shake, sig: f.pushSig } }
 `
 
 /**
@@ -245,6 +262,9 @@ check('K-L10', RUN, async ({ page }) => {
     assertEq(`switch ${sw}: ready + pushed === breaks`, g.sum, true)
     assertEq(`switch ${sw}: the depth's weight stays the value at entry (__weight is not a level entry)`, g.weight, false)
     assertEq(`switch ${sw}: __weight is not a flip: no weightMixed`, g.mixed, null)
+    // W1: the freeze counters move with the switch on (the contact and the break of a part's push), and stay 0 with it off
+    if (sw === 'on') assert(g.fields.freezePartMs > 0 && g.fields.freezeAutoMs === 0, `switch on: freezePartMs should have moved and freezeAutoMs not, got ${g.fields.freezePartMs} / ${g.fields.freezeAutoMs}`)
+    else assertEq('switch off: both freeze counters stay 0', [g.fields.freezePartMs, g.fields.freezeAutoMs], [0, 0])
   }
 
   // weightMixed only on a flip depth: a flip from the pause screen marks it, the next depth is clean, and the off depth never has it
@@ -275,6 +295,261 @@ check('K-L10', RUN, async ({ page }) => {
   assertEq('the next depth: weight on, no weightMixed', flip.next, { weight: true, mixed: null })
   assertEq('only the flip depth is mixed', flip.history.filter((h) => h.mixed).map((h) => h.depth), [2])
   assertEq('left off', flip.after, { stored: '0', on: false })
+})
+
+// ---- W1: timing (WEIGHT.md §2.3, §4) -------------------------------------------------------------------------------------------------------
+
+/**
+ * One scene of a timing check, as page source: a clean arena with the switch `on` (SETUP), the helpers, then \`body\`. Each scene is its own
+ * block, so it declares what it likes; what it hands on goes through \`out\` (and \`acc\`, where a check sums across scenes).
+ */
+const scene = (on, body) => `{
+  (${SETUP})(${on})
+  ${HELPERS}
+  ${TIMING}
+  ${body}
+}`
+
+/** In a scene: ready the button \`slot\` again, as a ready flash does. */
+const READY = (slot) => `W.__hud.ready('${slot}', 'cold')`
+
+const near = (what, a, b) => assert(Math.abs(a - b) <= 0.5, `${what}: ${a} ms, wanted ${b}`)
+
+// K-L6 the formula and the merge: freeze = min(100, round(30 + 6 x base cooldown s + 10 x (bodies - 1))) ms, and freezes within 0.2 s merge
+check('K-L6', RUN, async ({ page }) => {
+  const got = await evalJson(page, `() => {
+    const out = { cleaver: {}, vent: {} }
+    const acc = { sums: 0, lost0: window.__run.stats.at(-1).freezePartMs }
+    ${[1, 3, 5].map((n) => scene(true, `
+      const read = () => { const f = ms(); acc.sums += f.ms; return f }
+      walls(${n})
+      W.__fire('arms')
+      out.cleaver[${n}] = read().ms`) + scene(true, `
+      const read = () => { const f = ms(); acc.sums += f.ms; return f }
+      ring(${n})
+      W.__fire('torso')
+      out.vent[${n}] = read().ms`)).join('\n')}
+    // a Cleaver III freezes like a rank-I one (the part's own cooldown, never the tempered one)
+    ${scene(true, `
+      const read = () => { const f = ms(); acc.sums += f.ms; return f }
+      W.__equipRank('scrap-cleaver', 3)
+      walls(1)
+      W.__fire('arms')
+      out.cleaver3 = read().ms`)}
+    // Patient Lens (1.5 s): nothing on the press, 39 on the step the bolt lands
+    ${scene(true, `
+      const read = () => { const f = ms(); acc.sums += f.ms; return f }
+      W.__equip('patient-lens')
+      const far = wall(1e6, 0, 6)
+      W.__fire('head')
+      out.patientPress = read().ms
+      let landed = 0
+      for (let i = 0; i < 90 && !landed; i++) { tick(far); landed = read().ms }
+      out.patient = landed`)}
+    // the merge: a Cleaver (46), 0.1 s on the Vent (69) adds only the 23 it has over it; 0.3 s on the Cleaver is a fresh 46
+    ${scene(true, `
+      const read = () => { const f = ms(); acc.sums += f.ms; return f }
+      const w1 = wall(1e6, 0, 2)
+      W.__fire('arms')
+      out.m1a = read().ms
+      for (let i = 0; i < 6; i++) tick(w1)
+      ${READY('torso')}
+      W.__fire('torso')
+      out.m1b = read().ms
+      for (let i = 0; i < 18; i++) tick(w1)
+      ${READY('arms')}
+      W.__fire('arms')
+      out.m2 = read().ms`)}
+    // a Cleaver that kills a 1 HP hulk: the press (46) and the step it dies (the part kill's 90) sum to 90
+    ${scene(true, `
+      const one = wall(1, 0, 2)
+      W.__fire('arms')
+      let n = 0
+      while (C.enemies.includes(one) && n++ < 10) tick(one)
+      out.killed = !C.enemies.includes(one)
+      out.kill = ms().ms
+      acc.sums += out.kill`)}
+    out.freezePartMs = window.__run.stats.at(-1).freezePartMs - acc.lost0
+    out.sums = acc.sums
+    return out
+  }`)
+  near('Cleaver, 1 body', got.cleaver[1], 46)
+  near('Cleaver, 3 bodies', got.cleaver[3], 66)
+  near('Cleaver, 5 bodies', got.cleaver[5], 86)
+  near('Vent, 1 body', got.vent[1], 69)
+  near('Vent, 3 bodies', got.vent[3], 89)
+  near('Vent, 5 bodies (capped)', got.vent[5], 100)
+  near('Cleaver III, 1 body', got.cleaver3, 46)
+  near('Patient Lens on the press', got.patientPress, 0)
+  near('Patient Lens when it lands', got.patient, 39)
+  near('merge: the Cleaver', got.m1a, 46)
+  near('merge: the Vent 0.1 s later adds only its excess', got.m1b, 23)
+  near('merge: 0.3 s later is a fresh freeze', got.m2, 46)
+  assert(got.killed, 'the 1 HP hulk never died')
+  near('merge: the press then the step it dies', got.kill, 90)
+  near('freezePartMs equals the sum of the freezes read', got.freezePartMs, got.sums)
+})
+
+// K-L7 the autos are quiet: no freeze from a hand strike or a lance; an auto kill 35 ms, a part kill 90; a hand break 35, a part's break 90
+check('K-L7', RUN, async ({ page }) => {
+  const got = await evalJson(page, `() => {
+    const out = {}
+    // the hand on a wall, autos on: weight on, not a frozen step in 3 s; the control, switch off, freezes
+    ${[true, false].map((on) => scene(on, `
+      C.autoAttack = true
+      const w = wall(1e6, 0, 2)
+      const h0 = snap().hand
+      let maxStop = 0
+      for (let i = 0; i < ${on ? 180 : 60}; i++) { tick(w); maxStop = Math.max(maxStop, fx().hitstop) }
+      out.${on ? 'hand' : 'handOff'} = { maxStop: maxStop * 1000, strikes: snap().hand - h0 }`)).join('\n')}
+    // the eye's planted lance at a wall 8 u off
+    ${scene(true, `
+      C.autoAttack = true
+      const far = wall(1e6, 0, 8)
+      const l0 = snap().autoDmg.eye
+      let maxLance = 0
+      for (let i = 0; i < 240; i++) { tick(far); maxLance = Math.max(maxLance, fx().hitstop) }
+      out.lance = { maxStop: maxLance * 1000, struck: snap().autoDmg.eye - l0 }`)}
+    // an auto kill: a 1 HP hulk in the hand's reach
+    ${scene(true, `
+      C.autoAttack = true
+      const a = wall(1, 0, 2)
+      const k0 = snap()
+      let maxKill = 0, maxShake = 0
+      for (let i = 0; i < 120 && C.enemies.includes(a); i++) { tick(a); const f = ms(); maxKill = Math.max(maxKill, f.ms); maxShake = Math.max(maxShake, f.shake) }
+      const k1 = snap()
+      out.autoKill = { dead: !C.enemies.includes(a), maxStop: maxKill, maxShake, by: k1.kills.auto - k0.kills.auto, auto: k1.freezeAutoMs - k0.freezeAutoMs, part: k1.freezePartMs - k0.freezePartMs }`)}
+    // a part kill: a Cleaver on a 1 HP hulk, autos off: the press (46) and the kill merge to 90, and the kill's shake is whole
+    ${scene(true, `
+      const p = wall(1, 0, 2)
+      W.__fire('arms')
+      let n = 0
+      while (C.enemies.includes(p) && n++ < 10) tick(p)
+      const f = ms()
+      out.partKill = { dead: !C.enemies.includes(p), maxStop: f.ms, shake: f.shake }`)}
+    // a hand break of a crowned windup: autos on, a plated hulk 2 u off winds up and the hand breaks it
+    ${scene(true, `
+      C.autoAttack = true
+      C.pressure = false
+      const h = W.__spawn('chaser', 0, 2, true, 'plated')
+      h.hp = 1e6
+      const b0 = snap().handBreaks
+      let maxBreak = 0, broke = false
+      for (let i = 0; i < 400 && !broke; i++) { tick(h); const f2 = ms(); maxBreak = Math.max(maxBreak, f2.ms); broke = snap().handBreaks > b0 }
+      out.handBreak = { broke, maxStop: maxBreak }`)}
+    // a Cleaver's break: pressed once, a push on the cooling button breaks the windup. The merge window is reset between the two presses
+    ${scene(true, `
+      C.pressure = false
+      const c = W.__spawn('chaser', 0, 2, true, 'plated')
+      c.hp = 1e6
+      let m = 0
+      while (c.phase !== 'windup' && m++ < 240) tick(c)
+      W.__fire('arms')
+      ms()
+      W.__weight(true)
+      vib.length = 0
+      const br0 = snap().breaks
+      W.__fire('arms', true)
+      const fb = ms()
+      out.partBreak = { broke: snap().breaks - br0, ms: fb.ms, vib: JSON.stringify(vib) }`)}
+    return out
+  }`)
+  assertEq('the hand struck for three seconds', got.hand.strikes > 0, true)
+  assertEq('weight on: the hand never froze a step', got.hand.maxStop, 0)
+  assert(got.handOff.strikes > 0 && got.handOff.maxStop > 0, `the control (switch off) must freeze on a hand strike, got ${JSON.stringify(got.handOff)}`)
+  assert(got.lance.struck > 0, 'the planted lance never struck the wall')
+  assertEq('weight on: the lance never froze a step', got.lance.maxStop, 0)
+  assert(got.autoKill.dead, 'the auto never killed the 1 HP hulk')
+  assertEq('an auto kill is logged as an auto kill', got.autoKill.by, 1)
+  near('an auto kill', got.autoKill.maxStop, 35)
+  assert(got.autoKill.maxShake <= 0.14 + 1e-9 && got.autoKill.maxShake > 0, `an auto kill's shake: ${got.autoKill.maxShake}, wanted at most 0.14`)
+  assert(Math.abs(got.autoKill.auto - 35) <= 0.5 && got.autoKill.part === 0, `freezeAutoMs +${got.autoKill.auto} (wanted 35), freezePartMs +${got.autoKill.part} (wanted 0)`)
+  assert(got.partKill.dead, 'the Cleaver never killed the 1 HP hulk')
+  near('a part kill', got.partKill.maxStop, 90)
+  assert(got.partKill.shake >= 0.28 - 1e-9, `a part kill's shake: ${got.partKill.shake}, wanted at least 0.28`)
+  assert(got.handBreak.broke, 'the hand never broke the crowned windup')
+  near('a hand break', got.handBreak.maxStop, 35)
+  assertEq("a push broke the Cleaver's windup", got.partBreak.broke, 1)
+  near("a part's break", got.partBreak.ms, 90)
+  assert(got.partBreak.vib.includes('[20,30,40]'), `a part's break haptic [20,30,40] not recorded: ${got.partBreak.vib}`)
+})
+
+// K-L8 no freeze on a miss (verifier r2's cases, the thresholds recomputed for the agreed formula)
+check('K-L8', RUN, async ({ page }) => {
+  const got = await evalJson(page, `() => {
+    const out = {}
+    // (a) a Cleaver at a hulk 6 u BEHIND Still, and (e) the control: the same press with the switch off
+    ${[true, false].map((on) => scene(on, `
+      wall(1e6, 0, -6)
+      W.__fire('arms')
+      const f = ms()
+      out.${on ? 'miss' : 'missOff'} = { ms: f.ms, shake: f.shake, vib: JSON.stringify(vib) }`)).join('\n')}
+    // (b) one hulk in the arc, then three
+    ${[1, 3].map((n) => scene(true, `
+      walls(${n})
+      W.__fire('arms')
+      out.arc${n} = { ms: ms().ms, vib: JSON.stringify(vib) }`)).join('\n')}
+    // (c) a Lens at a hulk 8 u away: nothing on the press, nothing while the bolt flies, 55 on the step it lands
+    ${scene(true, `
+      const far = wall(1e6, 0, 8)
+      W.__fire('head')
+      const press = ms().ms
+      const steps = []
+      for (let i = 0; i < 90; i++) { tick(far); steps.push(ms().ms) }
+      const first = steps.findIndex((x) => x > 0)
+      out.lens = { press, first, landed: steps[first], before: steps.slice(0, Math.max(0, first)).every((x) => x === 0), after: steps.slice(first + 1).every((x) => x === 0) }`)}
+    // (f) the pose starts cocked with weight on, from 0 with it off; the autos' own attack never does
+    ${[true, false].map((on) => scene(on, `
+      W.__fire('arms')
+      out.${on ? 'cockedOn' : 'cockedOff'} = { pose: W.__still.anim.pose, t: W.__still.anim.t, dur: W.__still.anim.dur }`) + scene(on, `
+      W.__fire('torso')
+      out.${on ? 'novaOn' : 'novaOff'} = { pose: W.__still.anim.pose, t: W.__still.anim.t, dur: W.__still.anim.dur }`) + scene(on, `
+      W.__still.attack({ beat: 'shot', pushed: false })
+      out.${on ? 'autoOn' : 'autoOff'} = W.__still.anim.t`)).join('\n')}
+    return out
+  }`)
+  assertEq('(a) a Cleaver at a hulk behind: no freeze on the press', got.miss.ms, 0)
+  assertEq('(a) no shake', got.miss.shake, 0)
+  assertEq("(a) vibrate: only the hud's 12", got.miss.vib, '[12]')
+  near('(b) one hulk in the arc', got.arc1.ms, 46)
+  near('(b) three hulks in the arc', got.arc3.ms, 66)
+  assertEq("(b) one hulk: the contact haptic comes on top of the hud's 12", got.arc1.vib, '[12,12]')
+  assertEq('(c) a Lens at 8 u: nothing on the press', got.lens.press, 0)
+  assert(got.lens.first > 0, `(c) the bolt never landed: ${JSON.stringify(got.lens)}`)
+  assertEq('(c) nothing on any step before the bolt lands', got.lens.before, true)
+  near('(c) the step it lands', got.lens.landed, 55)
+  assertEq('(c) nothing after', got.lens.after, true)
+  assert(got.missOff.ms > 0, `(e) the control: switch off, the same press must freeze (today's main.ts line), got ${got.missOff.ms} ms`)
+  near("(e) the control is today's 35 ms", got.missOff.ms, 35)
+  assert(Math.abs(got.cockedOn.t - 0.3 * got.cockedOn.dur) < 1e-9, `(f) weight on: the arc starts at 0.3 of its dur, got ${got.cockedOn.t} of ${got.cockedOn.dur}`)
+  assert(Math.abs(got.novaOn.t - 0.25 * got.novaOn.dur) < 1e-9, `(f) weight on: the nova starts at 0.25 of its dur, got ${got.novaOn.t} of ${got.novaOn.dur}`)
+  assertEq('(f) weight off: the arc starts at 0', got.cockedOff.t, 0)
+  assertEq('(f) weight off: the nova starts at 0', got.novaOff.t, 0)
+  assertEq("(f) the autos' attack never starts cocked", [got.autoOn, got.autoOff], [0, 0])
+})
+
+// K-L9 moves: a dash freezes at the landing and only if it struck bodies
+check('K-L9', RUN, async ({ page }) => {
+  const got = await evalJson(page, `() => {
+    const out = {}
+    // bodies asleep: they stand where they are and never strike back; the dash runs them over all the same
+    ${[['empty', null, 0, 27], ['three', null, 3, 27], ['hop', 'skitter', 1, 30]].map(([name, equip, n, steps]) => scene(true, `
+      ${equip ? `W.__equip('${equip}')` : ''}
+      for (let i = 0; i < ${n}; i++) { const b = W.__spawn('chaser', 0, 2 + i * 1.4, false); b.hp = 1e6 }
+      W.__fire('legs')
+      const rows = [ms().ms]
+      for (let i = 0; i < ${steps}; i++) { C.hp = 100; W.__step(1 / 60); rows.push(ms().ms) }
+      out.${name} = rows`)).join('\n')}
+    return out
+  }`)
+  assert(got.empty.every((x) => x === 0), `an empty floor: expected 0 from the press to 10 steps after the landing, got ${JSON.stringify(got.empty)}`)
+  assertEq('three walls: nothing on the press', got.three[0], 0)
+  const land = got.three.findIndex((x) => x > 0)
+  assert(land >= 15 && land <= 18, `three walls: the freeze came on step ${land}, wanted the landing, within a tick of travelMs 280 (step 17)`)
+  assert(got.three.slice(0, land).every((x) => x === 0), `three walls: a freeze before the landing: ${JSON.stringify(got.three)}`)
+  near('three walls: the landing', got.three[land], 98)
+  assert(got.three.slice(land + 1).every((x) => x === 0), `three walls: a second freeze after the landing: ${JSON.stringify(got.three)}`)
+  assert(got.hop.every((x) => x === 0), `Skitter over a wall: expected 0 throughout, got ${JSON.stringify(got.hop)}`)
 })
 
 process.exit(await run(process.argv.slice(2)))

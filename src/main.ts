@@ -9,7 +9,7 @@ import { Combat, eliteLine, PARRY, HAND, HAND_REACH, EYE, type Archetype, type A
 import { STARTING, PARTS, byId, type AbilityDef, type AbilityShape, type BeatKey, type Lean } from './abilities'
 import { SLOT_NAMES, type SlotName } from './still'
 import { TEMPER, ROMAN, tempered } from './temper'
-import { presetId as weightPresetId, setPreset as setWeightPreset, weighed, WEIGHT_PRESETS, type PresetId } from './weight'
+import { presetId as weightPresetId, setPreset as setWeightPreset, weighed, baseCooldownS, WEIGHT_FEEL, WEIGHT_PRESETS, type PresetId } from './weight'
 import { curveAt } from './curve'
 import { MASTERY, MASTERY_MAX, FORM_NAME, masteryOffer, type MasteryId, type MasteryForm } from './mastery'
 import { STATE_IDS, pairWith, paired, type StateId } from './states'
@@ -226,6 +226,28 @@ let pushSig = 0
 /** Hits landed during the cast being resolved: Piston sounds different when it connects. */
 let castHits = 0
 
+/**
+ * The "weight" trial's freeze (design/lean/WEIGHT.md §2.3), the only path for the freezes it lists; every other hitstop line stays as it was.
+ * Freezes less than `mergeS` of game time apart merge: the later one adds only what it has over the one already running (game time stands
+ * still inside a freeze, so a freeze's start and end are the same t). `src` splits what was added in the depth's log.
+ */
+let freezeAt = -Infinity
+let freezeLen = 0
+function freeze(ms: number, src: 'part' | 'auto') {
+  const t = combat.time
+  const since = t - freezeAt
+  const merge = since >= 0 && since < WEIGHT_FEEL.freeze.mergeS
+  const add = merge ? Math.max(0, ms - freezeLen) : ms
+  if (merge) hitstop += add / 1000
+  else hitstop = Math.max(hitstop, ms / 1000)
+  freezeLen = merge ? Math.max(freezeLen, ms) : ms
+  freezeAt = t
+  const st = run.stats[run.stats.length - 1]
+  if (st) st[src === 'part' ? 'freezePartMs' : 'freezeAutoMs'] += add
+}
+/** Who dealt the killing blow of the body being buried (onFelled comes just before its onKill). */
+let killBy: 'part' | 'auto' | 'other' = 'other'
+
 /** How high each hop arcs. Flat is a dash, an arc is a hop: height is how you tell them apart. */
 const HOP_H: Partial<Record<BeatKey, number>> = { skitter: 0.35, spring: 0.9 }
 
@@ -252,6 +274,7 @@ const combat = new Combat(world.scene, OPEN, {
       sfx.hitOpen(pan, e.plated ? 1.3 : 1)
       vfx.sparks(at3(at, 1.0), COLD, 12, 6.5, away, 0.9)
       vfx.flash(e.fireboxPoint(new THREE.Vector3()), EMBER, 0.4)
+      // weight: the open hatch keeps its beat (it teaches the hatch); every other hit freezes nothing
       hitstop = Math.max(hitstop, 0.06)
     } else {
       // shut plate soaks it: a quieter hit and a dull one under it
@@ -260,10 +283,10 @@ const combat = new Combat(world.scene, OPEN, {
         sfx.plateDull(pan)
       } else sfx.hit(pan)
       vfx.sparks(at3(at, 1.0), COLD, 8, 6.5, away, 0.9)
-      hitstop = Math.max(hitstop, 0.045)
+      if (!combat.weight) hitstop = Math.max(hitstop, 0.045)
     }
     vfx.flash(at3(at, 1.0), COLD_DEEP, 0.35)
-    shake = Math.max(shake, 0.1)
+    if (!combat.weight) shake = Math.max(shake, 0.1)
   },
   onPlayerHurt: (amount, _source, braced) => {
     const hurtSt = run.stats[run.stats.length - 1]
@@ -312,6 +335,7 @@ const combat = new Combat(world.scene, OPEN, {
       return
     }
     sfx.kill(panOf(at))
+    const killShake = combat.weight && killBy === 'auto' ? WEIGHT_FEEL.autoKillShake : 1
     if (kind === 'charger') {
       // the boiler's last breath: bronze, the two hatch plates thrown high, smoke rising
       vfx.chunks(at3(at, 0.8), 14, RAM_C, 5.5, 0.18)
@@ -328,17 +352,19 @@ const combat = new Combat(world.scene, OPEN, {
         vfx.chunks(at3(at, 0.8), 6, RAM_C, 5, 0.14)
         sfx.ramSplit(panOf(at))
       }
-      shake = Math.max(shake, 0.3)
+      shake = Math.max(shake, 0.3 * killShake)
     } else {
       // it comes apart: chunks of its own metal, a burst of embers, a puff of grit
       vfx.chunks(at3(at, 0.8), 12, metalOf(e), 5.5, 0.18)
       vfx.sparks(at3(at, 0.9), EMBER, 16, 6)
       vfx.flash(at3(at, 0.9), EMBER, 0.9)
       vfx.dust(at, 8, 0.8)
-      shake = Math.max(shake, 0.28)
+      shake = Math.max(shake, 0.28 * killShake)
     }
     maybeDrop(at, kind, pack, wasElite, summoned, weight)
-    hitstop = Math.max(hitstop, 0.08)
+    // weight: a part's kill freezes 90 ms, an auto's 35 (and shakes half); anything else keeps 80
+    if (combat.weight && killBy !== 'other') freeze(killBy === 'part' ? WEIGHT_FEEL.killMs.part : WEIGHT_FEEL.killMs.auto, killBy)
+    else hitstop = Math.max(hitstop, 0.08)
     rig.punch(0.035)
   },
   onEnemy: (ev) => {
@@ -534,8 +560,18 @@ const combat = new Combat(world.scene, OPEN, {
     else st.emptyBeats = (st.emptyBeats ?? 0) + 1
   },
   onFelled: (_e, by) => {
+    killBy = by
     const st = run.stats[run.stats.length - 1]
     if (st?.kills) st.kills[by]++
+  },
+  onContact: (ev) => {
+    // weight (design/lean/WEIGHT.md §2.3): the feel of a part's strike, once per cast, sized by how many bodies and how heavy the part is
+    const F = WEIGHT_FEEL
+    const extra = ev.n - 1
+    freeze(Math.min(F.freeze.capMs, Math.round(F.freeze.baseMs + F.freeze.perCdS * baseCooldownS(ev.def) + F.freeze.perBodyMs * extra)), 'part')
+    shake = Math.max(shake, Math.min(F.contactShake[2]!, F.contactShake[0]! + F.contactShake[1]! * extra))
+    rig.punch(Math.min(F.contactPunch[2]!, F.contactPunch[0]! + F.contactPunch[1]! * extra))
+    navigator.vibrate?.(Math.min(F.contactHapticMs[2]!, F.contactHapticMs[0]! + F.contactHapticMs[1]! * extra))
   },
   onTrigger: (by, e, how) => {
     // a boss can't be broken: its opening's first hit plays the break it would have been
@@ -558,7 +594,7 @@ const combat = new Combat(world.scene, OPEN, {
     vfx.sparks(face, COLD, 5, 4.5, toward.multiplyScalar(-1), 0.9)
     vfx.flash(face, COLD_DEEP, 0.2)
     // a broken windup holds a beat longer, like a parry
-    hitstop = Math.max(hitstop, broke ? 0.05 : 0.022)
+    if (!combat.weight) hitstop = Math.max(hitstop, broke ? 0.05 : 0.022)
     shake = Math.max(shake, 0.06)
     const st = run.stats[run.stats.length - 1]
     if (st) {
@@ -1267,7 +1303,14 @@ function breakFx(e: Enemy, by?: AutoForm) {
     vfx.chunks(at, 5, new THREE.Color(0x9fc0ff), 4, 0.08)
   }
   vfx.dust(e.pos, 8, 0.6)
-  hitstop = Math.max(hitstop, 0.09)
+  if (combat.weight) {
+    // weight: the hand's and the eye's break is a tick (35 ms); a part's is the Anvil's weight (90 ms and its haptic)
+    if (by) freeze(WEIGHT_FEEL.breakMs.auto, 'auto')
+    else {
+      freeze(WEIGHT_FEEL.breakMs.part, 'part')
+      navigator.vibrate?.(WEIGHT_FEEL.breakHaptic)
+    }
+  } else hitstop = Math.max(hitstop, 0.09)
   rig.punch(0.05)
 }
 
@@ -2342,9 +2385,11 @@ pause.setSwitch('weight', () => weightOn, (on) => {
     // private window: it holds for this session
   }
 })
-/** The switch's state applied to Combat: at each level, when it's flipped mid-depth, and by the DEV hook. (The freeze merge state resets here from W1 on.) */
+/** The switch's state applied to Combat: at each level, when it's flipped mid-depth, and by the DEV hook. (The freeze merge state resets here.) */
 function applyWeight(on: boolean) {
   combat.weight = on
+  freezeAt = -Infinity
+  freezeLen = 0
 }
 
 /** Combat time of the last readying, and whether one is waiting for the button to have finished its cast (the cast sets the cooldown after the snap). */
@@ -3764,12 +3809,15 @@ function cast(def: AbilityDef, pushed: boolean): CastResult {
   // Snap the body to the target, or the swing plays sideways out of his shoulder.
   if (r.aim !== null) still.facing = r.aim
   sfx.ability(r.beat, pushed, r.power)
-  still.attack({ beat: r.beat, pushed, holdS: r.holdS, power: r.power, lean: r.lean })
+  still.attack({ beat: r.beat, pushed, holdS: r.holdS, power: r.power, lean: r.lean, cocked: combat.weight })
   castFx(def, r, pushed)
   still.group.scale.setScalar(pushed ? 1.16 : 1.08)
-  shake = Math.max(shake, pushed ? 0.34 : 0.16)
-  if (!MOVES.has(def.shape)) hitstop = Math.max(hitstop, pushed ? 0.06 : 0.035)
-  rig.punch(pushed ? 0.06 : 0.02)
+  // weight: nothing on the press. The feel comes from onContact, when something is struck (a whiff has none)
+  if (!combat.weight) {
+    shake = Math.max(shake, pushed ? 0.34 : 0.16)
+    if (!MOVES.has(def.shape)) hitstop = Math.max(hitstop, pushed ? 0.06 : 0.035)
+    rig.punch(pushed ? 0.06 : 0.02)
+  }
   return r
 }
 

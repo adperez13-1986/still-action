@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import { STARTING, type AbilityDef, type BeatKey } from './abilities'
 import type { StillMove } from './parts'
+import { WEIGHT_FEEL } from './weight'
 import { buildModel, EYE, EYE_OFF, EYE_ON, HUNCH, JAW_OPEN, JAW_X, LENS_TILT, type PartCtx, type SlotModel } from './partmodels'
 
 /**
@@ -36,6 +37,8 @@ export interface AttackSpec {
   power?: number
   /** −1 / 0 / +1: which way the head cants (Ricochet bank). */
   lean?: number
+  /** The "weight" trial (design/lean/WEIGHT.md §2.3): the pose starts part-way in, at WEIGHT_FEEL.cocked[pose] of its dur. Absent: from 0, as today. */
+  cocked?: boolean
 }
 
 /** The bodies built so far. Every beat plays one of them; a new part adds its own. */
@@ -258,7 +261,7 @@ export class Still {
     const power = a.power ?? 0
     const dur = p?.pose === 'patient' ? p.dur + 0.14 * power : p?.dur ?? 0
     // a beat with no body yet still lights the eye
-    this.anim = p ? { pose: p.pose, t: 0, dur, hold: a.holdS ?? 0, pushed: a.pushed, power, yaw: p.yaw ?? 1, lean: a.lean ?? 0 } : null
+    this.anim = p ? { pose: p.pose, t: a.cocked ? (WEIGHT_FEEL.cocked[p.pose] ?? 0) * dur : 0, dur, hold: a.holdS ?? 0, pushed: a.pushed, power, yaw: p.yaw ?? 1, lean: a.lean ?? 0 } : null
   }
 
   /** The core's colour this frame: the eye's, less the dim. */

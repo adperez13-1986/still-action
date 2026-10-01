@@ -345,6 +345,11 @@ export interface CombatEvents {
   onBank: (what: 'spent' | 'empty') => void
   /** A body died, and what dealt the killing blow: a part, an auto, or anything else (hazards, walls, trains). */
   onFelled: (e: Enemy, by: 'part' | 'auto' | 'other') => void
+  /**
+   * The "weight" trial (design/lean/WEIGHT.md §2.3), only with `weight` on: one part's cast struck `n` bodies, said once per payer. `at` and
+   * `first` are the first body struck (a payer that moves says it at the landing, and only if it struck). `def`: null for a payer with no id (the mirror).
+   */
+  onContact?: (ev: { def: AbilityDef | null; slot: SlotName; n: number; at: THREE.Vector3; first: Enemy }) => void
   onWindup: (e: Enemy, ms: number) => void
   onStrike: (e: Enemy) => void
   onGone: (e: Enemy) => void
@@ -452,6 +457,10 @@ export class Combat {
   weight = false
   packHpMul = 1
   heavyHpMul = 1
+  /** Bodies each payer has struck since the last flush (weight on only): one body counts once per payer. The flush says it as onContact. */
+  private readonly struck = new Map<Payer, Set<Enemy>>()
+  /** A payer that moves (a dash, Plumb Line's snap): its contact waits for the landing, game time. */
+  private readonly contactHold = new Map<Payer, number>()
   /** Who dealt each body's killing blow, read when it is buried. Absent: a hazard, a wall, a train. */
   private readonly felledBy = new WeakMap<Enemy, 'part' | 'auto'>()
   /**
@@ -852,6 +861,7 @@ export class Combat {
     // last: where he stood this tick and what he lost, for Borrowed Time
     this.history.push(player.x, player.z, this.tickDamage, dt)
     this.tickDamage = 0
+    this.flushContacts()
   }
 
   /**
@@ -1046,6 +1056,9 @@ export class Combat {
     this.hasPrev = false
     this.hurtMax = 0
     this.hurtCaught = false
+    // weight: a dash's held contact never crosses into the next level
+    this.struck.clear()
+    this.contactHold.clear()
     for (const f of this.fx) this.scene.remove(f.mesh)
     this.fx.length = 0
     this.line?.dispose()
@@ -1152,6 +1165,7 @@ export class Combat {
     const d = damage * mul
     const killed = e.hit(d)
     if (killed) this.felledBy.set(e, 'part')
+    if (this.weight) this.touch(payer, e)
     this.events.onHit(e.pos, e)
     this.events.onPartDamage?.(d)
     if (used && st) {
@@ -1163,6 +1177,35 @@ export class Combat {
     }
     if (pushed) this.pushBreak(e)
     return killed
+  }
+
+  /** The "weight" trial: this payer struck `e` (once per body). */
+  private touch(payer: Payer, e: Enemy) {
+    let set = this.struck.get(payer)
+    if (!set) this.struck.set(payer, (set = new Set()))
+    set.add(e)
+  }
+
+  /**
+   * Say each payer's contact once (weight on). A payer that moves is held until its landing (`contactHold`, game time): the laters that
+   * run the hits through are not the place to flush, because the later loop runs in reverse push order.
+   */
+  private flushContacts() {
+    if (this.struck.size === 0) return
+    if (!this.weight) {
+      this.struck.clear()
+      return
+    }
+    for (const [payer, set] of this.struck) {
+      const hold = this.contactHold.get(payer)
+      if (hold !== undefined) {
+        if (this.time < hold - 1e-9) continue
+        this.contactHold.delete(payer)
+      }
+      this.struck.delete(payer)
+      const first = set.values().next().value as Enemy
+      this.events.onContact?.({ def: 'id' in payer ? (payer as AbilityDef) : null, slot: payer.slot, n: set.size, at: first.pos.clone(), first })
+    }
   }
 
   /**
@@ -1320,6 +1363,7 @@ export class Combat {
     // a plain hit: a state was the first hit's to pay
     if (h.short && mod && !e.dead) {
       if (e.hit(mod.wallDamage)) this.felledBy.set(e, 'part')
+      if (this.weight) this.touch(h.def, e)
       this.events.onHit(e.pos, e)
     }
     const blast = h.def.blast ?? 0
@@ -1907,6 +1951,7 @@ export class Combat {
               if (mark) {
                 // Signal Flare: its own hit is a plain one (a setter, not a payer), so it never uses up the mark it leaves
                 if (e.hit(def.damage)) this.felledBy.set(e, 'part')
+                if (this.weight) this.touch(def, e)
                 this.events.onHit(e.pos, e)
                 this.setState(e, 'marked', mark.ms / 1000, def.slot)
                 if (pushed) this.pushBreak(e)
@@ -2057,6 +2102,7 @@ export class Combat {
         const end = this.terrain.clampMove(o.x, o.z, a.pos.x, a.pos.z, PLAYER_RADIUS)
         const ms = def.travelMs ?? 240
         this.runOver(o, end, def.radius, def.damage, def.shove ?? 0, ms, null, ctx.pushed, def)
+        if (this.weight) this.contactHold.set(def, this.time + ms / 1000)
         this.parts.anchor = null
         this.emitMove({ kind: 'snap', path: [new THREE.Vector3(end.x, 0, end.z)], ms, vault: false, lockMs: 0 }, 'snap')
         this.events.onPart({ kind: 'anchor', state: 'snap', at: a.pos.clone() })
@@ -2178,6 +2224,8 @@ export class Combat {
         const ez = end.z
         // the charge throws them aside, off the path, instead of ahead of it
         this.runOver(o, end, width, damage, knock, ms, over ? dir : null, ctx.pushed, def)
+        // weight: the contact waits for the landing (Skid Plates' slam lands at the same t and joins it)
+        if (this.weight) this.contactHold.set(def, this.time + ms / 1000)
         this.ring(o, 0.3, 1.6, 0.3, 0xbcd6ff)
         this.emitMove({ kind: 'dash', path: [new THREE.Vector3(ex, 0, ez)], ms, vault: false, lockMs: 0 }, r.beat)
         if (mod?.kind === 'strip') {
@@ -2228,6 +2276,7 @@ export class Combat {
     }
     // follow-through: a press that fired pays the bank, here once for every part (a refused one paid nothing)
     if (r.cooldown !== 'refused' && this.followThrough) this.bank = Math.min(BANK.cap, this.bank + BANK.perPress)
+    this.flushContacts()
     return r
   }
 
