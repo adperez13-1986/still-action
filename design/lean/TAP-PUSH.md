@@ -1,5 +1,8 @@
 # Tap push (build brief)
 
+**Built (1 Oct): P0 2cd0e7a, P1 71dd862, P2 (this commit). Lead's changes: the guard rolls (R3); the guarded answer is a shake, not the ember arc (P2). Where this brief still says "arc" for guarded, read "shake".**
+
+
 1 Oct 2026. The second trial of the "lean on the parts" round: the pause switch **"tap push"**, the "tap push" row of
 `design/lean/PITCHES.md`'s trial table. A coding agent follows it step by step (P0 to P2). The lead reviews each step
 against its "Done when" list. Every file:line below was checked against the tree at 888084d.
@@ -31,7 +34,7 @@ handler, as exactly one of:
 | a ready button | **cast** | fires on the press, as today (settled) | the part's own, as today |
 | a cooling (or hot) button, > 300 ms left | **push** | fires now, the real push: `fire(b, true)`, the same `pushed` path, cast, embers, `[14,26,14]` | +2, as today |
 | a cooling (or hot) button, <= 300 ms left | **queued** | the ring snaps full (cold) and a soft tick; it fires as a ready cast (`pushed = false`) the moment the button readies | none |
-| a cooling button within 250 ms of its own last fire **or last touch** (rolling: lead's change), or one already queued | **guarded** | nothing fires; the ember arc and the dry click | none |
+| a cooling button within 250 ms of its own last fire **or last touch** (rolling: lead's change), or one already queued | **guarded** | nothing fires; a 150 ms sideways "no" shake and the dry click (lead's change at P2: no arc, it read as a charging hold) | none |
 
 - No hold anywhere. Holding after the answer does nothing more. Letting go does nothing more.
 - A refused fire (the run said no) answers **refused**, the shake, as today.

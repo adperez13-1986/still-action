@@ -163,6 +163,7 @@ button again. Second criterion, equally binding: is building it still fun.
 
 ## Open
 
+- **1 Oct: the "tap push" trial** (pause switch, `design/lean/TAP-PUSH.md`) replaces the hold with a tap while it's on (his words: "the hold makes intentional pushes more difficult"). If his runs keep it, the hold below goes and this entry is rewritten.
 - **Hold means one thing (settled 26 Sep).** A ready button fires on the press, not the
   release (the playtest's median press was ~0.5 s, so every cast landed late). Holding a
   cooling button pushes. A press within 120 ms of ready is a cast, never a push. Hold-to-aim

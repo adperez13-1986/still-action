@@ -185,6 +185,9 @@ html, body {
 /* tap push: the push, the instant it fires: the price on the rim */
 .btn.kick { animation: kick .22s ease-out; }
 @keyframes kick { 0% { border-color: var(--strain); box-shadow: 0 0 0 3px rgba(200, 69, 47, .75), 0 0 22px rgba(200, 69, 47, .5); } }
+/* tap push: a guarded touch, "no / already done": the button shakes sideways for 150 ms, with no ring and no ember (the ring is the hold's charge) */
+.btn.nope { animation: nope .15s ease-out; }
+@keyframes nope { 25% { translate: -3px 0; } 50% { translate: 3px 0; } 75% { translate: -2px 0; } }
 /* tap push: the last 300 ms of a wait queues for nothing, so no push price is owed */
 .btn.near .pips .owed { display: none; }
 

@@ -45,6 +45,13 @@ const BREAK_HINT = 'break'
 /** PLACEHOLDER words (Adrian's): the push cue's one-time caption, over the first cooling payer whose state is live in reach. */
 const PAY_CAPTION = 'hold \u00b7 pay it'
 const PAY_HINT = 'pay'
+/**
+ * PLACEHOLDER words (Adrian's, design/lean/TAP-PUSH.md): the three captions above with "tap push" on, where nothing is held. The hint ids are unchanged,
+ * so each shows once per save in either mode. (The dead tap's caption never shows with the switch on: no touch is dead.)
+ */
+const HEAT_CAPTION_TAP = 'hot \u00b7 tap to push'
+const BREAK_CAPTION_TAP = 'tap \u00b7 break it'
+const PAY_CAPTION_TAP = 'tap \u00b7 pay it'
 
 /** "tap push" (design/lean/TAP-PUSH.md): the queue window and the same-button mash guard, game ms. */
 export const TAP = { queueMs: 300, guardMs: 250, queueSlackMs: 50, nbLogMs: 1000 } as const
@@ -645,7 +652,7 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
     b.deadAt = now
     const held = Math.min(360, ((now - b.downAt) / PUSH_HOLD_MS) * 360)
     b.arc = { from: Math.max(held, twice ? 240 : 120), at: now, hold: twice ? DEAD_HOLD_MS : 0 }
-    if (!hinted('deadtap')) {
+    if (!state.tapPush && !hinted('deadtap')) {
       markHinted('deadtap')
       caption(b, DEAD_CAPTION)
     }
@@ -684,14 +691,15 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
   }
 
   /**
-   * "tap push", a guarded touch: the same dead arc a dead tap draws (small, pulling back over DEAD_BACK_MS), "already done". A pending queue
-   * keeps its full cold ring and answers with the click alone.
+   * "tap push", a guarded touch: the button shakes "no" for 150 ms (a few px sideways, like a refusal but shorter), with the dry click. No arc and no
+   * ring: that partial ember ring is the old hold's charge, and a guarded touch must not read as "keep holding". A pending queue keeps its full cold
+   * ring and takes the same shake.
    */
   function guardTap(b: ButtonState) {
-    if (b.queued) return
-    b.arc = { from: 120, at: state.clock, hold: 0 }
-    b.el.style.setProperty('--arm', '120deg')
-    b.el.classList.add('arming')
+    b.el.classList.remove('nope')
+    void b.el.offsetWidth
+    b.el.classList.add('nope')
+    setTimeout(() => b.el.classList.remove('nope'), 150)
   }
 
   /** Ready: its cooldown done, and not hot. */
@@ -1038,7 +1046,7 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
       if (!hinted('heat')) {
         // the first heat ever: a caption over the button, once per save
         markHinted('heat')
-        caption(b, HEAT_CAPTION)
+        caption(b, state.tapPush ? HEAT_CAPTION_TAP : HEAT_CAPTION)
       }
     },
     heatLeft(slot) {
@@ -1073,7 +1081,7 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
       void b.el.offsetWidth
       b.el.classList.add('pulse')
       setTimeout(() => b.el.classList.remove('pulse'), 400)
-      caption(b, BREAK_CAPTION)
+      caption(b, state.tapPush ? BREAK_CAPTION_TAP : BREAK_CAPTION)
       return true
     },
 
@@ -1089,7 +1097,7 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
       // the first time a push would pay, on a cooling button: say so, once per save
       if (lit && !isReadyAt(b, state.clock) && !hinted(PAY_HINT)) {
         markHinted(PAY_HINT)
-        caption(b, PAY_CAPTION, true)
+        caption(b, state.tapPush ? PAY_CAPTION_TAP : PAY_CAPTION, true)
       }
     },
 

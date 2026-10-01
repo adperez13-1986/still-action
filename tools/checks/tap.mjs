@@ -111,6 +111,13 @@ const read = (page, slot) => evalJson(page, READ, slot)
 const lastTap = (page) => evalJson(page, `() => window.__taps().at(-1) ?? null`)
 const nVib = (r, v) => r.vib.filter((x) => JSON.stringify(x) === JSON.stringify(v)).length
 const cool = (page, slot, ms) => evalJson(page, `(a) => window.__cool(a[0], a[1])`, [slot, ms])
+/** Wait (real time) until the button's short-lived answer classes (kick 220 ms, nope 150 ms, refused 300 ms) have run out, so the next read is its own. */
+const settle = (page, slot) =>
+  page.waitForFunction((l) => {
+    const el = document.querySelector('.btn:has(.lbl[aria-label="' + l + '"])')
+    return !el.classList.contains('kick') && !el.classList.contains('nope') && !el.classList.contains('refused')
+  }, LABEL[slot], { timeout: 3000 })
+
 const cooldownOf = (page, slot) => evalJson(page, `(slot) => window.__hud.slots.find((s) => s.slot === slot).def.cooldownMs`, slot)
 
 // ---- K-P1: off is today's game ----------------------------------------------------------------------------------------------------------
@@ -596,17 +603,30 @@ check('K-P6', RUN, async ({ page }) => {
   let t = await touch(page, 'arms')
   assertEq('a ready touch casts', [t.tap.result, t.tap.tp], ['cast', true])
   await step(page, 0.2)
+  await settle(page, 'arms')
   const pre = await read(page, 'arms')
+  assert(!pre.cls.includes('nope'), 'the button starts the guarded touch with no shake running')
   const p = await press(page, 'arms')
   const g = await p.read()
-  assert(g.cls.includes('arming'), `guarded: the arc shows, classes ${g.cls.join(' ')}`)
-  assertEq('guarded: the small arc (--arm 120 deg; the clock is held, so it has not pulled back)', parseFloat(g.arm), 120)
+  // the answer is a "no" shake and the dry click: never the ember arc, which is the old hold's charge and would read as "keep holding"
+  assert(g.cls.includes('nope'), `guarded: the button shakes "no" (class nope), classes ${g.cls.join(' ')}`)
+  assert(!g.cls.includes('arming'), `guarded: no ring and no arc (a partial ring reads as a hold charging), classes ${g.cls.join(' ')}`)
+  assertEq('guarded: --arm untouched (no arc was drawn)', g.arm, pre.arm)
   assert(g.heard.filter((h) => h === 'deadTap').length === pre.heard.filter((h) => h === 'deadTap').length + 1, `guarded: the dry click was asked for, heard ${g.heard.join(',')}`)
   assertEq('guarded: strain, pushes, readyIn unchanged', [g.strain, g.st.pushes, g.readyIn.arms], [pre.strain, pre.st.pushes, pre.readyIn.arms])
   assertEq('guarded +1', g.st.guarded, pre.st.guarded + 1)
   assert(!g.cls.includes('kick') && !g.cls.includes('queued'), 'a guarded touch does not kick or queue')
+  // holding on does nothing more: still no ring after the clock moves on
+  await p.step(0.02)
+  await frames(page)
+  const gh = await p.read()
+  assert(!gh.cls.includes('arming') && gh.arm === pre.arm, `guarded, held on: still no ring (classes ${gh.cls.join(' ')}, --arm "${gh.arm}")`)
   await p.up()
   assertEq('the up logs guarded', [(await lastTap(page)).result, (await lastTap(page)).tp], ['guarded', true])
+  // the shake is 150 ms of real time, then the class is gone
+  await page.waitForTimeout(400)
+  const settled = await read(page, 'arms')
+  assert(!settled.cls.includes('nope') && !settled.cls.includes('arming'), `the shake ended: classes ${settled.cls.join(' ')}`)
 
   // the guard rolls: 50 ms after the guarded touch is still guarded (250 after the fire), 260 ms after it pushes
   await step(page, 0.05)
@@ -652,12 +672,14 @@ check('K-P6', RUN, async ({ page }) => {
   const r0 = await read(page, 'arms')
   await touch(page, 'arms')
   assertEq('queued again at 200 left', (await lastTap(page)).result, 'queued')
+  await settle(page, 'arms')
   const qp = await press(page, 'arms')
   const qd = await qp.read()
   assertEq('a touch on a pending queue: the ring stays full (360 deg, whichever way update() writes it)', parseFloat(qd.arm), 360)
-  assert(qd.cls.includes('queued'), 'a touch on a pending queue: still queued')
+  assert(qd.cls.includes('queued') && qd.cls.includes('arming'), `a touch on a pending queue: still queued with its cold ring, classes ${qd.cls.join(' ')}`)
+  assert(qd.cls.includes('nope'), `a touch on a pending queue: the same "no" shake, classes ${qd.cls.join(' ')}`)
   assertEq('it is guarded and counted', [qd.st.guarded, qd.st.queued], [r0.st.guarded + 1, r0.st.queued + 1])
-  assertEq('...with the click, no arc and no price', [qd.strain, qd.st.pushes], [r0.strain, r0.st.pushes])
+  assertEq('...with the click, no extra arc and no price', [qd.strain, qd.st.pushes], [r0.strain, r0.st.pushes])
   await qp.up()
   assertEq('logged guarded', (await lastTap(page)).result, 'guarded')
   await step(page, 0.3)
@@ -854,5 +876,249 @@ check('K-P13', RUN, async ({ page }) => {
   }
   assertEq('the DEV path gives the same results with the switch on and off', results.true, results.false)
 })
+
+// ---- K-P7: no touch is silent ----------------------------------------------------------------------------------------------------------
+
+// 24 scripted real touches over the four buttons: every one is answered inside the touch-down, in the DOM (what the eye sees) and in the log
+check('K-P7', RUN, async ({ page }) => {
+  await setup(page, true)
+  // Plumb Line on the legs: a ready press plants (and stays ready), then a press with Still past its 10 u range is refused by the run itself
+  await evalJson(page, `() => window.__equip('plumb-line')`)
+  const before = await read(page, 'arms')
+  const seq = []
+  /** One real touch whose answer is `want`; the DOM it must show between down and up is checked here. `pending`: a queue was already pending on the button. */
+  const go = async (slot, want, o = {}) => {
+    await settle(page, slot)
+    const pre = await read(page, slot)
+    const p = await press(page, slot)
+    const d = await p.read()
+    await p.up()
+    const tap = await lastTap(page)
+    const id = `#${seq.length + 1} ${slot} ${want}`
+    assertEq(`${id}: the logged result`, tap.result, want)
+    if (want === 'cast') {
+      assertEq(`${id}: a new 12 ms buzz`, nVib(d, 12), nVib(pre, 12) + 1)
+      if (!o.hold) assert(d.readyIn[slot] > 0, `${id}: the cooldown started, readyIn ${d.readyIn[slot]}`)
+      assert(!d.cls.includes('kick') && !d.cls.includes('nope') && !d.cls.includes('queued'), `${id}: a plain cast shows no other answer, classes ${d.cls.join(' ')}`)
+    } else if (want === 'push') {
+      assert(d.cls.includes('kick'), `${id}: the rim kicks, classes ${d.cls.join(' ')}`)
+      assertEq(`${id}: the push signature`, d.vib.at(-1), [14, 26, 14])
+      assert(!d.cls.includes('arming') && !d.cls.includes('nope'), `${id}: a push has no ring and no shake, classes ${d.cls.join(' ')}`)
+    } else if (want === 'queued') {
+      assert(d.cls.includes('queued') && d.cls.includes('arming') && parseFloat(d.arm) === 360, `${id}: the cold full ring, classes ${d.cls.join(' ')}, --arm ${d.arm}`)
+    } else if (want === 'guarded') {
+      assert(d.cls.includes('nope'), `${id}: the "no" shake, classes ${d.cls.join(' ')}`)
+      if (o.pending) assert(d.cls.includes('queued') && d.cls.includes('arming') && parseFloat(d.arm) === 360, `${id}: a pending queue keeps its full cold ring, classes ${d.cls.join(' ')}, --arm ${d.arm}`)
+      else assert(!d.cls.includes('arming') && d.arm === pre.arm, `${id}: no ring and no arc, classes ${d.cls.join(' ')}, --arm "${d.arm}" (was "${pre.arm}")`)
+      assert(d.heard.filter((h) => h === 'deadTap').length === pre.heard.filter((h) => h === 'deadTap').length + 1, `${id}: the dry click was asked for`)
+    } else if (want === 'refused') {
+      assert(d.cls.includes('refused'), `${id}: the refusal shake, classes ${d.cls.join(' ')}`)
+      assertEq(`${id}: nothing fired (no new buzz)`, d.vib.length, pre.vib.length)
+    }
+    seq.push({ slot, want, got: tap.result })
+    return d
+  }
+  const away = (x) => evalJson(page, `(x) => window.__still.pos.set(x, 0, 0)`, x)
+
+  // all ready: four casts (the legs plant)
+  await go('head', 'cast')
+  await go('torso', 'cast')
+  await go('arms', 'cast')
+  await go('legs', 'cast', { hold: true })
+  // 100 ms on, inside every fire's 250 ms: guarded
+  await step(page, 0.1)
+  await go('head', 'guarded')
+  await go('torso', 'guarded')
+  await go('arms', 'guarded')
+  // clear of every guard: three pushes, and a fourth touch on one of them at once
+  await gap(page)
+  await go('head', 'push')
+  await go('torso', 'push')
+  await go('arms', 'push')
+  await go('arms', 'guarded')
+  // three queues (250, 200, 280 ms left), a touch on a pending one, then the queues fire
+  await gap(page)
+  await cool(page, 'head', 250)
+  await cool(page, 'torso', 200)
+  await cool(page, 'arms', 280)
+  await go('head', 'queued')
+  await go('torso', 'queued')
+  await go('arms', 'queued')
+  await go('head', 'guarded', { pending: true })
+  await step(page, 0.35)
+  // two ready casts, one touched again at once
+  await cool(page, 'head', 0)
+  await cool(page, 'arms', 0)
+  await go('head', 'cast')
+  await go('arms', 'cast')
+  await go('arms', 'guarded')
+  // a push on a cooling Vent, and a push on a cooling Lens touched again at once
+  await gap(page)
+  await cool(page, 'torso', 2000)
+  await go('torso', 'push')
+  await cool(page, 'head', 2000)
+  await go('head', 'push')
+  await go('head', 'guarded')
+  // the run refuses three: the anchor is out and Still is 15 u from it
+  await away(15)
+  await go('legs', 'refused')
+  await go('legs', 'refused')
+  await go('legs', 'refused')
+  await away(0)
+
+  const n = (w) => seq.filter((x) => x.want === w).length
+  assertEq('24 scripted touches', seq.length, 24)
+  for (const w of ['cast', 'push', 'queued', 'guarded', 'refused']) assert(n(w) >= 3, `at least 3 ${w} touches, got ${n(w)}`)
+  assertEq('every answer got its own reply (cast / push / queued / guarded / refused)', ['cast', 'push', 'queued', 'guarded', 'refused'].map(n), [6, 5, 3, 7, 3])
+  const taps = await evalJson(page, `() => window.__taps()`)
+  assertEq('every touch is logged, in order', taps.map((t) => t.result), seq.map((x) => x.want))
+  for (const t of taps) assert(['cast', 'push', 'queued', 'guarded', 'refused'].includes(t.result) && t.tp === true, `a logged result outside the five answers: ${JSON.stringify(t)}`)
+  const after = await read(page, 'arms')
+  const d = (k) => after.st[k] - before.st[k]
+  assertEq('no touch was dead', d('deadTaps'), 0)
+  assertEq('the counters sum to the touches they count: tapPushes, pushes, queued, guarded', [d('tapPushes'), d('pushes'), d('queued'), d('guarded')], [n('push'), n('push'), n('queued'), n('guarded')])
+  assertEq('the queues all fired: none dropped', d('queueDropped'), 0)
+  assertEq('the strain is 2 a push', after.strain - before.strain, 2 * n('push'))
+})
+
+// ---- K-P11: with weight ----------------------------------------------------------------------------------------------------------------
+
+// A crowned hulk winding up 2 u ahead (lean.mjs K-L4(a)'s setup), the four pairs of switches. A ready or queued Cleaver is a ready cast: under weight it
+// has a push's whole effect (it breaks the windup) and none of its cost or signature; a tap push is the real push on either
+check('K-P11', RUN, async ({ page }) => {
+  /** A fresh arena, both switches set, a crowned hulk in its windup 2 u ahead (held there), the feel's counters zeroed. */
+  const scene = async (weight, tap) => {
+    await setup(page, tap)
+    await evalJson(page, `(w) => {
+      const W = window, C = W.__combat
+      W.__weight(w)
+      W.__weightPreset('B')
+      C.pressure = false
+      C.hurtPlayer = () => {}
+      W.__still.facing = 0
+      const h = W.__spawn('chaser', 0, 2, true, 'plated')
+      h.hp = 1e6
+      let n = 0
+      while (h.phase !== 'windup' && n++ < 240) { C.hp = 100; W.__still.pos.set(0, 0, 0); h.pos.set(h.pos.x, 0, h.pos.z); h.knock.set(0, 0, 0); W.__step(1 / 60) }
+      if (h.phase !== 'windup') throw new Error('the crowned hulk never wound up')
+      h.timer = 4000
+      W.__hulk = h
+      W.__vib.length = 0
+      W.__fx()
+    }`, weight)
+    return evalJson(page, `() => {
+      const s = window.__runStats().at(-1)
+      return { breaks: s.breaks, ready: s.breaksBy.ready, pushed: s.breaksBy.pushed, pushes: s.pushes, strain: window.__run.strain }
+    }`)
+  }
+  const result = async (b0) => evalJson(page, `(b0) => {
+    const W = window, s = W.__runStats().at(-1), f = W.__fx()
+    return { broke: s.breaks - b0.breaks, ready: s.breaksBy.ready - b0.ready, pushed: s.breaksBy.pushed - b0.pushed, pushes: s.pushes - b0.pushes,
+      strain: W.__run.strain - b0.strain, sig: f.pushSig, vib: W.__vib.at(-1) ?? null, phase: W.__hulk.phase }
+  }`, b0)
+  for (const weight of [true, false]) {
+    for (const tap of [false, true]) {
+      const mode = `weight ${weight ? 'on' : 'off'}, tap push ${tap ? 'on' : 'off'}`
+      const free = { broke: weight ? 1 : 0, ready: weight ? 1 : 0, pushed: 0, pushes: 0, strain: 0, sig: 0, vib: 12 }
+      const strip = (r) => ({ broke: r.broke, ready: r.ready, pushed: r.pushed, pushes: r.pushes, strain: r.strain, sig: r.sig, vib: r.vib })
+
+      // a ready Cleaver pressed: a free cast, breaking the windup only under weight
+      let b0 = await scene(weight, tap)
+      await touch(page, 'arms')
+      let r = await result(b0)
+      assertEq(`${mode}: a ready Cleaver (breaks, ready, pushed, pushes, strain, pushSig, vib)`, strip(r), free)
+      if (weight) assertEq(`${mode}: the hulk reels open`, r.phase, 'recover')
+
+      // a queued Cleaver (the switch on only): fires as a ready cast, so the same
+      if (tap) {
+        b0 = await scene(weight, tap)
+        await cool(page, 'arms', 200)
+        const t = await touch(page, 'arms')
+        assertEq(`${mode}: the touch queued`, t.tap.result, 'queued')
+        const mid = await result(b0)
+        assertEq(`${mode}: nothing fired at the touch`, [mid.broke, mid.strain, mid.vib], [0, 0, null])
+        await step(page, 0.25)
+        r = await result(b0)
+        assertEq(`${mode}: a queued Cleaver (breaks, ready, pushed, pushes, strain, pushSig, vib)`, strip(r), free)
+        if (weight) assertEq(`${mode}: the hulk reels open`, r.phase, 'recover')
+        else assertEq(`${mode}: the hulk is still winding up`, r.phase, 'windup')
+      }
+
+      // a push by the gesture of the mode (a tap on, a 0.2 s hold off): the real push, breaking it either way, with its own signature and +2
+      b0 = await scene(weight, tap)
+      await cool(page, 'arms', 2000)
+      const t = await touch(page, 'arms', tap ? 0 : 0.2)
+      assertEq(`${mode}: the touch pushed`, t.tap.result, 'push')
+      r = await result(b0)
+      assertEq(`${mode}: a push (breaks, ready, pushed, pushes, strain, pushSig, vib)`, strip(r), { broke: 1, ready: 0, pushed: 1, pushes: 1, strain: 2, sig: 1, vib: [14, 26, 14] })
+      assertEq(`${mode}: the hulk reels open`, r.phase, 'recover')
+    }
+  }
+})
+
+// ---- K-P12: the words ------------------------------------------------------------------------------------------------------------------
+
+/** In the page: what the three one-time captions say when each is asked for on a fresh save (heat, break, pay), in that order. */
+const WORDS = `() => {
+  const W = window
+  const on = (l) => [...document.querySelectorAll('.btn:has(.lbl[aria-label="' + l + '"]) .heatCaption')].map((e) => e.textContent)
+  const all = () => document.querySelectorAll('.heatCaption').length
+  const out = {}
+  W.__hud.heat('arms', 500)
+  out.heat = on('A')
+  out.breakAsked = W.__hud.breakHint('torso')
+  out.break = on('T')
+  W.__hud.stateCue('legs', 'chilled', true)
+  out.pay = on('L')
+  out.total = all()
+  return out
+}`
+
+const DEAD = 'hold to push'
+const wordsCheck = (on) => async ({ page }) => {
+  const mode = on ? 'on' : 'off'
+  await setup(page, on)
+  await cool(page, 'legs', 2000)
+  const w = await evalJson(page, WORDS)
+  const want = on ? ['hot · tap to push', 'tap · break it', 'tap · pay it'] : ['hot · hold to push', 'hold · break it', 'hold · pay it']
+  assertEq(`${mode}: the heat caption (over the hot Cleaver)`, w.heat, [want[0]])
+  assertEq(`${mode}: the break hint was asked for and shown`, w.breakAsked, true)
+  assertEq(`${mode}: the break caption (over the Vent)`, w.break, [want[1]])
+  assertEq(`${mode}: the pay caption (a lit state cue on the cooling legs)`, w.pay, [want[2]])
+  assertEq(`${mode}: exactly the three captions`, w.total, 3)
+  await page.waitForTimeout(2700)
+  assertEq(`${mode}: they go on their own`, await page.locator('.heatCaption').count(), 0)
+
+  if (on) {
+    // every kind of touch on a cooling button: none of them shows the dead tap's caption; a hold-path press that the switch outlives does not either
+    await gap(page)
+    await cool(page, 'arms', 2000)
+    await touch(page, 'arms')
+    await touch(page, 'arms')
+    await gap(page)
+    await cool(page, 'torso', 200)
+    await touch(page, 'torso')
+    await evalJson(page, `() => window.__tapPush(false)`)
+    await cool(page, 'head', 2000)
+    const p = await press(page, 'head')
+    await evalJson(page, `() => window.__tapPush(true)`)
+    await p.step(0.06)
+    await p.up()
+    assertEq('on: the press begun off and let go on ends dead by the old path', (await lastTap(page)).result, 'dead')
+    const caps = await page.locator('.heatCaption').allTextContents()
+    assert(!caps.includes(DEAD), `on: no touch ever shows the dead tap's caption, got ${JSON.stringify(caps)}`)
+  } else {
+    // the control: today's dead tap shows it, once
+    await cool(page, 'arms', 2000)
+    const p = await press(page, 'arms')
+    await p.step(0.06)
+    await p.up()
+    assertEq('off: a short press on a cooling button is dead', (await lastTap(page)).result, 'dead')
+    assertEq('off: it shows the dead tap caption', await page.locator('.heatCaption').allTextContents(), [DEAD])
+  }
+}
+// the second query is ignored by the game; it only tells the two pages apart
+check('K-P12', RUN + '&p12=on', wordsCheck(true))
+check('K-P12', RUN + '&p12=off', wordsCheck(false))
 
 process.exit(await run(process.argv.slice(2)))
