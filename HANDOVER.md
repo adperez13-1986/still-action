@@ -1,9 +1,19 @@
-# Handover — 30 Sep 2026 (late)
+# Handover — 1 Oct 2026 (morning)
 
 For the next session. Read this, then `DESIGN.md` (the settled decisions), then the design
 folder for whatever you're touching. Don't re-derive any of them.
 
-## Start here (30 Sep, evening: the autos round, waiting on his pick)
+## Start here (1 Oct, morning: first follow-through log read)
+
+He sent `~/Downloads/still-playtest-2026-10-01.json` (3 runs with follow-through on) but no words yet. Read in
+**`design/autos/TRIAL-1.md`**. In short: the pass lines look met on the pool (42.6 presses a fight-minute, 12% empty,
+HP roughly within 20%), but per play-minute he pressed **the same as with it off** (d1 10.1 vs 10.0, d2 13.0 vs 12.6;
+only the d3 boss +18%). From d2 the bank never empties, so it plays like autos on; at d1 it is empty 40% of beats
+(few parts to feed it). **Waiting on his feel** (did he feel any difference from d2; did the d1 gaps read as waiting or
+a bug), then his pick from TRIAL-1's options: tighten (with a d1 floor), the translator's package (my lean if he felt
+nothing), or keep. Nothing built today.
+
+## Start here (30 Sep, evening: the autos round)
 
 **His ask:** auto attack feels Vampire Survivors / Archero; he wants more active; "don't blindly agree".
 Round done in `design/autos/` (BRIEF, 1-/2- per voice, sims, **PITCHES.md = the outcome**). All four: partly
