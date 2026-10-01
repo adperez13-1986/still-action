@@ -2395,16 +2395,16 @@ function applyFollowThrough(on: boolean) {
 
 /**
  * The "weight" trial (design/lean/WEIGHT.md; weight.ts holds every number). On, timing, drama, full effect on ready casts, part damage
- * and area take effect at once, on the next press; pack and boss HP from the next level entered. A pause switch, kept per device, off
- * by default. The depth it was flipped on is logged `weightMixed`, to leave out when judging. The words are PLACEHOLDER (his to write).
+ * and area take effect at once, on the next press; pack and boss HP from the next level entered. A pause switch, kept per device, on
+ * by default (his call, 1 Oct, after design/lean/TRIAL-1.md). The depth it was flipped on is logged `weightMixed`, to leave out when judging. The words are PLACEHOLDER (his to write).
  * Off is today's game exactly.
  */
 const WEIGHT_KEY = 'still-action.weight'
 let weightOn = (() => {
   try {
-    return localStorage.getItem(WEIGHT_KEY) === '1'
+    return localStorage.getItem(WEIGHT_KEY) !== '0'
   } catch {
-    return false
+    return true
   }
 })()
 pause.setSwitch('weight', () => weightOn, (on) => {
@@ -2421,16 +2421,16 @@ pause.setSwitch('weight', () => weightOn, (on) => {
   }
 })
 /**
- * The "tap push" trial (design/lean/TAP-PUSH.md; the words are PLACEHOLDER, his to write). A pause switch, kept per device, off by
- * default; it applies at once, at any phase (a gesture, no level boundary). The depth it was flipped on is logged `tapPushMixed`,
+ * The "tap push" trial (design/lean/TAP-PUSH.md; the words are PLACEHOLDER, his to write). A pause switch, kept per device, on by
+ * default (his call, 1 Oct); it applies at once, at any phase (a gesture, no level boundary). The depth it was flipped on is logged `tapPushMixed`,
  * to leave out when judging. Off is today's gesture exactly.
  */
 const TAP_PUSH_KEY = 'still-action.tapPush'
 let tapPushOn = (() => {
   try {
-    return localStorage.getItem(TAP_PUSH_KEY) === '1'
+    return localStorage.getItem(TAP_PUSH_KEY) !== '0'
   } catch {
-    return false
+    return true
   }
 })()
 hud.tapPush = tapPushOn

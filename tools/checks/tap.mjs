@@ -194,14 +194,26 @@ task('K-P1', async () => {
   }
 })
 
-// K-P1 (a): the first check of this page, a fresh context: the switch has never been touched
+// K-P1 (a0): a fresh phone, the harness's pin skipped: never touched means on (his call, 1 Oct, design/lean/TRIAL-1.md)
+check('K-P1', RUN + '&trialDefaults', async ({ page }) => {
+  const got = await evalJson(page, () => ({
+    stored: localStorage.getItem('still-action.tapPush'),
+    on: window.__tapPush(),
+    logged: window.__runStats().at(-1).tapPush,
+  }))
+  assertEq('a fresh phone has no stored switch', got.stored, null)
+  assertEq('__tapPush() is true by default', got.on, true)
+  assertEq("the open depth's log: tapPush", got.logged, true)
+})
+
+// K-P1 (a): the first check of this page: the switch never touched but for the harness's pin (lib.mjs), so off
 check('K-P1', RUN, async ({ page }) => {
   const got = await evalJson(page, () => ({
     stored: localStorage.getItem('still-action.tapPush'),
     on: window.__tapPush(),
     logged: window.__runStats().at(-1).tapPush,
   }))
-  assertEq('a fresh context has no stored switch', got.stored, null)
+  assertEq("the harness's pin", got.stored, '0')
   assertEq('__tapPush() is false', got.on, false)
   assertEq("the open depth's log: tapPush", got.logged, false)
 })

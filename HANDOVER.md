@@ -3,6 +3,19 @@
 For the next session. Read this, then `DESIGN.md` (the settled decisions), then the design
 folder for whatever you're touching. Don't re-derive any of them.
 
+## Start here (1 Oct, night: weight + tap push ON BY DEFAULT; his verdict on the game as a whole)
+
+**Done + pushed:** both switches on by default (his word, after TRIAL-1): unset key = on, `'0'` = off; the switches stay on the pause
+screen. The hold only runs if he turns tap push off. Checks: `lib.mjs` pins both off when the key is unset (as area III pins roads=0),
+so every suite keeps its record; a query with `trialDefaults` skips the pin (K-P1 a0, K-L1 a0 assert a fresh phone boots with both on,
+negative-tested against the old default). Follow-through untouched (still off by default; he had it on).
+**His verdict (1 Oct), the next real work, NOT polish:** "hollow and easy"; no threat except the Assembler; the other two bosses too easy
+and gimmicky; parts boring, too alike, too few; no sense of reaching a build or archetype; strike/shot leanings forced, and both are
+ranged (one just shorter). He's happy with the progress but sees it is far from a real game. He called sounds/freeze/feel questions
+polish for later: don't lead with them again. Data agrees: a 9-depth run is ~14.5 min of play (~1.6 min a level vs DESIGN's 4-5).
+**Next:** his pick of where to start; my rec is the build layer (parts pool, archetypes, what a leaning means) before threat, since
+threat is tuned against builds. Ask want-vs-should first (memory: games are for fun).
+
 ## Start here (1 Oct, evening: first log with "weight" + "tap push" read)
 
 He sent `~/Downloads/still-playtest-2026-10-01 (1).json`, again no words. Read in **`design/lean/TRIAL-1.md`**. Two runs, both home

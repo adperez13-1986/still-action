@@ -56,6 +56,13 @@ export async function openPage(url, query) {
     if (process.env.WEIGHT === '1') await context.addInitScript(() => localStorage.setItem('still-action.weight', '1'))
     // TAP=1: the "tap push" trial's switch on from the first frame (design/lean/TAP-PUSH.md), the same way; report only. Both can be set
     if (process.env.TAP === '1') await context.addInitScript(() => localStorage.setItem('still-action.tapPush', '1'))
+    // both trials are on by default since 1 Oct (his call): the suites keep their pinned record with them off unless WEIGHT=1 / TAP=1,
+    // the way area III pins roads=0. Only an unset key is pinned, so a check that writes the key itself and reloads still wins.
+    // A query carrying `trialDefaults` (the game ignores it) skips the pin: that page boots as a fresh phone does
+    await context.addInitScript(() => {
+      if (new URLSearchParams(location.search).has('trialDefaults')) return
+      for (const k of ['still-action.weight', 'still-action.tapPush']) if (localStorage.getItem(k) === null) localStorage.setItem(k, '0')
+    })
     const page = await context.newPage()
     /** @type {string[]} */
     const errors = []

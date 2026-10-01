@@ -130,7 +130,21 @@ task('K-L1', async () => {
   }
 })
 
-// the first check of this page: a fresh context, so the switch has never been touched
+// a fresh phone, the harness's pin skipped: never touched means on (his call, 1 Oct, design/lean/TRIAL-1.md)
+check('K-L1', RUN + '&trialDefaults', async ({ page }) => {
+  const got = await evalJson(page, () => ({
+    stored: localStorage.getItem('still-action.weight'),
+    on: window.__weight(),
+    logged: window.__runStats().at(-1).weight,
+    packHpMul: window.__combat.packHpMul,
+  }))
+  assertEq('a fresh phone has no stored switch', got.stored, null)
+  assertEq('__weight() is true by default', got.on, true)
+  assertEq("the open depth's log: weight", got.logged, true)
+  assert(got.packHpMul > 1, `the weight's pack HP from the first level: packHpMul ${got.packHpMul}`)
+})
+
+// the first check of this page: the switch never touched but for the harness's pin (lib.mjs), so off
 check('K-L1', RUN, async ({ page }) => {
   const got = await evalJson(page, () => ({
     stored: localStorage.getItem('still-action.weight'),
@@ -139,7 +153,7 @@ check('K-L1', RUN, async ({ page }) => {
     packHpMul: window.__combat.packHpMul,
     heavyHpMul: window.__combat.heavyHpMul,
   }))
-  assertEq('a fresh context has no stored switch', got.stored, null)
+  assertEq("the harness's pin", got.stored, '0')
   assertEq('__weight() is false', got.on, false)
   assertEq("the open depth's log: weight", got.logged, false)
   assertEq('the HP multipliers are 1', [got.packHpMul, got.heavyHpMul], [1, 1])
