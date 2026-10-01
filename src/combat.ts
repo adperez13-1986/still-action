@@ -28,6 +28,7 @@ import type { Breakable, Post } from './dungeon'
 const TRAIN_SMASH_GROW = 0.2
 import type { AbilityDef, BeatKey } from './abilities'
 import type { SlotName } from './still'
+import { weighed } from './weight'
 import { MASTERY, MASTERY_TUNE, type MasteryId } from './mastery'
 import { STATE, STATE_IDS, masterySets, stateMul, type Payer, type StateBy, type StateId } from './states'
 import { curveAt, type DepthCurve } from './curve'
@@ -1269,6 +1270,7 @@ export class Combat {
    * reaches from `o` now, so a push would pay it.
    */
   wouldPay(def: AbilityDef, o: THREE.Vector3): boolean {
+    if (this.weight) def = weighed(def)
     if (!def.pays?.length) return false
     for (const [e, st] of this.status) {
       if (!e.dead && this.awakeNow(e) && stateMul(st, def).mul > 1 && this.reaches(def, o, e)) return true
@@ -1299,6 +1301,8 @@ export class Combat {
    * by the same tests the cast uses. The pushed aim and the break hint read it.
    */
   reaches(def: AbilityDef, o: THREE.Vector3, e: Enemy): boolean {
+    // weight (WEIGHT.md 2.5): main asks with the hud's unweighed defs; the reach is the weighed one (the memo makes the inner calls free)
+    if (this.weight) def = weighed(def)
     const d = Math.hypot(e.pos.x - o.x, e.pos.z - o.z)
     const mod = def.mod
     switch (def.shape) {
@@ -1902,6 +1906,8 @@ export class Combat {
    * how hard, and the mod bends it one way. Returns what the HUD and the body need.
    */
   useAbility(def: AbilityDef, ctx: CastContext): CastResult {
+    // weight (WEIGHT.md 2.5): the Ask 1 numbers, once, here; everything downstream (cone, blast, run-over width, the stored defs) reads them
+    if (this.weight) def = weighed(def)
     const o = ctx.origin
     const mod = def.mod
     // `real`: the real push, for the log and the state event only. Every effect reads the context's `full`; only Patient Lens, Plumb Line and
@@ -2204,6 +2210,9 @@ export class Combat {
             const vz = o.z + fz * hook.to - e.pos.z
             const v = Math.hypot(vx, vz)
             if (v > 0.2) e.knock.addScaledVector(shoveVelocity(vx, vz, v), e.knockMul)
+          } else if (def.id === 'scrap-cleaver' && def.shove) {
+            // weight: the Cleaver's shove is radial from Still (as the Vent's and the hand's); off, the def has none and this is dead
+            this.shoveFrom(e, o.x, o.z, def.shove)
           } else if (def.shove) {
             // Piston: straight along the jab, not away from Still, so it drives one enemy back in a line
             e.knock.addScaledVector(shoveVelocity(fx, fz, def.shove), e.knockMul)

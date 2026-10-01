@@ -51,13 +51,22 @@ function conflictLine(incoming: AbilityDef, equipped: readonly AbilityDef[]): st
   return null
 }
 
-function stats(d: AbilityDef, other?: AbilityDef) {
+/**
+ * The part as the next press will use it, for the numbers a card shows: main sets it (the "weight" trial, WEIGHT.md W3: with it on the
+ * cards show weighed(def)'s damage and radius, because he picks parts on them; off, the def unchanged).
+ */
+let shown: (d: AbilityDef) => AbilityDef = (d) => d
+
+function stats(def: AbilityDef, otherDef?: AbilityDef) {
+  const d = shown(def)
+  const other = otherDef && shown(otherDef)
   const row = (label: string, value: string, changed: boolean) =>
     `<div class="stat${changed ? ' changed' : ''}"><span>${label}</span><b>${value}</b></div>`
   return [
     row('cooldown', `${(d.cooldownMs / 1000).toFixed(1)}s`, !!other && other.cooldownMs !== d.cooldownMs),
     row('damage', damageLabel(d), !!other && damageLabel(other) !== damageLabel(d)),
-    row(REACH_LABEL[d.shape], String(reach(d)), !!other && reach(other) !== reach(d)),
+    // one decimal: a weighed radius (6.02) reads like the rest (4.3); no unweighed reach has more
+    row(REACH_LABEL[d.shape], String(typeof reach(d) === 'number' ? +(reach(d) as number).toFixed(1) : reach(d)), !!other && reach(other) !== reach(d)),
   ].join('')
 }
 
@@ -128,6 +137,8 @@ export interface PauseScreen {
   setLearned: (fn: () => { name: string; line: string }[]) => void
   /** The notebook: its pages, one at a time, and close. */
   notebook: (pages: NotebookPage[], onClose: () => void) => void
+  /** Which def a card's numbers come from (the weighed one while the weight switch is on). */
+  setShown: (fn: (d: AbilityDef) => AbilityDef) => void
   /** How part cards name a part and tell its past. */
   setDescribe: (fn: (d: AbilityDef) => { name: string; history: string | null }) => void
   /** A playtest switch on the loadout screen (the close hand, the eye), added or replaced by label: main reads and writes it. */
@@ -169,9 +180,10 @@ export function createPauseScreen(root: HTMLElement): PauseScreen {
     get open() { return isOpen },
 
     loadout(slots, onResume) {
+      const cardsOf = (ss: typeof slots) => ss.map((s) => (s.def ? card(s.def, SLOT_LABEL[s.slot]) : emptyCard(s.slot, SLOT_LABEL[s.slot]))).join('')
       const known = learned()
       show(
-        `<h2>Paused</h2><div class="row four">${slots.map((s) => (s.def ? card(s.def, SLOT_LABEL[s.slot]) : emptyCard(s.slot, SLOT_LABEL[s.slot]))).join('')}</div>` +
+        `<h2>Paused</h2><div class="row four">${cardsOf(slots)}</div>` +
         (known.length ? `<p class="learned">${known.map((m) => `<b>${m.name}</b> ${m.line}`).join('<br>')}</p>` : ''),
         [['resume', 'resume', onResume]],
       )
@@ -190,6 +202,9 @@ export function createPauseScreen(root: HTMLElement): PauseScreen {
         btn.addEventListener('click', () => {
           rule.write(!rule.read())
           paint()
+          // a switch can change the numbers a card shows (weight): the cards follow it
+          const row = el.querySelector('.row.four')
+          if (row) row.innerHTML = cardsOf(slots)
         })
         paint()
         resume.before(btn)
@@ -226,6 +241,10 @@ export function createPauseScreen(root: HTMLElement): PauseScreen {
         [],
       )
       el.querySelectorAll<HTMLElement>('.master').forEach((b) => b.addEventListener('click', () => options[Number(b.dataset.i)]?.onPick()))
+    },
+
+    setShown(fn) {
+      shown = fn
     },
 
     setLearned(fn) {

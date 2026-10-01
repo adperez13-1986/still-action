@@ -738,4 +738,406 @@ task('K-L5', async () => {
   assert(/const r = big \? 0\.8 : 1/.test(body) && /const k = big \? 1\.3 : 1/.test(body), "the push voice's pitch and gain must read big")
 })
 
+// ---- W3: the Ask 1 numbers (WEIGHT.md section 2.5, section 4 K-L3) --------------------------------------------------------------------------
+
+/**
+ * The balancer's numbers as the check knows them (design/lean/3-balancer.md r3, WEIGHT.md 2.1), typed again here and not imported: a wrong
+ * constant in src/weight.ts must be seen against this copy.
+ */
+const PRESETS = {
+  B: { early: 1.4, deep: 1.65, boss: 1.3, dmg: { head: 1.2, torso: 1.8, arms: 1.2, legs: 1.8 }, vent: 1.4, dash: 2, cone: 180, shove: 1.2 },
+  D: { early: 1.4, deep: 1.65, boss: 1.1, dmg: { head: 1.15, torso: 1.8, arms: 1.15, legs: 1.8 }, vent: 1.25, dash: 1.5, cone: 160, shove: 1.2 },
+}
+const VENT_IDS = ['pressure-vent', 'backdraft-vent', 'chill-vent']
+const rnd = (x, k) => Math.round(x * k)
+const u2 = (x, k) => +(x * k).toFixed(2)
+
+/** A def (as JSON) with the preset's rules applied, written out from WEIGHT.md 2.1 and not from src/weight.ts. */
+function expectedWeighed(def, P) {
+  const out = JSON.parse(JSON.stringify(def))
+  const k = P.dmg[def.slot]
+  out.damage = rnd(def.damage, k)
+  if (def.blastDamage !== undefined) out.blastDamage = rnd(def.blastDamage, k)
+  const m = out.mod
+  if (m) {
+    if (m.kind === 'charge') m.minDamage = rnd(m.minDamage, k)
+    if (['slam', 'overrun', 'reflect'].includes(m.kind)) m.damage = rnd(m.damage, k)
+    if (m.kind === 'toss') m.wallDamage = rnd(m.wallDamage, k)
+    if (m.kind === 'overrun') m.radius = u2(m.radius, P.dash)
+  }
+  if (VENT_IDS.includes(def.id)) out.radius = u2(def.radius, P.vent)
+  if (def.shape === 'dash') out.radius = u2(def.radius, P.dash)
+  if (def.id === 'scrap-cleaver') {
+    out.cone = Math.min(360, rnd(def.cone, P.cone / 120))
+    out.shove = P.shove
+  }
+  return out
+}
+
+// K-L3 (a, b): every part's numbers under both presets, at rank I and rank III, against the table written out in this file; nothing else differs;
+// weighed() is idempotent, memoized, and pure
+check('K-L3', RUN, async ({ page }) => {
+  const got = await evalJson(page, `async () => {
+    const W = window
+    const wm = await import('/src/weight.ts')
+    const ab = await import('/src/abilities.ts')
+    const tp = await import('/src/temper.ts')
+    const ids = W.__parts.map((d) => d.id)
+    const out = { ids, rows: [], idem: [], pure: [] }
+    for (const preset of ['B', 'D']) {
+      W.__weightPreset(preset)
+      for (const rank of [1, 3]) {
+        for (const id of ids) {
+          // the tempered def, unweighed, as the button carries it
+          const def = tp.tempered(ab.byId(id), rank)
+          out.rows.push({ preset, rank, id, def: JSON.parse(JSON.stringify(def)), got: W.__weighed(id, rank) })
+          const before = JSON.stringify(def)
+          const w = wm.weighed(def)
+          out.pure.push({ preset, rank, id, same: wm.weighed(def) === w, mutated: JSON.stringify(def) !== before, moved: w !== def })
+          out.idem.push({ preset, rank, id, idem: wm.weighed(w) === w })
+        }
+      }
+    }
+    W.__weightPreset('B')
+    return out
+  }`)
+  assert(got.ids.length >= 30, `__parts lists ${got.ids.length} parts`)
+  for (const r of got.rows) {
+    assertEq(`(a) ${r.id} rank ${r.rank} under ${r.preset}: __weighed equals the table`, r.got, expectedWeighed(r.def, PRESETS[r.preset]))
+  }
+  for (const x of got.pure) {
+    assert(x.same && !x.mutated && x.moved, `(b) ${x.id} rank ${x.rank} under ${x.preset}: weighed is not pure and memoized (same ${x.same}, mutated ${x.mutated})`)
+  }
+  for (const x of got.idem) assert(x.idem, `(b) ${x.id} rank ${x.rank} under ${x.preset}: weighed(weighed(d)) is not the same object`)
+  // the named values of the brief
+  const row = (preset, rank, id) => got.rows.find((r) => r.preset === preset && r.rank === rank && r.id === id)
+  assertEq('Scrap Cleaver I under B: cone 180, shove 1.2', [row('B', 1, 'scrap-cleaver').got.cone, row('B', 1, 'scrap-cleaver').got.shove], [180, 1.2])
+  assertEq('Scrap Cleaver I under D: cone 160', row('D', 1, 'scrap-cleaver').got.cone, 160)
+  assertEq('Scrap Cleaver III under B: 120 x 1.3 = 156, then 234', [row('B', 3, 'scrap-cleaver').def.cone, row('B', 3, 'scrap-cleaver').got.cone], [156, 234])
+  assertEq('Pressure Vent radius under B: 6.0 (4.3 x 1.4); D 5.4', [row('B', 1, 'pressure-vent').got.radius, row('D', 1, 'pressure-vent').got.radius], [u2(row('B', 1, 'pressure-vent').def.radius, 1.4), u2(row('B', 1, 'pressure-vent').def.radius, 1.25)])
+  assertEq('Kickstart under B: run-over half-width 2.4 (the 4.8 u swath), D 1.8 (3.6)', [row('B', 1, 'kickstart').got.radius, row('D', 1, 'kickstart').got.radius], [2.4, 1.8])
+  assertEq('Frayed Cleaver keeps its cones, no shove', [row('B', 1, 'frayed-cleaver').got.mod.cones, row('B', 1, 'frayed-cleaver').got.shove ?? null], [row('B', 1, 'frayed-cleaver').def.mod.cones, null])
+})
+
+
+// K-L3 (c, d, e): the first hit of a ready cast, the cone, the shove (fights on the arena). The page loops [name, switch, preset]: B, D, and off
+const MODES = `[['B', true, 'B'], ['D', true, 'D'], ['off', false, 'B']]`
+
+check('K-L3', RUN, async ({ page }) => {
+  const got = await evalJson(page, `() => {
+    const out = { c: {}, d: {}, e: {} }
+    for (const [name, on, p] of ${MODES}) {
+      out.c[name] = {}; out.d[name] = {}; out.e[name] = {}
+      // (c) the first hit of each ready cast on a wall (autos off: nothing else lands). The Kickstart's lands with the dash, the Lens's with the bolt
+      ${scene('on', `
+        W.__weightPreset(p)
+        const t = wall(1e6, 0, 2); W.__fire('arms'); out.c[name].cleaver = 1e6 - t.hp`)}
+      ${scene('on', `
+        W.__weightPreset(p)
+        const t = wall(1e6, 0, 2.5); W.__fire('torso'); out.c[name].vent = 1e6 - t.hp`)}
+      ${scene('on', `
+        W.__weightPreset(p)
+        const t = wall(1e6, 0, 3); W.__fire('legs')
+        for (let i = 0; i < 30; i++) { C.hp = 100; W.__step(1 / 60) }
+        out.c[name].kickstart = 1e6 - t.hp`)}
+      ${scene('on', `
+        W.__weightPreset(p)
+        const t = wall(1e6, 0, 6); W.__fire('head')
+        for (let i = 0; i < 60; i++) tick(t)
+        out.c[name].lens = 1e6 - t.hp`)}
+      // (d) a hulk at 2 u, 85 degrees off the swing (the nearer hulk ahead takes the aim), and one at 95 degrees on the other side
+      ${scene('on', `
+        W.__weightPreset(p)
+        const a = 85 * Math.PI / 180, b = 95 * Math.PI / 180
+        const ahead = wall(1e6, 0, 1.2)
+        const in85 = wall(1e6, 2 * Math.sin(a), 2 * Math.cos(a))
+        const in95 = wall(1e6, -2 * Math.sin(b), 2 * Math.cos(b))
+        W.__fire('arms')
+        out.d[name] = { ahead: 1e6 - ahead.hp, at85: 1e6 - in85.hp, at95: 1e6 - in95.hp }
+        // the shove is radial from Still, not along the swing: the struck hulk at 85 degrees keeps its bearing and moves out
+        for (let i = 0; i < 6; i++) { C.hp = 100; W.__still.pos.set(0, 0, 0); W.__step(1 / 60) }
+        out.d[name].bearing = Math.atan2(in85.pos.x, in85.pos.z) * 180 / Math.PI
+        out.d[name].dist = Math.hypot(in85.pos.x, in85.pos.z)`)}
+      // (e) the shove: a lone hulk at 2 u, 0.5 s after a ready Cleaver, how far from Still (Still held at the origin, the hulk free)
+      ${scene('on', `
+        W.__weightPreset(p)
+        const t = wall(1e6, 0, 2)
+        W.__fire('arms')
+        let peak = 0
+        for (let i = 0; i < 30; i++) { C.hp = 100; W.__still.pos.set(0, 0, 0); W.__step(1 / 60); peak = Math.max(peak, Math.hypot(t.pos.x, t.pos.z)) }
+        out.e[name] = { at: Math.hypot(t.pos.x, t.pos.z), peak }`)}
+    }
+    return out
+  }`)
+  const want = {
+    B: { cleaver: 22, vent: 27, kickstart: 22, lens: 31 },
+    D: { cleaver: 21, vent: 27, kickstart: 22, lens: 30 },
+    off: { cleaver: 18, vent: 15, kickstart: 12, lens: 26 },
+  }
+  for (const name of ['B', 'D', 'off']) assertEq(`(c) ${name}: the first hit of a ready cast`, got.c[name], want[name])
+  assert(got.d.B.ahead > 0 && got.d.B.at85 > 0, `(d) B: the hulk at 85 degrees should be struck, got ${JSON.stringify(got.d.B)}`)
+  assertEq('(d) B (180): 95 degrees off is outside', got.d.B.at95, 0)
+  assert(got.d.D.ahead > 0, `(d) D: the aimed hulk should be struck`)
+  assertEq('(d) D (160) and off (120): 85 degrees off is outside', [got.d.D.at85, got.d.off.at85], [0, 0])
+  // the brief says "0.5 s after"; a hulk walks back to its 2 u standoff within 0.5 s (it is at 2.06 u by then, on or off), so the shove is read at its peak in that half second
+  for (const name of ['B', 'D']) assert(got.e[name].peak >= 2.6, `(e) ${name}: the hulk's farthest from Still within 0.5 s of a ready Cleaver is ${got.e[name].peak.toFixed(2)} u, wanted >= 2.6`)
+  assert(got.e.off.peak < 2.2, `(e) off: the hulk's farthest from Still is ${got.e.off.peak.toFixed(2)} u, wanted < 2.2 (no shove today)`)
+  assert(Math.abs(got.d.B.bearing - 85) < 3 && got.d.B.dist > 2.4, `(d) B: the shove should be radial: the struck hulk at 85 degrees is now at ${got.d.B.bearing.toFixed(1)} degrees, ${got.d.B.dist.toFixed(2)} u out`)
+})
+
+/** In the page: the stored switch set to `on` through the pause screen's row (the one path that changes what the next level entry applies). */
+const SWITCH = `(on) => { if ((localStorage.getItem('still-action.weight') === '1') !== on) (${FLIP})() }`
+
+// K-L3 (f, g, h): level entry. Pack HP, the breakpoint, the boss (switch through the pause row, then __enter)
+check('K-L3', RUN, async ({ page }) => {
+  try {
+    await entryChecks(page)
+  } finally {
+    await evalJson(page, `() => (${SWITCH})(false)`)
+  }
+})
+async function entryChecks(page) {
+  const got = await evalJson(page, `async () => {
+    const W = window
+    W.__run.dev = false
+    const out = { packs: [], curve: {}, sentinel: [], boss: {} }
+    const BASE = { chaser: 30, ranged: 20, swarm: 8, charger: 36, mender: 20 }
+    const baseOf = (m) => (m.kind === 'ranged' && m.variant === 'lobber' ? 22 : BASE[m.kind])
+    const take = () => {
+      const lvl = W.__level()
+      return {
+        boss: !!lvl.boss,
+        mul: W.__combat.packHpMul,
+        heavy: W.__combat.heavyHpMul,
+        spots: lvl.packs.map((pk) => pk.members.map((m) => [m.kind, m.variant ?? null, +m.x.toFixed(3), +m.z.toFixed(3)])),
+        packs: W.__combat.packs.map((pk) => ({ elite: !!pk.elite, members: pk.members.map((m) => ({ kind: m.kind, variant: m.variant ?? null, base: baseOf(m), hp: m.hp })) })),
+      }
+    }
+    for (const depth of [1, 2, 4, 5]) out.curve[depth] = W.__curveAt(depth).hp
+    for (const preset of ['B', 'D']) {
+      W.__weightPreset(preset)
+      for (const depth of [1, 2, 4, 5]) {
+        for (const seed of [1, 2, 3]) {
+          const row = { preset, depth, seed }
+          for (const on of [false, true]) {
+            ;(${SWITCH})(on)
+            W.__enter(depth, seed)
+            row[on ? 'on' : 'off'] = take()
+            row[on ? 'onWeight' : 'offWeight'] = W.__combat.weight
+          }
+          out.packs.push(row)
+        }
+      }
+    }
+    // (f) the breakpoint: sentinels at depth 1 (every ordinary one 28), and a white Lens that kills one
+    for (const preset of ['B', 'D']) {
+      W.__weightPreset(preset)
+      ;(${SWITCH})(true)
+      const row = { preset, level: [] }
+      for (const seed of [1, 2, 3, 4, 5]) {
+        W.__enter(1, seed)
+        for (const pk of W.__combat.packs) pk.members.forEach((m, i) => { if (m.kind === 'ranged' && !m.variant && !(pk.elite && i === 0)) row.level.push(m.hp) })
+      }
+      // the Lens against a spawned sentinel at depth 1 (the spawn takes the same multiplier): one ready press, the arena, nothing else landing
+      W.__enter(1, 1)
+      ;(${SETUP})(true)
+      W.__weightPreset(preset)
+      {
+        const C = W.__combat
+        C.hurtPlayer = () => {}
+        W.__still.facing = 0
+        const sn = W.__spawn('ranged', 0, 6, true)
+        row.spawned = sn.hp
+        W.__fire('head')
+        for (let i = 0; i < 90 && !sn.dead; i++) { C.hp = 100; W.__still.pos.set(0, 0, 0); W.__step(1 / 60) }
+        row.dead = sn.dead || sn.hp <= 0
+        row.left = sn.hp
+      }
+      out.sentinel.push(row)
+    }
+    // (h) the boss: depth 3 (the 6-depth run's first boss)
+    for (const preset of ['B', 'D']) {
+      W.__weightPreset(preset)
+      for (const on of [false, true]) {
+        ;(${SWITCH})(on)
+        W.__enter(3, 1)
+        const C = W.__combat
+        const plan = W.__plan(3).boss
+        const b = C.boss
+        const row = { preset, on, plan: plan && plan.hp, kind: plan && plan.kind, max: b && b.maxHp, hp: b && b.hp, mul: C.packHpMul }
+        if (b) {
+          C.hurtPlayer = () => {}
+          const pack = C.packs.find((pk) => pk.members.includes(b))
+          if (pack && pack.state === 'asleep') C.wake(pack)
+          row.at = {}
+          for (const frac of [0.56, 0.54]) {
+            W.__enter(3, 1)
+            const c2 = W.__combat, b2 = c2.boss
+            c2.hurtPlayer = () => {}
+            const pk2 = c2.packs.find((pk) => pk.members.includes(b2))
+            if (pk2 && pk2.state === 'asleep') c2.wake(pk2)
+            b2.hp = frac * b2.maxHp
+            for (let i = 0; i < 3; i++) { c2.hp = 100; W.__still.pos.set(0, 0, 12); W.__step(1 / 60) }
+            row.at[frac] = { over: b2.overloaded, max: b2.maxHp }
+          }
+        }
+        out.boss[preset + (on ? '/on' : '/off')] = row
+      }
+    }
+    ;(${SWITCH})(false)
+    W.__weightPreset('B')
+    return out
+  }`)
+
+  // (f) the breakpoint
+  for (const r of got.sentinel) {
+    assert(r.level.length >= 3, `(f) ${r.preset}: only ${r.level.length} ordinary sentinels in 5 depth-1 levels`)
+    assert(r.level.every((hp) => hp === 28), `(f) ${r.preset}: an ordinary sentinel at depth 1 has HP ${[...new Set(r.level)]}, wanted 28 (20 x 1.4)`)
+    assertEq(`(f) ${r.preset}: a spawned sentinel at depth 1`, r.spawned, 28)
+    assert(r.dead, `(f) ${r.preset}: one ready white Lens left a sentinel with ${r.left} HP`)
+  }
+  // (g) pack HP, the same seed on and off, depths 1 (early) and 4 (deep)
+  assertEq('the 6-depth curve this check reads: d1 1, d2, d4 1.1 (R3)', [got.curve[1], got.curve[4]], [1, 1.1])
+  let ordinary = 0
+  for (const r of got.packs) {
+    const tag = `(g) ${r.preset} depth ${r.depth} seed ${r.seed}`
+    assertEq(`${tag}: the switch really was off, then on, at entry`, [r.offWeight, r.onWeight], [false, true])
+    assertEq(`${tag}: the generated level (the packs' places) equals on and off`, r.on.spots, r.off.spots)
+    assertEq(`${tag}: the pack roster equals on and off`, r.on.packs.map((p) => p.members.map((m) => m.kind + (m.variant ?? ''))), r.off.packs.map((p) => p.members.map((m) => m.kind + (m.variant ?? ''))))
+    assert(!r.on.boss, `${tag}: a boss level (pick other depths)`)
+    const k = r.depth < 4 ? PRESETS[r.preset].early : PRESETS[r.preset].deep
+    assertEq(`${tag}: packHpMul on / off`, [r.on.mul, r.off.mul], [k, 1])
+    assertEq(`${tag}: heavyHpMul stays 1`, [r.on.heavy, r.off.heavy], [1, 1])
+    r.on.packs.forEach((pk, pi) => {
+      pk.members.forEach((m, mi) => {
+        const off = r.off.packs[pi].members[mi]
+        if (pk.elite && mi === 0) return assertEq(`${tag}: an elite pack's leader (${m.kind}) is equal on and off`, m.hp, off.hp)
+        ordinary++
+        const curve = got.curve[r.depth]
+        assertEq(`${tag}: ${m.kind}${m.variant ? '/' + m.variant : ''} on, one rounding of base x curve x ${k}`, m.hp, Math.round(m.base * curve * k))
+        assertEq(`${tag}: ${m.kind} off, today's round(base x curve)`, off.hp, Math.round(off.base * curve))
+      })
+    })
+  }
+  assert(ordinary >= 100, `only ${ordinary} ordinary bodies were checked`)
+  // (h) the boss
+  for (const preset of ['B', 'D']) {
+    const k = PRESETS[preset].boss
+    const off = got.boss[`${preset}/off`], on = got.boss[`${preset}/on`]
+    assert(on.plan > 0 && on.max !== undefined, `(h) ${preset}: no boss at depth 3 (kind ${on.kind})`)
+    assertEq(`(h) ${preset} off: maxHp is bossFor's HP, untouched`, off.max, off.plan)
+    assertEq(`(h) ${preset} on: maxHp is round(bossFor(3).hp x ${k})`, on.max, Math.round(on.plan * k))
+    assertEq(`(h) ${preset}: the boss level's packHpMul stays 1`, on.mul, 1)
+    assert(!on.at[0.56].over, `(h) ${preset}: overloaded at 0.56 x maxHp`)
+    assert(on.at[0.54].over, `(h) ${preset}: not overloaded at 0.54 x maxHp`)
+    assertEq(`(h) ${preset}: maxHp unchanged by the thresholds' steps`, [on.at[0.56].max, on.at[0.54].max], [on.max, on.max])
+  }
+}
+
+// K-L3 (j): reaches() and wouldPay() take the hud's unweighed defs (the break hint, the push cue) and answer for the weighed ones: a body just past
+// today's reach but inside the weighed one is reached with weight on, and not off
+check('K-L3', RUN, async ({ page }) => {
+  const got = await evalJson(page, `() => {
+    const out = {}
+    for (const [name, on, p] of ${MODES}) {
+      ${scene('on', `
+        W.__weightPreset(p)
+        const slotDef = (slot) => W.__hud.slots.find((x) => x.slot === slot).def
+        const o = W.__still.pos
+        // the Vent: a hulk 0.9 u past today's blast (the radius is the def's), inside B's 6.0 and D's 5.4 only if the room is
+        const vent = slotDef('torso')
+        const far = wall(1e6, 0, vent.radius + 0.5)
+        const row = { ventReach: C.reaches(vent, o, far), ventR: vent.radius }
+        // Kickstart: the run-over's reach is range + half-width + the body's radius
+        const kick = slotDef('legs')
+        const near = wall(1e6, 0, 0.5)
+        near.pos.set(0, 0, kick.range + kick.radius + near.radius + 0.5)
+        row.kickReach = C.reaches(kick, o, near)
+        // the push cue: Overrun pays 'marked'; a marked hulk just past its charge's reach
+        W.__equip('overrun')
+        const over = slotDef('legs')
+        const m = wall(1e6, 0, 0.5)
+        m.pos.set(0, 0, over.mod.range + over.mod.radius + m.radius + 0.6)
+        C.setState(m, 'marked', 5, 'head')
+        row.pay = C.wouldPay(over, o)
+        out[name] = row`)}
+    }
+    return out
+  }`)
+  assertEq('(j) off: the Vent does not reach a hulk 0.5 u past its blast, Kickstart not a body 0.5 u past its run-over, Overrun does not cue', [got.off.ventReach, got.off.kickReach, got.off.pay], [false, false, false])
+  for (const name of ['B', 'D']) assertEq(`(j) ${name}: the weighed reach is the one asked (Vent, Kickstart, the push cue)`, [got[name].ventReach, got[name].kickReach, got[name].pay], [true, true, true])
+})
+
+// K-L3 (i), the lead's "K-L3g": the cards tell the truth. With weight on, the compare card (the pickup card is the same screen) and the loadout card show
+// weighed(def)'s damage and radius; off, the def's. The text is read from the DOM, for every part, against the label rules written out here
+check('K-L3', RUN, async ({ page }) => {
+  try {
+    await cardChecks(page)
+  } finally {
+    await evalJson(page, `() => (${SWITCH})(false)`)
+  }
+})
+async function cardChecks(page) {
+  const got = await evalJson(page, `async () => {
+    const W = window
+    const out = { rows: [], loadout: {}, vent: {} }
+    const ids = W.__parts.map((d) => d.id)
+    const ab = await import('/src/abilities.ts')
+    const statOf = (card, label) => [...card.querySelectorAll('.stat')].map((s) => [s.querySelector('span').textContent, s.querySelector('b').textContent]).find(([l]) => l === label)?.[1]
+    const readCard = (id) => {
+      W.__pause.compare(null, ab.byId(id), [], () => {}, () => {})
+      const cards = [...document.querySelectorAll('#pause .pcard')]
+      const card = cards[cards.length - 1]
+      const stats = [...card.querySelectorAll('.stat')].map((s) => [s.querySelector('span').textContent, s.querySelector('b').textContent])
+      W.__pause.hide()
+      return stats
+    }
+    for (const on of [false, true]) {
+      ;(${SWITCH})(on)
+      W.__weightPreset('B')
+      for (const id of ids) {
+        const def = JSON.parse(JSON.stringify(ab.byId(id)))
+        out.rows.push({ on, id, def, w: W.__weighed(id), stats: readCard(id) })
+      }
+    }
+    // the loadout card follows the row at once: the Vent's damage before the click, and after it
+    ;(${SWITCH})(false)
+    W.__pause.loadout(W.__hud.slots, () => {})
+    const ventCard = () => [...document.querySelectorAll('#pause .pcard')].find((c) => c.querySelector('.pname')?.textContent.startsWith('Pressure Vent'))
+    out.loadout.before = statOf(ventCard(), 'damage')
+    ;[...document.querySelectorAll('#pause .rule')].find((x) => x.textContent.startsWith('weight')).click()
+    out.loadout.after = statOf(ventCard(), 'damage')
+    ;[...document.querySelectorAll('#pause .rule')].find((x) => x.textContent.startsWith('weight')).click()
+    out.loadout.back = statOf(ventCard(), 'damage')
+    W.__pause.hide()
+    return out
+  }`)
+  // the label rules of pause.ts (damageLabel, reach), written out again
+  const damageText = (d) => {
+    const m = d.mod
+    if (m?.kind === 'charge') return `${m.minDamage}–${d.damage}`
+    if (m?.kind === 'fan') return `${d.damage} ×${m.count}`
+    if (m?.kind === 'overrun') return `${d.damage} / ${m.damage} held`
+    if (['ward', 'rewind', 'hop'].includes(d.shape)) return '–'
+    return String(d.damage)
+  }
+  const REACH = { bolt: 'range', lob: 'range', nova: 'radius', ward: 'radius', decoy: 'radius', arc: 'reach', grab: 'reach', catch: 'radius', dash: 'distance', hop: 'distance', anchor: 'snap', rewind: 'rewind' }
+  // the card rounds a reach to one decimal (a weighed vent's 6.02 reads 6)
+  const oneDp = (x) => (typeof x === 'number' ? +x.toFixed(1) : x)
+  const reachText = (d) => String(oneDp(['nova', 'ward', 'decoy', 'catch'].includes(d.shape) ? d.radius : d.shape === 'rewind' ? (d.windowMs ?? 0) / 1000 : d.range))
+  let moved = 0
+  for (const r of got.rows) {
+    const shown = r.on ? r.w : r.def
+    const stats = Object.fromEntries(r.stats)
+    assertEq(`(i) ${r.id}, weight ${r.on ? 'on' : 'off'}: the card's damage text`, stats.damage, damageText(shown))
+    assertEq(`(i) ${r.id}, weight ${r.on ? 'on' : 'off'}: the card's reach text (${REACH[r.def.shape]})`, stats[REACH[r.def.shape]], reachText(shown))
+    if (r.on && damageText(r.w) !== damageText(r.def)) moved++
+  }
+  assert(moved >= 10, `(i) only ${moved} cards read different numbers with weight on`)
+  const vent = (on) => got.rows.find((x) => x.on === on && x.id === 'pressure-vent')
+  assertEq('(i) a torso part: Pressure Vent reads 27 on and 15 off', [Object.fromEntries(vent(true).stats).damage, Object.fromEntries(vent(false).stats).damage], [String(vent(true).w.damage), String(vent(false).def.damage)])
+  assertEq('(i) the Vent card: 27 on, 15 off (the weighed def and the def)', [vent(true).w.damage, vent(false).def.damage], [27, 15])
+  assertEq('(i) the loadout card follows the switch row at once: off, on, off', [got.loadout.before, got.loadout.after, got.loadout.back], ['15', '27', '15'])
+}
+
 process.exit(await run(process.argv.slice(2)))

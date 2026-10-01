@@ -2229,6 +2229,8 @@ function notebookPages(): NotebookPage[] {
 /** How a part card names a part and tells its past, from the save. */
 const describePart = (d: AbilityDef) => ({ name: partName(save, d.id, d.name), history: historyLine(save, d.id) })
 pause.setDescribe(describePart)
+// weight (WEIGHT.md W3): with the switch on, every card's damage and radius are the weighed def's, the numbers the next press uses
+pause.setShown((d) => (weightOn ? weighed(d) : d))
 
 /**
  * Strain step 1 (design/strain/PITCHES.md): a push breaks the windup it lands in. Permanent
@@ -3014,9 +3016,12 @@ function enterLevel(depth: number, o: { seed?: number; bossFelled?: boolean; res
   applyFollowThrough(followThroughOn)
   applyWeight(weightOn)
   combat.curve = curveAt(depth, RUN_DEPTHS)
-  // W3 (design/lean/WEIGHT.md §2.2): combat.packHpMul / heavyHpMul follow the preset here, and the boss's HP below; until then they stay 1 (the fields exist, addPack reads them)
-  combat.packHpMul = 1
-  combat.heavyHpMul = 1
+  // weight (design/lean/WEIGHT.md §2.2): ordinary bodies' HP on top of the depth curve, from this level on; a boss level and the switch off stay 1
+  {
+    const P = WEIGHT_PRESETS[weightPresetId()]
+    combat.packHpMul = combat.weight && !level.boss ? (depth < 4 ? P.packHpEarly : P.packHpDeep) : 1
+    combat.heavyHpMul = combat.weight && !level.boss ? P.heavyHp : 1
+  }
   const sidings = level.sidings
   for (const p of level.packs) {
     // the Lobber, the Signalman (B4) and the Handcar (B5); the Porter stays out until its step; a lesson pack's Signalman calls once on waking (R10)
@@ -3035,7 +3040,7 @@ function enterLevel(depth: number, o: { seed?: number; bossFelled?: boolean; res
     world.scene.add(combat.line.group)
   }
   const boss = bossHere(depth)
-  if (level.boss && boss && !run.bossFelled) combat.addBoss(level.boss.x, level.boss.z, level.boss.face, boss, level.posts, level.track)
+  if (level.boss && boss && !run.bossFelled) combat.addBoss(level.boss.x, level.boss.z, level.boss.face, combat.weight ? { ...boss, hp: Math.round(boss.hp * WEIGHT_PRESETS[weightPresetId()].bossHp) } : boss, level.posts, level.track)
   // G8: a thief in a barrel in its elite's room, with no pack (it never spawns carrying)
   arenaFloor = null
   const lt = level.thief
