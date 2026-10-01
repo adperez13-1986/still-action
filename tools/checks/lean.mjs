@@ -1328,4 +1328,214 @@ check('K-L13', RUN, async ({ page }) => {
   assert(got.off5.every((f) => f > cap + 0.1), `(off) five struck hulks flash full, as today, got ${JSON.stringify(got.off5)}`)
 })
 
+// ---- W5: the whole trial (WEIGHT.md section 4 K-L12) ----------------------------------------------------------------------------------------
+
+/** The sim's own numbers for the same quantity (design/lean/3-balancer.md: the agreed formula's freeze share of pack time, and parts' share of it). */
+const SIM = { share: '4-7%', parts: '77%' }
+/** K-L12's gate: the freeze budget (share of fight time) and the part share's floor. */
+const BUDGET = { share: 0.1, parts: 0.6 }
+
+/**
+ * One scripted fight, in the page (self-contained: it is sent as source): preset B, weight on, the autos on, the starting loadout, Math.random
+ * seeded with mulberry32(seed) after the setup (still.wear draws it). Still stands at the origin facing +z with his HP put back each tick, as
+ * fights.mjs does, so no ending triggers. The fight ends when every body is dead, or at 60 s of game time.
+ * \`scenario\`: 'hulks' (three at 3 u), 'mites' (six, one brood at 5 u) or 'mixed' (a hulk at 3 u, a sentinel at 7 u, a ram at 6 u the other way).
+ * \`bot\`: 'eager' casts every ready part at once; 'hesitant' casts a part 3.7 s after it was first seen ready (never-melt's hesitation).
+ * Returns the freeze the weight trial added (part / auto), the game ms, the pending hitstop of every source read each tick (INFO), and who killed what.
+ */
+const FIGHT = `(arg) => {
+  const W = window
+  const mulberry32 = (a) => () => {
+    a |= 0
+    a = (a + 0x6d2b79f5) | 0
+    let t = Math.imul(a ^ (a >>> 15), 1 | a)
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
+  ;(${SETUP})(true)
+  const C = W.__combat
+  C.autoAttack = true
+  // the d1-2 entry value, as enterLevel(1) sets it with the switch on (the arena is built without one)
+  C.packHpMul = 1.4
+  C.heavyHpMul = 1
+  const original = Math.random
+  Math.random = mulberry32(arg.seed)
+  try {
+    const around = (n, r, a0) => Array.from({ length: n }, (_, k) => [Math.sin(a0 + (k * 2 * Math.PI) / n) * r, Math.cos(a0 + (k * 2 * Math.PI) / n) * r])
+    const a0 = Math.random() * Math.PI * 2
+    if (arg.scenario === 'hulks') for (const [x, z] of around(3, 3, a0)) W.__spawn('chaser', x, z, true)
+    else if (arg.scenario === 'mites') W.__pack(around(6, 5, a0).map(([x, z]) => ({ kind: 'swarm', x, z })), true)
+    else {
+      W.__spawn('chaser', ...around(1, 3, a0)[0], true)
+      W.__spawn('ranged', ...around(1, 7, a0 + 2)[0], true)
+      W.__spawn('charger', ...around(1, 6, a0 + Math.PI)[0], true)
+    }
+    const st = W.__run.stats[W.__run.stats.length - 1]
+    const was = { part: st.freezePartMs, auto: st.freezeAutoMs, kills: { ...st.kills }, ready: st.breaksBy.ready, hand: st.hand ?? 0 }
+    const SLOTS = ['head', 'torso', 'arms', 'legs']
+    const readySince = {}
+    W.__fx()
+    let all = 0, lost = 0, ticks = 0, cleared = false, casts = 0
+    for (let i = 0; i < 60 * 60; i++) {
+      for (const slot of SLOTS) {
+        if (!W.__hud.isReady(slot)) { readySince[slot] = null; continue }
+        readySince[slot] ??= C.time
+        if (arg.bot === 'eager' || C.time - readySince[slot] >= 3.7 - 1e-9) { W.__fire(slot); readySince[slot] = null; casts++ }
+      }
+      const hp0 = 100
+      C.hp = hp0
+      W.__still.pos.set(0, 0, 0)
+      W.__step(1 / 60)
+      lost += hp0 - C.hp
+      ticks++
+      all += W.__fx().hitstop * 1000
+      if (C.enemies.every((e) => e.dead)) { cleared = true; break }
+    }
+    const now = W.__run.stats[W.__run.stats.length - 1]
+    return {
+      part: now.freezePartMs - was.part, auto: now.freezeAutoMs - was.auto, all, gameMs: ticks * 1000 / 60, cleared, casts, lost,
+      kills: { part: now.kills.part - was.kills.part, auto: now.kills.auto - was.kills.auto, other: now.kills.other - was.kills.other },
+    }
+  } finally {
+    Math.random = original
+  }
+}`
+
+// K-L12 the budget: scripted fights (3 scenarios x seeds 1-5, to the clear or 60 s) with two bots, preset B, weight on, the autos on. PASS: the freeze the trial
+// adds is at most 10% of fight time (game ms + frozen ms, the sim's own denominator) for each bot, and parts own at least 60% of it. Prints both beside the sim's
+check('K-L12', RUN, async ({ page }) => {
+  const rows = []
+  for (const bot of ['eager', 'hesitant']) {
+    for (const scenario of ['hulks', 'mites', 'mixed']) {
+      for (let seed = 1; seed <= 5; seed++) {
+        const r = await evalJson(page, FIGHT, { bot, scenario, seed })
+        rows.push({ bot, scenario, seed, ...r })
+      }
+    }
+  }
+  const sum = (xs, f) => xs.reduce((a, x) => a + f(x), 0)
+  const stat = (xs) => {
+    const part = sum(xs, (r) => r.part), auto = sum(xs, (r) => r.auto), game = sum(xs, (r) => r.gameMs), all = sum(xs, (r) => r.all)
+    const frozen = part + auto
+    return { part, auto, frozen, game, share: frozen / (game + frozen), shareOfGame: frozen / game, parts: frozen ? part / frozen : 1, all, allShare: all / (game + all), n: xs.length, uncleared: xs.filter((r) => !r.cleared).length }
+  }
+  const pct = (x) => (x * 100).toFixed(1) + '%'
+  const line = (what, s) => `${what}: ${s.n} fights, ${(s.game / 1000).toFixed(1)} s of play + ${(s.frozen / 1000).toFixed(2)} s frozen (${s.part.toFixed(0)} part + ${s.auto.toFixed(0)} auto ms) = ${pct(s.share)} of fight time (${pct(s.shareOfGame)} of play), parts own ${pct(s.parts)}; every source read ${pct(s.allShare)}; ${s.uncleared} uncleared`
+  const fails = []
+  for (const bot of ['eager', 'hesitant']) {
+    const mine = rows.filter((r) => r.bot === bot)
+    const s = stat(mine)
+    console.log(`INFO K-L12: ${line(bot + ', all', s)} (sim: ${SIM.share}, parts ${SIM.parts})`)
+    for (const scenario of ['hulks', 'mites', 'mixed']) console.log(`INFO K-L12:   ${line(bot + ' / ' + scenario, stat(mine.filter((r) => r.scenario === scenario)))}`)
+    if (s.share > BUDGET.share) fails.push(`${bot}: ${pct(s.share)} of fight time frozen, over ${pct(BUDGET.share)}`)
+    if (s.parts < BUDGET.parts) fails.push(`${bot}: parts own ${pct(s.parts)} of the freeze, under ${pct(BUDGET.parts)}`)
+  }
+  assert(fails.length === 0, fails.join('; '))
+})
+
+// K-L12w the whole trial in the real levels (a report; it fails only on a throw): a generated level of each area (I the ruin at depth 2, II the Works at 4, III the
+// Line at 4 on its road), the first three packs of each, seeds 1-3, one fight per pack with each bot, weight off and on. Weight on is the whole trial: the Ask 1 HP at
+// entry, the full effect, the freeze. Off is today. It prints kill time, the share of kills that were parts', the freeze and what never ended (40 s)
+const AREAS = [
+  { area: 'I (ruin, depth 2)', depth: 2, route: 'II' },
+  { area: 'II (works, depth 4)', depth: 4, route: 'II' },
+  { area: 'III (the Line, depth 4)', depth: 4, route: 'III' },
+]
+const PACKS_EACH = 3
+const AREA_FIGHT = `(arg) => {
+  const W = window
+  const C = W.__combat
+  const mulberry32 = (a) => () => {
+    a |= 0
+    a = (a + 0x6d2b79f5) | 0
+    let t = Math.imul(a ^ (a >>> 15), 1 | a)
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
+  const SLOTS = ['head', 'torso', 'arms', 'legs']
+  W.__hold(true)
+  ;(${SWITCH})(arg.on)
+  W.__weightPreset('B')
+  W.__run.route = arg.route
+  for (const slot of SLOTS) C.clearSlot(slot)
+  W.__hud.resetLoadout([])
+  for (const slot of SLOTS) W.__still.wear(slot, null)
+  for (const id of ['focusing-lens', 'pressure-vent', 'scrap-cleaver', 'kickstart']) W.__equip(id)
+  const original = Math.random
+  Math.random = mulberry32(arg.seed * 131 + arg.pack)
+  try {
+    W.__enter(arg.depth, arg.seed)
+    C.autoAttack = true
+    C.autoTimer = 0
+    W.__stick(0, 0)
+    const lvl = W.__level()
+    const spec = lvl.packs[arg.pack]
+    if (!spec || !C.packs[arg.pack]) return null
+    const pack = C.packs[arg.pack]
+    const at = spec.room?.center ?? pack.members[0].pos
+    W.__still.pos.set(at.x, 0, at.z)
+    C.wake(pack)
+    const st = W.__run.stats[W.__run.stats.length - 1]
+    const was = { part: st.freezePartMs, auto: st.freezeAutoMs, kills: { ...st.kills } }
+    const readySince = {}
+    const body = pack.members.map((e) => e.kind)
+    const hp = pack.members.map((e) => e.hp)
+    W.__fx()
+    let lost = 0, ticks = 0, cleared = false
+    for (let i = 0; i < 40 * 60; i++) {
+      for (const slot of SLOTS) {
+        if (!W.__hud.isReady(slot)) { readySince[slot] = null; continue }
+        readySince[slot] ??= C.time
+        if (arg.bot === 'eager' || C.time - readySince[slot] >= 3.7 - 1e-9) { W.__fire(slot); readySince[slot] = null }
+      }
+      C.hp = 100
+      W.__step(1 / 60)
+      lost += 100 - C.hp
+      ticks++
+      if (pack.members.every((e) => e.dead)) { cleared = true; break }
+    }
+    const now = W.__run.stats[W.__run.stats.length - 1]
+    return {
+      body, hp, cleared, lost, s: ticks / 60,
+      left: pack.members.filter((e) => !e.dead).map((e) => e.kind + ' ' + Math.hypot(e.pos.x - at.x, e.pos.z - at.z).toFixed(1) + ' u ' + Math.round(e.hp) + ' hp ' + e.phase), part: now.freezePartMs - was.part, auto: now.freezeAutoMs - was.auto,
+      kills: { part: now.kills.part - was.kills.part, auto: now.kills.auto - was.kills.auto, other: now.kills.other - was.kills.other },
+    }
+  } finally {
+    Math.random = original
+  }
+}`
+
+check('K-L12w', '?depth=1&save=memory&roads=1&line=0&engine=0', async ({ page }) => {
+  try {
+    await wholeTrial(page)
+  } finally {
+    await evalJson(page, `() => (${SWITCH})(false)`)
+  }
+})
+async function wholeTrial(page) {
+  const mean = (xs) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : NaN)
+  for (const { area, depth, route } of AREAS) {
+    for (const bot of ['eager', 'hesitant']) {
+      const got = { off: [], on: [] }
+      for (const on of [false, true]) {
+        for (let seed = 1; seed <= 3; seed++) {
+          for (let pack = 0; pack < PACKS_EACH; pack++) {
+            const r = await evalJson(page, AREA_FIGHT, { on, bot, depth, route, seed, pack })
+            if (r) got[on ? 'on' : 'off'].push(r)
+          }
+        }
+      }
+      const fmt = (rs) => {
+        const kills = rs.reduce((a, r) => a + r.kills.part + r.kills.auto + r.kills.other, 0)
+        const part = rs.reduce((a, r) => a + r.kills.part, 0)
+        const frozen = rs.reduce((a, r) => a + r.part + r.auto, 0), play = rs.reduce((a, r) => a + r.s, 0) * 1000
+        return `${rs.length} fights, kill time ${mean(rs.filter((r) => r.cleared).map((r) => r.s)).toFixed(1)} s (cleared ${rs.filter((r) => r.cleared).length}), body HP ${mean(rs.flatMap((r) => r.hp)).toFixed(1)}, HP lost ${mean(rs.map((r) => r.lost)).toFixed(1)}, part kills ${kills ? ((part / kills) * 100).toFixed(0) : '-'}% of ${kills}, frozen ${frozen ? ((frozen / (play + frozen)) * 100).toFixed(1) : '0.0'}% (${frozen.toFixed(0)} ms), never ended ${rs.filter((r) => !r.cleared).length}`
+      }
+      for (const side of ['off', 'on']) for (const r of got[side]) if (!r.cleared) console.log(`INFO K-L12w:   (${side}) never ended in 40 s, left: ${r.left.join(', ')}`)
+      console.log(`INFO K-L12w: area ${area}, ${bot}: off ${fmt(got.off)}`)
+      console.log(`INFO K-L12w: area ${area}, ${bot}: on  ${fmt(got.on)}`)
+    }
+  }
+}
+
 process.exit(await run(process.argv.slice(2)))

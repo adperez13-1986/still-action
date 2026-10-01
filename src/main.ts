@@ -2941,7 +2941,8 @@ const CLACK = { every: 0.18, hear: 30 }
 const lineHost = {
   get time() { return combat.time },
   get book() { return combat.book },
-  get bodyMul() { return combat.curve.hp },
+  // weight: the bodies' own HP multiplier too, so a train still fells what it fells today (LINE-RULES R6); off it is 1
+  get bodyMul() { return combat.curve.hp * combat.packHpMul },
   addHazard: (spec: HazardSpec) => combat.addHazard(spec),
   roomAwake: (room: Room) => combat.roomAwake(room),
   smashIn: (shape: Parameters<Combat['smashIn']>[0], grow: number) => combat.smashIn(shape, grow),

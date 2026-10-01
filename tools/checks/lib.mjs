@@ -51,6 +51,9 @@ export async function openPage(url, query) {
   })
   try {
     const context = await browser.newContext()
+    // WEIGHT=1: the "weight" trial's switch on from the first frame, so a whole suite can be run with the trial on (a report; the suites' own thresholds
+    // are today's). Unset, nothing changes: K-L1 holds the suites to what they print with it off
+    if (process.env.WEIGHT === '1') await context.addInitScript(() => localStorage.setItem('still-action.weight', '1'))
     const page = await context.newPage()
     /** @type {string[]} */
     const errors = []
