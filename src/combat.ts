@@ -358,7 +358,7 @@ export interface CombatEvents {
    * The "weight" trial (design/lean/WEIGHT.md §2.3), only with `weight` on: one part's cast struck `n` bodies, said once per payer. `at` and
    * `first` are the first body struck (a payer that moves says it at the landing, and only if it struck). `def`: null for a payer with no id (the mirror).
    */
-  onContact?: (ev: { def: AbilityDef | null; slot: SlotName; n: number; at: THREE.Vector3; first: Enemy }) => void
+  onContact?: (ev: { def: AbilityDef | null; slot: SlotName; n: number; at: THREE.Vector3; first: Enemy; bodies: readonly Enemy[] }) => void
   onWindup: (e: Enemy, ms: number) => void
   onStrike: (e: Enemy) => void
   onGone: (e: Enemy) => void
@@ -1214,7 +1214,7 @@ export class Combat {
       }
       this.struck.delete(payer)
       const first = set.values().next().value as Enemy
-      this.events.onContact?.({ def: 'id' in payer ? (payer as AbilityDef) : null, slot: payer.slot, n: set.size, at: first.pos.clone(), first })
+      this.events.onContact?.({ def: 'id' in payer ? (payer as AbilityDef) : null, slot: payer.slot, n: set.size, at: first.pos.clone(), first, bodies: [...set] })
     }
   }
 

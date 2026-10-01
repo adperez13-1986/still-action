@@ -1,4 +1,6 @@
 import type { BeatKey, Tier } from './abilities'
+import type { SlotName } from './still'
+import { WEIGHT_FEEL } from './weight'
 
 /**
  * Every sound is synthesised. No files to source, no load latency, and each one
@@ -281,10 +283,10 @@ function live(): AudioContext | null {
  * DEV only (STAGE-B.md §2.10, STAGE-C.md §2.9): every call of a stage-B or stage-C sound, and of aim / rev, in order. A headless page's AudioContext never
  * runs (live() is null), so every sfx returns at once and nothing else proves a sound was asked for; only a phone proves it sounds right.
  */
-export const heardLog: { name: string; live: boolean }[] = []
-function heard(name: string): void {
+export const heardLog: { name: string; live: boolean; k?: number }[] = []
+function heard(name: string, k?: number): void {
   if (!import.meta.env.DEV) return
-  heardLog.push({ name, live: live() !== null })
+  heardLog.push(k === undefined ? { name, live: live() !== null } : { name, live: live() !== null, k })
   if (heardLog.length > 2000) heardLog.shift()
 }
 
@@ -451,6 +453,70 @@ export function hit(pan: number, gain = 1) {
   hiss(c, d, t, 0.05, 0.25 * gain, 'bandpass', 2200 * r, 900 * r, 1.2)
   sample(c, 'metalMedium', d, 0.8 * gain, 0.9)
   tone(c, d, 'square', t, 95 * r, 60 * r, 0.04, 0.12 * gain)
+}
+
+/**
+ * The "weight" trial's strike (design/lean/WEIGHT.md §2.6): one voice per slot, said once per cast on its contact. Every transient sits in a phone
+ * speaker's band (400 Hz to 1 kHz; a phone has no bass), the weight coming from the sample under it and the vibration motor. Only called with the
+ * switch on, so it draws no `Math.random` off. `k` is the head's pierce count (0 on the first body, up a semitone each after).
+ */
+export function contact(slot: SlotName, n: number, pan: number, k = 0) {
+  heard('contact:' + slot, slot === 'head' ? k : undefined)
+  if (slot === 'torso') heard('duck')
+  const c = live()
+  if (!c) return
+  const t = c.currentTime
+  const d = out(c, 'hits', pan)
+  const r = vary(1, 0.05)
+  switch (slot) {
+    case 'arms':
+      // a crunch: the heavy recording a step low (a step lower again at 3+ bodies), a short body under it
+      sample(c, 'metalHeavy', d, 0.85, n >= 3 ? 0.8 : 0.9)
+      tone(c, d, 'triangle', t, 760 * r, 430 * r, 0.07, 0.35)
+      hiss(c, d, t, 0.05, 0.22, 'bandpass', 800 * r, 520, 1.4)
+      break
+    case 'head': {
+      // a dry "tck", a semitone higher for every body the bolt goes through
+      const f = 2400 * Math.pow(2, Math.min(k, 12) / 12)
+      tone(c, d, 'square', t, f, f * 0.96, 0.012, 0.14, 0.001)
+      break
+    }
+    case 'torso': {
+      // the whump goes round the duck (as the hurt does): it is the one thing left at full while the rest dips by 4 dB for a quarter second
+      const g = c.createGain()
+      g.gain.value = mix.hits
+      g.connect(master)
+      const p = c.createStereoPanner()
+      p.pan.value = clampPan(pan)
+      p.connect(g)
+      tone(c, p, 'sine', t, 420 * r, 180 * r, 0.12, 0.9, 0.004)
+      sample(c, 'plateHeavy', p, 0.55, 0.8)
+      // a harder duck already running (a hurt's, a stopped clock's) is left alone
+      if (duck.gain.value > WEIGHT_FEEL.duck.gain) {
+        duck.gain.cancelScheduledValues(t)
+        duck.gain.setValueAtTime(WEIGHT_FEEL.duck.gain, t)
+        duck.gain.linearRampToValueAtTime(1, t + WEIGHT_FEEL.duck.s)
+      }
+      break
+    }
+    case 'legs':
+      // the landing slam: a plate dropped, a thud under it
+      sample(c, 'plateHeavy', d, 0.75, 0.95)
+      tone(c, d, 'sine', t, 640 * r, 260 * r, 0.1, 0.8, 0.003)
+      hiss(c, d, t, 0.06, 0.25, 'bandpass', 700 * r, 420, 1.2)
+      break
+  }
+}
+
+/** The weight trial: a part's break lands with the Anvil's heft (the heavy recording low, a distorted thud in the phone's band). */
+export function breakHeavy(pan: number) {
+  heard('breakHeavy')
+  const c = live()
+  if (!c) return
+  const t = c.currentTime
+  const d = out(c, 'abilities', pan)
+  sample(c, 'metalHeavy', d, 0.8, 0.85)
+  tone(c, distorted(c, d), 'sine', t, 520, 240, 0.12, 0.6, 0.003)
 }
 
 export function kill(pan: number) {

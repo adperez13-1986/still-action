@@ -235,6 +235,10 @@ export class Ranged implements Enemy {
     this.answer = { ...a, t: PART.answerSeconds }
   }
 
+  dimFlash(cap: number) {
+    this.flash = Math.min(this.flash, cap)
+  }
+
   hit(damage: number): boolean {
     this.hp -= damage * this.armor * (this.reel >= 0 ? REEL.mul : 1)
     this.flash = 1

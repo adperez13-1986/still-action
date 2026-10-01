@@ -179,6 +179,11 @@ export type EnemyEvent =
   | { kind: 'mend'; e: Enemy; what: 'link' | 'drop' | 'cut'; at: THREE.Vector3; patient: Enemy; from?: THREE.Vector3; to?: THREE.Vector3 }
 
 export interface Enemy {
+  /**
+   * The "weight" trial (design/lean/WEIGHT.md W4, lead's review): a crowd struck at once flashes less per body, so five struck hulks
+   * read as five, not one white blob under bloom. Caps this hit's flash; absent on bodies that never crowd.
+   */
+  dimFlash?(cap: number): void
   /** 'thief': a body without a pack that never attacks (thief.ts). 'mender': a packmate that never attacks (mender.ts). */
   readonly kind: 'chaser' | 'ranged' | 'charger' | 'swarm' | 'boss' | 'thief' | 'mender'
   /** 'lobber' for the sentinel variant that lobs shells; loot, budget and treasure follow `kind`. */
@@ -631,6 +636,10 @@ export class Chaser implements Enemy {
     this.blink = 0.2
     this.coreMat.color.setHex(this.coreOff)
     return true
+  }
+
+  dimFlash(cap: number) {
+    this.flash = Math.min(this.flash, cap)
   }
 
   hit(damage: number): boolean {

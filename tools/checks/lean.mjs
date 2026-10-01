@@ -1140,4 +1140,192 @@ async function cardChecks(page) {
   assertEq('(i) the loadout card follows the switch row at once: off, on, off', [got.loadout.before, got.loadout.after, got.loadout.back], ['15', '27', '15'])
 }
 
+// ---- W4: per-slot drama (WEIGHT.md §2.6, §4) ----------------------------------------------------------------------------------------------------
+
+/**
+ * In a scene: \`names(m)\` the drama names heard since \`m = W.__heard.length\` (a contact, the duck, a break's heft); \`ticks(m)\` the head's contact
+ * entries with their pierce count; \`spawns()\` the particles and chunks spawned since the last read.
+ */
+const DRAMA = `
+  const H = W.__heard
+  const names = (m) => H.slice(m).map((h) => h.name).filter((n) => n.startsWith('contact:') || n === 'duck' || n === 'breakHeavy')
+  const ks = (m) => H.slice(m).filter((h) => h.name === 'contact:head').map((h) => h.k)
+  const spawns = () => W.__spawns()
+`
+
+// K-L11 the drama (__heard): each slot's contact is heard once, on the contact and never on a whiff; off, never. The head's tick climbs a semitone per pierce
+// and only its first body flinches (the tilt is away from Still and back to nothing); a part's break has the Anvil's heft; and the drama adds no particle to a
+// crowd (the spawn counts of a press are equal on and off for the arms, torso and legs; the head's is the gather's six, at the lens, and no more)
+check('K-L11', RUN, async ({ page }) => {
+  const got = await evalJson(page, `() => {
+    const out = {}
+    ${[true, false].map((on) => `
+    out.${on ? 'on' : 'off'} = {}
+    ${scene(on, `
+      ${DRAMA}
+      const o = out.${on ? 'on' : 'off'}
+      // arms: a Cleaver through three hulks (once), then at a hulk behind Still (a whiff: none, however long after)
+      let m = H.length
+      walls(3); W.__fire('arms'); o.arms = names(m)
+      for (let i = 0; i < 20; i++) tick()
+      o.armsAfter = names(m)
+      for (const b of C.enemies) b.hp = 0
+    `)}
+    ${scene(on, `
+      ${DRAMA}
+      const o = out.${on ? 'on' : 'off'}
+      wall(1e6, 0, -6)
+      const m = H.length
+      W.__fire('arms'); for (let i = 0; i < 20; i++) tick()
+      o.whiff = names(m)
+    `)}
+    ${scene(on, `
+      ${DRAMA}
+      const o = out.${on ? 'on' : 'off'}
+      // torso: a Vent through three hulks round Still: the whump and the duck, once each
+      ring(3)
+      const m = H.length
+      W.__fire('torso'); o.torso = names(m)
+      for (let i = 0; i < 20; i++) tick()
+      o.torsoAfter = names(m)
+    `)}
+    ${scene(on, `
+      ${DRAMA}
+      const o = out.${on ? 'on' : 'off'}
+      // head: a Lens at a hulk 8 u away: nothing on the press, nothing in flight, one tick on the step the bolt lands (the step that freezes)
+      const far = wall(1e6, 0, 8)
+      const m = H.length
+      W.__fire('head')
+      o.headPress = names(m)
+      const steps = []
+      for (let i = 0; i < 90; i++) { const before = names(m).length; tick(far); const f = ms(); steps.push({ named: names(m).length - before, ms: f.ms }) }
+      o.headSteps = steps.map((x) => x.named)
+      o.headLand = steps.findIndex((x) => x.ms > 0)
+      o.headAt = steps.findIndex((x) => x.named > 0)
+    `)}
+    ${scene(on, `
+      ${DRAMA}
+      const o = out.${on ? 'on' : 'off'}
+      // legs: a Kickstart through three sleeping hulks: nothing on the press or in flight, one slam on the landing step
+      for (let i = 0; i < 3; i++) { const b = W.__spawn('chaser', 0, 2 + i * 1.4, false); b.hp = 1e6 }
+      const m = H.length
+      W.__fire('legs')
+      o.legsPress = names(m)
+      const steps = []
+      for (let i = 0; i < 40; i++) { const before = names(m).length; C.hp = 100; W.__step(1 / 60); const f = ms(); steps.push({ named: names(m).length - before, ms: f.ms }) }
+      o.legsLand = steps.findIndex((x) => x.ms > 0)
+      o.legsAt = steps.findIndex((x) => x.named > 0)
+      o.legsCount = steps.reduce((a, x) => a + x.named, 0)
+    `)}
+    `).join('\n')}
+    // the pierce: a Cracked Lens down a line of three hulks (asleep, so they stand and never strike back)
+    ${[true, false].map((on) => scene(on, `
+      ${DRAMA}
+      W.__equip('cracked-lens')
+      const line = [3, 5.2, 7.4].map((z) => { const b = W.__spawn('chaser', 0, z, false); b.hp = 1e6; return b })
+      const m = H.length
+      const up = (b) => { const v = new b.pos.constructor(0, 1, 0).applyQuaternion(b.group.quaternion); return { x: v.x, z: v.z } }
+      const tilt = (b) => Math.hypot(up(b).x, up(b).z)
+      W.__fire('head')
+      let peak = [0, 0, 0], order = ['', '', '']
+      for (let i = 0; i < 40; i++) { C.hp = 100; W.__step(1 / 60); line.forEach((b, j) => { if (tilt(b) > peak[j]) { peak[j] = tilt(b); order[j] = b.group.rotation.order } }) }
+      out.${on ? 'pierceOn' : 'pierceOff'} = { ks: ks(m), peak, order, rest: line.map((b) => [b.group.rotation.order, b.group.rotation.x, b.group.rotation.z]) }`)).join('\n')}
+    // the tilt is away from Still: a hulk off to the side (3, 3), a Lens at it; the top of the body moves along the bearing out from Still
+    ${scene(true, `
+      ${DRAMA}
+      const b = W.__spawn('chaser', 3, 3, false); b.hp = 1e6
+      W.__fire('head')
+      let best = null
+      for (let i = 0; i < 30; i++) {
+        C.hp = 100; W.__step(1 / 60)
+        const v = new b.pos.constructor(0, 1, 0).applyQuaternion(b.group.quaternion)
+        const away = Math.hypot(b.pos.x, b.pos.z)
+        const along = (v.x * b.pos.x + v.z * b.pos.z) / away
+        if (!best || along > best.along) best = { along, across: Math.abs(v.x * b.pos.z - v.z * b.pos.x) / away }
+      }
+      out.away = best`)}
+    // the particles: a press, counted as spawned. A Cleaver through five hulks and through one, a Vent through five, a Kickstart through three, a Lens at one
+    ${[true, false].map((on) => [
+      ['cleaver5', 'walls(5)', 'arms', 0], ['cleaver1', 'wall(1e6, 0, 2)', 'arms', 0], ['vent5', 'ring(5)', 'torso', 0],
+      ['kick3', 'for (let i = 0; i < 3; i++) { const b = W.__spawn("chaser", 0, 2 + i * 1.4, false); b.hp = 1e6 }', 'legs', 40], ['lens1', 'wall(1e6, 0, 3)', 'head', 30],
+    ].map(([name, build, slot, steps]) => scene(on, `
+      ${DRAMA}
+      const o = (out.spawn ??= {})
+      ${build}
+      spawns()
+      W.__fire('${slot}')
+      let n = spawns()
+      for (let i = 0; i < ${steps}; i++) { C.hp = 100; W.__step(1 / 60); n += spawns() }
+      ;(o.${name} ??= {}).${on ? 'on' : 'off'} = n`)).join('\n')).join('\n')}
+    // a part's break: the Anvil's heft
+    ${[true, false].map((on) => scene(on, `
+      ${DRAMA}
+      C.pressure = false
+      const c = W.__spawn('chaser', 0, 2, true, 'plated'); c.hp = 1e6
+      let k = 0
+      while (c.phase !== 'windup' && k++ < 240) tick(c)
+      const m = H.length, br0 = snap().breaks
+      W.__fire('arms')
+      out.${on ? 'breakOn' : 'breakOff'} = { broke: snap().breaks - br0, names: names(m), shake: ms().shake }`)).join('\n')}
+    return out
+  }`)
+  // ---- the names
+  assertEq('(arms, on) a struck Cleaver: contact:arms once', got.on.arms, ['contact:arms'])
+  assertEq('(arms, on) and nothing after', got.on.armsAfter, ['contact:arms'])
+  assertEq('(arms, on) a whiff: nothing, then or later', got.on.whiff, [])
+  assertEq('(torso, on) a struck Vent: contact:torso and the duck, once each', got.on.torso, ['contact:torso', 'duck'])
+  assertEq('(torso, on) and nothing after', got.on.torsoAfter, ['contact:torso', 'duck'])
+  assertEq('(head, on) a Lens: nothing on the press', got.on.headPress, [])
+  assert(got.on.headLand > 0, `(head, on) the bolt never landed: ${JSON.stringify(got.on.headSteps)}`)
+  assertEq('(head, on) one contact:head, on the step the bolt lands', [got.on.headAt, got.on.headSteps.reduce((a, b) => a + b, 0)], [got.on.headLand, 1])
+  assertEq('(legs, on) a Kickstart: nothing on the press', got.on.legsPress, [])
+  assert(got.on.legsLand > 10, `(legs, on) the landing froze on step ${got.on.legsLand}`)
+  assertEq('(legs, on) one contact:legs, on the landing step', [got.on.legsAt, got.on.legsCount], [got.on.legsLand, 1])
+  for (const k of ['arms', 'armsAfter', 'whiff', 'torso', 'torsoAfter', 'headPress', 'legsPress'])
+    assertEq(`(off) ${k}: no contact:* and no duck, ever`, got.off[k], [])
+  assertEq('(off) a Lens: nothing on any step', got.off.headSteps.every((x) => x === 0), true)
+  assertEq('(off) a Kickstart: nothing on any step', got.off.legsCount, 0)
+  // ---- the head: a rising tick per pierce, the first body only flinches
+  assertEq('(pierce, on) the tick climbs one step per body the bolt goes through', got.pierceOn.ks, [0, 1, 2])
+  assert(got.pierceOn.peak[0] > 0.15 && got.pierceOn.peak[0] < 0.18, `(pierce, on) the first body's flinch, at its fullest in the struck tick: tilt ${got.pierceOn.peak[0]}, wanted sin(0.17) = 0.169`)
+  assert(got.pierceOn.peak[1] < 1e-6 && got.pierceOn.peak[2] < 1e-6, `(pierce, on) only the first body flinches: the others tilted ${got.pierceOn.peak[1]}, ${got.pierceOn.peak[2]}`)
+  assertEq('(pierce, on) every body is upright, in the default order, 40 steps on', got.pierceOn.rest, [['XYZ', 0, 0], ['XYZ', 0, 0], ['XYZ', 0, 0]])
+  assertEq('(pierce, off) no tick, no flinch', [got.pierceOff.ks, got.pierceOff.peak], [[], [0, 0, 0]])
+  assert(got.away.along > 0.15 && got.away.along > 3 * got.away.across, `(away) the top of the body moves out from Still: along ${got.away.along}, across ${got.away.across}`)
+  // ---- no new particles in a crowd
+  for (const name of ['cleaver5', 'cleaver1', 'vent5', 'kick3'])
+    assertEq(`(particles) ${name}: the press spawns as many with the drama as without (${JSON.stringify(got.spawn[name])})`, got.spawn[name].on, got.spawn[name].off)
+  assertEq(`(particles) a Lens: the gather's six at the lens, nothing more (${JSON.stringify(got.spawn.lens1)})`, got.spawn.lens1.on - got.spawn.lens1.off, 6)
+  // ---- the break
+  assertEq('(break, on) a ready Cleaver breaks the windup', got.breakOn.broke, 1)
+  assert(got.breakOn.names.includes('breakHeavy'), `(break, on) the Anvil's heft was not heard: ${JSON.stringify(got.breakOn.names)}`)
+  assert(got.breakOn.shake >= 0.4 - 1e-9, `(break, on) a part's break shakes ${got.breakOn.shake}, wanted at least 0.4`)
+  assertEq('(break, off) no heft', got.breakOff.names.includes('breakHeavy'), false)
+})
+
+// K-L13 the crowd's flash (lead's W4 review): a part that strikes n bodies at once caps each one's hit flash at 1/sqrt(n), so a crowd stays bodies
+// under bloom; one body keeps today's full flash; off, every struck body flashes full
+check('K-L13', RUN, async ({ page }) => {
+  const got = await evalJson(page, `() => {
+    const out = {}
+    ${[true, false].map((on) => `
+    ${scene(on, `
+      const five = walls(5)
+      W.__fire('arms')
+      out.${on ? 'on5' : 'off5'} = five.map((b) => b.flash)
+      for (const b of C.enemies) b.hp = 0
+    `)}
+    ${scene(on, `
+      const one = walls(1)
+      W.__fire('arms')
+      out.${on ? 'on1' : 'off1'} = one.map((b) => b.flash)
+    `)}`).join('')}
+    return out
+  }`)
+  const cap = 1 / Math.sqrt(5)
+  assert(got.on5.length === 5 && got.on5.every((f) => f > 0 && f <= cap + 1e-9), `(on) five struck hulks: each flash at most ${cap.toFixed(3)}, got ${JSON.stringify(got.on5)}`)
+  assert(got.on1.length === 1 && got.on1[0] > cap + 0.1, `(on) one struck hulk keeps its full flash, got ${JSON.stringify(got.on1)}`)
+  assert(got.off5.every((f) => f > cap + 0.1), `(off) five struck hulks flash full, as today, got ${JSON.stringify(got.off5)}`)
+})
+
 process.exit(await run(process.argv.slice(2)))

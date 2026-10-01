@@ -113,6 +113,9 @@ const HOT_FRAG = /* glsl */ `
   }
 `
 
+/** DEV only: particles and chunks spawned since main's `__spawns` last read it (the weight trial's K-L11 counts what a contact adds). */
+export const spawned = { n: 0 }
+
 class Pool {
   readonly points: THREE.Points
   private readonly parts: Particle[]
@@ -153,6 +156,7 @@ class Pool {
   }
 
   spawn(p: Partial<Particle> & { x: number; y: number; z: number; max: number }) {
+    if (import.meta.env.DEV) spawned.n++
     const slot = this.parts[this.cursor]!
     this.cursor = (this.cursor + 1) % this.parts.length
     Object.assign(slot, { vx: 0, vy: 0, vz: 0, size: 0.2, grow: 0, r: 1, g: 1, b: 1, gravity: 0, drag: 0 }, p)
@@ -226,6 +230,7 @@ class Debris {
   }
 
   spawn(at: THREE.Vector3, v: THREE.Vector3, scale: number, color: THREE.Color, life = 1.4) {
+    if (import.meta.env.DEV) spawned.n++
     const i = this.cursor
     const ch = this.chunks[i]!
     this.cursor = (this.cursor + 1) % this.chunks.length

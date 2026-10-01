@@ -45,7 +45,7 @@ import { loadKit, setSurfaces, pieceData, surfaceNow, buildInstanced, PIECES, ty
 import { generateCrossroads, dressRoad, labelAlpha, RoadSmoke, ROAD_LABEL, CROSSROADS, type Dressing } from './crossroads'
 import { generateLevel, generateWalkHome, makeTerrain, key, squarePosts, type Box, type Breakable, type Circle, type Level, type PackSpec, type Post, type Room, type Shrine } from './dungeon'
 import type { Terrain } from './terrain'
-import { Vfx, syncTells, COLD, COLD_DEEP, EMBER, SLAG_DROP } from './vfx'
+import { Vfx, syncTells, spawned as vfxSpawned, COLD, COLD_DEEP, EMBER, SLAG_DROP } from './vfx'
 import { PartFx } from './partfx'
 import type { PartEvent } from './parts'
 import type { NotebookPage } from './pause'
@@ -245,6 +245,9 @@ function freeze(ms: number, src: 'part' | 'auto') {
   const st = run.stats[run.stats.length - 1]
   if (st) st[src === 'part' ? 'freezePartMs' : 'freezeAutoMs'] += add
 }
+/** The head's pierce count (weight, design/lean/WEIGHT.md §2.6): the tick climbs a semitone per head contact less than 0.2 s of game time after the last. */
+let headAt = -Infinity
+let headK = 0
 /** Who dealt the killing blow of the body being buried (onFelled comes just before its onKill). */
 let killBy: 'part' | 'auto' | 'other' = 'other'
 
@@ -572,6 +575,19 @@ const combat = new Combat(world.scene, OPEN, {
     shake = Math.max(shake, Math.min(F.contactShake[2]!, F.contactShake[0]! + F.contactShake[1]! * extra))
     rig.punch(Math.min(F.contactPunch[2]!, F.contactPunch[0]! + F.contactPunch[1]! * extra))
     navigator.vibrate?.(Math.min(F.contactHapticMs[2]!, F.contactHapticMs[0]! + F.contactHapticMs[1]! * extra))
+    // a crowd struck at once flashes less per body (1/sqrt n): five hulks stay five under bloom, not one white blob (lead's review, W4)
+    if (ev.n > 1) for (const b of ev.bodies) b.dimFlash?.(1 / Math.sqrt(ev.n))
+    // the slot's own voice (§2.6). Sound and one body's tilt: nothing is emitted at struck bodies, so a crowd's brightness is what it was
+    let k = 0
+    if (ev.slot === 'head') {
+      const since = combat.time - headAt
+      k = since >= 0 && since < 0.2 ? headK + 1 : 0
+      headK = k
+      headAt = combat.time
+      // the first body of a pierce rocks back from Still; the ones after it only tick
+      if (k === 0) partFx.flinch(ev.first, ev.first.pos.x - still.pos.x, ev.first.pos.z - still.pos.z)
+    }
+    sfx.contact(ev.slot, ev.n, panOf(ev.at), k)
   },
   onTrigger: (by, e, how) => {
     // a boss can't be broken: its opening's first hit plays the break it would have been
@@ -1309,9 +1325,12 @@ function breakFx(e: Enemy, by?: AutoForm) {
     else {
       freeze(WEIGHT_FEEL.breakMs.part, 'part')
       navigator.vibrate?.(WEIGHT_FEEL.breakHaptic)
+      // the Anvil catch's heft, minus its light: a shake and a punch, a heavy voice. No flash, no sparks beyond today's
+      shake = Math.max(shake, 0.4)
+      sfx.breakHeavy(panOf(e.pos))
     }
   } else hitstop = Math.max(hitstop, 0.09)
-  rig.punch(0.05)
+  rig.punch(combat.weight && !by ? 0.07 : 0.05)
 }
 
 /** A chill paid on a body that lives: the rime bursts off it outward, a cold ring on the floor under it. */
@@ -2392,6 +2411,8 @@ function applyWeight(on: boolean) {
   combat.weight = on
   freezeAt = -Infinity
   freezeLen = 0
+  headAt = -Infinity
+  headK = 0
 }
 
 /** Combat time of the last readying, and whether one is waiting for the button to have finished its cast (the cast sets the cooldown after the snap). */
@@ -3821,6 +3842,10 @@ function cast(def: AbilityDef, pushed: boolean): CastResult {
   // weight: the fx follow the numbers the cast really used (the cone, the radius)
   castFx(combat.weight ? weighed(def) : def, r, pushed)
   still.group.scale.setScalar(full ? 1.16 : 1.08)
+  // weight: a head bolt draws its light in at the lens first (Through-Line has its own draw, in castFx): six motes, at Still, never at a body
+  if (combat.weight && def.slot === 'head' && r.beat !== 'through') {
+    vfx.gather(still.lensPoint(new THREE.Vector3()), WEIGHT_FEEL.gather.count, WEIGHT_FEEL.gather.radius, COLD)
+  }
   // weight: nothing on the press. The feel comes from onContact, when something is struck (a whiff has none)
   if (!combat.weight) {
     shake = Math.max(shake, pushed ? 0.34 : 0.16)
@@ -5192,6 +5217,12 @@ if (import.meta.env.DEV) {
       shake = 0
       pushSig = 0
       return out
+    },
+    /** Particles and debris chunks spawned since the last read, read and zeroed (K-L11: what a contact adds to a crowd). */
+    __spawns: () => {
+      const n = vfxSpawned.n
+      vfxSpawned.n = 0
+      return n
     },
     /** The core's drawn light: the sum of its colour's channels (follow-through dims it; off never moves it by itself). */
     __coreLight: () => {

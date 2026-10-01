@@ -553,6 +553,10 @@ export class Mite implements Enemy {
     return this.phase === 'windup' && this.brood.state === 'windup' ? Math.max(0, this.brood.timer) : null
   }
 
+  dimFlash(cap: number) {
+    this.flash = Math.min(this.flash, cap)
+  }
+
   hit(damage: number): boolean {
     this.hp -= damage * this.armor
     this.flash = 1

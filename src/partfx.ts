@@ -6,6 +6,7 @@ import type { Terrain } from './terrain'
 import type { Enemy } from './enemy'
 import type { Still } from './still'
 import { WALL_TOP } from './lane'
+import { WEIGHT_FEEL } from './weight'
 
 /**
  * Something in the air that will land: its mark on the floor closes on its true
@@ -47,6 +48,9 @@ interface Beam { mesh: THREE.Mesh; mat: THREE.ShaderMaterial; life: number; max:
 
 /** The hook's chain to something it caught, while it's hauled in. */
 interface Tether { enemy: Enemy; t: number; mesh: THREE.Mesh; mat: THREE.ShaderMaterial }
+
+/** The weight trial's flinch: a body tilted back from Still, `t` s in, the unit bearing it tilts toward (x, z). Render-side: nothing reads the tilt. */
+interface Flinch { enemy: Enemy; t: number; x: number; z: number; fresh: boolean }
 
 /** A cold ring on the floor contracts from this much wider than its true size (G2: Still's marks close, enemies' fill). */
 const PREVIEW_WIDE = 1.3
@@ -157,6 +161,7 @@ export class PartFx {
   private readonly tickMat = new THREE.MeshBasicMaterial({ color: 0xeef6ff, blending: THREE.AdditiveBlending, transparent: true })
   private beams: Beam[] = []
   private tethers: Tether[] = []
+  private flinches: Flinch[] = []
   private readonly stripGeo = unitStrip()
   private readonly ringGeo = new THREE.RingGeometry(0.9, 1, 48)
   private readonly globGeo = new THREE.SphereGeometry(0.16, 10, 8)
@@ -318,6 +323,7 @@ export class PartFx {
     }
 
     this.drawWindows(dt)
+    this.drawFlinches(dt)
 
     const from = this.still.pos
     for (let i = this.tethers.length - 1; i >= 0; i--) {
@@ -333,6 +339,53 @@ export class PartFx {
       this.pose(te.mesh, from, e.pos, 0.12, TETHER_Y)
       // from the feet, like a throw's: a trail stacked over the body blows it out white
       this.vfx.trail(new THREE.Vector3(e.pos.x, 0.15, e.pos.z), COLD_DEEP, 0.22)
+    }
+  }
+
+  /**
+   * The weight trial (design/lean/WEIGHT.md §2.6): the head's first body is struck and rocks back from Still, up to WEIGHT_FEEL.flinch.rad, eased out over
+   * flinch.s of game time (a freeze holds it at its peak). `away` is the bearing from Still to the body. Posed at once, so the frozen frame shows it.
+   * Nothing but the body's own `group` is touched: Euler order 'YXZ' keeps the yaw the enemy writes every tick outermost, so the tilt is in the
+   * body's own frame and no enemy update ever reads or writes group.rotation.x / z (checked 1 Oct: none does). A boss never flinches.
+   */
+  flinch(enemy: Enemy, awayX: number, awayZ: number) {
+    const len = Math.hypot(awayX, awayZ)
+    if (len < 1e-6 || enemy.dead || enemy.kind === 'boss') return
+    const at = this.flinches.findIndex((f) => f.enemy === enemy)
+    if (at >= 0) this.flinches.splice(at, 1)
+    const f = { enemy, t: 0, x: awayX / len, z: awayZ / len, fresh: true }
+    this.flinches.push(f)
+    this.poseFlinch(f)
+  }
+
+  private poseFlinch(f: Flinch) {
+    const { rad, s } = WEIGHT_FEEL.flinch
+    const k = Math.max(0, 1 - f.t / s)
+    const g = f.enemy.group
+    if (k <= 0 || f.enemy.dead) {
+      g.rotation.order = 'XYZ'
+      g.rotation.x = 0
+      g.rotation.z = 0
+      return
+    }
+    const a = rad * k * k
+    const y = g.rotation.y
+    // the bearing in the body's own frame: forward is (sin y, cos y), its right (cos y, -sin y)
+    const lx = f.x * Math.cos(y) - f.z * Math.sin(y)
+    const lz = f.x * Math.sin(y) + f.z * Math.cos(y)
+    g.rotation.order = 'YXZ'
+    g.rotation.x = a * lz
+    g.rotation.z = -a * lx
+  }
+
+  private drawFlinches(dt: number) {
+    for (let i = this.flinches.length - 1; i >= 0; i--) {
+      const f = this.flinches[i]!
+      // the tick that struck it holds the peak: the frozen frame is the flinch at its fullest
+      if (f.fresh) f.fresh = false
+      else f.t += dt
+      this.poseFlinch(f)
+      if (f.t >= WEIGHT_FEEL.flinch.s || f.enemy.dead) this.flinches.splice(i, 1)
     }
   }
 
@@ -405,6 +458,11 @@ export class PartFx {
       releaseTell(te.mat)
     }
     this.tethers.length = 0
+    for (const f of this.flinches) {
+      f.t = Infinity
+      this.poseFlinch(f)
+    }
+    this.flinches.length = 0
   }
 
   /** The torso and arms windows, drawn from the part state each tick. */
