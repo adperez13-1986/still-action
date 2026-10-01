@@ -94,3 +94,12 @@ investor first; Yanah's and Yuri's parts are his to write (leave a place, write 
 - Round 1 alone; don't read the other `1-*.md` files. Round 2: read all four, say where you moved and why, and where you hold.
 - Say where you disagree with him or the brief, with the reason. Don't protect the floor player by default.
 - Effort to build is not the constraint (it is vibe-coded); content, tuning and how it reads on a phone are.
+
+## Corrections (found by the verifier in round 1; read before round 2)
+
+- **Riders were cut on 28 Sep** (`src/abilities.ts`: breaks are rare under pressure, a free ready sold what the push buys).
+  The field and runtime remain; nothing fires.
+- **Pedestals are off** (`PEDESTALS_ON = false` in `src/main.ts`, his call on 28 Sep, 0d37d12): exits raise nothing.
+- **Mastery is the only live payoff of a lean.** The lean tags themselves do nothing in play.
+- **`tools/dropsim.ts` models 6 depths with pedestals on and no temper**, so its formation figures describe a game that isn't live.
+- **The check suites pin weight and tap push off** (`tools/checks/lib.mjs`, 1 Oct), so they test the old defaults, not what he plays.
