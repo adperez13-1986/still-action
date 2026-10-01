@@ -3,7 +3,7 @@
 For the next session. Read this, then `DESIGN.md` (the settled decisions), then the design
 folder for whatever you're touching. Don't re-derive any of them.
 
-## Start here (1 Oct, afternoon: weight W0+W1 live, W2 next; he OK'd localhost-only checks for this session)
+## Start here (1 Oct, afternoon: weight W0-W2 live, W3 next; he OK'd localhost-only checks for this session)
 
 **Brief: `design/lean/WEIGHT.md`** (verifier; e7ea3c9): steps W0-W5, checks K-L1..L12 in a new `tools/checks/lean.mjs`, numbers in
 a new `src/weight.ts` with presets **B** (default, `3-balancer.md` r3: packs x1.4 d1-2 / x1.65 d4+, boss x1.3, torso/legs x1.8,
@@ -13,7 +13,7 @@ numbers while it's on (W3, K-L3g). R3 answered (3-balancer "R3 answer"): keep pa
 screen but does nothing until W1-W3. **W1 (timing) done + pushed** (freeze on contact only, cocked pose,
 quiet autos). **For W4:** in S1 five struck hulks bloom into one white blob (existing hit flash x bloom): W4 must not add
 brightness in crowds; consider the per-hit flash shrinking with bodies struck. k9 can flake when run alongside other suites
-(timeouts); rerun alone. Next: W2 (full effect on ready casts), then W3..W5, one fresh Sonnet engineer each, push each
+(timeouts); rerun alone. W2 (full effect on ready casts) done + pushed. Next: W3 (the Ask 1 numbers + cards show weighed numbers), then W4, W5, one fresh Sonnet engineer each, push each
 reviewed step. If a session dies mid-step: review the uncommitted diff against WEIGHT.md before keeping it, me reviewing every diff and screenshot; push each reviewed step
 (he wants work live, the switch keeps it off by default).
 
