@@ -3,7 +3,7 @@
 For the next session. Read this, then `DESIGN.md` (the settled decisions), then the design
 folder for whatever you're touching. Don't re-derive any of them.
 
-## Start here (1 Oct, evening: "weight" DONE and live, waiting on his phone run)
+## Start here (1 Oct, evening: "weight" DONE and live; "tap push" brief being written)
 
 **The "weight" trial is complete and live (W0-W5, 0620020..47036ef)**, a pause switch "weight" (PLACEHOLDER word), off by default.
 Brief `design/lean/WEIGHT.md`, round outcome `design/lean/PITCHES.md`, numbers `design/lean/3-balancer.md` (preset B in
@@ -19,7 +19,7 @@ scale with the weight's pack HP (else bodies survive trains and loiter in lit st
 the sounds (none ever heard); haptics; does the 180 Cleaver / big vent crowd the screen (else preset D). Then his log: `kills.part`
 share d1-2 >= 45% (36% now), hpLost d1-3 within 20% of runs 9-17, `freezeMs` per fight-minute, `breaksBy`. Watch: with weight on,
 trains take 28-30% of the bot's kills on the Line (21% off), and the hesitant bot's area-II kill time rose 4.9 -> 6.2 s.
-**Next build (his call after the run): "tap push"** (PITCHES: tap on a cooling button pushes, 300 ms queue, 250 ms mash guard; strain
+**"tap push": he said build it now (1 Oct): "I didn't like the hold approach, feels like it is not working... more often than not, the hold makes intentional pushes more difficult."** Verifier writing `design/lean/TAP-PUSH.md` (steps P0..; checks tools/checks/tap.mjs K-P*); then one Sonnet engineer per step, reviewed + pushed each. If a session dies: check whether TAP-PUSH.md exists, then continue. Plan (PITCHES: tap on a cooling button pushes, 300 ms queue, 250 ms mash guard; strain
 untouched by his word). Small leftovers: flinch likely invisible at game camera; card has no cone/width row.
 
 ## Start here (1 Oct, later: "weight" brief + balancer r3 running)
