@@ -62,6 +62,12 @@ Explicitly *not* companion entities.
 models: hard desaturation, one warm source, cold everything else, heavy fog, strong
 vignette. Only Still's own parts get hand-work.
 
+**The floor player (settled 1 Oct 2026, his call).** Melting is the intended way to grow. The player who never
+melts is declining growth, so he should struggle: **for now he finishes about 1 run in 5** (was ~1 in 3 in
+`design/scaling/CURVE*.md`). That target rises when synergies and set items land and give him a way to catch up.
+Design rounds judge ideas by the median and investor first; a cost to the never-melt player is not by itself a reason
+against.
+
 **Tech.** Vanilla three.js for the world, React above the canvas for UI once there
 is UI. Fixed 60Hz timestep, interpolated render. No physics library — circles on a
 plane, a grid for walls.

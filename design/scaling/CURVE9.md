@@ -2,6 +2,8 @@
 
 29 Sep 2026. For stage R of `design/area3/BOTH-ROADS.md`, decision 6a: the finish line moves to depth 9.
 
+**1 Oct 2026, his call: the never-melt (floor) target is now about 1 in 5, not 1 in 3** (DESIGN.md "The floor player"). It rises when synergies and set items land.
+
 **FIRST PASS. These numbers are modelled, not locked.** The standing rule is not to lock a baseline on incomplete content, and a lot here is still missing:
 - The Line has never been played.
 - The Engine isn't built.
