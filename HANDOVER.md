@@ -3,6 +3,16 @@
 For the next session. Read this, then `DESIGN.md` (the settled decisions), then the design
 folder for whatever you're touching. Don't re-derive any of them.
 
+## Start here (1 Oct, later: "weight" brief + balancer r3 running)
+
+**His calls (1 Oct):** strain economy untouched; the never-melt target is now **~1 in 5** (DESIGN.md "The floor player",
+a2aeeab: melting is how you grow; he catches up when synergies + set items land; judge rounds by median/investor first). Go on
+"weight" first, and in parallel: balancer re-run (`design/lean/3-balancer.md`: bigger packs for the median, Ask 1 numbers
+re-tuned for the new target) and a frame-rate measurement of bigger packs. Running: verifier writing `design/lean/WEIGHT.md`
+(steps W0..Wn, checks K-L* in tools/checks/lean.mjs). If a session dies: rerun whichever of those two files is missing.
+**Perf:** the in-game readout (`src/perf.ts` createReadout) is DEV-only, so the phone number needs the LAN dev server at home;
+a headless draw-call count needs localhost vite (ask him first at the office). Next after both: engineer on W0, then tap push.
+
 ## Start here (1 Oct: lean round DONE, awaiting his pick)
 
 His ask: tougher enemies + stronger parts, more dramatic parts, no hold-to-push. Round done: **`design/lean/PITCHES.md` is the
