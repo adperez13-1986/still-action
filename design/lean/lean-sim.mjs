@@ -1,0 +1,199 @@
+// Lean sim (balancer, round 1). Run: node design/lean/lean-sim.mjs
+// Part A: the pack/boss Monte Carlo of design/autos/autos-sim2.mjs (same engine, same calibration: HAND_P .7,
+// EYE_P .25, hesitation 3.7 s never-melt / 1.3 s investor), extended with: enemy HP multipliers (packs, bosses),
+// part power as damage (per slot) or as area (more bodies per cast), and kill attribution (last hit).
+// Part B: the strain economy over the 9-depth run (CURVE9 Works-first) for each push variant, crossed with the
+// CURVE9 Broke model (lognormal CV .5, HP lost ~ kill time^0.8), so a run ends Broke, Stopped or Made it.
+// No geometry: shove, stagger, a break's defence, hits not taken are invisible here. Say so when it matters.
+const BEAT = 0.62, DT = 0.02
+const PLAYERS = { floor: { rank: 0, hesit: 3.7, stateMul: 1 }, invest: { rank: 2, hesit: 1.3, stateMul: 1.25 } }
+const T_DMG = [1, 1.3, 1.6], T_CD = [1, 0.85, 0.72]
+// white loadout (abilities.ts): Focusing Lens 26/4.2, Pressure Vent 15/6.5, Scrap Cleaver 18/2.6, Kickstart 12/8
+const BASE_PARTS = [
+  { slot: 'head', dmg: 26, cd: 4.2, hits: 'priority', p2: 0 },
+  { slot: 'torso', dmg: 15, cd: 6.5, hits: 'each', p: 0.6 },
+  { slot: 'arms', dmg: 18, cd: 2.6, hits: 'arc', p2: 0.5 },
+  { slot: 'legs', dmg: 12, cd: 8, hits: 'each', p: 0.35 },
+]
+const HAND_P = 0.7, EYE_P = 0.25
+let seed = 7
+const rng = () => ((seed = (seed * 16807) % 2147483647) / 2147483647)
+
+// opt: { hp, bossHp, mul: {head,torso,arms,legs}, area: bool }
+function fight(who, opt, boss) {
+  const P = PLAYERS[who]
+  const hpMul = boss ? opt.bossHp : opt.hp
+  const bodies = (boss ? [900] : [30, 30, 30, 20]).map((hp, i) => ({ hp: hp * hpMul, back: !boss && i === 3, dead: false }))
+  const parts = BASE_PARTS.map((p) => {
+    const q = { ...p, cd: p.cd * T_CD[P.rank], dmg: p.dmg * T_DMG[P.rank] * P.stateMul * (opt.mul?.[p.slot] ?? 1), wait: -1 }
+    // area (no blue's identity borrowed: the head gets none, so Cracked Lens keeps pierce): vent radius x1.25 and dash
+    // half-width x1.5 ~ p +0.25 a body; cleaver cone 120 -> 160 ~ 2nd body .5 -> .8, a 3rd at .3
+    if (opt.area) { if (q.hits === 'each') q.p = Math.min(0.95, q.p + 0.25); if (q.hits === 'arc') { q.p2 = 0.8; q.p3 = 0.3 } }
+    q.t = rng() * q.cd
+    return q
+  })
+  let t = 0, beat = 0
+  const st = { t: 0, auto: 0, part: 0, kills: 0, partKills: 0, casts: 0 }
+  const alive = () => bodies.filter((b) => !b.dead)
+  const hurt = (b, d, src) => {
+    if (b.dead) return
+    const dealt = Math.min(b.hp, d) // overkill doesn't count: share = damage that mattered
+    b.hp -= d
+    st[src] += dealt
+    if (b.hp <= 0) { b.dead = true; st.kills++; if (src === 'part') st.partKills++ }
+  }
+  while (alive().length && t < 600) {
+    t += DT
+    for (const p of parts) {
+      p.t -= DT
+      if (p.t <= 0 && p.wait < 0) p.wait = -Math.log(1 - rng()) * P.hesit * (who === 'floor' ? opt.hes ?? 1 : 1)
+      if (p.wait >= 0) {
+        p.wait -= DT
+        if (p.wait <= 0) {
+          p.wait = -1; p.t = p.cd; st.casts++
+          const a = alive(); if (!a.length) break
+          if (p.hits === 'priority') { const b = a.find((x) => x.back) ?? a[0]; hurt(b, p.dmg, 'part'); const n = a.find((x) => x !== b && !x.dead); if (n && rng() < p.p2) hurt(n, p.dmg, 'part') }
+          else if (p.hits === 'arc') { hurt(a[0], p.dmg, 'part'); if (a[1] && rng() < p.p2) hurt(a[1], p.dmg, 'part'); if (a[2] && p.p3 && rng() < p.p3) hurt(a[2], p.dmg, 'part') }
+          else for (const b of a) if (rng() < p.p) hurt(b, p.dmg, 'part')
+        }
+      }
+    }
+    beat -= DT
+    if (beat <= 0) {
+      beat = BEAT
+      const a = alive(); if (!a.length) break
+      const r = rng(), form = r < HAND_P ? 'hand' : r < HAND_P + EYE_P ? 'eye' : null
+      if (!form) continue
+      const cand = form === 'hand' ? a.slice(0, 2) : [...a.filter((b) => b.back), ...a.filter((b) => !b.back)]
+      let dmg = form === 'hand' ? 10 : 8
+      if (boss) dmg *= 0.5
+      hurt(cand[0], dmg, 'auto')
+      if (form === 'eye' && cand[1] && rng() < 0.3) hurt(cand[1], dmg, 'auto')
+    }
+  }
+  st.t = t
+  return st
+}
+function measure(who, opt, boss) {
+  const n = boss ? 300 : 2500, acc = { t: 0, auto: 0, part: 0, kills: 0, partKills: 0, casts: 0 }
+  for (let i = 0; i < n; i++) { const s = fight(who, opt, boss); for (const k in acc) acc[k] += s[k] }
+  for (const k in acc) acc[k] /= n
+  return acc
+}
+
+// ---- finish model (CURVE9 §2, Works-first; HP lost per check floor / median / investor; scrap) ----
+const erf = (x) => { const t = 1 / (1 + 0.3275911 * Math.abs(x)); const y = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-x * x); return x >= 0 ? y : -y }
+const SIG = Math.sqrt(Math.log(1.25))
+const pAlive = (m, cap) => { const mu = Math.log(m) - SIG * SIG / 2; return 0.5 * (1 + erf((Math.log(cap) - mu) / (SIG * Math.SQRT2))) }
+// [name, kind, crawl hp mul (1 or 1.3 bucket), scrap, lost f/m/i, boss?]
+const CHECKS = [['d1', 'c1', 30, [55, 53, 51]], ['d2', 'c1', 30, [20, 18, 15]], ['d3', 'b', 0, [88, 67, 47]], ['d4', 'c13', 15, [70, 55, 40]], ['d5', 'c13', 15, [63, 42, 31]], ['d6', 'b', 0, [62, 37, 28]], ['d7', 'c13', 10, [73, 49, 40]], ['d8', 'c13', 10, [77, 49, 42]], ['d9', 'b', 0, [70, 46, 40]]]
+
+// ---- Part A ----
+const pct = (x) => `${Math.round(x * 100)}%`
+const base = (o) => ({ hp: 1, bossHp: 1, mul: {}, area: false, ...o })
+const OPTS = [
+  ['today', base({})],
+  ['HP x1.5, parts x1', base({ hp: 1.5, bossHp: 1.5 })],
+  ['HP x1.5, parts x1.5', base({ hp: 1.5, bossHp: 1.5, mul: { head: 1.5, torso: 1.5, arms: 1.5, legs: 1.5 } })],
+  ['HP x1.5, parts x2', base({ hp: 1.5, bossHp: 1.5, mul: { head: 2, torso: 2, arms: 2, legs: 2 } })],
+  ['HP x2, parts x2', base({ hp: 2, bossHp: 2, mul: { head: 2, torso: 2, arms: 2, legs: 2 } })],
+  ['HP x2, parts x2.6', base({ hp: 2, bossHp: 2, mul: { head: 2.6, torso: 2.6, arms: 2.6, legs: 2.6 } })],
+  ['pack x1.5 boss x1, parts x1.5', base({ hp: 1.5, bossHp: 1, mul: { head: 1.5, torso: 1.5, arms: 1.5, legs: 1.5 } })],
+  ['pack x1.5, boss x1.25, weak x2 strong x1.4', base({ hp: 1.5, bossHp: 1.25, mul: { head: 1.4, torso: 2, arms: 1.4, legs: 2 } })],
+  ['pack x1.5, boss x1.25, area + weak x1.6', base({ hp: 1.5, bossHp: 1.25, area: true, mul: { head: 1.25, torso: 1.6, arms: 1.25, legs: 1.6 } })],
+  ['pack x1.5, boss x1.25, area only', base({ hp: 1.5, bossHp: 1.25, area: true, mul: { head: 1.25, torso: 1.25, arms: 1.25, legs: 1.25 } })],
+  ['pack x1.4, boss x1.2, area + torso/legs x1.6', base({ hp: 1.4, bossHp: 1.2, area: true, mul: { head: 1.1, torso: 1.6, arms: 1.1, legs: 1.6 } })],
+  ['pack x1.6, boss x1.2, area + torso/legs x2', base({ hp: 1.6, bossHp: 1.2, area: true, mul: { head: 1.2, torso: 2, arms: 1.2, legs: 2 } })],
+  ['pack x1.5, boss x1.2, area + torso/legs x1.8', base({ hp: 1.5, bossHp: 1.2, area: true, mul: { head: 1.15, torso: 1.8, arms: 1.15, legs: 1.8 } })],
+  ['pack x1.25, boss x1.1, area + torso/legs x1.5', base({ hp: 1.25, bossHp: 1.1, area: true, mul: { head: 1.1, torso: 1.5, arms: 1.1, legs: 1.5 } })],
+  ['  same, never-melt presses 25% sooner', base({ hp: 1.25, bossHp: 1.1, area: true, hes: 0.75, mul: { head: 1.1, torso: 1.5, arms: 1.1, legs: 1.5 } })],
+  ['pack x1.5 x1.8 row, never-melt 25% sooner', base({ hp: 1.5, bossHp: 1.2, area: true, hes: 0.75, mul: { head: 1.15, torso: 1.8, arms: 1.15, legs: 1.8 } })],
+]
+const BASE = {}
+for (const who of ['floor', 'invest']) { BASE[who] = { c1: measure(who, base({}), false), c13: measure(who, base({ hp: 1.3 }), false), b: measure(who, base({}), true) } }
+console.log('PART A. Cells never-melt / investor. pack x = pack kill time vs today (crawl HP 1.3 bucket); boss x; part share = part damage that mattered;')
+console.log('part kills = last hit by a part; casts per pack fight / per boss fight; finish at 9 = never-melt / median / investor (today 31/74/91).')
+const ROWS = {}
+for (const [name, o] of OPTS) {
+  const row = {}
+  for (const who of ['floor', 'invest']) {
+    const c1 = measure(who, o, false), c13 = measure(who, { ...o, hp: o.hp * 1.3 }, false), b = measure(who, o, true)
+    row[who] = { c1: c1.t / BASE[who].c1.t, c13: c13.t / BASE[who].c13.t, b: b.t / BASE[who].b.t, share: c13.part / (c13.part + c13.auto), bshare: b.part / (b.part + b.auto), pk: c13.partKills / c13.kills, casts: c13.casts, bcasts: b.casts, bt: b.t, pt: c13.t }
+  }
+  const fin = [0, 1, 2].map((w) => CHECKS.reduce((acc, [, k, scrap, lost]) => { const x = w === 0 ? row.floor[k] : w === 2 ? row.invest[k] : (row.floor[k] + row.invest[k]) / 2; return acc * pAlive(lost[w] * x ** 0.8, 100 + scrap) }, 1))
+  row.fin = fin; ROWS[name] = row
+  const f = row.floor, v = row.invest
+  console.log(`  ${name.padEnd(44)} pack ${f.c13.toFixed(2)}/${v.c13.toFixed(2)} boss ${f.b.toFixed(2)}/${v.b.toFixed(2)}  part share ${pct(f.share)}/${pct(v.share)} (boss ${pct(f.bshare)}/${pct(v.bshare)})  part kills ${pct(f.pk)}/${pct(v.pk)}  casts ${f.casts.toFixed(1)}/${v.casts.toFixed(1)} boss ${f.bcasts.toFixed(0)}/${v.bcasts.toFixed(0)} (${f.bt.toFixed(0)}/${v.bt.toFixed(0)} s)  finish ${fin.map((x) => Math.round(x * 100)).join('/')}`)
+}
+
+// ---- part power per second on one body (the 'weakest parts' table) ----
+console.log('\nOne-body DPS at white (damage / cooldown); the close strike is 10/0.62 = 16.1')
+for (const [n, d, cd] of [['Focusing Lens', 26, 4.2], ['Scrap Cleaver', 18, 2.6], ['Piston', 20, 3], ['Frayed Cleaver', 16, 2.6], ['Flare', 18, 4.2], ['Cracked Lens', 20, 4.6], ['Through-Line', 24, 6], ['Patient Lens (full)', 32, 7.5], ['Rusted Hook', 12, 3.2], ['Parry Clamp', 10, 3.6], ['Pressure Vent', 15, 6.5], ['Backdraft Vent', 12, 6.5], ['Chill Vent', 10, 6.5], ['Signal Flare', 12, 5], ['Lure', 18, 12], ['Skid Plates (8+10)', 18, 8], ['Kickstart', 12, 8], ['Plumb Line', 14, 9], ['Brace', 8, 9]]) process.stdout.write(`${n} ${(d / cd).toFixed(1)} · `)
+console.log()
+
+// ---- Part B: strain over the 9-depth run ----
+// Per depth: fights (log runs 9-20: d1 7.6, d2 5.4, crawl 4-8 ~5.5), shrines (GUESS: Rest used 0.3 a crawl depth, Plenty
+// taken 0.2), the Assembler's second pick +4 kept (GUESS 0.4). Quiet -2 per fight, floor = floor(strainIn x .5) or kept.
+// Pushes today (log runs 9-20): per crawl fight 0.56 (d1) 0.5 (d2) 0.3 (d4) 0.2 (d5+); boss pushes resampled from the
+// d3 log {1,4,1,1,9,7,0,0,3,0,3}; d6 and d9 the same x0.5 (log d6 {0,1,3}, d9 {0}).
+// Casts (V1): per pack fight and per boss fight from Part A for the option, scaled to the log (crawl 2.3-4.6 a fight,
+// Assembler 25): each player x his own sim casts / the sim's mean of the two.
+const FIGHTS = [8, 5, 1, 6, 5, 1, 5, 5, 1], BOSS = [2, 5, 8], CRAWL_PUSH = [0.56, 0.5, 0, 0.3, 0.2, 0, 0.2, 0.2, 0]
+const LOG_CASTS = [2.3, 2.8, 25, 4.6, 4.6, 23, 4.4, 4.4, 20]
+const BOSS_PUSHES = [1, 4, 1, 1, 9, 7, 0, 0, 3, 0, 3]
+const pois = (l) => { let k = 0, p = Math.exp(-l), s = p, u = rng(); while (u > s && k < 50) { k++; p *= l / k; s += p } return k }
+const LOST = [[55, 53, 51], [20, 18, 15], [88, 67, 47], [70, 55, 40], [63, 42, 31], [62, 37, 28], [73, 49, 40], [77, 49, 42], [70, 46, 40]], SCRAP = [30, 30, 0, 15, 15, 0, 10, 10, 0]
+const lnorm = (m) => { const mu = Math.log(m) - SIG * SIG / 2; const z = Math.sqrt(-2 * Math.log(1 - rng())) * Math.cos(2 * Math.PI * rng()); return Math.exp(mu + SIG * z) }
+// v: { cast: strain per ready cast, push: strain per push, pushMul: pushes x, eager: accidental pushes a crawl depth, decay }
+function run(w, v, row) {
+  const who = w === 0 ? 'floor' : w === 2 ? 'invest' : null
+  const kx = (k) => (who ? row[who][k] : (row.floor[k] + row.invest[k]) / 2)
+  const castMul = (boss) => { const k = boss ? 'bcasts' : 'casts'; const m = (row.floor[k] + row.invest[k]) / 2, b0 = (ROWS.today.floor[k] + ROWS.today.invest[k]) / 2; return (who ? row[who][k] : m) / b0 }
+  let s = 0, kept = 0, pushes = 0, fights = 0
+  for (let d = 0; d < 9; d++) {
+    const boss = BOSS.includes(d), sIn = s, floorS = () => Math.max(Math.floor(sIn * 0.5), kept)
+    if (!boss) { if (rng() < 0.2) s += 4; if (rng() < 0.3) s = Math.max(0, s - 6) }
+    if (s >= 20) return { end: 'stopped', d, pushes, fights }
+    for (let f = 0; f < FIGHTS[d]; f++) {
+      fights++
+      let n = boss ? BOSS_PUSHES[Math.floor(rng() * BOSS_PUSHES.length)] * (d === 2 ? 1 : 0.5) : pois(CRAWL_PUSH[d])
+      { const y = n * v.pushMul; n = Math.floor(y) + (rng() < y % 1 ? 1 : 0) }
+      if (!boss && v.eager) n += pois(v.eager / FIGHTS[d])
+      pushes += n
+      const casts = v.cast ? pois(LOG_CASTS[d] * castMul(boss) * (v.lean ?? 1)) : 0
+      s += n * v.push + casts * v.cast
+      if (s >= 20) return { end: 'stopped', d, pushes, fights }
+      s = Math.max(Math.min(s, floorS()), s - (v.decay ?? 2))
+    }
+    if (d === 2 && rng() < 0.4) { s += 4; kept = Math.max(kept, 4) }
+    if (s >= 20) return { end: 'stopped', d, pushes, fights }
+    const x = kx(boss ? 'b' : d < 2 ? 'c1' : 'c13')
+    if (lnorm(LOST[d][w] * x ** 0.8) > 100 + SCRAP[d]) return { end: 'broke', d, pushes, fights }
+  }
+  return { end: 'made', d: 9, pushes, fights }
+}
+const VARIANTS = [
+  ['V0 today: hold to push, +2', { cast: 0, push: 2, pushMul: 1 }],
+  ['V0, he pushes x2', { cast: 0, push: 2, pushMul: 2 }],
+  ['V1 every cast +0.25 (today\'s flow)', { cast: 0.25, push: 0, pushMul: 0 }],
+  ['V1 every cast +0.35', { cast: 0.35, push: 0, pushMul: 0 }],
+  ['V1 +0.35, he leans: casts x1.3', { cast: 0.35, push: 0, pushMul: 0, lean: 1.3 }],
+  ['V1 every cast +0.5', { cast: 0.5, push: 0, pushMul: 0 }],
+  ['V1 every cast +1', { cast: 1, push: 0, pushMul: 0 }],
+  ['V1 +1, quiet -5', { cast: 1, push: 0, pushMul: 0, decay: 5 }],
+  ['V2 tap pushes +2, x1.5, eager 0.6', { cast: 0, push: 2, pushMul: 1.5, eager: 0.6 }],
+  ['V2 tap pushes +2, x2, eager 0.6', { cast: 0, push: 2, pushMul: 2, eager: 0.6 }],
+  ['V3 casts +0.25, tap push +3, x1.5', { cast: 0.25, push: 3, pushMul: 1.5, eager: 0.6 }],
+  ['V4 tap pushes +2 (buffer), x1.5', { cast: 0, push: 2, pushMul: 1.5 }],
+  ['V4 tap pushes +2 (buffer), x2', { cast: 0, push: 2, pushMul: 2 }],
+  ['V4 x1.5, quiet -3', { cast: 0, push: 2, pushMul: 1.5, decay: 3 }],
+  ['V4 x2, quiet -3', { cast: 0, push: 2, pushMul: 2, decay: 3 }],
+]
+for (const optName of ['today', process.env.LEAN_OPT ?? 'pack x1.25, boss x1.1, area + torso/legs x1.5']) {
+  console.log(`\nPART B (enemies: ${optName}). Broke / Stopped / Made it, never-melt | median | investor; pushes a fight (median); Stopped at the bosses`)
+  for (const [name, v] of VARIANTS) {
+    const out = [0, 1, 2].map((w) => { const c = { broke: 0, stopped: 0, made: 0, pushes: 0, fights: 0, sBoss: 0 }; const N = 20000; for (let i = 0; i < N; i++) { const r = run(w, v, ROWS[optName]); c[r.end]++; c.pushes += r.pushes; c.fights += r.fights; if (r.end === 'stopped' && BOSS.includes(r.d)) c.sBoss++ } return { ...c, N } })
+    const cell = (c) => `${Math.round(100 * c.broke / c.N)}/${Math.round(100 * c.stopped / c.N)}/${Math.round(100 * c.made / c.N)}`
+    console.log(`  ${name.padEnd(38)} ${out.map(cell).join(' | ')}   pushes/fight ${(out[1].pushes / out[1].fights).toFixed(2)}   Stopped at bosses ${pct(out[1].sBoss / Math.max(1, out[1].stopped))}`)
+  }
+}
