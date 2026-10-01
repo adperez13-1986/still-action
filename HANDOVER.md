@@ -3,14 +3,16 @@
 For the next session. Read this, then `DESIGN.md` (the settled decisions), then the design
 folder for whatever you're touching. Don't re-derive any of them.
 
-## Start here (1 Oct, night: BUILD LAYER design round, round 1 running)
+## Start here (1 Oct, night: BUILD LAYER design round, round 2 running)
 
 His pick: dig into the build layer next. His answers: **everything open** (slots, autos, leanings, riders, states, temper,
 mastery, pedestals); builds should change **what parts do together + how you fight**; **no reference game**. Brief:
-`design/buildlayer/BRIEF.md`. Round 1: `1-claude.md` done (my lean: a **core** per run replaces the hand + eye, each a
-different verb leaving a condition in the world; parts pay or shape it; scrap shared; trial = Ram + Trail). Running: the
-balancer, translator, verifier writing `1-<voice>.md` (balancer may add `build-sim.mjs`). If a session dies: rerun the missing
-voices with the brief, then round 2 (`2-<voice>.md`, each reads all four), then `PITCHES.md` to him. Nothing built.
+`design/buildlayer/BRIEF.md` (+ a Corrections section: riders cut, pedestals off, dropsim stale, suites pin trials off).
+**Round 1 done**: all four `1-*.md` + the balancer's `build-sim.mjs`. All agree: one core/root a run replaces "both autos
+for everyone"; the auto sets the state, parts cash it. Balancer's key finding: today's temper (4 melts to III = +27-37% packs,
++68-84% boss) beats every build; flatten it. **Round 2**: `2-claude.md` done (Wake + Breaker trial, pick at the d1 exit,
+flatten temper, scrap out, measure first). Running: balancer, translator, verifier writing `2-<voice>.md`. If a session dies:
+rerun the missing round-2 voices (each reads BRIEF + all four 1-*.md), then write `PITCHES.md` for him. Nothing built.
 
 ## Start here (1 Oct, night: weight + tap push ON BY DEFAULT; his verdict on the game as a whole)
 
