@@ -56,8 +56,8 @@ export interface PartRuntime {
   /** Arms window: Anvil. Closes on the first catch. */
   anvil: { t: number; max: number; def: AbilityDef } | null
   /** Torso: the Lure decoy. At most one. */
-  /** `pushed`: its cast was a push, so its burst is a pushed hit (the break rule). */
-  decoy: { pos: THREE.Vector3; t: number; max: number; def: AbilityDef; pushed: boolean } | null
+  /** `pushed`: its cast was a push (or a ready cast under "weight"), so its burst is a pushed hit (the break rule). `real`: a real push, for the log. */
+  decoy: { pos: THREE.Vector3; t: number; max: number; def: AbilityDef; pushed: boolean; real: boolean } | null
   /** Legs: the Plumb Line anchor. While it lives, the legs button is tappable (cooldown 'hold'). */
   anchor: { pos: THREE.Vector3; t: number; max: number; def: AbilityDef } | null
   /** Head: seconds since the last Patient Lens cast. Set to mod.minS on swap-in and on reset. */
@@ -81,7 +81,7 @@ export interface EnemyStatus {
 export interface Zone { ax: number; az: number; bx: number; bz: number; halfW: number; t: number; max: number; mul: number; by: SlotName }
 
 /** An enemy in the clamp's throw. While held, it doesn't think. */
-export interface Held { from: THREE.Vector3; to: THREE.Vector3; t: number; T: number; short: boolean; def: AbilityDef; pushed: boolean }
+export interface Held { from: THREE.Vector3; to: THREE.Vector3; t: number; T: number; short: boolean; def: AbilityDef; pushed: boolean; real: boolean }
 
 export type Flip = 'x' | 'z' | 'xz'
 
@@ -178,8 +178,9 @@ export type PartEvent =
    * A windup broken (Parry, a grab, a push, the hand, the eye). `push`: a pushed hit broke it under the
    * break rule, and it reels. `by`: the hand's strike or the eye's planted shot broke it (a trigger).
    * `tell`: Parry Clamp caught a pressure body's own tell (a cock, a lens glow, a rear), not a windup (LINE-RULES R3).
+   * `ready`: with `push`, the push effect came from a ready cast under the "weight" trial, not a real push (set only then).
    */
-  | { kind: 'interrupt'; enemy: Enemy; push?: boolean; by?: 'hand' | 'eye'; tell?: boolean; parry?: boolean }
+  | { kind: 'interrupt'; enemy: Enemy; push?: boolean; by?: 'hand' | 'eye'; tell?: boolean; parry?: boolean; ready?: boolean }
   /**
    * A state set fresh on a body ('on', not a refresh), paid by a part's hit, or run out unpaid.
    * A pay says who set it, which slot paid, whether a push did, whether the hit killed, its

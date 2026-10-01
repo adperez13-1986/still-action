@@ -1177,14 +1177,16 @@ function lowpass(c: AudioContext, d: AudioNode, hz: number): AudioNode {
  * A part's voice, keyed by its beat. The ported parts borrow their shape's voice
  * until they get their own; a beat with no voice yet is silent apart from the
  * push grind. `power` is 0..1 where a beat scales (Patient Lens's charge).
+ * `big`: the pushed voice (lower, louder): a push, or a ready cast under the "weight" trial. `real`: a real push, which alone
+ * grinds (the grind is the sound of strain); off, `real === big`.
  */
-export function ability(beat: BeatKey, pushed: boolean, power = 0) {
+export function ability(beat: BeatKey, big: boolean, power = 0, real = big) {
   const c = live()
   if (!c) return
   const t = c.currentTime
   const d = out(c, 'abilities', 0)
-  const r = pushed ? 0.8 : 1
-  const k = pushed ? 1.3 : 1
+  const r = big ? 0.8 : 1
+  const k = big ? 1.3 : 1
 
   switch (beat) {
     case 'through':
@@ -1287,7 +1289,7 @@ export function ability(beat: BeatKey, pushed: boolean, power = 0) {
       tone(c, d, 'triangle', t + 0.08, vary(420 * r, 0.05), 380 * r, 0.18, 0.12 * k)
       // the tear grows with the strain feeding the swing: you hear it in the blade
       if (beat === 'fray-180' || beat === 'fray-360') sample(c, 'tin', d, 0.3, 0.9)
-      if (beat === 'fray-360' && !pushed) smallGrind(c, d, t, 0.5)
+      if (beat === 'fray-360' && !real) smallGrind(c, d, t, 0.5)
       break
     case 'piston':
       // the whoosh only; the thunk or the pneumatic miss follows once it's known which
@@ -1328,7 +1330,7 @@ export function ability(beat: BeatKey, pushed: boolean, power = 0) {
       // a reverse swell against a falling hiss, and a grind every time: it always costs strain
       tone(c, d, 'sine', t, 80 * r, 400 * r, 0.25, 0.5 * k, 0.02)
       hiss(c, d, t, 0.25, 0.4 * k, 'bandpass', 3000, 500, 1.5, 0.01)
-      if (!pushed) grind(c, d, t)
+      if (!real) grind(c, d, t)
       break
     }
     case 'lure':
@@ -1357,7 +1359,7 @@ export function ability(beat: BeatKey, pushed: boolean, power = 0) {
       break
   }
 
-  if (pushed) grind(c, d, t)
+  if (real) grind(c, d, t)
 }
 
 /** A little of the push grind, for parts that run on strain. */

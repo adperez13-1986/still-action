@@ -485,7 +485,7 @@ const combat = new Combat(world.scene, OPEN, {
         const st = run.stats[run.stats.length - 1]
         if (st) {
           st.breaks++
-          st.breaksBy.pushed++
+          st.breaksBy[ev.ready ? 'ready' : 'pushed']++
         }
         // a ram broken by a push reels with its hatch open: dazed, and the slam when it shuts
         const c = ev.enemy
@@ -3795,8 +3795,11 @@ const MOVES = new Set<AbilityShape>(['dash', 'hop', 'anchor', 'rewind'])
 function cast(def: AbilityDef, pushed: boolean): CastResult {
   castHits = 0
   const hpBefore = combat.hp
+  // weight: every ready cast has a push's whole effect (the break rule, the threat aim, the pose, pitch and scale), but none of its cost or signature.
+  // `pushed` stays the real push (strain, the embers, the grind); off, `full === pushed` and nothing below differs from today
+  const full = pushed || combat.weight
   const r = combat.useAbility(def, {
-    origin: still.pos, facing: still.facing, moveX: hud.moveX, moveZ: hud.moveZ, pushed, strain: run.strain,
+    origin: still.pos, facing: still.facing, moveX: hud.moveX, moveZ: hud.moveZ, pushed, full, strain: run.strain,
   })
   if (r.cooldown === 'refused') {
     sfx.denied()
@@ -3808,10 +3811,11 @@ function cast(def: AbilityDef, pushed: boolean): CastResult {
   if (combat.hp > hpBefore + 0.5) hud.healing()
   // Snap the body to the target, or the swing plays sideways out of his shoulder.
   if (r.aim !== null) still.facing = r.aim
-  sfx.ability(r.beat, pushed, r.power)
-  still.attack({ beat: r.beat, pushed, holdS: r.holdS, power: r.power, lean: r.lean, cocked: combat.weight })
-  castFx(def, r, pushed)
-  still.group.scale.setScalar(pushed ? 1.16 : 1.08)
+  sfx.ability(r.beat, full, r.power, pushed)
+  still.attack({ beat: r.beat, pushed: full, holdS: r.holdS, power: r.power, lean: r.lean, cocked: combat.weight })
+  // weight: the fx follow the numbers the cast really used (the cone, the radius)
+  castFx(combat.weight ? weighed(def) : def, r, pushed)
+  still.group.scale.setScalar(full ? 1.16 : 1.08)
   // weight: nothing on the press. The feel comes from onContact, when something is struck (a whiff has none)
   if (!combat.weight) {
     shake = Math.max(shake, pushed ? 0.34 : 0.16)
@@ -3967,10 +3971,13 @@ function castFx(def: AbilityDef, r: CastResult, pushed: boolean) {
     default:
       break
   }
-  if (pushed) {
-    vfx.sparks(at3(still.pos, 1.2), EMBER, 14, 4)
-    if (import.meta.env.DEV) pushSig++
-  }
+  if (pushed) pushSignature()
+}
+
+/** What only a real push throws: embers off his own joints, because it costs him. (The vibration is the hud's, the grind is audio's: both real-push only.) */
+function pushSignature() {
+  vfx.sparks(at3(still.pos, 1.2), EMBER, 14, 4)
+  if (import.meta.env.DEV) pushSig++
 }
 
 /** Patient Lens has banked a full shot, and the button has said so once. */

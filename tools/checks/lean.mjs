@@ -225,46 +225,50 @@ check('K-L10', RUN, async ({ page }) => {
       hpLost: n(s.hpLost), breaks: n(s.breaks),
     }
   }
+  // W2: a crowned hulk 2 u ahead winds up, and the Cleaver breaks it twice over, each way in its own run: by a READY press (breaksBy.ready with the
+  // switch on, nothing with it off: today) and by a real PUSH on the cooling button (breaksBy.pushed, on or off). The push run cools the button first
+  // with a press on the empty floor
   const got = await evalJson(page, `() => {
     const out = {}
     for (const on of [true, false]) {
-      // a fresh depth entered with the switch off (the stored one), then the weight turned on by the hook alone
-      window.__enter(1, 1)
-      ;(${SETUP})(on)
-      ${HELPERS}
-      const s0 = snap()
-      // one real push-broken windup: a crowned hulk 2 u ahead winds up; the arms cast, then pushed on the cooling button
-      C.pressure = false
-      const h = W.__spawn('chaser', 0, 2, true, 'plated')
-      h.hp = 1e6
-      let n = 0
-      while (h.phase !== 'windup' && n++ < 240) tick(h)
-      const wound = h.phase === 'windup'
-      W.__fire('arms')
-      W.__fire('arms', true)
-      const s1 = snap()
-      const f = W.__runStats().at(-1)
-      out[on ? 'on' : 'off'] = {
-        wound, broke: s1.breaks - s0.breaks, pushed: s1.breaksBy.pushed - s0.breaksBy.pushed, ready: s1.breaksBy.ready - s0.breaksBy.ready,
-        sum: s1.breaksBy.ready + s1.breaksBy.pushed === s1.breaks, weight: s1.weight, mixed: s1.weightMixed ?? null, fields: f,
+      for (const how of ['ready', 'push']) {
+        // a fresh depth entered with the switch off (the stored one), then the weight turned on by the hook alone
+        window.__enter(1, 1)
+        ;(${SETUP})(on)
+        ${HELPERS}
+        C.pressure = false
+        if (how === 'push') W.__fire('arms')
+        const s0 = snap()
+        const h = W.__spawn('chaser', 0, 2, true, 'plated')
+        h.hp = 1e6
+        let n = 0
+        while (h.phase !== 'windup' && n++ < 240) tick(h)
+        const wound = h.phase === 'windup'
+        W.__fire('arms', how === 'push')
+        const s1 = snap()
+        const f = W.__runStats().at(-1)
+        out[(on ? 'on' : 'off') + '/' + how] = {
+          wound, broke: s1.breaks - s0.breaks, pushed: s1.breaksBy.pushed - s0.breaksBy.pushed, ready: s1.breaksBy.ready - s0.breaksBy.ready,
+          pushes: s1.pushes - s0.pushes, sum: s1.breaksBy.ready + s1.breaksBy.pushed === s1.breaks, weight: s1.weight, mixed: s1.weightMixed ?? null, fields: f,
+        }
       }
     }
     return out
   }`)
-  for (const sw of ['on', 'off']) {
-    const g = got[sw]
+  const want = { 'on/ready': [1, 0, 1], 'on/push': [1, 1, 0], 'off/ready': [0, 0, 0], 'off/push': [1, 1, 0] }
+  for (const [key, g] of Object.entries(got)) {
+    const sw = key.split('/')[0]
     const s = shape(g.fields)
-    for (const [k, ok] of Object.entries(s)) assert(ok, `switch ${sw}: the depth's stats have no good ${k}`)
-    assert(g.wound, `switch ${sw}: the crowned hulk never wound up`)
-    assertEq(`switch ${sw}: the push broke one windup`, g.broke, 1)
-    assertEq(`switch ${sw}: breaksBy.pushed +1`, g.pushed, 1)
-    assertEq(`switch ${sw}: breaksBy.ready +0`, g.ready, 0)
-    assertEq(`switch ${sw}: ready + pushed === breaks`, g.sum, true)
-    assertEq(`switch ${sw}: the depth's weight stays the value at entry (__weight is not a level entry)`, g.weight, false)
-    assertEq(`switch ${sw}: __weight is not a flip: no weightMixed`, g.mixed, null)
+    for (const [k, ok] of Object.entries(s)) assert(ok, `${key}: the depth's stats have no good ${k}`)
+    assert(g.wound, `${key}: the crowned hulk never wound up`)
+    assertEq(`${key}: [breaks, breaksBy.pushed, breaksBy.ready] moved by`, [g.broke, g.pushed, g.ready], want[key])
+    assertEq(`${key}: pushes moved by (only a real push counts)`, g.pushes, key.endsWith('push') ? 1 : 0)
+    assertEq(`${key}: ready + pushed === breaks`, g.sum, true)
+    assertEq(`${key}: the depth's weight stays the value at entry (__weight is not a level entry)`, g.weight, false)
+    assertEq(`${key}: __weight is not a flip: no weightMixed`, g.mixed, null)
     // W1: the freeze counters move with the switch on (the contact and the break of a part's push), and stay 0 with it off
-    if (sw === 'on') assert(g.fields.freezePartMs > 0 && g.fields.freezeAutoMs === 0, `switch on: freezePartMs should have moved and freezeAutoMs not, got ${g.fields.freezePartMs} / ${g.fields.freezeAutoMs}`)
-    else assertEq('switch off: both freeze counters stay 0', [g.fields.freezePartMs, g.fields.freezeAutoMs], [0, 0])
+    if (sw === 'on') assert(g.fields.freezePartMs > 0 && g.fields.freezeAutoMs === 0, `${key}: freezePartMs should have moved and freezeAutoMs not, got ${g.fields.freezePartMs} / ${g.fields.freezeAutoMs}`)
+    else assertEq(`${key}: both freeze counters stay 0`, [g.fields.freezePartMs, g.fields.freezeAutoMs], [0, 0])
   }
 
   // weightMixed only on a flip depth: a flip from the pause screen marks it, the next depth is clean, and the off depth never has it
@@ -437,19 +441,16 @@ check('K-L7', RUN, async ({ page }) => {
       let maxBreak = 0, broke = false
       for (let i = 0; i < 400 && !broke; i++) { tick(h); const f2 = ms(); maxBreak = Math.max(maxBreak, f2.ms); broke = snap().handBreaks > b0 }
       out.handBreak = { broke, maxStop: maxBreak }`)}
-    // a Cleaver's break: pressed once, a push on the cooling button breaks the windup. The merge window is reset between the two presses
+    // a Cleaver's break: with weight on a READY press breaks a crowned windup (W2: the full effect); the break is 90 ms and the haptic is its own
     ${scene(true, `
       C.pressure = false
       const c = W.__spawn('chaser', 0, 2, true, 'plated')
       c.hp = 1e6
       let m = 0
       while (c.phase !== 'windup' && m++ < 240) tick(c)
-      W.__fire('arms')
-      ms()
-      W.__weight(true)
       vib.length = 0
       const br0 = snap().breaks
-      W.__fire('arms', true)
+      W.__fire('arms')
       const fb = ms()
       out.partBreak = { broke: snap().breaks - br0, ms: fb.ms, vib: JSON.stringify(vib) }`)}
     return out
@@ -469,7 +470,7 @@ check('K-L7', RUN, async ({ page }) => {
   assert(got.partKill.shake >= 0.28 - 1e-9, `a part kill's shake: ${got.partKill.shake}, wanted at least 0.28`)
   assert(got.handBreak.broke, 'the hand never broke the crowned windup')
   near('a hand break', got.handBreak.maxStop, 35)
-  assertEq("a push broke the Cleaver's windup", got.partBreak.broke, 1)
+  assertEq("a ready Cleaver broke the windup", got.partBreak.broke, 1)
   near("a part's break", got.partBreak.ms, 90)
   assert(got.partBreak.vib.includes('[20,30,40]'), `a part's break haptic [20,30,40] not recorded: ${got.partBreak.vib}`)
 })
@@ -550,6 +551,191 @@ check('K-L9', RUN, async ({ page }) => {
   near('three walls: the landing', got.three[land], 98)
   assert(got.three.slice(land + 1).every((x) => x === 0), `three walls: a second freeze after the landing: ${JSON.stringify(got.three)}`)
   assert(got.hop.every((x) => x === 0), `Skitter over a wall: expected 0 throughout, got ${JSON.stringify(got.hop)}`)
+})
+
+// ---- W2: full effect on ready casts (WEIGHT.md section 2.4, section 4) -------------------------------------------------------------------------
+
+// K-L4: with weight on, a ready cast has a push's whole effect (the break rule, the threat aim, the reel, the pose and scale) and none of its cost;
+// Patient Lens, Overrun and Plumb Line keep their push-only extras. Off: today. (A Plumb Line ready press with the anchor out snaps; the other half, a
+// real push re-planting over a live anchor, cannot happen: the planted button is 'hold', tappable, never cooling. The negative test covers the line)
+check('K-L4', RUN, async ({ page }) => {
+  const got = await evalJson(page, `() => {
+    const out = {}
+    // (a) a crowned hulk winding up 2 u ahead, then a ready Cleaver: it breaks and reels; counted as a ready break, no push, no strain. Off: it does not
+    ${[true, false].map((on) => scene(on, `
+      C.pressure = false
+      const h = W.__spawn('chaser', 0, 2, true, 'plated')
+      h.hp = 1e6
+      let n = 0
+      while (h.phase !== 'windup' && n++ < 240) tick(h)
+      const wound = h.phase === 'windup'
+      const s0 = snap(), strain0 = W.__run.strain
+      W.__fire('arms')
+      const s1 = snap()
+      out.${on ? 'a' : 'aOff'} = { wound, broke: s1.breaks - s0.breaks, ready: s1.breaksBy.ready - s0.breaksBy.ready, pushed: s1.breaksBy.pushed - s0.breaksBy.pushed,
+        pushes: s1.pushes - s0.pushes, strain: W.__run.strain - strain0, phase: h.phase }`)).join('\n')}
+    // (b) an idle hulk 4 u ahead and a winding one 9 u off to the side: a ready Lens flies at the winding one. Off: ahead, into the idle one
+    ${[true, false].map((on) => scene(on, `
+      C.pressure = false
+      const idle = W.__spawn('chaser', 0, 4, false)
+      idle.hp = 1e6
+      const w = W.__spawn('chaser', 5, 8, true, 'plated')
+      w.hp = 1e6
+      w.phase = 'windup'
+      w.timer = 4000
+      W.__fire('head')
+      for (let i = 0; i < 60; i++) tick(w)
+      out.${on ? 'b' : 'bOff'} = { idle: 1e6 - idle.hp, wound: 1e6 - w.hp }`)).join('\n')}
+    // (c1) Patient Lens twice, 0.5 s apart, both ready: neither fires full; a real push on the cooling button does
+    ${scene(true, `
+      W.__equip('patient-lens')
+      const t = wall(1e6, 0, 6)
+      const dealt = () => { const d = 1e6 - t.hp; t.hp = 1e6; return d }
+      W.__fire('head')
+      for (let i = 0; i < 30; i++) tick(t)
+      const first = dealt()
+      ${READY('head')}
+      W.__fire('head')
+      for (let i = 0; i < 30; i++) tick(t)
+      const second = dealt()
+      W.__fire('head', true)
+      for (let i = 0; i < 30; i++) tick(t)
+      out.patient = { first, second, push: dealt() }`)}
+    // (c2) Overrun: a ready one is the short step (overrun-step) and runs nothing over; a push on the cooling button is the charge and does
+    ${scene(true, `
+      W.__equip('overrun')
+      const bodies = [3, 4.5, 6].map((z) => { const b = W.__spawn('chaser', 0, z, false); b.hp = 1e6; return b })
+      const lost = () => bodies.reduce((a, b) => a + (1e6 - b.hp), 0)
+      const beat = () => W.__partLog.filter((k) => k.kind === 'move').at(-1)?.beat
+      W.__partLog.length = 0
+      W.__fire('legs')
+      for (let i = 0; i < 40; i++) tick(...bodies)
+      out.overrun = { beat: beat(), lost: lost() }
+      W.__partLog.length = 0
+      W.__fire('legs', true)
+      for (let i = 0; i < 40; i++) tick(...bodies)
+      out.overrunPush = { beat: beat(), lost: lost() }`)}
+    // (c3) Plumb Line: a ready press plants; a second ready press snaps (the anchor goes) and does not re-plant. A push re-plants
+    ${scene(true, `
+      W.__equip('plumb-line')
+      const states = () => W.__partLog.filter((k) => k.kind === 'anchor').map((k) => k.state)
+      W.__partLog.length = 0
+      W.__fire('legs')
+      const planted = !!C.parts.anchor
+      W.__fire('legs')
+      out.plumb = { planted, after: !!C.parts.anchor, states: states() }
+      W.__partLog.length = 0
+      W.__fire('legs', true)
+      out.plumbPush = { after: !!C.parts.anchor, states: states() }`)}
+    // (d) the pose and the scale: a ready cast stands as a push does (on); today it does not (off)
+    ${[true, false].map((on) => scene(on, `
+      walls(1)
+      W.__fire('arms')
+      out.${on ? 'd' : 'dOff'} = { pushed: W.__still.anim.pushed, scale: W.__still.group.scale.x }
+      W.__fire('arms', true)
+      out.${on ? 'dPush' : 'dPushOff'} = { pushed: W.__still.anim.pushed, scale: W.__still.group.scale.x }`)).join('\n')}
+    // (e) Clamp Toss (a reel): a ready one breaks the windup it lifts, counted ready
+    ${scene(true, `
+      W.__equip('clamp-toss')
+      C.pressure = false
+      const h = W.__spawn('chaser', 0, 2, true, 'plated')
+      h.hp = 1e6
+      let n = 0
+      while (h.phase !== 'windup' && n++ < 240) tick(h)
+      const s0 = snap()
+      W.__fire('arms')
+      const s1 = snap()
+      out.toss = { wound: n < 240, broke: s1.breaks - s0.breaks, ready: s1.breaksBy.ready - s0.breaksBy.ready, pushed: s1.breaksBy.pushed - s0.breaksBy.pushed }`)}
+    // (f) the state a hit pays is a real push's to count: a ready Cleaver paying a chill is no "pushed into state"; a real push paying one is
+    ${scene(true, `
+      W.__equip('chill-vent')
+      const t = wall(1e6, 0, 2)
+      const paid = () => { const x = snap(); return { paid: x.paidBy.arms, pushedIn: x.pushedIntoState ?? 0 } }
+      W.__fire('torso')
+      const p0 = paid()
+      W.__fire('arms')
+      const p1 = paid()
+      ${READY('torso')}
+      W.__fire('torso')
+      W.__fire('arms', true)
+      const p2 = paid()
+      out.paid = { ready: [p1.paid - p0.paid, p1.pushedIn - p0.pushedIn], push: [p2.paid - p1.paid, p2.pushedIn - p1.pushedIn] }`)}
+    return out
+  }`)
+  assert(got.a.wound && got.aOff.wound, '(a) the crowned hulk never wound up')
+  assertEq('(a) weight on: a ready Cleaver breaks the windup (breaks, ready, pushed)', [got.a.broke, got.a.ready, got.a.pushed], [1, 1, 0])
+  assertEq('(a) it reels open, as a push leaves it', got.a.phase, 'recover')
+  assertEq('(a) a ready cast is not a push', got.a.pushes, 0)
+  assertEq('(a) and costs no strain', got.a.strain, 0)
+  assertEq('(a) off: the same press does not break it', [got.aOff.broke, got.aOff.ready, got.aOff.pushed, got.aOff.phase], [0, 0, 0, 'windup'])
+  assertEq('(b) weight on: the Lens flew at the winding hulk, past the idle one', [got.b.idle, got.b.wound > 0], [0, true])
+  assert(got.bOff.idle > 0 && got.bOff.wound === 0, `(b) off: the Lens flies ahead into the idle hulk, got ${JSON.stringify(got.bOff)}`)
+  assert(got.patient.push > 0 && got.patient.first < got.patient.push && got.patient.second < got.patient.push,
+    `(c) Patient Lens: a ready shot must be weaker than a push's full one, got ${JSON.stringify(got.patient)}`)
+  assert(got.patient.second < 32 && got.patient.second > 0, `(c) the second ready Patient Lens, 0.5 s on, deals under 32, got ${got.patient.second}`)
+  assertEq('(c) Overrun ready plays overrun-step', got.overrun.beat, 'overrun-step')
+  assertEq('(c) Overrun ready deals no run-over damage', got.overrun.lost, 0)
+  assertEq('(c) the control: a pushed Overrun is the charge', got.overrunPush.beat, 'overrun-charge')
+  assert(got.overrunPush.lost > 0, `(c) the control: a pushed Overrun must run something over, got ${got.overrunPush.lost}`)
+  assert(got.plumb.planted, '(c) Plumb Line: the first ready press plants')
+  assertEq('(c) Plumb Line: the second ready press snaps, the anchor goes', [got.plumb.after, got.plumb.states.includes('snap'), got.plumb.states.filter((x) => x === 'plant').length], [false, true, 1])
+  assertEq('(c) the control: a push on the cooling button plants', [got.plumbPush.after, got.plumbPush.states.filter((x) => x === 'plant').length], [true, 1])
+  assertEq('(d) weight on, a ready cast: the pushed pose and scale 1.16', [got.d.pushed, Math.abs(got.d.scale - 1.16) < 1e-6], [true, true])
+  assertEq('(d) off, a ready cast: the plain pose and scale 1.08', [got.dOff.pushed, Math.abs(got.dOff.scale - 1.08) < 1e-6], [false, true])
+  assertEq('(d) a real push stands the same either way', [got.dPush.pushed, got.dPushOff.pushed, Math.abs(got.dPush.scale - 1.16) < 1e-6, Math.abs(got.dPushOff.scale - 1.16) < 1e-6], [true, true, true, true])
+  assertEq('(f) a ready Cleaver pays the chill and counts no push into a state: [paid, pushedIntoState]', got.paid.ready, [1, 0])
+  assertEq('(f) a real push paying one counts it', got.paid.push, [1, 1])
+  assert(got.toss.wound, '(e) the hulk never wound up')
+  assertEq('(e) a ready Clamp Toss breaks the windup it lifts, counted ready (breaks, ready, pushed)', [got.toss.broke, got.toss.ready, got.toss.pushed], [1, 1, 0])
+})
+
+// K-L5: the push signature is a real push's alone. A ready cast under weight throws no embers, no [14,26,14]; a push throws both, on or off
+check('K-L5', RUN, async ({ page }) => {
+  const got = await evalJson(page, `() => {
+    const out = {}
+    ${[true, false].map((on) => scene(on, `
+      const rows = { ready: [], push: [] }
+      for (const slot of ['head', 'torso', 'arms', 'legs']) {
+        W.__still.pos.set(0, 0, 0)
+        ${READY('head')};${READY('torso')};${READY('arms')};${READY('legs')}
+        vib.length = 0
+        fx()
+        W.__fire(slot)
+        const r = fx()
+        rows.ready.push({ slot, sig: r.pushSig, vib: JSON.stringify(vib) })
+        vib.length = 0
+        W.__fire(slot, true)
+        const p = fx()
+        rows.push.push({ slot, sig: p.pushSig, vib: JSON.stringify(vib) })
+      }
+      out.${on ? 'on' : 'off'} = rows`)).join('\n')}
+    return out
+  }`)
+  for (const sw of ['on', 'off']) {
+    for (const r of got[sw].ready) {
+      assertEq(`switch ${sw}: a ready ${r.slot} cast throws no push signature`, r.sig, 0)
+      assert(!r.vib.includes('[14,26,14]'), `switch ${sw}: a ready ${r.slot} cast buzzed the push pattern: ${r.vib}`)
+    }
+    for (const p of got[sw].push) {
+      assertEq(`switch ${sw}: a real ${p.slot} push throws the signature once`, p.sig, 1)
+      assert(p.vib.includes('[14,26,14]'), `switch ${sw}: a real ${p.slot} push did not buzz [14,26,14]: ${p.vib}`)
+    }
+  }
+})
+
+// K-L5 (audio): a headless page runs no AudioContext, so the grind can only be read in the source: in sfx.ability every grind is guarded by `real`
+// (a real push), the push voice (`big`) only changes pitch and gain, and `pushed` is no name in it at all
+task('K-L5', async () => {
+  const { readFileSync } = await import('node:fs')
+  const src = readFileSync(HERE + '../../src/audio.ts', 'utf8')
+  const start = src.indexOf('export function ability(')
+  const body = src.slice(start, src.indexOf('\n}\n', start))
+  assert(start > 0 && /export function ability\(beat: BeatKey, big: boolean, power = 0, real = big\)/.test(body), 'ability(beat, big, power = 0, real = big) is not the signature')
+  const grinds = body.split('\n').filter((l) => /\b(smallGrind|grind)\(c, d, t/.test(l))
+  assertEq('three grinds in ability(): fray-360, the rewind, the last', grinds.length, 3)
+  for (const g of grinds) assert(/\breal\b/.test(g), `a grind not guarded by real: ${g.trim()}`)
+  assert(!/\bpushed\b/.test(body), 'ability() still reads a name "pushed"')
+  assert(/const r = big \? 0\.8 : 1/.test(body) && /const k = big \? 1\.3 : 1/.test(body), "the push voice's pitch and gain must read big")
 })
 
 process.exit(await run(process.argv.slice(2)))

@@ -97,7 +97,13 @@ export interface CastContext {
   origin: THREE.Vector3      // Still's live position; clone anything you store
   facing: number
   moveX: number; moveZ: number
+  /** A real push: the button was cooling and he paid for the press (strain, the push signature, the grind). */
   pushed: boolean
+  /**
+   * The push's effect: the break rule, the threat aim, the reel, the stored push flags. A real push, or, under the "weight" trial, any ready cast
+   * (design/lean/WEIGHT.md section 2.4). Off, `full === pushed`. Patient Lens, Plumb Line and Overrun keep their push-only extras on `pushed`.
+   */
+  full: boolean
   /** Run strain at the moment of the press (Frayed Cleaver reads it). */
   strain: number
 }
@@ -142,6 +148,8 @@ interface Bolt {
   trail?: number
   /** Fired by a push: it lands as a pushed hit, however long it flies (the break rule). */
   pushed?: boolean
+  /** Fired by a real push (not merely a ready cast under "weight"): the log's and the state event's `pushed`. */
+  real?: boolean
   /** The eye's lance: each body it hits slides this far along its flight (never a boss). */
   shove?: number
   /** The eye's lance: it breaks a windup it lands in, as the hand does (the eye break). */
@@ -481,8 +489,9 @@ export class Combat {
   /** The boss's opening this is has had its first hand or eye hit (its trigger); false again once it closes. */
   private openingSpent = false
   /**
-   * Strain step 1 (design/strain/PITCHES.md), behind a switch that is off by default: a pushed
-   * hit that lands in a windup breaks it, and a pushed cast aims at the windup that lands soonest.
+   * Strain step 1 (design/strain/PITCHES.md), on for good since 26 Sep (main applies it from its pause switch, which defaults on): a pushed
+   * hit that lands in a windup breaks it, and a pushed cast aims at the windup that lands soonest. Under the "weight" trial a ready cast
+   * has the same effect (`CastContext.full`). Only the dev checks turn it off.
    */
   breakRule = false
   /**
@@ -895,7 +904,7 @@ export class Combat {
     for (const e of this.enemies) {
       if (b.pierced?.has(e) || b.once?.has(e)) continue
       if (Math.hypot(p.x - e.pos.x, p.z - e.pos.z) >= b.radius + e.radius) continue
-      if (b.payer) this.hitPart(e, b.damage, !!b.pushed, b.payer)
+      if (b.payer) this.hitPart(e, b.damage, !!b.pushed, b.payer, !!b.real)
       else if (b.eye) this.eyeHit(e, b.damage)
       else {
         // a plain Still bolt: the eye's split shots (or the far shot, when a check turns the hand off)
@@ -1159,7 +1168,7 @@ export class Combat {
    * the hazards and Signal Flare's own hit don't come through here, so they never pay. A pay
    * doubles damage only: shoves come from the def, never from this. A paid hit that kills shatters.
    */
-  private hitPart(e: Enemy, damage: number, pushed: boolean, payer: Payer): boolean {
+  private hitPart(e: Enemy, damage: number, pushed: boolean, payer: Payer, real = pushed): boolean {
     const st = this.status.get(e)
     const { mul, used } = stateMul(st, payer)
     const d = damage * mul
@@ -1171,11 +1180,11 @@ export class Combat {
     if (used && st) {
       const s = st[used]
       if (STATE[used].consumed) s.t = 0
-      this.events.onPart({ kind: 'state', id: used, enemy: e, state: 'paid', by: s.by, payer: payer.slot, pushed, killed, mul, bonus: d - damage })
+      this.events.onPart({ kind: 'state', id: used, enemy: e, state: 'paid', by: s.by, payer: payer.slot, pushed: real, killed, mul, bonus: d - damage })
       // what the kill had left over goes on to the next body
       if (killed) this.shatter(e, -e.hp)
     }
-    if (pushed) this.pushBreak(e)
+    if (pushed) this.pushBreak(e, real)
     return killed
   }
 
@@ -1268,8 +1277,8 @@ export class Combat {
   }
 
   /** The break rule: a pushed hit that lands in a windup a push can break breaks it, and it reels open. */
-  private pushBreak(e: Enemy) {
-    if (this.breakRule && this.breakable(e) && e.interrupt(true)) this.interrupted(e, true)
+  private pushBreak(e: Enemy, real: boolean) {
+    if (this.breakRule && this.breakable(e) && e.interrupt(true)) this.interrupted(e, true, undefined, false, false, !real)
   }
 
   /**
@@ -1359,7 +1368,7 @@ export class Combat {
   private landThrow(e: Enemy, h: Held) {
     const mod = h.def.mod?.kind === 'toss' ? h.def.mod : null
     e.group.position.y = 0
-    this.hitPart(e, h.def.damage, h.pushed, h.def)
+    this.hitPart(e, h.def.damage, h.pushed, h.def, h.real)
     // a plain hit: a state was the first hit's to pay
     if (h.short && mod && !e.dead) {
       if (e.hit(mod.wallDamage)) this.felledBy.set(e, 'part')
@@ -1372,7 +1381,7 @@ export class Combat {
     for (const o of this.enemies) {
       if (o === e || o.dead) continue
       if (Math.hypot(o.pos.x - to.x, o.pos.z - to.z) > blast + o.radius || !this.terrain.lineClear(to.x, to.z, o.pos.x, o.pos.z, PART.linePad)) continue
-      this.hitPart(o, h.def.blastDamage ?? 0, h.pushed, h.def)
+      this.hitPart(o, h.def.blastDamage ?? 0, h.pushed, h.def, h.real)
       this.shoveFrom(o, to.x, to.z, mod?.splashShove ?? 0)
     }
     for (const b of this.breakables) {
@@ -1450,13 +1459,13 @@ export class Combat {
   }
 
   /** The decoy's time is up (or a push recast it): it bursts, shoving and hurting what it drew. */
-  private burstDecoy(pushed = false) {
+  private burstDecoy(pushed = false, real = pushed) {
     const d = this.parts.decoy
     if (!d) return
     this.parts.decoy = null
     for (const e of this.enemies) {
       if (!this.inBlast(d.pos, e, d.def.radius) || this.shaded(d.pos, e)) continue
-      this.hitPart(e, d.def.damage, pushed || d.pushed, d.def)
+      this.hitPart(e, d.def.damage, pushed || d.pushed, d.def, real || d.real)
       this.shoveFrom(e, d.pos.x, d.pos.z, d.def.shove ?? 0)
     }
     for (const b of this.breakables) {
@@ -1895,6 +1904,9 @@ export class Combat {
   useAbility(def: AbilityDef, ctx: CastContext): CastResult {
     const o = ctx.origin
     const mod = def.mod
+    // `real`: the real push, for the log and the state event only. Every effect reads the context's `full`; only Patient Lens, Plumb Line and
+    // Overrun read its `pushed` (their push-only extras, WEIGHT.md 2.4), so grep for that read to find them.
+    const { pushed: real } = ctx
     const r: CastResult = { cooldown: 'start', strain: def.strain ?? 0, aim: null, beat: def.beat, power: 0, holdS: 0, lean: 0 }
 
     switch (def.shape) {
@@ -1908,7 +1920,7 @@ export class Combat {
           break
         }
         // no line needed to pick a target: walls stop the bolt, not the aim (a push aims at the threat, a payer at its state)
-        const target = (ctx.pushed && this.threat(o, def)) || this.prefer(o, def, this.eyeCast(o, def, this.nearest(o, def.range)))
+        const target = (ctx.full && this.threat(o, def)) || this.prefer(o, def, this.eyeCast(o, def, this.nearest(o, def.range)))
         const aim = target ? Math.atan2(target.pos.x - o.x, target.pos.z - o.z) : ctx.facing
         let damage = def.damage
         let scale = 1
@@ -1929,16 +1941,16 @@ export class Combat {
         const once = fan ? new Set<Enemy>() : undefined
         if (fan) trail = 0.16
         for (const off of spread) {
-          this.spawnBolt(o, aim + off, damage, def.radius, def.range, { payer: def, pierced: mod?.kind === 'pierce' ? new Set() : undefined, once, scale, trail, pushed: ctx.pushed })
+          this.spawnBolt(o, aim + off, damage, def.radius, def.range, { payer: def, pierced: mod?.kind === 'pierce' ? new Set() : undefined, once, scale, trail, pushed: ctx.full, real })
         }
         break
       }
 
       case 'lob': {
         // arcs over walls onto where the target stands now: it can't miss a sleeper, it can miss a mover
-        const target = (ctx.pushed && this.threat(o, def)) || this.prefer(o, def, this.eyeCast(o, def, this.pickTarget(o, def.range, true)))
+        const target = (ctx.full && this.threat(o, def)) || this.prefer(o, def, this.eyeCast(o, def, this.pickTarget(o, def.range, true)))
         const to = target ? new THREE.Vector3(target.pos.x, 0, target.pos.z) : this.ahead(o, ctx.facing, Math.min(def.range, PART.lobNoTarget))
-        const pushed = ctx.pushed
+        const pushed = ctx.full
         const ms = def.travelMs ?? 800
         const mark = mod?.kind === 'mark' ? mod : null
         this.events.onPart({ kind: 'lob', from: o.clone(), to: to.clone(), ms, radius: def.radius, signal: !!mark })
@@ -1954,9 +1966,9 @@ export class Combat {
                 if (this.weight) this.touch(def, e)
                 this.events.onHit(e.pos, e)
                 this.setState(e, 'marked', mark.ms / 1000, def.slot)
-                if (pushed) this.pushBreak(e)
+                if (pushed) this.pushBreak(e, real)
               } else {
-                this.hitPart(e, def.damage, pushed, def)
+                this.hitPart(e, def.damage, pushed, def, real)
               }
             }
             for (const b of this.breakables) {
@@ -1975,7 +1987,7 @@ export class Combat {
           // a blast doesn't go through the wall you're hiding behind, either way
           if (!this.inBlast(o, e, def.radius) || this.shaded(o, e)) continue
           const d = Math.hypot(e.pos.x - o.x, e.pos.z - o.z)
-          this.hitPart(e, def.damage, ctx.pushed, def)
+          this.hitPart(e, def.damage, ctx.full, def, real)
           // Chill Vent: chills, and slows the walk, never a windup or a strike (a boss only chills)
           if (mod?.kind === 'slow') {
             this.applySlow(e, mod.ms / 1000, mod.mul)
@@ -2032,7 +2044,7 @@ export class Combat {
             best = d
           }
         }
-        if (ctx.pushed) e = this.threat(o, def) ?? e
+        if (ctx.full) e = this.threat(o, def) ?? e
         if (!e) {
           // a whiff: the clamp snaps shut on nothing, and the cooldown still starts
           this.sweep(o, ctx.facing, def.range, 0x8fb8e8, Math.PI / 2)
@@ -2045,8 +2057,8 @@ export class Combat {
           break
         }
         // lifted out of its swing; pushed, under the break rule, it reels once it lands
-        const reel = ctx.pushed && this.breakRule && this.breakable(e)
-        if (e.phase === 'windup' && e.interrupt(reel)) this.interrupted(e, reel)
+        const reel = ctx.full && this.breakRule && this.breakable(e)
+        if (e.phase === 'windup' && e.interrupt(reel)) this.interrupted(e, reel, undefined, false, false, reel && !real)
         const m = Math.hypot(ctx.moveX, ctx.moveZ)
         let dx = m >= 0.1 ? ctx.moveX / m : e.pos.x - o.x
         let dz = m >= 0.1 ? ctx.moveZ / m : e.pos.z - o.z
@@ -2063,20 +2075,20 @@ export class Combat {
         const to = new THREE.Vector3(end.x, 0, end.z)
         const short = Math.hypot(end.x - e.pos.x, end.z - e.pos.z) < dist - 0.05
         const T = (def.travelMs ?? 350) / 1000
-        this.held.set(e, { from: e.pos.clone(), to, t: 0, T, short, def, pushed: ctx.pushed })
+        this.held.set(e, { from: e.pos.clone(), to, t: 0, T, short, def, pushed: ctx.full, real })
         this.events.onPart({ kind: 'throw', enemy: e, to: to.clone(), ms: T * 1000, short })
         break
       }
 
       case 'decoy': {
         // Lure: a pushed recast bursts the old one first; there's only ever one
-        if (this.parts.decoy) this.burstDecoy(ctx.pushed)
+        if (this.parts.decoy) this.burstDecoy(ctx.full, real)
         const dir = this.steer(ctx)
         const back = def.offset ?? 1.5
         // behind him, opposite the stick (or his facing), and never inside a wall
         const p = this.terrain.clampMove(o.x, o.z, o.x - dir.x * back, o.z - dir.z * back, PLAYER_RADIUS)
         const s = (def.windowMs ?? 3000) / 1000
-        this.parts.decoy = { pos: new THREE.Vector3(p.x, 0, p.z), t: s, max: s, def, pushed: ctx.pushed }
+        this.parts.decoy = { pos: new THREE.Vector3(p.x, 0, p.z), t: s, max: s, def, pushed: ctx.full, real }
         this.events.onPart({ kind: 'decoy', state: 'spawn', at: new THREE.Vector3(p.x, 0, p.z) })
         break
       }
@@ -2101,7 +2113,7 @@ export class Combat {
         // back along the straight line, stopping at a wall, running over what's in the way
         const end = this.terrain.clampMove(o.x, o.z, a.pos.x, a.pos.z, PLAYER_RADIUS)
         const ms = def.travelMs ?? 240
-        this.runOver(o, end, def.radius, def.damage, def.shove ?? 0, ms, null, ctx.pushed, def)
+        this.runOver(o, end, def.radius, def.damage, def.shove ?? 0, ms, null, ctx.full, def, real)
         if (this.weight) this.contactHold.set(def, this.time + ms / 1000)
         this.parts.anchor = null
         this.emitMove({ kind: 'snap', path: [new THREE.Vector3(end.x, 0, end.z)], ms, vault: false, lockMs: 0 }, 'snap')
@@ -2153,7 +2165,7 @@ export class Combat {
           }
         }
         // pushed: the windup that lands soonest, if the blade reaches it; else a payer swings at its state
-        const threat = ctx.pushed ? this.threat(o, def) : null
+        const threat = ctx.full ? this.threat(o, def) : null
         // Parry (R3): the body whose tell lands soonest, a windup or a pressure body's own, pushed or not
         const tell = parry ? this.tellAim(o, def) : null
         snap = tell ?? threat ?? this.prefer(o, def, snap)
@@ -2169,21 +2181,21 @@ export class Combat {
           // behind a wall: no spark, no sound. The swing visibly fails to reach it.
           if (this.shaded(o, e)) continue
           const winding = e.phase === 'windup'
-          this.hitPart(e, def.damage, ctx.pushed && !parry, def)
+          this.hitPart(e, def.damage, ctx.full && !parry, def, real && !parry)
           if (parry) {
             // Parry Clamp: caught mid-windup, the attack breaks and it stumbles back (pushed, it reels).
             // A pressure body has no windup but its own tell (a cock, a glow, a rear): caught there, the attack is spent (R3)
             if (!e.dead) {
-              const reel = ctx.pushed && this.breakRule
+              const reel = ctx.full && this.breakRule
               if (winding) {
                 const brk = reel && this.breakable(e)
                 if (e.interrupt(brk)) {
                   this.shoveFrom(e, o.x, o.z, parry.shove)
-                  this.interrupted(e, brk, undefined, false, true)
+                  this.interrupted(e, brk, undefined, false, true, brk && !real)
                 }
               } else if (e.catchTell?.(this.time, PARRY.graceMs, reel)) {
                 this.shoveFrom(e, o.x, o.z, parry.shove)
-                this.interrupted(e, reel, undefined, true, true)
+                this.interrupted(e, reel, undefined, true, true, reel && !real)
               }
             }
           } else if (hook) {
@@ -2223,7 +2235,7 @@ export class Combat {
         const ex = end.x
         const ez = end.z
         // the charge throws them aside, off the path, instead of ahead of it
-        this.runOver(o, end, width, damage, knock, ms, over ? dir : null, ctx.pushed, def)
+        this.runOver(o, end, width, damage, knock, ms, over ? dir : null, ctx.full, def, real)
         // weight: the contact waits for the landing (Skid Plates' slam lands at the same t and joins it)
         if (this.weight) this.contactHold.set(def, this.time + ms / 1000)
         this.ring(o, 0.3, 1.6, 0.3, 0xbcd6ff)
@@ -2237,13 +2249,13 @@ export class Combat {
         if (mod?.kind === 'slam') {
           // Skid Plates: the landing blast. Shoves, so it clears space where you stop.
           const at = new THREE.Vector3(ex, 0, ez)
-          const pushed = ctx.pushed
+          const pushed = ctx.full
           this.later.push({
             t: ms / 1000,
             run: () => {
               for (const e of this.enemies) {
                 if (!this.inBlast(at, e, mod.radius) || this.shaded(at, e)) continue
-                this.hitPart(e, mod.damage, pushed, def)
+                this.hitPart(e, mod.damage, pushed, def, real)
                 this.shoveFrom(e, at.x, at.z, mod.shove)
               }
               this.ring(at, 0.3, mod.radius, 0.35, 0x8fb8e8)
@@ -2313,12 +2325,13 @@ export class Combat {
    */
   private ricochet(def: AbilityDef, search: number, ctx: CastContext, r: CastResult) {
     const o = ctx.origin
-    const t = (ctx.pushed && this.threat(o, def)) || this.eyeCast(o, def, this.pickTarget(o, def.range, true))
+    const { pushed: real } = ctx
+    const t = (ctx.full && this.threat(o, def)) || this.eyeCast(o, def, this.pickTarget(o, def.range, true))
     const bank = t && !this.clearShot(o, t.pos) ? bankShot(this.terrain, o, t.pos, search, def.range) : null
     const aim = bank ? Math.atan2(bank.at.x - o.x, bank.at.z - o.z) : t ? Math.atan2(t.pos.x - o.x, t.pos.z - o.z) : ctx.facing
     // the head cants toward the bank side, so it reads "at an angle"
     r.lean = bank ? Math.sign(Math.sin(aim - ctx.facing)) || 1 : 0
-    this.spawnBolt(o, aim, def.damage, def.radius, def.range, { payer: def, bounces: 2, trail: 0.2, pushed: ctx.pushed })
+    this.spawnBolt(o, aim, def.damage, def.radius, def.range, { payer: def, bounces: 2, trail: 0.2, pushed: ctx.full, real })
     // you didn't pick the angle, so the whole path flashes first
     const points = bank && t
       ? [o.clone(), bank.at.clone(), t.pos.clone()]
@@ -2332,11 +2345,12 @@ export class Combat {
    */
   private throughLine(def: AbilityDef, breachMs: number, ctx: CastContext, r: CastResult) {
     const o = ctx.origin
-    const t = (ctx.pushed && this.threat(o, def)) || this.eyeCast(o, def, this.pickTarget(o, def.range, true))
+    const { pushed: real } = ctx
+    const t = (ctx.full && this.threat(o, def)) || this.eyeCast(o, def, this.pickTarget(o, def.range, true))
     const aim = t ? Math.atan2(t.pos.x - o.x, t.pos.z - o.z) : ctx.facing
     // he faces down the line: the draw, the beam and the recoil all run along it
     r.aim = aim
-    const dir = this.spawnBolt(o, aim, def.damage, def.radius, def.range, { payer: def, speed: PART.ghostSpeed, ghost: true, pierced: new Set(), pushed: ctx.pushed })
+    const dir = this.spawnBolt(o, aim, def.damage, def.radius, def.range, { payer: def, speed: PART.ghostSpeed, ghost: true, pierced: new Set(), pushed: ctx.full, real })
     const holes = this.terrain.breach(o.x, o.z, o.x + dir.x * def.range, o.z + dir.z * def.range, breachMs / 1000)
     this.events.onPart({ kind: 'breach', holes, open: true, seconds: breachMs / 1000 })
   }
@@ -2355,7 +2369,7 @@ export class Combat {
   /** One of Still's bolts, leaving from lens height. `scale` shrinks the mesh only, never the hit. */
   private spawnBolt(
     o: THREE.Vector3, aim: number, damage: number, radius: number, range: number,
-    opts: { payer: Payer; pierced?: Set<Enemy>; once?: Set<Enemy>; scale?: number; trail?: number; speed?: number; ghost?: boolean; bounces?: number; pushed?: boolean },
+    opts: { payer: Payer; pierced?: Set<Enemy>; once?: Set<Enemy>; scale?: number; trail?: number; speed?: number; ghost?: boolean; bounces?: number; pushed?: boolean; real?: boolean },
   ) {
     const dir = new THREE.Vector3(Math.sin(aim), 0, Math.cos(aim))
     const mesh = new THREE.Mesh(this.boltGeo, this.abilityBoltMat)
@@ -2367,7 +2381,7 @@ export class Combat {
     const speed = opts.speed ?? PART.boltSpeed
     this.bolts.push({
       mesh, payer: opts.payer, dir, life: range / speed, damage, radius, speed, pierced: opts.pierced, once: opts.once, trail: opts.trail,
-      ghost: opts.ghost, bouncesLeft: opts.bounces ?? 0, bounces: [], pushed: opts.pushed,
+      ghost: opts.ghost, bouncesLeft: opts.bounces ?? 0, bounces: [], pushed: opts.pushed, real: opts.real,
     })
     return dir
   }
@@ -2409,7 +2423,7 @@ export class Combat {
    * path when `sideways` is the travel direction (Overrun's charge). No line check:
    * the path is already clamped at the first wall. Crates on it break either way.
    */
-  private runOver(o: THREE.Vector3, end: { x: number; z: number }, width: number, damage: number, knock: number, ms: number, sideways: { x: number; z: number } | null, pushed: boolean, payer: Payer) {
+  private runOver(o: THREE.Vector3, end: { x: number; z: number }, width: number, damage: number, knock: number, ms: number, sideways: { x: number; z: number } | null, pushed: boolean, payer: Payer, real = pushed) {
     const sx = o.x
     const sz = o.z
     const ex = end.x
@@ -2425,7 +2439,7 @@ export class Combat {
           t: reachT * (ms / 1000),
           run: () => {
             if (e.dead || distToSegment(e.pos.x, e.pos.z, sx, sz, ex, ez) > width + 1.1) return
-            this.hitPart(e, damage, pushed, payer)
+            this.hitPart(e, damage, pushed, payer, real)
             if (sideways) {
               const nx = -sideways.z
               const nz = sideways.x
@@ -2583,13 +2597,14 @@ export class Combat {
 
   /**
    * A broken windup: its booked lock goes with it, and the run hears of it (`push`: the break rule's;
-   * `by`: the hand or the eye broke it, not a part; `tell`: Parry caught a pressure body's own tell, not a windup).
+   * `by`: the hand or the eye broke it, not a part; `tell`: Parry caught a pressure body's own tell, not a windup;
+   * `ready`: the push effect came from a ready cast under "weight", not a real push: the log splits the two).
    */
-  private interrupted(e: Enemy, push = false, by?: AutoForm, tell = false, parry = false) {
+  private interrupted(e: Enemy, push = false, by?: AutoForm, tell = false, parry = false, ready = false) {
     this.book.unbook(e)
     const ev = push ? { kind: 'interrupt' as const, enemy: e, push } : by ? { kind: 'interrupt' as const, enemy: e, by } : { kind: 'interrupt' as const, enemy: e }
     // `parry`: Parry Clamp's snap did it (a windup broken or a tell caught): the parry-catch trial (main) reads it
-    this.events.onPart({ ...ev, ...(tell ? { tell: true } : {}), ...(parry ? { parry: true } : {}) })
+    this.events.onPart({ ...ev, ...(tell ? { tell: true } : {}), ...(parry ? { parry: true } : {}), ...(ready ? { ready: true } : {}) })
   }
 
   /** Every enemy instant passes here: Combat does its own part first (a rush into a crate breaks it), then the run's. */
