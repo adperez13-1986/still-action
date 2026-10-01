@@ -9,6 +9,7 @@ import { Combat, eliteLine, PARRY, HAND, HAND_REACH, EYE, type Archetype, type A
 import { STARTING, PARTS, byId, type AbilityDef, type AbilityShape, type BeatKey, type Lean } from './abilities'
 import { SLOT_NAMES, type SlotName } from './still'
 import { TEMPER, ROMAN, tempered } from './temper'
+import { presetId as weightPresetId, setPreset as setWeightPreset, weighed, WEIGHT_PRESETS, type PresetId } from './weight'
 import { curveAt } from './curve'
 import { MASTERY, MASTERY_MAX, FORM_NAME, masteryOffer, type MasteryId, type MasteryForm } from './mastery'
 import { STATE_IDS, pairWith, paired, type StateId } from './states'
@@ -220,6 +221,8 @@ const MAX_FRAME = 0.25
 /** Hit feel lives here: a few frames of frozen time and a kick to the camera. */
 let hitstop = 0
 let shake = 0
+/** Push signatures made (the embers of a real push), counted in DEV for the weight trial's checks (__fx). */
+let pushSig = 0
 /** Hits landed during the cast being resolved: Piston sounds different when it connects. */
 let castHits = 0
 
@@ -454,7 +457,10 @@ const combat = new Combat(world.scene, OPEN, {
       }
       if (ev.push) {
         const st = run.stats[run.stats.length - 1]
-        if (st) st.breaks++
+        if (st) {
+          st.breaks++
+          st.breaksBy.pushed++
+        }
         // a ram broken by a push reels with its hatch open: dazed, and the slam when it shuts
         const c = ev.enemy
         if (c instanceof Charger && c.stunned && run.phase === 'crawl') loops.set(c, sfx.dazed(CHARGER.reelMs, panOf(c.pos)))
@@ -1573,6 +1579,19 @@ interface DepthStats {
   kills?: { part: number; auto: number; other: number }
   fightS?: number
   bankBeats?: number; emptyBeats?: number
+  /**
+   * The "weight" trial (design/lean/WEIGHT.md; the word is a PLACEHOLDER), logged with the switch on or off. `weight`: on at entry.
+   * `weightMixed`: it was flipped during this depth (leave the depth out when judging). `breaksBy`: splits `breaks` by whether a real
+   * push or a ready cast broke the windup (ready + pushed === breaks; ready stays 0 with the switch off). `freezeMs`: real frozen ms in
+   * the crawl, all sources, measured in frame() (headless __step never runs it). `freezePartMs` / `freezeAutoMs`: what the contact
+   * freeze added (after merging), by source; 0 with the switch off.
+   */
+  weight: boolean
+  weightMixed?: true
+  breaksBy: { ready: number; pushed: number }
+  freezeMs: number
+  freezePartMs: number
+  freezeAutoMs: number
   /** Seconds actually played on this depth's crawl: game time, so pauses, loot screens and the app in the background don't count. */
   playS?: number
   /** The pressure prototype on at this depth (its ordinary packs), and integrity lost here, all sources. */
@@ -2296,6 +2315,38 @@ function applyFollowThrough(on: boolean) {
   combat.bank = 0
 }
 
+/**
+ * The "weight" trial (design/lean/WEIGHT.md; weight.ts holds every number). On, timing, drama, full effect on ready casts, part damage
+ * and area take effect at once, on the next press; pack and boss HP from the next level entered. A pause switch, kept per device, off
+ * by default. The depth it was flipped on is logged `weightMixed`, to leave out when judging. The words are PLACEHOLDER (his to write).
+ * Off is today's game exactly.
+ */
+const WEIGHT_KEY = 'still-action.weight'
+let weightOn = (() => {
+  try {
+    return localStorage.getItem(WEIGHT_KEY) === '1'
+  } catch {
+    return false
+  }
+})()
+pause.setSwitch('weight', () => weightOn, (on) => {
+  weightOn = on
+  if (run.phase === 'crawl' && combat.weight !== on) {
+    applyWeight(on)
+    const st = run.stats[run.stats.length - 1]
+    if (st) st.weightMixed = true
+  }
+  try {
+    localStorage.setItem(WEIGHT_KEY, on ? '1' : '0')
+  } catch {
+    // private window: it holds for this session
+  }
+})
+/** The switch's state applied to Combat: at each level, when it's flipped mid-depth, and by the DEV hook. (The freeze merge state resets here from W1 on.) */
+function applyWeight(on: boolean) {
+  combat.weight = on
+}
+
 /** Combat time of the last readying, and whether one is waiting for the button to have finished its cast (the cast sets the cooldown after the snap). */
 let parryReadyAt = -Infinity
 let parryReadyPending = false
@@ -2916,7 +2967,11 @@ function enterLevel(depth: number, o: { seed?: number; bossFelled?: boolean; res
   combat.counters = combat.pressure && countersOn
   applyParryCatch(parryCatchOn)
   applyFollowThrough(followThroughOn)
+  applyWeight(weightOn)
   combat.curve = curveAt(depth, RUN_DEPTHS)
+  // W3 (design/lean/WEIGHT.md §2.2): combat.packHpMul / heavyHpMul follow the preset here, and the boss's HP below; until then they stay 1 (the fields exist, addPack reads them)
+  combat.packHpMul = 1
+  combat.heavyHpMul = 1
   const sidings = level.sidings
   for (const p of level.packs) {
     // the Lobber, the Signalman (B4) and the Handcar (B5); the Porter stays out until its step; a lesson pack's Signalman calls once on waking (R10)
@@ -2976,7 +3031,7 @@ function enterLevel(depth: number, o: { seed?: number; bossFelled?: boolean; res
   run.depth = depth
   closeStats()
   run.stats.push({ depth, fights: 0, pushes: 0, breaks: 0, deadTaps: 0, quiets: 0, strainIn: run.strain, strainOut: null, hand: 0, shots: 0, eye: 0, eyeCasts: 0, handBreaks: 0, braced: 0, playS: 0, eyeBreaks: 0, openings: 0, plantedS: 0, autoDmg: { hand: 0, eye: 0 }, riders: {}, pressure: combat.pressure, hpLost: 0,
-    followThrough: combat.followThrough, autoDmgReal: { hand: 0, eye: 0 }, kills: { part: 0, auto: 0, other: 0 }, fightS: 0, bankBeats: 0, emptyBeats: 0, temper: temperOn, melts: 0,
+    followThrough: combat.followThrough, weight: combat.weight, breaksBy: { ready: 0, pushed: 0 }, freezeMs: 0, freezePartMs: 0, freezeAutoMs: 0, autoDmgReal: { hand: 0, eye: 0 }, kills: { part: 0, auto: 0, other: 0 }, fightS: 0, bankBeats: 0, emptyBeats: 0, temper: temperOn, melts: 0,
     counters: combat.counters, lunges: { started: 0, hit: 0, broken: 0 }, catches: { hulk: 0, sentinel: 0, mite: 0 }, parryCatch: combat.parryCatch, parryReadies: 0, ducks: { started: 0, peeked: 0, backed: 0 },
     states: Object.fromEntries(STATE_IDS.map((id) => [id, { set: 0, paid: 0, expired: 0 }])) as DepthStats['states'],
     stateBonus: Object.fromEntries(STATE_IDS.map((id) => [id, 0])) as DepthStats['stateBonus'],
@@ -3864,7 +3919,10 @@ function castFx(def: AbilityDef, r: CastResult, pushed: boolean) {
     default:
       break
   }
-  if (pushed) vfx.sparks(at3(still.pos, 1.2), EMBER, 14, 4)
+  if (pushed) {
+    vfx.sparks(at3(still.pos, 1.2), EMBER, 14, 4)
+    if (import.meta.env.DEV) pushSig++
+  }
 }
 
 /** Patient Lens has banked a full shot, and the button has said so once. */
@@ -4570,6 +4628,11 @@ function frame(nowMs: number) {
   if (paused || held) {
     // frozen: render only
   } else if (hitstop > 0) {
+    // the weight trial's log: the real frozen ms, all sources (headless __step never gets here)
+    if (run.phase === 'crawl') {
+      const st = run.stats[run.stats.length - 1]
+      if (st) st.freezeMs += Math.min(hitstop, elapsed) * 1000
+    }
     hitstop -= elapsed
   } else {
     accumulator += elapsed
@@ -5040,6 +5103,35 @@ if (import.meta.env.DEV) {
     __followThrough: (on?: boolean) => {
       if (on !== undefined) applyFollowThrough(on)
       return combat.followThrough
+    },
+    /** The weight trial's switch, applied now (HP from the next level entered, as in play); returns whether it is on. */
+    __weight: (on?: boolean) => {
+      if (on !== undefined) applyWeight(on)
+      return combat.weight
+    },
+    /** The active weight preset's id; sets it first when given (checks and screenshots only; nothing persists it). */
+    __weightPreset: (id?: PresetId) => {
+      if (id !== undefined) {
+        if (!(id in WEIGHT_PRESETS)) throw new Error(`no weight preset ${id}`)
+        setWeightPreset(id)
+      }
+      return weightPresetId()
+    },
+    /** A part as the weight trial weighs it, at a rank: weighed(tempered(byId(id), rank)), as plain JSON. */
+    __weighed: (id: string, rank = 1) => JSON.parse(JSON.stringify(weighed(tempered(byId(id), rank)))),
+    /** __equip at a temper rank. */
+    __equipRank: (id: string, rank: number) => {
+      const def = tempered(byId(id), rank)
+      swapIn(def)
+      still.wear(def.slot, def)
+    },
+    /** The feel's three counters, read and zeroed: the freeze and the shake pending, and the push signatures made since the last read. */
+    __fx: () => {
+      const out = { hitstop, shake, pushSig }
+      hitstop = 0
+      shake = 0
+      pushSig = 0
+      return out
     },
     /** The core's drawn light: the sum of its colour's channels (follow-through dims it; off never moves it by itself). */
     __coreLight: () => {

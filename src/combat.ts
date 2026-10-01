@@ -445,6 +445,13 @@ export class Combat {
   followThrough = false
   /** Auto beats banked by presses, 0..BANK.cap. Empties with the level and with the quiet. */
   bank = 0
+  /**
+   * The "weight" trial (design/lean/WEIGHT.md; the word is a PLACEHOLDER): main sets these from its pause switch and the preset
+   * (weight.ts). Off (false, 1, 1) is exactly today's game. `packHpMul` / `heavyHpMul` are read by addPack and are 1 on a boss level.
+   */
+  weight = false
+  packHpMul = 1
+  heavyHpMul = 1
   /** Who dealt each body's killing blow, read when it is buried. Absent: a hazard, a wall, a train. */
   private readonly felledBy = new WeakMap<Enemy, 'part' | 'auto'>()
   /**
@@ -2804,10 +2811,11 @@ export class Combat {
     // the depth curve (curve.ts): ordinary bodies' HP and damage; the crowned leader's comes with its crown
     for (const e of pack.members) {
       if (elite && e === pack.members[0]) continue
-      e.hp = Math.round(e.hp * this.curve.hp)
+      e.hp = Math.round(e.hp * this.curve.hp * this.packHpMul)
       if (this.curve.dmg !== 1) e.dmgMul = this.curve.dmg
     }
     if (elite && pack.members[0]) this.crown(pack, pack.members[0], elite.mod, elite.name)
+    if (elite && pack.members[0] && this.heavyHpMul !== 1) pack.members[0].hp = Math.round(pack.members[0].hp * this.heavyHpMul)
     // the crowned leader alone is the heavy (a D2 unique and its minions): its packmates are pressure too.
     // Not a brood's: an elite pack's mites keep the surge and its ring, her brood's or not
     if (this.pressure) {
