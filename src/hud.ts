@@ -46,6 +46,23 @@ const BREAK_HINT = 'break'
 const PAY_CAPTION = 'hold \u00b7 pay it'
 const PAY_HINT = 'pay'
 
+/** "tap push" (design/lean/TAP-PUSH.md): the queue window and the same-button mash guard, game ms. */
+export const TAP = { queueMs: 300, guardMs: 250, queueSlackMs: 50, nbLogMs: 1000 } as const
+export type TapAnswer = 'cast' | 'push' | 'queued' | 'guarded'
+
+/**
+ * What a touch-down on a filled, enabled button answers with the switch on. Pure.
+ * leftMs: max(cooldown left, heat left), unrounded (b.leftAtDown). sinceFireMs: now - the button's last successful fire.
+ * sinceTouchMs: now - the button's last touch (the guard rolls: a sustained mash pays once). queued: a queue is already pending on this button.
+ * INV: ready -> 'cast' (the guard never touches a ready press: a live anchor's second press stays a press).
+ * INV: no answer is a no-op without a visible and audible reply (TAP-PUSH.md 2.4).
+ */
+export function tapAnswer(t: { ready: boolean; leftMs: number; sinceFireMs: number; sinceTouchMs: number; queued: boolean }): TapAnswer {
+  if (t.ready) return 'cast'
+  if (t.queued || t.sinceFireMs < TAP.guardMs || t.sinceTouchMs < TAP.guardMs) return 'guarded'
+  return t.leftMs <= TAP.queueMs ? 'queued' : 'push'
+}
+
 /** What the run tells the button after a press: start the cooldown, stay live, or nothing happened. */
 export type FireResult = Pick<CastResult, 'cooldown'>
 
@@ -54,7 +71,16 @@ export type FireResult = Pick<CastResult, 'cooldown'>
  * dead: released on a cooling button before the push fired. refused: the run said no.
  * `leftMs`: the cooldown (or heat) left on the button when the press went down, game ms; 0 if it was ready.
  */
-export interface Press { slot: SlotName; ms: number; ready: boolean; result: 'cast' | 'push' | 'dead' | 'refused'; leftMs: number }
+export interface Press {
+  slot: SlotName; ms: number; ready: boolean; result: 'cast' | 'push' | 'dead' | 'refused' | 'queued' | 'guarded'; leftMs: number
+  /** Game ms at the touch-down, rounded. */
+  at: number
+  /** The neighbour log: another filled button went down `nbMs` (wall, rounded) before this one, under TAP.nbLogMs. Only logged. */
+  nbMs?: number
+  nbSlot?: SlotName
+  /** The answer came from the "tap push" path (switch on). */
+  tp?: true
+}
 
 interface ButtonState {
   el: HTMLElement
@@ -83,6 +109,9 @@ interface ButtonState {
   /** The last dead tap (game ms), and the arc it drew: from this angle, held, then pulled back. */
   deadAt: number
   arc: { from: number; at: number; hold: number } | null
+  /** The neighbour log of this press: the other button that went down just before it, and how long before (wall ms). Written at down, read at up. */
+  nbMs: number | undefined
+  nbSlot: SlotName | undefined
   /** Ready last frame: a part that just started recharging may owe its one-time push hint. */
   wasReady: boolean
   /** The push cue drawn now ('chilled', 'chilled lit'), or '' for none: repaints only on change. */
@@ -218,6 +247,13 @@ export interface Hud {
    * once per save, a caption over it.
    */
   stateCue: (slot: SlotName, id: StateId | null, lit: boolean) => void
+  /**
+   * The "tap push" trial (design/lean/TAP-PUSH.md; the words are PLACEHOLDER): on, a touch on a cooling button answers at once instead
+   * of waiting for a hold. P0: the flag exists and nothing reads it yet, so on behaves as off.
+   */
+  tapPush: boolean
+  /** Dev only: a cooling state for checks, `ms` left on a slot's cooldown from now. */
+  devCool: (slot: SlotName, ms: number) => void
   /** Dev only: the path a tap (false) or a push (true) takes once the gesture is recognised. */
   fireSlot: (slot: SlotName, pushed: boolean) => void
   /** Dev only: hold the stick at a world direction (0, 0 lets go). */
@@ -365,7 +401,7 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
     el.style.right = `calc(env(safe-area-inset-right, 0px) + ${PAD + ARC_R * Math.cos(th) - BTN / 2}px)`
     el.style.bottom = `calc(env(safe-area-inset-bottom, 0px) + ${PAD + ARC_R * Math.sin(th) - BTN / 2}px)`
     root.appendChild(el)
-    const b: ButtonState = { el, cdEl: el.querySelector<HTMLElement>('.cd')!, slot, def: null, icon: null, readyAt: 0, hotUntil: 0, hotMs: 0, pointerId: null, downAt: 0, downWall: 0, readyAtDown: true, leftAtDown: 0, pushed: false, pressed: null, queued: false, deadAt: -Infinity, arc: null, wasReady: true, cue: '' }
+    const b: ButtonState = { el, cdEl: el.querySelector<HTMLElement>('.cd')!, slot, def: null, icon: null, readyAt: 0, hotUntil: 0, hotMs: 0, pointerId: null, downAt: 0, downWall: 0, readyAtDown: true, leftAtDown: 0, pushed: false, pressed: null, queued: false, deadAt: -Infinity, arc: null, nbMs: undefined, nbSlot: undefined, wasReady: true, cue: '' }
     paint(b)
     return b
   })
@@ -437,7 +473,7 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
       strainMeter.appendChild(tick)
     }
   }
-  const state = { moveX: 0, moveZ: 0, strain: 0, integrity: 1, enabled: true, clock: 0, breakRule: false }
+  const state = { moveX: 0, moveZ: 0, strain: 0, integrity: 1, enabled: true, clock: 0, breakRule: false, tapPush: false }
 
   // --- stick ---
   let stickPointer: number | null = null
@@ -494,6 +530,8 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
   }
 
   // --- ability buttons: a ready one fires on the press, holding a cooling one pushes it ---
+  /** The last touch-down on any filled button (wall ms): the neighbour log's reference. */
+  let lastDown: { slot: SlotName; wall: number } | null = null
   for (const b of buttons) {
     b.el.addEventListener('pointerdown', (e) => {
       b.el.setPointerCapture(e.pointerId)
@@ -507,6 +545,16 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
       // the hold ring takes over from any dead-tap arc still pulling back
       b.arc = null
       b.el.classList.add('press')
+      // the neighbour log, both modes: a press on another filled button soon after the last one. Only logged; nothing reads it
+      b.nbMs = undefined
+      b.nbSlot = undefined
+      if (b.def) {
+        if (lastDown && lastDown.slot !== b.slot && e.timeStamp - lastDown.wall < TAP.nbLogMs) {
+          b.nbMs = Math.round(e.timeStamp - lastDown.wall)
+          b.nbSlot = lastDown.slot
+        }
+        lastDown = { slot: b.slot, wall: e.timeStamp }
+      }
       // on the press, not the release: a thumb rests on a button about half a second
       if (b.readyAtDown) b.pressed = fire(b, false) ? 'cast' : 'refused'
       else if (b.readyAt - state.clock <= BUFFER_MS && state.clock >= b.hotUntil) b.pressed = 'buffered'
@@ -529,7 +577,7 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
           if (b.def && state.enabled) deadTap(b)
         }
         if (!b.def || !state.enabled) return
-        const p: Press = { slot: b.slot, ms: e.timeStamp - b.downWall, ready: b.readyAtDown, result, leftMs: Math.round(b.leftAtDown) }
+        const p: Press = { slot: b.slot, ms: e.timeStamp - b.downWall, ready: b.readyAtDown, result, leftMs: Math.round(b.leftAtDown), at: Math.round(b.downAt), ...(b.nbMs !== undefined ? { nbMs: b.nbMs, nbSlot: b.nbSlot! } : {}) }
         for (const cb of pressListeners) cb(p)
       })
     }
@@ -578,6 +626,8 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
     set strain(v: number) { state.strain = v },
     get integrity() { return state.integrity },
     set integrity(v: number) { state.integrity = v },
+    get tapPush() { return state.tapPush },
+    set tapPush(v: boolean) { state.tapPush = v },
     get breakRule() { return state.breakRule },
     set breakRule(v: boolean) { state.breakRule = v },
     get enabled() { return state.enabled },
@@ -925,6 +975,10 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
       // as the fingers would: a tap on a cooling button does nothing, and a hold on a ready one fires as a tap
       if (!ready && !pushed) return
       fire(b, pushed && !ready)
+    },
+    devCool(slot, ms) {
+      const b = buttons.find((x) => x.slot === slot)!
+      b.readyAt = state.clock + ms
     },
     setStick(x, z) {
       state.moveX = x

@@ -2,7 +2,7 @@ import './style.css'
 import * as THREE from 'three'
 import { createWorld, grade } from './world'
 import { Still } from './still'
-import { createHud, type Press } from './hud'
+import { createHud, tapAnswer, type Press } from './hud'
 import { createGradePanel, apply as applyGrade } from './grade'
 import { createPacer, createQuality, createReadout, FRAME_S, BEHIND_CARD_S, IDLE_ROOM_S } from './perf'
 import { Combat, eliteLine, PARRY, HAND, HAND_REACH, EYE, type Archetype, type AutoForm, type CastResult, type EliteMod, type Pack } from './combat'
@@ -1654,6 +1654,20 @@ interface DepthStats {
   freezeMs: number
   freezePartMs: number
   freezeAutoMs: number
+  /**
+   * The "tap push" trial (design/lean/TAP-PUSH.md; PLACEHOLDER words). `tapPush`: hud.tapPush at entry. `tapPushMixed`: flipped
+   * during this depth (leave it out when judging). `tapPushes`: pushes a touch made with the switch on (<= pushes; 0 off).
+   * `queued` / `guarded`: touches that answered so (0 off). `queueDropped`: queues that never fired (heat, a swap, the pause,
+   * the switch flipped, refused; 0 off), so free queued casts = queued - queueDropped. `strainAtBoss`: run.strain on the first
+   * tick this depth's boss was awake (absent on a depth without one). Strain at a boss is now logged with the switch on or off.
+   */
+  tapPush: boolean
+  tapPushMixed?: true
+  tapPushes: number
+  queued: number
+  queueDropped: number
+  guarded: number
+  strainAtBoss?: number
   /** Seconds actually played on this depth's crawl: game time, so pauses, loot screens and the app in the background don't count. */
   playS?: number
   /** The pressure prototype on at this depth (its ordinary packs), and integrity lost here, all sources. */
@@ -1689,7 +1703,7 @@ interface DepthStats {
   menders?: { met: number; cut: number; killed: number; healed: number }
 }
 /** One press on a filled button, for the playtest file: how long taps really last on the phone. */
-interface TapLog { depth: number; slot: SlotName; ms: number; ready: boolean; result: Press['result']; leftMs: number }
+interface TapLog { depth: number; slot: SlotName; ms: number; ready: boolean; result: Press['result']; leftMs: number; at: number; nbMs?: number; nbSlot?: SlotName; tp?: true }
 
 const run = {
   phase: 'boot' as Phase,
@@ -2406,6 +2420,33 @@ pause.setSwitch('weight', () => weightOn, (on) => {
     // private window: it holds for this session
   }
 })
+/**
+ * The "tap push" trial (design/lean/TAP-PUSH.md; the words are PLACEHOLDER, his to write). A pause switch, kept per device, off by
+ * default; it applies at once, at any phase (a gesture, no level boundary). The depth it was flipped on is logged `tapPushMixed`,
+ * to leave out when judging. Off is today's gesture exactly.
+ */
+const TAP_PUSH_KEY = 'still-action.tapPush'
+let tapPushOn = (() => {
+  try {
+    return localStorage.getItem(TAP_PUSH_KEY) === '1'
+  } catch {
+    return false
+  }
+})()
+hud.tapPush = tapPushOn
+pause.setSwitch('tap push', () => tapPushOn, (on) => {
+  tapPushOn = on
+  if (run.phase === 'crawl' && hud.tapPush !== on) {
+    const st = run.stats[run.stats.length - 1]
+    if (st) st.tapPushMixed = true
+  }
+  hud.tapPush = on
+  try {
+    localStorage.setItem(TAP_PUSH_KEY, on ? '1' : '0')
+  } catch {
+    // private window: it holds for this session
+  }
+})
 /** The switch's state applied to Combat: at each level, when it's flipped mid-depth, and by the DEV hook. (The freeze merge state resets here.) */
 function applyWeight(on: boolean) {
   combat.weight = on
@@ -2659,6 +2700,8 @@ function takePart(g: GroundPart) {
 let paused = false
 /** Dev only: the rAF loop renders and nothing steps (async checks). */
 let held = false
+/** DEV: the HUD clock stands still in frame() (only __step / __until move it), so a real press meets an exact cooldown. */
+let clockHeld = false
 /** Game time in ms. Cooldowns run on this, so pausing can't be used to wait them out. */
 let clock = 0
 
@@ -3103,7 +3146,7 @@ function enterLevel(depth: number, o: { seed?: number; bossFelled?: boolean; res
   run.depth = depth
   closeStats()
   run.stats.push({ depth, fights: 0, pushes: 0, breaks: 0, deadTaps: 0, quiets: 0, strainIn: run.strain, strainOut: null, hand: 0, shots: 0, eye: 0, eyeCasts: 0, handBreaks: 0, braced: 0, playS: 0, eyeBreaks: 0, openings: 0, plantedS: 0, autoDmg: { hand: 0, eye: 0 }, riders: {}, pressure: combat.pressure, hpLost: 0,
-    followThrough: combat.followThrough, weight: combat.weight, breaksBy: { ready: 0, pushed: 0 }, freezeMs: 0, freezePartMs: 0, freezeAutoMs: 0, autoDmgReal: { hand: 0, eye: 0 }, kills: { part: 0, auto: 0, other: 0 }, fightS: 0, bankBeats: 0, emptyBeats: 0, temper: temperOn, melts: 0,
+    followThrough: combat.followThrough, weight: combat.weight, breaksBy: { ready: 0, pushed: 0 }, freezeMs: 0, freezePartMs: 0, freezeAutoMs: 0, tapPush: hud.tapPush, tapPushes: 0, queued: 0, queueDropped: 0, guarded: 0, autoDmgReal: { hand: 0, eye: 0 }, kills: { part: 0, auto: 0, other: 0 }, fightS: 0, bankBeats: 0, emptyBeats: 0, temper: temperOn, melts: 0,
     counters: combat.counters, lunges: { started: 0, hit: 0, broken: 0 }, catches: { hulk: 0, sentinel: 0, mite: 0 }, parryCatch: combat.parryCatch, parryReadies: 0, ducks: { started: 0, peeked: 0, backed: 0 },
     states: Object.fromEntries(STATE_IDS.map((id) => [id, { set: 0, paid: 0, expired: 0 }])) as DepthStats['states'],
     stateBonus: Object.fromEntries(STATE_IDS.map((id) => [id, 0])) as DepthStats['stateBonus'],
@@ -3790,7 +3833,7 @@ hud.onFire((def, pushed) => {
 
 hud.onPress((p) => {
   if (run.phase !== 'crawl') return
-  run.taps.push({ depth: run.depth, slot: p.slot, ms: Math.round(p.ms), ready: p.ready, result: p.result, leftMs: p.leftMs })
+  run.taps.push({ depth: run.depth, slot: p.slot, ms: Math.round(p.ms), ready: p.ready, result: p.result, leftMs: p.leftMs, at: p.at, ...(p.nbMs !== undefined ? { nbMs: p.nbMs, nbSlot: p.nbSlot } : {}), ...(p.tp ? { tp: true as const } : {}) })
   if (p.result !== 'dead') return
   const st = run.stats[run.stats.length - 1]
   if (st) st.deadTaps++
@@ -4322,6 +4365,9 @@ function simulate(realDt: number) {
   const boss = combat.boss
   if (boss && !boss.dead) {
     const awakeBoss = combat.awake.includes(boss)
+    const bossSt = run.stats[run.stats.length - 1]
+    // the strain he brought to this boss (strainIn is the strain at level entry, not at the wake): once, on the first tick it is awake
+    if (awakeBoss && bossSt && bossSt.strainAtBoss === undefined) bossSt.strainAtBoss = run.strain
     const def = boss.def
     hud.bossBar(awakeBoss ? { name: def.name, frac: boss.hp / boss.maxHp, phase2: boss.phase2, open: boss.open, openWord: def.openWord, board: boss.board?.() ?? '' } : null)
     if (boss.justPhase2) {
@@ -4803,7 +4849,7 @@ function frame(nowMs: number) {
     strain: run.strain / 20,
     home,
   })
-  if (!paused) clock += elapsed * 1000
+  if (!paused && !clockHeld) clock += elapsed * 1000
   drawEliteLabels()
   drawRoadLabels()
   partFaces(elapsed)
@@ -5174,6 +5220,20 @@ if (import.meta.env.DEV) {
     },
     __snapshot: () => (save.run ? JSON.parse(JSON.stringify(save.run)) : null),
     __hold: (on: boolean) => { held = on },
+    /** The "tap push" switch, applied now (no pause screen, no log flag); returns whether it is on. */
+    __tapPush: (on?: boolean) => {
+      if (on !== undefined) hud.tapPush = on
+      return hud.tapPush
+    },
+    /** A cooling state for checks: `ms` left on a slot's cooldown. */
+    __cool: (slot: SlotName, ms: number) => hud.devCool(slot, ms),
+    /** The pure answer table of a touch-down. */
+    __tapAnswer: (input: Parameters<typeof tapAnswer>[0]) => tapAnswer(input),
+    /** While on, frame() does not advance the HUD clock: only __step / __until move it. Returns whether it is held. */
+    __clockHold: (on?: boolean) => {
+      if (on !== undefined) clockHeld = on
+      return clockHeld
+    },
     /** B4: every body out of the level entered (its Line, terrain and breakables stay), for checks. */
     __emptyLevel: () => combat.clearBodies(),
     /** B4: every call of a stage-B sound, and of aim / rev, in order (a headless page's AudioContext never runs). */
