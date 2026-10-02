@@ -1,0 +1,257 @@
+import * as THREE from 'three'
+import { DECAL_Y } from './world'
+import { RING, markCap } from './cores'
+import type { Combat } from './combat'
+import type { PartEvent } from './parts'
+
+/**
+ * The core's marks, drawn (design/buildlayer/BUILD.md §2.10): a ring at the feet of every body holding marks, filled in thirds (fifths under Deep Frost).
+ *
+ * The frame budget: **one InstancedMesh per ring segment** (3, and 5 for Deep), each `RING.maxBodies` instances, one shared material. A body with 2 marks
+ * takes instance j of segments 0 and 1. So the draw calls this adds are the segment count (3, or 5) whatever the number of marked bodies, and nothing is
+ * created after the constructor: the 3-segment and the 5-segment sets are both built once and shown or hidden. A frame's cost is one pass over `combat.statuses()`
+ * and a write of 16 floats a mark into preallocated arrays; no allocation unless more than `maxBodies` bodies are marked (then the farthest go undrawn;
+ * their marks still count).
+ *
+ * The look, a departure from the brief (which had one additive material and `instanceColor` for the fade): the ring is **laid over the floor, not added to it**
+ * (handring.ts learned that an added cold vanishes on the ruin's lit stone, and washes to flat peach on a warm floor), and each segment carries its own dark
+ * rim in the same geometry (vertex colours), so a bright core reads on a dark floor and a dark rim on a bright one, at no extra draw call. The fade is a
+ * per-instance alpha attribute (`aAlpha`), since normal blending cannot fade through a colour. Wake's ring is plain; Ram's cracked look is B3's (nothing is
+ * drawn under Ram yet).
+ */
+
+/** The look. Radii are fractions of the ring's outer radius (1). */
+const LOOK = {
+  /** The dark rim under the core: [inner, outer], and its opacity. */
+  rim: [0.68, 1.0] as const, rimA: 0.62, rimColor: [0.02, 0.04, 0.09] as const,
+  /** The cold core band: [inner, outer], and its opacity. */
+  core: [0.74, 0.94] as const, coreA: 0.96, coreColor: [0.42, 0.72, 1.0] as const,
+  /** Triangles along a full circle. */
+  steps: 36,
+  /** The floor lift above the decals' DECAL_Y. */
+  lift: 0.02,
+  /** Each segment's start, so the first third sits at the back-left and they fill clockwise on screen. */
+  startDeg: 90,
+}
+/** Drains running at once (a spend's last RING.drainS): more than a handful never overlap. */
+const DRAINS = 24
+const MAX_SEG = 5
+
+const FLOOR_Y = DECAL_Y + LOOK.lift
+
+/** One band of an arc on the floor, appended to the position / colour arrays: radii r0..r1, from angle a0 to a1 (radians), in `steps` quads. The material is double-sided. */
+function band(pos: number[], col: number[], r0: number, r1: number, a0: number, a1: number, steps: number, rgb: readonly number[], alpha: number) {
+  for (let i = 0; i < steps; i++) {
+    const t0 = a0 + ((a1 - a0) * i) / steps
+    const t1 = a0 + ((a1 - a0) * (i + 1)) / steps
+    // the quad's corners: inner at t0, inner at t1, outer at t0, outer at t1; two triangles
+    const c: [number, number][] = [[Math.cos(t0) * r0, Math.sin(t0) * r0], [Math.cos(t1) * r0, Math.sin(t1) * r0], [Math.cos(t0) * r1, Math.sin(t0) * r1], [Math.cos(t1) * r1, Math.sin(t1) * r1]]
+    for (const k of [0, 1, 2, 1, 3, 2]) {
+      const [x, z] = c[k]!
+      pos.push(x, 0, z)
+      col.push(rgb[0]!, rgb[1]!, rgb[2]!, alpha)
+    }
+  }
+}
+
+/** Segment `i` of `cap`: a dark rim band and the cold band on it, an arc of 360 / cap less the gap. Unit outer radius. */
+function segmentGeometry(i: number, cap: number): THREE.BufferGeometry {
+  const span = (Math.PI * 2) / cap
+  const gap = (RING.gapDeg * Math.PI) / 180
+  // clockwise on screen: the angle runs the other way over the floor
+  const a0 = (LOOK.startDeg * Math.PI) / 180 - i * span - gap / 2
+  const a1 = a0 - (span - gap)
+  const pos: number[] = []
+  const col: number[] = []
+  const steps = Math.max(4, Math.round((LOOK.steps * (span - gap)) / (Math.PI * 2)))
+  band(pos, col, LOOK.rim[0], LOOK.rim[1], a0, a1, steps, LOOK.rimColor, LOOK.rimA)
+  band(pos, col, LOOK.core[0], LOOK.core[1], a0, a1, steps, LOOK.coreColor, LOOK.coreA)
+  const g = new THREE.BufferGeometry()
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3))
+  g.setAttribute('color', new THREE.Float32BufferAttribute(col, 4))
+  g.setAttribute('aAlpha', new THREE.InstancedBufferAttribute(new Float32Array(RING.maxBodies + DRAINS), 1))
+  return g
+}
+
+export class MarkFx {
+  readonly group = new THREE.Group()
+  private readonly mat: THREE.MeshBasicMaterial
+  /** Segment meshes by ring size: [3 segments, 5 segments]. Built once. */
+  private readonly sets: Record<3 | 5, THREE.InstancedMesh[]> = { 3: [], 5: [] }
+  // one frame's gathered rings: where, how big, how many segments, how opaque, how shrunk
+  private readonly gx = new Float32Array(RING.maxBodies + DRAINS)
+  private readonly gz = new Float32Array(RING.maxBodies + DRAINS)
+  private readonly gr = new Float32Array(RING.maxBodies + DRAINS)
+  private readonly gn = new Uint8Array(RING.maxBodies + DRAINS)
+  private readonly ga = new Float32Array(RING.maxBodies + DRAINS)
+  private readonly gd = new Float32Array(RING.maxBodies + DRAINS)
+  /** Rings draining into a spend: a ring of `dn` segments at (dx, dz), age `dt` of RING.drainS. dn 0: free. */
+  private readonly dx = new Float32Array(DRAINS)
+  private readonly dz = new Float32Array(DRAINS)
+  private readonly dr = new Float32Array(DRAINS)
+  private readonly dn = new Uint8Array(DRAINS)
+  private readonly dt = new Float32Array(DRAINS)
+  private dNext = 0
+  /** Marked bodies in the last frame, drawn and not (the log of the cap). */
+  drawn = 0
+  skipped = 0
+
+  constructor(scene: THREE.Scene) {
+    this.mat = new THREE.MeshBasicMaterial({
+      color: 0xffffff, vertexColors: true, transparent: true, depthWrite: false, fog: false, side: THREE.DoubleSide,
+      // a transparent double-sided material is drawn twice (back faces, then front) unless told otherwise: one draw call a segment, not two
+      forceSinglePass: true,
+    })
+    // a per-instance alpha: the fade of a ring that is running out, and the drain of one being spent
+    this.mat.onBeforeCompile = (sh) => {
+      sh.vertexShader = sh.vertexShader
+        .replace('#include <common>', '#include <common>\nattribute float aAlpha;\nvarying float vAlpha;')
+        .replace('#include <begin_vertex>', '#include <begin_vertex>\nvAlpha = aAlpha;')
+      sh.fragmentShader = sh.fragmentShader
+        .replace('#include <common>', '#include <common>\nvarying float vAlpha;')
+        .replace('#include <color_fragment>', '#include <color_fragment>\ndiffuseColor.a *= vAlpha;')
+    }
+    for (const cap of [3, 5] as const) {
+      for (let i = 0; i < cap; i++) {
+        const m = new THREE.InstancedMesh(segmentGeometry(i, cap), this.mat, RING.maxBodies + DRAINS)
+        m.instanceMatrix.setUsage(THREE.DynamicDrawUsage)
+        m.frustumCulled = false
+        m.visible = false
+        m.count = 0
+        // over the floor and its decals, under every tell (tellOrder starts near 1000) and under the hand's ring's neighbours
+        m.renderOrder = 2
+        m.name = `marks-${cap}-${i}`
+        this.group.add(m)
+        this.sets[cap].push(m)
+      }
+    }
+    scene.add(this.group)
+  }
+
+  /** A spend: the body's rings drain into the hit. The marks are already gone from the body, so the ring is drawn from here until it has shrunk away. */
+  event(ev: PartEvent) {
+    if (ev.kind !== 'spend') return
+    const k = this.dNext
+    this.dNext = (k + 1) % DRAINS
+    this.dx[k] = ev.enemy.pos.x
+    this.dz[k] = ev.enemy.pos.z
+    this.dr[k] = Math.max(RING.minR, ev.enemy.radius * RING.perRadius)
+    this.dn[k] = Math.min(MAX_SEG, ev.n)
+    this.dt[k] = 0
+  }
+
+  /** A new level, or a run's end: nothing draining. */
+  clear() {
+    this.dn.fill(0)
+    for (const set of [this.sets[3], this.sets[5]]) for (const m of set) { m.count = 0; m.visible = false }
+  }
+
+  /**
+   * One rendered frame's rings (`dt` real seconds, for the drains). `from`: Still's place, for who is left undrawn past `maxBodies`.
+   * With no core worn, or Ram's (its look is B3's), nothing is drawn.
+   */
+  draw(combat: Combat, dt: number, fromX: number, fromZ: number) {
+    const core = combat.core
+    const cap = core === 'wake' ? (markCap(core, combat.keystone) >= 5 ? 5 : 3) : 0
+    if (!cap) {
+      this.hideAll()
+      this.drawn = this.skipped = 0
+      return
+    }
+    const max = RING.maxBodies
+    let g = 0
+    let over = 0
+    for (const [e, st] of combat.statuses()) {
+      const m = st.marks
+      if (m.n <= 0 || e.dead) continue
+      if (g >= max) {
+        over++
+        continue
+      }
+      this.gx[g] = e.pos.x
+      this.gz[g] = e.pos.z
+      this.gr[g] = Math.max(RING.minR, e.radius * RING.perRadius)
+      this.gn[g] = Math.min(cap, m.n)
+      // the last RING.fadeS of life dims it
+      this.ga[g] = m.t >= RING.fadeS ? 1 : Math.max(0, m.t / RING.fadeS)
+      this.gd[g] = 1
+      g++
+    }
+    if (over > 0) g = this.nearest(combat, fromX, fromZ, cap)
+    this.drawn = g
+    this.skipped = over
+    // the rings draining into a spend
+    for (let k = 0; k < DRAINS; k++) {
+      if (this.dn[k] === 0) continue
+      const age = this.dt[k]! + dt
+      this.dt[k] = age
+      const f = age / RING.drainS
+      if (f >= 1) {
+        this.dn[k] = 0
+        continue
+      }
+      if (g >= this.gx.length) continue
+      this.gx[g] = this.dx[k]!
+      this.gz[g] = this.dz[k]!
+      this.gr[g] = this.dr[k]!
+      this.gn[g] = Math.min(cap, this.dn[k]!)
+      this.ga[g] = 1
+      this.gd[g] = 1 - f
+      g++
+    }
+    const meshes = this.sets[cap]
+    const other = this.sets[cap === 3 ? 5 : 3]
+    for (const m of other) m.visible = false
+    for (let s = 0; s < meshes.length; s++) {
+      const mesh = meshes[s]!
+      const mat = mesh.instanceMatrix.array as Float32Array
+      const alpha = (mesh.geometry.getAttribute('aAlpha') as THREE.InstancedBufferAttribute).array as Float32Array
+      let j = 0
+      for (let b = 0; b < g; b++) {
+        if (this.gn[b]! <= s) continue
+        const sc = this.gr[b]! * this.gd[b]!
+        const o = j * 16
+        mat[o] = sc; mat[o + 1] = 0; mat[o + 2] = 0; mat[o + 3] = 0
+        mat[o + 4] = 0; mat[o + 5] = sc; mat[o + 6] = 0; mat[o + 7] = 0
+        mat[o + 8] = 0; mat[o + 9] = 0; mat[o + 10] = sc; mat[o + 11] = 0
+        mat[o + 12] = this.gx[b]!; mat[o + 13] = FLOOR_Y; mat[o + 14] = this.gz[b]!; mat[o + 15] = 1
+        alpha[j] = this.ga[b]!
+        j++
+      }
+      mesh.count = j
+      mesh.visible = j > 0
+      if (j > 0) {
+        mesh.instanceMatrix.needsUpdate = true
+        ;(mesh.geometry.getAttribute('aAlpha') as THREE.InstancedBufferAttribute).needsUpdate = true
+      }
+    }
+  }
+
+  /** More marked bodies than `maxBodies`: keep the nearest to Still. Rare (a deep pack with everything marked): it may allocate. Returns how many are kept. */
+  private nearest(combat: Combat, fx: number, fz: number, cap: number): number {
+    const all: { x: number; z: number; r: number; n: number; a: number; d: number }[] = []
+    for (const [e, st] of combat.statuses()) {
+      const m = st.marks
+      if (m.n <= 0 || e.dead) continue
+      all.push({ x: e.pos.x, z: e.pos.z, r: Math.max(RING.minR, e.radius * RING.perRadius), n: Math.min(cap, m.n), a: m.t >= RING.fadeS ? 1 : Math.max(0, m.t / RING.fadeS), d: (e.pos.x - fx) ** 2 + (e.pos.z - fz) ** 2 })
+    }
+    all.sort((a, b) => a.d - b.d)
+    const keep = Math.min(all.length, RING.maxBodies)
+    for (let i = 0; i < keep; i++) {
+      const o = all[i]!
+      this.gx[i] = o.x; this.gz[i] = o.z; this.gr[i] = o.r; this.gn[i] = o.n; this.ga[i] = o.a; this.gd[i] = 1
+    }
+    this.skipped = all.length - keep
+    return keep
+  }
+
+  private hideAll() {
+    for (const set of [this.sets[3], this.sets[5]]) for (const m of set) if (m.visible) { m.visible = false; m.count = 0 }
+  }
+
+  dispose() {
+    this.group.removeFromParent()
+    for (const set of [this.sets[3], this.sets[5]]) for (const m of set) { m.geometry.dispose(); m.dispose() }
+    this.mat.dispose()
+  }
+}

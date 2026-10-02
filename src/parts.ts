@@ -200,8 +200,8 @@ export type PartEvent =
   | { kind: 'mark'; enemy: Enemy; n: number; added: number; by: 'core' | SlotName; fresh: boolean }
   | { kind: 'markExpired'; enemy: Enemy; n: number }
   | { kind: 'spend'; enemy: Enemy; n: number; bonus: number; payer: 'core' | SlotName; killed: boolean; lagS: number }
-  /** Wake's skim (B2): a body passed beside. */
-  | { kind: 'skim'; enemy: Enemy }
+  /** Wake's skim (B2): a body passed beside. `burst`: the skim filled it to the cap and Burst spent the marks (its `spend` event comes first); `spray`: the body Spray marked too. */
+  | { kind: 'skim'; enemy: Enemy; burst?: true; spray?: Enemy }
   /** Ram's shove (B3): `slam` says what the body hit, or null for a plain shove; `other` is the body it hit; `why` the source. */
   | { kind: 'shove'; enemy: Enemy; slam: 'wall' | 'body' | 'still' | 'tell' | null; other?: Enemy; why: 'beat' | 'part' | 'catch' | 'chain' }
   /** A paid kill's excess, passed on to the nearest body as a plain hit. */

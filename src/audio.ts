@@ -1468,6 +1468,29 @@ export function chillEnd(pan: number) {
   tone(c, out(c, 'hits', pan), 'triangle', c.currentTime, 3136, 2800, 0.03, 0.06)
 }
 
+/**
+ * The build layer (BUILD.md §2.9): marks spent. `n` short cold ticks, each a semitone above the last, inside 0.15 s, so a 6-spend sounds bigger than a
+ * 2-spend. No Math.random. A phone speaker's band (1.3 kHz up).
+ */
+export function spend(n: number, pan: number) {
+  heard('spend:' + n)
+  const c = live()
+  if (!c) return
+  const t = c.currentTime
+  const d = out(c, 'hits', pan)
+  const k = Math.max(1, Math.min(9, n))
+  const gap = Math.min(0.03, 0.15 / k)
+  for (let i = 0; i < k; i++) tone(c, d, 'triangle', t + i * gap, 1318 * 2 ** (i / 12), 1318 * 2 ** (i / 12) * 0.96, 0.035, 0.13)
+}
+
+/** The build layer: marks ran out unspent. A faint fizzle, about -18 dB against the hit's hiss. Helpful or nagging is his phone call (BUILD.md §9). */
+export function fizzle(pan: number) {
+  heard('fizzle')
+  const c = live()
+  if (!c) return
+  hiss(c, out(c, 'hits', pan), c.currentTime, 0.16, 0.035, 'highpass', 5500, 3200, 0.8)
+}
+
 /** A paid kill's leftover flies on as ice (the state's shatter). A glassy crack, falling, and the tick of it landing. */
 export function iceShatter(pan: number) {
   const c = live()

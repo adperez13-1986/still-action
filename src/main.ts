@@ -12,7 +12,7 @@ import { TEMPER, ROMAN, tempered } from './temper'
 import { presetId as weightPresetId, setPreset as setWeightPreset, weighed, baseCooldownS, WEIGHT_FEEL, WEIGHT_PRESETS, type PresetId } from './weight'
 import { curveAt } from './curve'
 import { MASTERY, MASTERY_FORM, MASTERY_MAX, FORM_NAME, masteryOffer, type MasteryId, type MasteryForm } from './mastery'
-import { WORDS, variant, type CoreId, type KeystoneId, type UpgradeId } from './cores'
+import { CORES, UPGRADES, WORDS, variant, type CoreId, type KeystoneId, type UpgradeId } from './cores'
 import { STATE_IDS, pairWith, paired, type StateId } from './states'
 import type { Enemy, EnemyEvent } from './enemy'
 import { isBoss, Assembler } from './boss'
@@ -48,6 +48,7 @@ import { generateLevel, generateWalkHome, makeTerrain, key, squarePosts, type Bo
 import type { Terrain } from './terrain'
 import { Vfx, syncTells, spawned as vfxSpawned, COLD, COLD_DEEP, EMBER, SLAG_DROP } from './vfx'
 import { PartFx } from './partfx'
+import { MarkFx } from './markfx'
 import type { PartEvent } from './parts'
 import type { NotebookPage } from './pause'
 import {
@@ -390,6 +391,8 @@ const combat = new Combat(world.scene, OPEN, {
       if (partLog.length > 500) partLog.shift()
     }
     partFx.event(ev)
+    markFx.event(ev)
+    if (ev.kind === 'mark' || ev.kind === 'markExpired' || ev.kind === 'spend' || ev.kind === 'skim') coreEvent(ev)
     if (ev.kind === 'move') {
       moveFx(ev.move.path[ev.move.path.length - 1] ?? still.pos, ev.beat)
       still.startMove({
@@ -1274,6 +1277,10 @@ function ramImpact(c: Charger, at: THREE.Vector3, wall: boolean) {
 }
 
 const partFx = new PartFx(world.scene, vfx, still, combat.parts, combat)
+/** The core's marks, drawn on the floor at the bodies' feet (markfx.ts): a few instanced draw calls, whatever the number of marked bodies. */
+const markFx = new MarkFx(world.scene)
+/** His walk pace as still.ts has it (Slipstream multiplies it for a moment and only ever through this). */
+const STILL_WALK = still.speed
 
 /** Something a part put in the air comes down. Each kind lands in its own voice. */
 function landFx(at: THREE.Vector3, what: 'flare' | 'signal' | 'throw' | 'wall', e?: Enemy) {
@@ -1349,6 +1356,67 @@ function chillBreak(e: Enemy) {
 }
 
 /** Shatter: the kill's leftover flies on as ice, a cold streak from where it fell to the body it lands in. */
+/**
+ * The build layer's events (BUILD.md §2.9, §2.11): the log (marks made, spent, expired; spends and how soon after the first mark; Wake's skims) and the look
+ * and sound. A spend drains the body's rings (markfx.ts reads the same event); marks that run out unspent fizzle, faintly.
+ */
+function coreEvent(ev: Extract<PartEvent, { kind: 'mark' | 'markExpired' | 'spend' | 'skim' }>) {
+  const st = run.stats[run.stats.length - 1]
+  if (ev.kind === 'mark') {
+    if (st?.marks) {
+      st.marks.made += ev.added
+      if (ev.by === 'core') st.marks.byCore += ev.added
+      else st.marks.byPart += ev.added
+    }
+    return
+  }
+  if (ev.kind === 'markExpired') {
+    if (st?.marks) st.marks.expired += ev.n
+    sfx.fizzle(panOf(ev.enemy.pos))
+    return
+  }
+  if (ev.kind === 'spend') {
+    if (st?.marks && st.spends) {
+      st.marks.spent += ev.n
+      st.spends.hits++
+      st.spends.bonus += ev.bonus
+      st.spends.lag[ev.lagS <= 1 ? 0 : ev.lagS <= 2 ? 1 : ev.lagS <= 4 ? 2 : 3]++
+      // Burst is the core's own hit: the autos' nominal, beside the skim's
+      if (ev.payer === 'core' && st.autoDmg) st.autoDmg.core += ev.bonus
+    }
+    fightSpends++
+    sfx.spend(ev.n, panOf(ev.enemy.pos))
+    return
+  }
+  // a skim: Wake passed beside a body
+  if (st) {
+    const k = (st.skims ??= { n: 0, burst: 0, spray: 0 })
+    k.n++
+    if (ev.burst) k.burst++
+    if (ev.spray) k.spray++
+    if (st.autoDmg) st.autoDmg.core += CORES.wake.damage
+  }
+  const e = ev.enemy
+  // one frost mote at the body's near side
+  const dx = still.pos.x - e.pos.x
+  const dz = still.pos.z - e.pos.z
+  const d = Math.hypot(dx, dz) || 1
+  vfx.frost(new THREE.Vector3(e.pos.x + (dx / d) * e.radius * 0.8, 0.5, e.pos.z + (dz / d) * e.radius * 0.8), 1, 0.12)
+  if (ev.burst) {
+    // Burst: the third ring breaks the body open, a cold pop
+    vfx.flash(at3(e.pos, 0.8), COLD, 0.8)
+    vfx.sparks(at3(e.pos, 0.8), COLD, 10, 5)
+  }
+  if (ev.spray) {
+    // Spray: a cold spray line between the two bodies
+    const o = ev.spray
+    for (let i = 1; i <= 4; i++) {
+      const k = i / 5
+      vfx.trail(new THREE.Vector3(e.pos.x + (o.pos.x - e.pos.x) * k, 0.5, e.pos.z + (o.pos.z - e.pos.z) * k), COLD, 0.16, 0.4)
+    }
+  }
+}
+
 function shatterFx(ev: Extract<PartEvent, { kind: 'shatter' }>) {
   const from = at3(ev.from, 0.8)
   const to = at3(ev.to, 0.9)
@@ -1775,6 +1843,17 @@ const run = {
 
 /** An awake body this near Still (u, the wake radius) is a fight, for the log's `fightS`. */
 const FIGHT_NEAR = 8
+/**
+ * The open fight's spending hits (§2.11 `spendsPerFight`) and the depth it began in. A spend between fights counts toward the next one. Each fight closes into its
+ * own depth's list: when it goes quiet, when it is outrun, and when the depth closes.
+ */
+let fightSpends = 0
+let fightSt: DepthStats | null = null
+function flushFight() {
+  if (fightSt) fightSt.spendsPerFight.push(fightSpends)
+  fightSt = null
+  fightSpends = 0
+}
 /** Nothing awake for this long counts as a fight cleared. */
 const QUIET_SECONDS = 2.5
 const QUIET_STRAIN = 2
@@ -1887,6 +1966,7 @@ function partDrops() {
 const statsOut = () => run.stats.map((st) => ({
   ...st, strainOut: st.strainOut ?? run.strain, playS: Math.round(st.playS ?? 0), plantedS: Math.round(st.plantedS ?? 0), fightS: Math.round((st.fightS ?? 0) * 10) / 10, ...depthDrops(st.depth),
   ...(st.menders ? { menders: { ...st.menders, healed: Math.round(st.menders.healed) } } : {}),
+  ...(st.nearBins ? { movingS: Math.round(st.movingS * 10) / 10, nearBins: st.nearBins.map((v) => Math.round(v * 10) / 10), nearMovingBins: st.nearMovingBins.map((v) => Math.round(v * 10) / 10) } : {}),
 }))
 
 /** What the save has found and turned, at this depth: every drop reads it. */
@@ -2062,7 +2142,7 @@ function openPick(g: GroundPart) {
   const note = !rest ? undefined : last ? `the other${rest > 1 ? ' two go' : ' goes'} back to the wall` : `then one more, for strain +${PEDESTALS.secondStrain}`
   const swap = swapWords(g.def)
   openPause()
-  pause.compare(current, g.def, hud.loadout, () => {
+  pause.compare(current, variant(g.def, coreNow()), hud.loadout, () => {
     resume()
     takePick(g)
   }, resume, !save.found.includes(g.def.id), { tag: 'on the pedestal', cost: pickCost(set), stays: set.kind === 'gift', note, take: swap?.take, melts: swap?.melts, pair: pairWords(g.def) ?? undefined })
@@ -2550,6 +2630,7 @@ function breakHint(e: Enemy) {
 function quiet() {
   vfx.embers(at3(still.pos, 0.4), 18, 0.9, COLD)
   run.fought = false
+  flushFight()
   run.quietT = 0
   run.killed = false
   // follow-through: each fight starts empty, and opens on a press
@@ -2578,7 +2659,9 @@ function updateOffer() {
     if (rec) rec.offered = true
     // a floor part shows its card; a pedestal's opens the compare as he walks in
     const card = next && !next.set ? next : null
-    hud.offer(card?.def ?? null, !!card && !save.found.includes(card.def.id), card ? describePart(card.def) : undefined, card ? meltLabel(card) : null,
+    // under a core, the card shows the part as worn (a reshape's name, line and numbers); with none, the part itself
+    const shown = card ? variant(card.def, coreNow()) : null
+    hud.offer(shown, !!card && !save.found.includes(card.def.id), shown ? describePart(shown) : undefined, card ? meltLabel(card) : null,
       card ? { swap: swapWords(card.def), pair: pairWords(card.def) } : undefined)
     loot.offer(next)
     if (next?.set) openPick(next)
@@ -2683,7 +2766,7 @@ hud.onCompare(() => {
   const current = hud.loadout.find((p) => p.slot === g.def.slot) ?? null
   openPause()
   const swap = swapWords(g.def)
-  pause.compare(current, g.def, hud.loadout, () => {
+  pause.compare(current, variant(g.def, coreNow()), hud.loadout, () => {
     resume()
     takePart(g)
   }, resume, !save.found.includes(g.def.id), { take: swap?.take, melts: swap?.melts, pair: pairWords(g.def) ?? undefined })
@@ -3120,6 +3203,7 @@ function enterLevel(depth: number, o: { seed?: number; bossFelled?: boolean; res
   clearLoot()
   combat.reset()
   partFx.clear()
+  markFx.clear()
   run.seed = o.seed ?? Math.floor(Math.random() * 1e9)
   run.bossFelled = !!o.bossFelled
   run.bossLoot = []
@@ -3264,6 +3348,7 @@ function newRunId() {
 
 /** The depth being left gets its strain on the way out. */
 function closeStats() {
+  flushFight()
   const st = run.stats[run.stats.length - 1]
   if (!st || st.strainOut !== null) return
   st.strainOut = run.strain
@@ -3438,6 +3523,7 @@ function enterCrossroads(seed = Math.floor(Math.random() * 1e9)) {
   clearLoot()
   combat.reset()
   partFx.clear()
+  markFx.clear()
   run.seed = seed
   run.bossFelled = true
   run.bossLoot = []
@@ -3720,6 +3806,7 @@ function enterRoom(arrival: ArrivalKind, hour: HomeHour, worn: (string | null)[]
   clearLoot()
   combat.reset()
   partFx.clear()
+  markFx.clear()
   combat.terrain = workshop.terrain
   loot.terrain = workshop.terrain
   // the room wears its own wood and stone, whatever the run was last in
@@ -4296,7 +4383,19 @@ function simulate(realDt: number) {
     if (st) {
       st.playS = (st.playS ?? 0) + realDt
       if (combat.inStance) st.plantedS = (st.plantedS ?? 0) + realDt
-      if (combat.foeWithin(still.pos, FIGHT_NEAR)) st.fightS = (st.fightS ?? 0) + realDt
+      if (combat.foeWithin(still.pos, FIGHT_NEAR)) {
+        st.fightS = (st.fightS ?? 0) + realDt
+        // the build layer's posture log (§2.11): fight seconds with the stick out, and by how far the nearest awake body's edge is (bins 2 / 3.5 / 6 / 11 u)
+        if (st.nearBins && st.nearMovingBins) {
+          const gap = combat.handGap(still.pos)
+          const b = gap < 2 ? 0 : gap < 3.5 ? 1 : gap < 6 ? 2 : gap < 11 ? 3 : 4
+          st.nearBins[b]! += realDt
+          if (combat.walking) {
+            st.movingS += realDt
+            st.nearMovingBins[b]! += realDt
+          }
+        }
+      }
     }
     if (level?.open) fieldMap.reveal(level, still.pos)
   } else if (run.phase === 'homing' || run.phase === 'toWalk' || run.phase === 'walkHome') run.walkS += realDt
@@ -4377,6 +4476,8 @@ function simulate(realDt: number) {
     }
   }
 
+  // Wake's Slipstream (cores.ts): walk speed x mul while skims have banked some; STILL_WALK is his own pace, so with no core it is never anything else
+  still.speed = STILL_WALK * (combat.core === 'wake' && combat.slipS > 0 ? UPGRADES['wake-slip'].mul : 1)
   still.update(dt, hud.moveX, hud.moveZ)
 
   // mid-vault he's over the wall, not in it
@@ -4426,6 +4527,8 @@ function simulate(realDt: number) {
       run.water = run.strain
       const st = run.stats[run.stats.length - 1]
       if (st) st.fights++
+      flushFight()
+      fightSt = st ?? null
     }
     run.fought = true
     run.quietT = 0
@@ -4434,7 +4537,10 @@ function simulate(realDt: number) {
     // a fight is cleared by clearing it: outrunning a pack until it walks home is not a quiet
     if (run.quietT >= QUIET_SECONDS) {
       if (run.killed) quiet()
-      else run.fought = false
+      else {
+        run.fought = false
+        flushFight()
+      }
     }
   }
   // the free push, drawn while the fight is on: the quiet at its end pays QUIET_STRAIN back
@@ -4534,6 +4640,7 @@ function enterWalkHome() {
   clearLoot()
   combat.reset()
   partFx.clear()
+  markFx.clear()
   stopAllWindups()
   level = generateWalkHome(Math.floor(Math.random() * 1e9), PLACES[WALK_PLACE])
   setSurfaces(PLACES[WALK_PLACE].surfaces)
@@ -4784,6 +4891,8 @@ let slagT = 0
 const SLAG_DRIP_S = 0.33
 function ambientFx(dt: number) {
   if (level?.group.visible) roadSmoke.tick(dt, vfx, roadSmokeAt)
+  // Slipstream: a cold streak at his heels while the banked speed runs
+  if (combat.core === 'wake' && combat.slipS > 0 && run.phase === 'crawl') vfx.trail(at3(still.pos, 0.18), COLD, 0.22, 0.3)
   ambientT -= dt
   const tick = ambientT <= 0
   if (tick) ambientT = 0.09
@@ -4947,13 +5056,14 @@ function frame(nowMs: number) {
     for (const [e, v] of loops) v.pan(panOf(e.pos))
   }
   // the hand's ring: in a crawl with the switch on, waking as an awake body nears the reach
-  handRing.update(paused ? 0 : elapsed, x, z, combat.handGap(still.pos), !home && run.phase === 'crawl' && combat.closeHand && !!level)
+  handRing.update(paused ? 0 : elapsed, x, z, combat.handGap(still.pos), !home && run.phase === 'crawl' && combat.closeHand && combat.core === null && !!level)
   // the eye's sightline: planted in a crawl, to the body it has chosen, drawn where that body is drawn
   const seen = !home && run.phase === 'crawl' && !!level ? combat.eyeTarget : null
   sightline.update(paused ? 0 : elapsed, x, z, seen && { key: seen, x: seen.group.position.x, z: seen.group.position.z, r: seen.radius })
   syncTells()
   combat.miteBatch.sync(world.camera, now)
   combat.sleeperBatch?.sync(world.camera, now)
+  markFx.draw(combat, paused ? 0 : elapsed, x, z)
   world.render()
   // straight after the render, while the drawing buffer is still there
   drawings.afterRender(world.renderer.domElement)
@@ -4996,6 +5106,7 @@ function genFor(depth: number, seed: number, route: RouteId, thiefFirst = false)
 if (import.meta.env.DEV) {
   Object.assign(window, {
     __combat: combat, __still: still, __hud: hud, __loot: loot, __level: () => level, __world: world,
+    __markFx: markFx,
     __run: run, __parts: PARTS, __partLog: partLog, __pause: pause,
     /** Advance exactly `s` seconds of game time, and the HUD clock (and the button faces) with it. No rAF, no hitstop. */
     __step: (s: number) => {
@@ -5141,6 +5252,7 @@ if (import.meta.env.DEV) {
       combat.reset()
       clearLoot()
       partFx.clear()
+      markFx.clear()
       combat.terrain = terrain
       loot.terrain = terrain
       combat.breakables = []

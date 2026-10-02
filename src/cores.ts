@@ -5,8 +5,8 @@ import type { AbilityDef } from './abilities'
  * tools/corecheck.ts runs it under node. A core replaces the hand and the eye; it marks bodies, and the parts that fit it spend the marks.
  * With no core worn nothing here is read: the game is today's (BUILD.md §1, K-M1).
  *
- * B1 (this step) lands the data, the switch and the machine; the cores themselves (Wake's skim, Ram's shove), the reshapes, the keystone and
- * upgrade effects and the pick come in B2-B5. The numbers are the SHIP column of design/buildlayer/3-balancer.md §1 (the balancer's re-price of
+ * B1 landed the data, the switch and the machine. B2 (Wake) builds Wake's skim, its three reshapes (VARIANTS), Burst, Deep Frost, Spray and Slipstream, and the
+ * rings (markfx.ts); Ram's shove and its keystones and upgrades come in B3, the pick in B4, the hunt and the buttons in B5. The numbers are the SHIP column of design/buildlayer/3-balancer.md §1 (the balancer's re-price of
  * BUILD.md's, which the lead made binding on 2 Oct); where that file added a number or a rule, it is marked **new** below. A rule that is B2-B5's
  * is only recorded here.
  */
@@ -34,7 +34,7 @@ export const CORES = {
     damage: 6,
     /**
      * **new**: a skim on a body that can't be moved (§2.6's immovable test: a boss, an anchored body, knockMul < 0.1) deals full damage (x`mul`, not BOSS_AUTO_MUL),
-     * once per `perBodyS` (BUILD.md: x BOSS_AUTO_MUL, once per 1 s). Wake boss whites -25% -> -8% against today. B2 builds it.
+     * once per `perBodyS` (BUILD.md: x BOSS_AUTO_MUL, once per 1 s). Wake boss whites -25% -> -8% against today. Built in B2 (combat.ts tickWake).
      */
     bossSkim: { mul: 1, perBodyS: 0.5 },
   },
@@ -109,8 +109,8 @@ export const RESHAPES = {
   pistonRam: { base: 'piston', core: 'ram', cooldownMs: 2600 },
 } as const
 
-/** The look (§2.10). */
-export const RING = { minR: 0.45, perRadius: 1.2, gapDeg: 10, maxBodies: 48, drainS: 0.12, fadeS: 0.5 }
+/** The look (§2.10). `minR` / `perRadius` are 0.6 / 1.75 (BUILD.md: 0.45 / 1.2): at 1.2 x the body's radius the ring sat under its feet and a third of it read, at B2's screenshots. */
+export const RING = { minR: 0.6, perRadius: 1.75, gapDeg: 10, maxBodies: 48, drainS: 0.12, fadeS: 0.5 }
 /** The button (§2.9). The count is refreshed at most every `refreshS` of game time, shown up to `showMax`, pulses at `pulseAt`. */
 export const SPEND_HUD = { refreshS: 0.1, showMax: 9, pulseAt: 3 }
 
@@ -130,15 +130,41 @@ export const WORDS = {
   /** Shapers' and guards' fit lines; a spender's is built: `spends ${mark}: +${k} each`, with `k = fit.k ?? CORES[core].K` (B5). */
   fitLine: { 'backdraft-vent': 'pulls them together, so a shove slams two', kickstart: 'runs them into walls', brace: 'holds your ground',
     'signal-flare': 'rimes what will not come to you', 'spring-heels': 'over a wall, they string out after you', ward: 'covers the pass' },
+  /** The reshaped parts' names and lines, as worn under Wake (VARIANTS below); Ram's Piston is a numbers-only variant and keeps its own (B3). */
+  reshape: { backhand: ['Backhand', 'A swing behind you, at what you just passed.'], skate: ['Skate', 'A slow glide through them.'], frostFlare: ['Frost Flare', 'Rimes what it lands on, and slows it.'] },
   readout: (made: number, spent: number) => `marked ${made} · spent ${spent}`,
   spendCaption: 'tap · spend them',
 }
 
 /**
  * The reshapes (§2.1), applied only while that core is worn, by part id: the fields a part changes. The id, slot, tier, drops, key and `fits`
- * stay the base part's. Empty until B2 (Backhand, Skate, Frost Flare).
+ * stay the base part's (and so does `beat`, the pose and the sound it wears). A field set to `undefined` is taken off the part. Wake's three are built from
+ * RESHAPES (the ship numbers); Ram's Piston variant is B3's. The `fits.k` of Backhand (10) lives on its base part (abilities.ts).
  */
-const VARIANTS: Record<CoreId, Record<string, Partial<Omit<AbilityDef, 'id' | 'slot' | 'tier' | 'drops' | 'key' | 'fits'>>>> = { wake: {}, ram: {} }
+type Over = Partial<Omit<AbilityDef, 'id' | 'slot' | 'tier' | 'drops' | 'key' | 'fits'>>
+/** Frayed Cleaver's 90-degree icon, mirrored: the swing goes the other way. */
+const MIRROR_ICON = (inner: string) => `<g transform="translate(24 0) scale(-1 1)">${inner}</g>`
+const VARIANTS: Record<CoreId, Record<string, Over>> = {
+  wake: {
+    /** An arc at what is behind him (`behind`), no fray. cone / damage / cooldown: RESHAPES.backhand. Range 3.1 kept. */
+    'frayed-cleaver': {
+      name: WORDS.reshape.backhand[0], line: WORDS.reshape.backhand[1], mod: { kind: 'behind' }, iconStates: undefined,
+      damage: RESHAPES.backhand.damage, cone: RESHAPES.backhand.cone, cooldownMs: RESHAPES.backhand.cooldownMs, range: 3.1,
+      icon: MIRROR_ICON('<path d="M6.3 9.3A8 8 0 0 1 17.7 9.3"/><path d="M6.3 9.3 4.6 7.6M17.7 9.3l1.7-1.7"/><circle cx="12" cy="15" r="1.2"/>'),
+    },
+    /** A plain run-over dash: no strip, no chill. BUILD.md §2.1: radius 1.0, range 5.6, travel 420, shove 0.6. */
+    'frost-trail': {
+      name: WORDS.reshape.skate[0], line: WORDS.reshape.skate[1], mod: undefined, sets: undefined,
+      damage: RESHAPES.skate.damage, cooldownMs: RESHAPES.skate.cooldownMs, radius: 1.0, range: 5.6, travelMs: 420, shove: 0.6,
+    },
+    /** A lob that rimes (2 marks) and slows (x0.5, 2 s) every body in the blast; never sets the `marked` state. BUILD.md §2.1: range 11, radius 2.2, travel 800. */
+    'signal-flare': {
+      name: WORDS.reshape.frostFlare[0], line: WORDS.reshape.frostFlare[1], mod: { kind: 'rime', marks: 2, slowMul: 0.5, slowMs: 2000 }, sets: undefined,
+      damage: RESHAPES.frostFlare.damage, cooldownMs: RESHAPES.frostFlare.cooldownMs, range: 11, radius: 2.2, travelMs: 800,
+    },
+  },
+  ram: {},
+}
 
 const memo: Record<CoreId, WeakMap<AbilityDef, AbilityDef>> = { wake: new WeakMap(), ram: new WeakMap() }
 
@@ -148,7 +174,12 @@ export function variant(def: AbilityDef, core: CoreId | null): AbilityDef {
   const hit = memo[core].get(def)
   if (hit) return hit
   const over = VARIANTS[core][def.id]
-  const out: AbilityDef = over ? { ...def, ...over } : def
+  let out = def
+  if (over) {
+    const w: Record<string, unknown> = { ...def, ...over }
+    for (const [k, v] of Object.entries(over)) if (v === undefined) delete w[k]
+    out = w as unknown as AbilityDef
+  }
   memo[core].set(def, out)
   memo[core].set(out, out)
   return out

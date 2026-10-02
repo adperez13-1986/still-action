@@ -30,7 +30,7 @@ import type { AbilityDef, BeatKey } from './abilities'
 import type { SlotName } from './still'
 import { weighed } from './weight'
 import { MASTERY, MASTERY_TUNE, type MasteryId } from './mastery'
-import { CORES, fitOf, markCap, markLife, type CoreId, type KeystoneId, type UpgradeId } from './cores'
+import { CORES, KEYSTONES, UPGRADES, fitOf, markCap, markLife, type CoreId, type KeystoneId, type UpgradeId } from './cores'
 import { STATE, STATE_IDS, masterySets, stateMul, type Payer, type StateBy, type StateId } from './states'
 import { curveAt, type DepthCurve } from './curve'
 import { PART, History, bankShot, type EnemyStatus, type Flip, type Held, type PartEvent, type PartRuntime, type StillMove, type Zone } from './parts'
@@ -38,6 +38,8 @@ import { PART, History, bankShot, type EnemyStatus, type Flip, type Held, type P
 /** A boss that never walks, or a Handcar (it never leaves its rails: B5): spacing leaves it where it stands. */
 const anchored = (e: Enemy) => (isBoss(e) && e.anchored !== null) || e instanceof Handcar
 
+/** Backhand's cone behind him (BUILD.md §2.1): the target lies within `deg` of straight behind. */
+const BEHIND = { deg: 75, cos: Math.cos((75 * Math.PI) / 180) }
 const AUTO_RANGE = 7.6
 const AUTO_INTERVAL = 0.62
 const AUTO_DAMAGE = 5
@@ -522,6 +524,10 @@ export class Combat {
   core: CoreId | null = null
   keystone: KeystoneId | null = null
   upgrades: ReadonlySet<UpgradeId> = new Set()
+  /** Wake (BUILD.md §2.5): when each body was last skimmed, game time (once per body per `perBodyS`). A new map each level (reset). */
+  private lastSkim = new WeakMap<Enemy, number>()
+  /** Wake's Slipstream upgrade (§2.7): seconds of walk speed banked by skims, 0..maxS; drains in game time. Main reads it for Still's walk speed. */
+  slipS = 0
   /** The depth curve for packs added now (curve.ts): main sets it per level; keyed on depth alone. */
   // row 1 is shared by both run lengths (INV-C1), so combat need not know the run's (it must not import areas)
   curve: DepthCurve = curveAt(1, 6)
@@ -1098,6 +1104,8 @@ export class Combat {
     this.clearSlot('torso')
     this.clearSlot('legs')
     this.status.clear()
+    this.lastSkim = new WeakMap()
+    this.slipS = 0
     this.held.clear()
     this.zones.length = 0
     // a rewind must never cross levels
@@ -1913,10 +1921,78 @@ export class Combat {
   }
 
   /**
-   * The core's tick, in the auto block's place (BUILD.md §2.5-2.6): Wake's skim (B2), Ram's shove (B3). Empty in B1. It draws no
+   * The core's tick, in the auto block's place (BUILD.md §2.5-2.6): Wake's skim (B2), Ram's shove (B3, not yet). It draws no
    * Math.random: ties break by distance, then by array order (INV-T3's rule), so a cored fight seeded in a check is the same from step to step.
    */
-  private tickCore(_dt: number, _player: THREE.Vector3) {}
+  private tickCore(dt: number, player: THREE.Vector3) {
+    if (this.core === 'wake') this.tickWake(dt, player)
+  }
+
+  /** A body that can't be moved: a boss, an anchored body, or one too heavy to lift (knockMul < 0.1, the Assembler's "too heavy to lift"). §2.6. */
+  private immovable(e: Enemy): boolean {
+    return isBoss(e) || anchored(e) || e.knockMul < 0.1
+  }
+
+  /**
+   * Wake's skim (§2.5, numbers 3-balancer.md §1): each tick he moves, every awake body whose EDGE is within `radius` of him and who lies beside his heading
+   * (45-135 deg: straight at it and straight away from it both mark nothing) takes `damage` and a mark, at most once per body per `perBodyS`. Standing, or
+   * barely moving, does nothing at all. A body that can't be moved takes the full hit (not the autos' boss half) twice as often. No allocation: a skim loop
+   * runs every tick.
+   */
+  private tickWake(dt: number, p: THREE.Vector3) {
+    const W = CORES.wake
+    if (this.slipS > 0) this.slipS = Math.max(0, this.slipS - dt)
+    const v = this.playerVel
+    const sp = Math.hypot(v.x, v.z)
+    if (sp < W.minSpeed) return
+    for (const e of this.enemies) {
+      if (e.dead || !targetable(e) || this.held.has(e) || !this.awakeNow(e)) continue
+      const dx = e.pos.x - p.x
+      const dz = e.pos.z - p.z
+      const d = Math.hypot(dx, dz) || 1
+      if (d - e.radius > W.radius) continue
+      // beside, not behind
+      if (Math.abs((v.x * dx + v.z * dz) / (sp * d)) > W.sideCos) continue
+      const heavy = this.immovable(e)
+      if (this.time - (this.lastSkim.get(e) ?? -Infinity) < (heavy ? W.bossSkim.perBodyS : W.perBodyS)) continue
+      this.lastSkim.set(e, this.time)
+      this.autoHit(e, heavy ? W.damage * W.bossSkim.mul : W.damage, 'core', heavy)
+      this.addMarks(e, 1, 'core')
+      const m = this.status.get(e)?.marks
+      // Burst: a skim that fills a body to its cap spends every mark at once, a core hit (the autos' boss half applies)
+      let burst = false
+      if (this.keystone === 'wake-burst' && !e.dead && m && m.n >= markCap('wake', this.keystone)) {
+        const n = m.n
+        const bonus = Math.round(KEYSTONES['wake-burst'].share * n * W.K)
+        const lagS = this.time - m.since
+        this.autoHit(e, bonus, 'core')
+        m.n = 0
+        m.t = 0
+        burst = true
+        this.events.onPart({ kind: 'spend', enemy: e, n, bonus, payer: 'core', killed: e.dead, lagS })
+      }
+      // Spray: the nearest other awake body within `reach` of this one and further from Still is marked too
+      let spray: Enemy | undefined
+      if (this.upgrades.has('wake-spray') && !e.dead) {
+        const U = UPGRADES['wake-spray']
+        let bestD = Infinity
+        for (const o of this.enemies) {
+          if (o === e || o.dead || !targetable(o) || this.held.has(o) || !this.awakeNow(o)) continue
+          const od = Math.hypot(o.pos.x - e.pos.x, o.pos.z - e.pos.z)
+          if (od > U.reach || od >= bestD || Math.hypot(o.pos.x - p.x, o.pos.z - p.z) <= d) continue
+          spray = o
+          bestD = od
+        }
+        if (spray) this.addMarks(spray, U.marks, 'core')
+      }
+      // Slipstream: each skim banks a little walk speed
+      if (this.upgrades.has('wake-slip')) {
+        const U = UPGRADES['wake-slip']
+        this.slipS = Math.min(U.maxS, this.slipS + U.perSkimS)
+      }
+      this.events.onPart({ kind: 'skim', enemy: e, ...(burst ? { burst } : {}), ...(spray ? { spray } : {}) })
+    }
+  }
 
   /** One auto beat's price under follow-through: spends a banked beat and says so, or finds the bank empty and says that. */
   private spendBeat(): boolean {
@@ -1929,9 +2005,10 @@ export class Combat {
     return true
   }
 
-  /** An auto's hit on `e`: a boss takes its half, the damage is logged by form, and a killing blow is the auto's. */
-  private autoHit(e: Enemy, damage: number, form: AutoForm) {
-    const dealt = autoOn(e, damage)
+  /** An auto's hit on `e`: a boss takes its half (unless `full`), the damage is logged by form, and a killing blow is the auto's. */
+  private autoHit(e: Enemy, damage: number, form: AutoForm, full = false) {
+    // `full`: the core's hit on a body it can't move is whole, not the boss's half (3-balancer.md: Wake's skim on an immovable body)
+    const dealt = full ? damage : autoOn(e, damage)
     this.events.onAutoDmg(form, dealt)
     if (e.hit(dealt)) this.felledBy.set(e, 'auto')
   }
@@ -2020,7 +2097,9 @@ export class Combat {
         const pushed = ctx.full
         const ms = def.travelMs ?? 800
         const mark = mod?.kind === 'mark' ? mod : null
-        this.events.onPart({ kind: 'lob', from: o.clone(), to: to.clone(), ms, radius: def.radius, signal: !!mark })
+        // Frost Flare (Signal Flare's reshape under Wake, cores.ts): the blast hits, then rimes (core marks) and slows every body in it
+        const rime = mod?.kind === 'rime' ? mod : null
+        this.events.onPart({ kind: 'lob', from: o.clone(), to: to.clone(), ms, radius: def.radius, signal: !!mark || !!rime })
         this.later.push({
           t: ms / 1000,
           run: () => {
@@ -2036,13 +2115,18 @@ export class Combat {
                 if (pushed) this.pushBreak(e, real)
               } else {
                 this.hitPart(e, def.damage, pushed, def, real)
+                // its hit is a shaper's (it spends nothing), so the marks it lands come after it
+                if (rime && !e.dead) {
+                  this.addMarks(e, rime.marks, def.slot)
+                  this.applySlow(e, rime.slowMs / 1000, rime.slowMul)
+                }
               }
             }
             for (const b of this.breakables) {
               if (!b.broken && Math.hypot(b.x - to.x, b.z - to.z) <= def.radius + b.r) this.events.onSmash(b)
             }
             this.ring(to, 0.3, def.radius, 0.35, 0x8fb8e8)
-            this.events.onPart({ kind: 'land', at: to.clone(), radius: def.radius, what: mark ? 'signal' : 'flare' })
+            this.events.onPart({ kind: 'land', at: to.clone(), radius: def.radius, what: mark || rime ? 'signal' : 'flare' })
           },
         })
         break
@@ -2235,9 +2319,13 @@ export class Combat {
         const threat = ctx.full ? this.threat(o, def) : null
         // Parry (R3): the body whose tell lands soonest, a windup or a pressure body's own, pushed or not
         const tell = parry ? this.tellAim(o, def) : null
-        snap = tell ?? threat ?? this.prefer(o, def, snap)
-        const face = snap ?? this.nearest(o, 9.5)
-        const aimed = face ? Math.atan2(face.pos.x - o.x, face.pos.z - o.z) : ctx.facing
+        // Backhand (Frayed Cleaver's reshape under Wake, cores.ts): the target is behind him, against the stick (or against his facing at rest); nothing there is a whiff behind
+        const behind = mod?.kind === 'behind'
+        const back = this.steer(ctx)
+        if (behind) snap = this.behindTarget(o, def, ctx, -back.x, -back.z)
+        else snap = tell ?? threat ?? this.prefer(o, def, snap)
+        const face = behind ? snap : snap ?? this.nearest(o, 9.5)
+        const aimed = face ? Math.atan2(face.pos.x - o.x, face.pos.z - o.z) : behind ? Math.atan2(-back.x, -back.z) : ctx.facing
         r.aim = aimed
         const fx = Math.sin(aimed)
         const fz = Math.cos(aimed)
@@ -2386,6 +2474,40 @@ export class Combat {
       return runs === 1 ? { x: px, z: pz } : null
     }
     return null
+  }
+
+  /**
+   * Backhand's body (BUILD.md §2.1, the `behind` mod): of the bodies the blade reaches and touches within BEHIND.deg of straight behind him (`bx`, `bz`: the unit
+   * vector behind), a pushed cast takes the windup that lands soonest; else the one with the most core marks (a spender spends them), ties the nearest.
+   * Null: nothing behind, a whiff.
+   */
+  private behindTarget(o: THREE.Vector3, def: AbilityDef, ctx: CastContext, bx: number, bz: number): Enemy | null {
+    let best: Enemy | null = null
+    let bestN = -1
+    let bestD = Infinity
+    let soon: Enemy | null = null
+    let soonT = Infinity
+    for (const e of this.enemies) {
+      if (e.dead || !targetable(e) || this.held.has(e) || !this.inReach(o, e, def.range) || this.shaded(o, e)) continue
+      const dx = e.pos.x - o.x
+      const dz = e.pos.z - o.z
+      const d = Math.hypot(dx, dz)
+      if (d > 0.001 && (dx * bx + dz * bz) / d < BEHIND.cos) continue
+      if (ctx.full && this.breakRule && this.breakable(e)) {
+        const t = e.landsIn()
+        if (t !== null && t < soonT) {
+          soon = e
+          soonT = t
+        }
+      }
+      const n = this.status.get(e)?.marks.n ?? 0
+      if (n > bestN || (n === bestN && d < bestD)) {
+        best = e
+        bestN = n
+        bestD = d
+      }
+    }
+    return soon ?? best
   }
 
   /**
