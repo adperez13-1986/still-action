@@ -14,8 +14,10 @@ re-captured (K-90's only change: 4 boss HPs, weight's x1.3); K-A7/K-N9/K-T15/K-E
 dropsim vs runs 23-24: offers 33.4 vs 34.5, takes 7.7 vs 8.0 (two knobs fitted: `--side 0.5`, `--whim 0.08`; uncalibrated takes
 fail -34%); temper tables asserted in statecheck; riders gone. Known fails untouched: K-W3d (Parry), K-90N (`names.json` stale vs
 `WHAT.handcar`, no suite runs it). **The brief: `design/buildlayer/BUILD.md`** (verifier; my calls at §9's top: builds ON by
-default from B1, inert until B4's pick; old runs resume bare). Balancer re-pricing in `3-balancer.md` (Ram K, Burst, keystones,
-upgrades, reshapes, filter). **Next: B1** (data, gate, marks machine, flat temper, `fits`, lean cut), one Sonnet engineer.
+default from B1, inert until B4's pick; old runs resume bare). **Balancer r3 done (`3-balancer.md`, binding for numbers):** at the
+brief's numbers a build was worth ~0 on packs (Scrap Cleaver, a white starter, was the best spender); ship numbers give a full rank-I
+build +22% on deep packs, never-melt floor 18% when building (11-13% whites only); `Fit.k` per part; slam line 0.3. **B1 RUNNING**
+(data, gate, marks machine, flat temper, `fits` + `Fit.k`, lean cut), one Sonnet engineer, told to use 3-balancer's numbers.
 For him (§9): 3 the core never breaks a windup or moves a body in its tell (is it still Ram?); 4 the filter ignores "found";
 5 the planted brace goes with the eye. If a session dies mid-step: review the uncommitted diff against BUILD.md first.
 
