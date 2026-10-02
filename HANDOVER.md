@@ -3,7 +3,7 @@
 For the next session. Read this, then `DESIGN.md` (the settled decisions), then the design
 folder for whatever you're touching. Don't re-derive any of them.
 
-## Start here (2 Oct: his calls made, B0 done, B1 next)
+## Start here (2 Oct: his calls made, B0 + B1 done, B2 Wake next)
 
 **His calls (2 Oct):** the second core is **Ram** (beside Wake); the pick is **at run start, from two cards**. Both my recs.
 Building now like stage C: the verifier writes `design/buildlayer/BUILD.md` (B0-B6, Ram in Breaker's place, run-start pick,
@@ -16,8 +16,11 @@ fail -34%); temper tables asserted in statecheck; riders gone. Known fails untou
 `WHAT.handcar`, no suite runs it). **The brief: `design/buildlayer/BUILD.md`** (verifier; my calls at §9's top: builds ON by
 default from B1, inert until B4's pick; old runs resume bare). **Balancer r3 done (`3-balancer.md`, binding for numbers):** at the
 brief's numbers a build was worth ~0 on packs (Scrap Cleaver, a white starter, was the best spender); ship numbers give a full rank-I
-build +22% on deep packs, never-melt floor 18% when building (11-13% whites only); `Fit.k` per part; slam line 0.3. **B1 RUNNING**
-(data, gate, marks machine, flat temper, `fits` + `Fit.k`, lean cut), one Sonnet engineer, told to use 3-balancer's numbers.
+build +22% on deep packs, never-melt floor 18% when building (11-13% whites only); `Fit.k` per part; slam line 0.3. **B1 DONE +
+pushed** (src/cores.ts with 3-balancer's numbers; `coreActive = buildsOn && run.core`; marks on EnemyStatus; spend in hitPart with
+`Fit.k`; flat temper via `asWorn`; lean tags cut, mastery via `MASTERY_FORM`; "builds" row on by default, inert; checks
+`node tools/checks/builds.mjs` K-M1..M5, `npx tsx tools/corecheck.ts` replaces leancheck). Known small: open pause cards keep old
+numbers after a mid-crawl flip until reopened; `__spendCount`/`__shoveLog` hooks wait for B5/B3. **Next: B2 Wake.**
 For him (§9): 3 the core never breaks a windup or moves a body in its tell (is it still Ram?); 4 the filter ignores "found";
 5 the planted brace goes with the eye. If a session dies mid-step: review the uncommitted diff against BUILD.md first.
 

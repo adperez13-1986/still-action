@@ -29,6 +29,44 @@ export const MASTERY: Record<MasteryId, { form: MasteryForm; name: string; line:
 export const MASTERY_MAX = 6
 
 /**
+ * Which auto a part at III feeds: close parts the hand, marksman parts the eye, the rest (Borrowed Time) either. The build layer (B1, 2 Oct) cut the
+ * leaning tags from the part defs; this table is what they said, one for one (tools/checks/baseline/leans.json, held equal by tools/corecheck.ts),
+ * so mastery is offered exactly as before with "builds" off. With a core worn there is no mastery.
+ */
+export const MASTERY_FORM: Record<string, MasteryForm | null> = {
+  'focusing-lens': 'eye',
+  'flare': 'hand',
+  'cracked-lens': 'eye',
+  'ricochet-lens': 'eye',
+  'patient-lens': 'eye',
+  'signal-flare': 'hand',
+  'through-line': 'eye',
+  'overclocked-coil': 'hand',
+  'pressure-vent': 'eye',
+  'ward': 'eye',
+  'backdraft-vent': 'hand',
+  'chill-vent': 'eye',
+  'brace': 'hand',
+  'mirror-ward': 'eye',
+  'lure': 'eye',
+  'scrap-cleaver': 'hand',
+  'piston': 'eye',
+  'rusted-hook': 'hand',
+  'parry-clamp': 'hand',
+  'frayed-cleaver': 'hand',
+  'clamp-toss': 'eye',
+  'anvil': 'hand',
+  'kickstart': 'hand',
+  'skitter': 'eye',
+  'skid-plates': 'hand',
+  'overrun': 'hand',
+  'frost-trail': 'eye',
+  'spring-heels': 'eye',
+  'plumb-line': 'eye',
+  'borrowed-time': null,
+}
+
+/**
  * The numbers, in one place: a chill's length, a mark's length, the cleave's share, the split's reach and hit.
  * A mastery's chill never slows (his call, 28 Sep): a free auto may set only states that don't protect him on their own.
  */

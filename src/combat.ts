@@ -30,6 +30,7 @@ import type { AbilityDef, BeatKey } from './abilities'
 import type { SlotName } from './still'
 import { weighed } from './weight'
 import { MASTERY, MASTERY_TUNE, type MasteryId } from './mastery'
+import { CORES, fitOf, markCap, markLife, type CoreId, type KeystoneId, type UpgradeId } from './cores'
 import { STATE, STATE_IDS, masterySets, stateMul, type Payer, type StateBy, type StateId } from './states'
 import { curveAt, type DepthCurve } from './curve'
 import { PART, History, bankShot, type EnemyStatus, type Flip, type Held, type PartEvent, type PartRuntime, type StillMove, type Zone } from './parts'
@@ -90,8 +91,13 @@ export const EYE = { settle: 0.3, range: 11, brace: 0.5, shove: 0.6, damage: 8 }
  */
 export const BANK = { perPress: 3, cap: 6 }
 
+/**
+ * Whose auto it was: the hand's strike, the eye's planted shot, or, with a core worn (design/buildlayer/BUILD.md), the core's own hit. The
+ * core never breaks a windup, never triggers and never calls onHand / onEye, so what breaks or triggers is `BreakForm`.
+ */
+export type AutoForm = 'hand' | 'eye' | 'core'
 /** Who broke a windup, or hit a boss in its opening: the hand's strike or the eye's planted shot. */
-export type AutoForm = 'hand' | 'eye'
+export type BreakForm = Exclude<AutoForm, 'core'>
 
 /** What a cast knows about the moment it was pressed. */
 export interface CastContext {
@@ -347,7 +353,7 @@ export interface CombatEvents {
    * A trigger the enemy caused: the hand or the eye broke a windup ('break'), or
    * struck a boss first in one of its openings ('opening', nothing interrupted). Never a part's break.
    */
-  onTrigger: (by: AutoForm, e: Enemy, how: 'break' | 'opening') => void
+  onTrigger: (by: BreakForm, e: Enemy, how: 'break' | 'opening') => void
   /** An auto dealt `damage` (after a boss's half) to a body: the hand's strike or cleave, the eye's lance or split shot. */
   onAutoDmg: (form: AutoForm, damage: number) => void
   /** The bank on an auto beat that would have fired: 'spent' one and fired, or 'empty' and passed. Never called with the switch off. */
@@ -509,6 +515,13 @@ export class Combat {
   private nipWait = 0
   /** Mastery (mastery.ts): what the hand and the eye have learned this run. Main owns the set; reset() leaves it. */
   mastery: ReadonlySet<MasteryId> = new Set()
+  /**
+   * The build layer (design/buildlayer/BUILD.md): the core worn, its socketed keystone and its learned upgrades. Main sets all three (`applyBuilds`);
+   * reset() leaves them, like mastery. Null: today's game exactly, and nothing below this line runs (K-M1).
+   */
+  core: CoreId | null = null
+  keystone: KeystoneId | null = null
+  upgrades: ReadonlySet<UpgradeId> = new Set()
   /** The depth curve for packs added now (curve.ts): main sets it per level; keyed on depth alone. */
   // row 1 is shared by both run lengths (INV-C1), so combat need not know the run's (it must not import areas)
   curve: DepthCurve = curveAt(1, 6)
@@ -697,7 +710,10 @@ export class Combat {
 
     // --- auto attack: nearest enemy in range, no aiming required ---
     this.autoTimer -= dt
-    if (this.autoAttack && this.autoTimer <= 0) {
+    // a core worn is the auto: the hand and the eye are not run at all (BUILD.md §2.4). Nothing new runs, and nothing is emitted, with none
+    if (this.core) {
+      if (this.autoAttack) this.tickCore(dt, player)
+    } else if (this.autoAttack && this.autoTimer <= 0) {
       const reach = this.closeHand ? this.handTarget(player) : null
       // backing off from it: no strike, and the timer stays spent, so stopping strikes at once
       const close = reach && !this.retreating(player, reach) ? reach : null
@@ -1109,7 +1125,7 @@ export class Combat {
   private statusFor(e: Enemy): EnemyStatus {
     let st = this.status.get(e)
     if (!st) {
-      st = { chilled: { t: 0, by: 'hand' }, marked: { t: 0, by: 'hand' }, slowT: 0, slowMul: 1 }
+      st = { chilled: { t: 0, by: 'hand' }, marked: { t: 0, by: 'hand' }, marks: { n: 0, t: 0, since: 0 }, slowT: 0, slowMul: 1 }
       this.status.set(e, st)
     }
     return st
@@ -1126,6 +1142,20 @@ export class Combat {
     s.t = Math.max(s.t, seconds)
     s.by = by
     if (fresh) this.events.onPart({ kind: 'state', id, enemy: e, state: 'on', by })
+  }
+
+  /**
+   * Core marks on a body (BUILD.md §2.2), only with a core worn: `n` more, up to the cap (the keystone's, if socketed), and the life refreshed to the full.
+   * A mark at the cap still refreshes and still says so (`added: 0`). `by`: the core's own, or the slot of the part that marked. Public for the dev hooks.
+   */
+  addMarks(e: Enemy, n: number, by: 'core' | SlotName) {
+    if (!this.core || e.dead || n <= 0) return
+    const m = this.statusFor(e).marks
+    const before = m.n
+    m.n = Math.min(markCap(this.core, this.keystone), before + n)
+    m.t = markLife(this.core, this.keystone)
+    if (before === 0) m.since = this.time
+    this.events.onPart({ kind: 'mark', enemy: e, n: m.n, added: m.n - before, by, fresh: before === 0 })
   }
 
   /**
@@ -1153,6 +1183,12 @@ export class Combat {
         this.events.onPart({ kind: 'state', id, enemy: e, state: 'expired', by: s.by })
       }
     }
+    const m = st.marks
+    if (m.t > 0 && (m.t -= dt) <= 0) {
+      this.events.onPart({ kind: 'markExpired', enemy: e, n: m.n })
+      m.n = 0
+      m.t = 0
+    }
     if (st.slowT > 0 && (st.slowT -= dt) <= 0) {
       st.slowT = 0
       e.speedMul /= st.slowMul
@@ -1168,11 +1204,18 @@ export class Combat {
    * whose `pays` lists it, set outside its slot (stateMul): x2 at most, and used up. The autos,
    * the hazards and Signal Flare's own hit don't come through here, so they never pay. A pay
    * doubles damage only: shoves come from the def, never from this. A paid hit that kills shatters.
+   * With a core worn (BUILD.md §2.2), a payer that fits it as a spender also cashes the body's marks: its own `Fit.k` flat damage each (else the core's K),
+   * added after every multiplier (never x temper, weight, a state or a push), and the marks are used up. A boss takes the full bonus.
    */
   private hitPart(e: Enemy, damage: number, pushed: boolean, payer: Payer, real = pushed): boolean {
     const st = this.status.get(e)
     const { mul, used } = stateMul(st, payer)
-    const d = damage * mul
+    const m = st?.marks
+    const fit = this.core ? fitOf(payer, this.core) : null
+    const n = fit?.role === 'spend' && m && m.n > 0 ? m.n : 0
+    const bonus = n ? n * (fit!.k ?? CORES[this.core!].K) : 0
+    const paid = damage * mul
+    const d = paid + bonus
     const killed = e.hit(d)
     if (killed) this.felledBy.set(e, 'part')
     if (this.weight) this.touch(payer, e)
@@ -1181,10 +1224,16 @@ export class Combat {
     if (used && st) {
       const s = st[used]
       if (STATE[used].consumed) s.t = 0
-      this.events.onPart({ kind: 'state', id: used, enemy: e, state: 'paid', by: s.by, payer: payer.slot, pushed: real, killed, mul, bonus: d - damage })
-      // what the kill had left over goes on to the next body
-      if (killed) this.shatter(e, -e.hp)
+      this.events.onPart({ kind: 'state', id: used, enemy: e, state: 'paid', by: s.by, payer: payer.slot, pushed: real, killed, mul, bonus: paid - damage })
     }
+    if (n && m) {
+      const lagS = this.time - m.since
+      m.n = 0
+      m.t = 0
+      this.events.onPart({ kind: 'spend', enemy: e, n, bonus, payer: payer.slot, killed, lagS })
+    }
+    // what a paid kill had left over goes on to the next body; when only marks paid, what the marks added beyond the HP left
+    if (killed && (used || n)) this.shatter(e, used ? -e.hp : Math.min(bonus, -e.hp))
     if (pushed) this.pushBreak(e, real)
     return killed
   }
@@ -1244,18 +1293,24 @@ export class Combat {
   /**
    * A payer aims at its state (bolts, lobs and arcs): of the awake bodies this part reaches now,
    * the nearest carrying a state it would pay beats `usual`, unless a body nearer than that one
-   * is winding up. After the pushed-threat rule, never instead of it.
+   * is winding up. After the pushed-threat rule, never instead of it. With a core worn, a spender's
+   * choice is the body with the most marks (the nearest of those), then the same rule.
    */
   private prefer(o: THREE.Vector3, def: AbilityDef, usual: Enemy | null): Enemy | null {
-    if (!def.pays?.length) return usual
+    // with a core worn, a spender also aims at its marks: the most marks beats the nearest (ties: the nearest)
+    const spender = this.core !== null && fitOf(def, this.core)?.role === 'spend'
+    if (!def.pays?.length && !spender) return usual
     let best: Enemy | null = null
     let bestD = Infinity
+    let bestN = 0
     for (const [e, st] of this.status) {
-      if (e.dead || !targetable(e) || this.held.has(e) || !this.awakeNow(e) || stateMul(st, def).mul <= 1) continue
+      const marked = spender ? st.marks.n : 0
+      if (e.dead || !targetable(e) || this.held.has(e) || !this.awakeNow(e) || (marked === 0 && stateMul(st, def).mul <= 1)) continue
       const d = Math.hypot(e.pos.x - o.x, e.pos.z - o.z)
-      if (d < bestD && this.reaches(def, o, e)) {
+      if ((marked > bestN || (marked === bestN && d < bestD)) && this.reaches(def, o, e)) {
         best = e
         bestD = d
+        bestN = marked
       }
     }
     if (!best || best === usual) return usual
@@ -1857,6 +1912,12 @@ export class Combat {
     }
   }
 
+  /**
+   * The core's tick, in the auto block's place (BUILD.md §2.5-2.6): Wake's skim (B2), Ram's shove (B3). Empty in B1. It draws no
+   * Math.random: ties break by distance, then by array order (INV-T3's rule), so a cored fight seeded in a check is the same from step to step.
+   */
+  private tickCore(_dt: number, _player: THREE.Vector3) {}
+
   /** One auto beat's price under follow-through: spends a banked beat and says so, or finds the bank empty and says that. */
   private spendBeat(): boolean {
     if (this.bank < 1) {
@@ -1893,7 +1954,7 @@ export class Combat {
    * The hand's or the eye's trigger: a break, or, a boss being unbreakable, the first hand or eye
    * hit in each of its openings (the Assembler stunned, the Arbiter venting), which interrupts nothing.
    */
-  private trigger(by: AutoForm, e: Enemy, broke: boolean) {
+  private trigger(by: BreakForm, e: Enemy, broke: boolean) {
     if (broke) this.events.onTrigger(by, e, 'break')
     else if (isBoss(e) && e.open && !this.openingSpent) {
       this.openingSpent = true
@@ -2296,7 +2357,7 @@ export class Combat {
       }
     }
     // follow-through: a press that fired pays the bank, here once for every part (a refused one paid nothing)
-    if (r.cooldown !== 'refused' && this.followThrough) this.bank = Math.min(BANK.cap, this.bank + BANK.perPress)
+    if (r.cooldown !== 'refused' && this.followThrough && !this.core) this.bank = Math.min(BANK.cap, this.bank + BANK.perPress)
     this.flushContacts()
     return r
   }
@@ -2509,9 +2570,12 @@ export class Combat {
     return (v.x * dx + v.z * dz) / (speed * d) < HAND.retreat
   }
 
-  /** Planted: the stick has rested EYE.settle s with the eye's switch on. A cast doesn't lift it; a step does. */
+  /**
+   * Planted: the stick has rested EYE.settle s with the eye's switch on. A cast doesn't lift it; a step does. Never with a core worn: the one
+   * line that removes the planted brace, the eye's head-part aim, the sightline and `ctx.planted` (BUILD.md §2.4).
+   */
   get inStance(): boolean {
-    return this.eye && this.stillT >= EYE.settle
+    return this.eye && this.core === null && this.stillT >= EYE.settle
   }
 
   /**
@@ -2609,7 +2673,7 @@ export class Combat {
    * `by`: the hand or the eye broke it, not a part; `tell`: Parry caught a pressure body's own tell, not a windup;
    * `ready`: the push effect came from a ready cast under "weight", not a real push: the log splits the two).
    */
-  private interrupted(e: Enemy, push = false, by?: AutoForm, tell = false, parry = false, ready = false) {
+  private interrupted(e: Enemy, push = false, by?: BreakForm, tell = false, parry = false, ready = false) {
     this.book.unbook(e)
     const ev = push ? { kind: 'interrupt' as const, enemy: e, push } : by ? { kind: 'interrupt' as const, enemy: e, by } : { kind: 'interrupt' as const, enemy: e }
     // `parry`: Parry Clamp's snap did it (a windup broken or a tell caught): the parry-catch trial (main) reads it

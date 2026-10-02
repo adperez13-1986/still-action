@@ -1,5 +1,5 @@
 import type { ChooserSpec } from './workshop'
-import { LEAN_GLYPH, type AbilityDef, type IconState } from './abilities'
+import type { AbilityDef, IconState } from './abilities'
 import type { CastResult } from './combat'
 import { SLOT_NAMES, type SlotName } from './still'
 import { STATE_GLYPH, type StateId } from './states'
@@ -926,8 +926,6 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
       const nameEl = chooserEl.querySelector<HTMLElement>('.name')!
       nameEl.textContent = d?.name ?? ''
       nameEl.style.color = d?.tier ? TIER_CSS[d.tier] : ''
-      // the wall shows a found part's lean beside its name
-      if (d?.lean) nameEl.insertAdjacentHTML('beforeend', ` <span class="plean ${d.lean}" aria-label="${d.lean}">${svg(LEAN_GLYPH[d.lean])}</span>`)
       chooserEl.querySelector('.line')!.textContent = d?.line ?? ''
       chooserEl.querySelector('.note')!.textContent = [d?.history, d?.note].filter(Boolean).join(' \u00b7 ')
       const act = chooserEl.querySelector<HTMLElement>('.act')!
@@ -955,7 +953,6 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
       offerHist.textContent = past?.history ?? ''
       offerHist.style.display = past?.history ? '' : 'none'
       offerName.style.color = TIER_CSS[incoming.tier]
-      // the lean's glyph stays off the fight's screen
       offerLine.textContent = incoming.line
       offerReplaces.textContent = o.swap ? `${o.swap.take}\n${o.swap.melts}` : current ? `replaces ${current.name}` : `fills the empty ${SLOT_LABEL[incoming.slot]} slot`
       offerPair.textContent = o.pair ?? ''

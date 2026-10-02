@@ -1,4 +1,4 @@
-import { PARTS, type AbilityDef, type DropGate, type Lean, type Tier } from './abilities'
+import { PARTS, type AbilityDef, type DropGate, type Tier } from './abilities'
 import type { SlotName } from './still'
 import type { Archetype, Pack } from './combat'
 import { POOL_RULES, type PoolView } from './pool'
@@ -95,14 +95,14 @@ export function dropChance(
  * A moment (an elite, a bargain, the Assembler) past the first depth sometimes
  * reaches into the parts never found, only in the tiers that moment may give;
  * everything else, and every fall-through, is drawn from the found ones exactly
- * as before. `lean`: only parts of that leaning (a pedestal's match).
+ * as before.
  */
 export function rollPart(
-  from: Archetype, taken: readonly AbilityDef[], source: DropSource, pool: PoolView, exclude: readonly SlotName[] = [], fresh = true, lean?: Lean,
+  from: Archetype, taken: readonly AbilityDef[], source: DropSource, pool: PoolView, exclude: readonly SlotName[] = [], fresh = true,
 ): AbilityDef | null {
   const on = new Set(taken.map((p) => p.id))
   const gates = GATES[source]
-  const base = PARTS.filter((p) => !on.has(p.id) && !pool.turned.has(p.id) && gates.includes(p.drops) && !exclude.includes(p.slot) && (!lean || p.lean === lean))
+  const base = PARTS.filter((p) => !on.has(p.id) && !pool.turned.has(p.id) && gates.includes(p.drops) && !exclude.includes(p.slot))
   const wantUnfound = fresh && pool.depth >= POOL_RULES.minDepth && Math.random() < POOL_RULES.unfound[source]
   if (wantUnfound) {
     const tiers = POOL_RULES.unfoundTiers[source]
@@ -166,44 +166,22 @@ export const PEDESTALS = {
 export const PEDESTALS_ON = false
 
 /**
- * The leaning match (design/leanings/PITCHES.md), built and left off: pedestals are the economy
- * change on trial, the eye break the combat one (the riders were cut 28 Sep). It turns on after he has played
- * 3 plain-pedestal runs.
- */
-export const LEAN_MATCH = false
-
-/**
- * His lean, for the match: the one he wears most; a tie goes to his last tagged pick. Null when
- * nothing he wears is tagged (or a tie with no tagged pick yet).
- */
-export function leanOf(worn: readonly AbilityDef[], last: Lean | null): Lean | null {
-  const close = worn.filter((p) => p.lean === 'close').length
-  const marksman = worn.filter((p) => p.lean === 'marksman').length
-  if (close === marksman) return close ? last : null
-  return close > marksman ? 'close' : 'marksman'
-}
-
-/**
  * One set: each pedestal on its own slot, every empty slot first (so a run goes from sparse to
  * whole: the fourth button lights at the Assembler), and at most one part never found among them
  * (so the wall fills no faster). Slots are drawn even, as a boss's are.
- * With the match on, one pedestal in three is drawn from his lean (`leanOf`); with no lean, one
- * close, one marksman and one free. A leaning with nothing left to give falls back to any part.
  */
 export function rollPicks(
-  kind: PickKind, worn: readonly AbilityDef[], taken: readonly AbilityDef[], pool: PoolView, lean: Lean | null = null, match = LEAN_MATCH,
+  kind: PickKind, worn: readonly AbilityDef[], taken: readonly AbilityDef[], pool: PoolView,
 ): AbilityDef[] {
   const out: AbilityDef[] = []
   const empty = emptySlots(worn)
-  const leans: (Lean | undefined)[] = !match ? [] : lean ? [lean] : ['close', 'marksman']
-  PEDESTALS.sources[kind].forEach((source, i) => {
+  PEDESTALS.sources[kind].forEach((source) => {
     const used = out.map((p) => p.slot)
     const open = empty.filter((sl) => !used.includes(sl))
     const fresh = out.every((p) => pool.found.has(p.id))
     const all = [...taken, ...out]
-    const roll = (l?: Lean) => (open.length ? rollPart('boss', all, source, pool, SLOTS.filter((sl) => !open.includes(sl)), fresh, l) : null)
-      ?? rollPart('boss', all, source, pool, used, fresh, l)
-    const def = (leans[i] && roll(leans[i])) || roll()
+    const def = (open.length ? rollPart('boss', all, source, pool, SLOTS.filter((sl) => !open.includes(sl)), fresh) : null)
+      ?? rollPart('boss', all, source, pool, used, fresh)
     if (def) out.push(def)
   })
   return out

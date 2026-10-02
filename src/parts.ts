@@ -72,6 +72,11 @@ export interface PartRuntime {
 export interface EnemyStatus {
   chilled: StateMark
   marked: StateMark
+  /**
+   * Core marks (design/buildlayer/BUILD.md §2.2): a count, not a StateId. `n` 0..cap; `t` seconds left (0 with n 0);
+   * `since`: combat time the stack's first mark landed (for the log's lag). INV: n === 0 <=> t === 0.
+   */
+  marks: { n: number; t: number; since: number }
   slowT: number      // seconds left, 0 = not slowed
   /** The factor applied to speedMul while slowT > 0. Divided back out on expiry: never set speedMul to 1. */
   slowMul: number
@@ -187,6 +192,18 @@ export type PartEvent =
    * multiplier and the damage it added.
    */
   | { kind: 'state'; id: StateId; enemy: Enemy; state: 'on' | 'paid' | 'expired'; by: StateBy; payer?: SlotName; pushed?: boolean; killed?: boolean; mul?: number; bonus?: number }
+  /**
+   * Core marks (BUILD.md §2.2), only with a core worn. `mark`: marks landed on a body; `n` is its count after, `added` the number actually added
+   * (0 at the cap: still a refresh), `fresh` a first mark on a body holding none. `markExpired`: the stack ran out unspent (`n` it held).
+   * `spend`: a part, or Burst (`payer: 'core'`), cashed `n` marks for `bonus` flat damage; `lagS`: seconds since the stack's first mark.
+   */
+  | { kind: 'mark'; enemy: Enemy; n: number; added: number; by: 'core' | SlotName; fresh: boolean }
+  | { kind: 'markExpired'; enemy: Enemy; n: number }
+  | { kind: 'spend'; enemy: Enemy; n: number; bonus: number; payer: 'core' | SlotName; killed: boolean; lagS: number }
+  /** Wake's skim (B2): a body passed beside. */
+  | { kind: 'skim'; enemy: Enemy }
+  /** Ram's shove (B3): `slam` says what the body hit, or null for a plain shove; `other` is the body it hit; `why` the source. */
+  | { kind: 'shove'; enemy: Enemy; slam: 'wall' | 'body' | 'still' | 'tell' | null; other?: Enemy; why: 'beat' | 'part' | 'catch' | 'chain' }
   /** A paid kill's excess, passed on to the nearest body as a plain hit. */
   | { kind: 'shatter'; from: THREE.Vector3; to: THREE.Vector3; enemy: Enemy; damage: number }
   | { kind: 'slow'; enemy: Enemy; state: 'on' | 'off' }

@@ -4,7 +4,7 @@ import { buildInstanced, pieceData, doorLeaf, skin, type Placement } from './kit
 import { makeTerrain, makeLightBeam, key, type BeamStyle, type Box, type Circle } from './dungeon'
 import type { Terrain } from './terrain'
 import { SLOT_NAMES, type SlotName, type Still } from './still'
-import { PARTS, type AbilityDef, type Lean, type Tier } from './abilities'
+import { PARTS, type AbilityDef, type Tier } from './abilities'
 import { partModel, centred, WALL_SCALE, DISPLAY_EYE, EYE_OFF } from './partmodels'
 import { canTurn, hookOffers, partName, historyLine } from './pool'
 import { presetOf, applyDay, WINDOW, GRACE_REACH, BASE_HEMI, BASE_KEY, type HomeHour } from './areas'
@@ -50,8 +50,8 @@ export interface ChooserSpec {
   title: string
   items: { id: PartId; icon: string; state: PlaqueState | 'disabled'; tier: Tier }[]
   selected: PartId | null
-  /** `note`: the small line under it (hung, or why a turn is refused). `lean`: a found part's. */
-  detail: { name: string; line: string; history: string | null; tier: Tier | null; note?: string; lean?: Lean } | null
+  /** `note`: the small line under it (hung, or why a turn is refused). */
+  detail: { name: string; line: string; history: string | null; tier: Tier | null; note?: string } | null
   /** Null hides the button. */
   action: string | null
 }
@@ -1158,7 +1158,7 @@ export function createWorkshop(world: World, still: Still, vfx: Vfx, drawings: D
     cardFor(id, sv, selected) {
       const detailOf = (def: AbilityDef, st: PlaqueState | 'disabled') => st === 'bare'
         ? { name: 'Not found yet', line: hintFor(def), history: null, tier: null }
-        : { name: partName(sv, def.id, def.name), line: def.line, history: historyLine(sv, def.id), tier: def.tier, lean: def.lean }
+        : { name: partName(sv, def.id, def.name), line: def.line, history: historyLine(sv, def.id), tier: def.tier }
       if (id === 'hook') {
         const offers = hookOffers(sv)
         const items = offers.map((pid) => {

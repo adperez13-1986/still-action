@@ -27,6 +27,12 @@ export const TEMPER = {
   swapRank: 2,
 }
 
+/**
+ * The build layer's flatter table (design/buildlayer/PITCHES.md): used only while a core is worn (main's `asWorn`). Area is TEMPER.area in both.
+ * The mark's damage (+K each, cores.ts) is flat and never multiplied, so the temper that scales a part's own number stays small.
+ */
+export const TEMPER_FLAT = { damage: [1, 1.15, 1.3], cooldown: [1, 0.92, 0.85] } as const
+
 export const ROMAN = ['', 'I', 'II', 'III'] as const
 
 /** The shapes whose `radius` is an area he sees (a blast, a shell, a landing, a burst). */
@@ -56,13 +62,16 @@ function temperMod(mod: Mod | undefined, dmg: number, cd: number, area: number):
   }
 }
 
-/** `base` at `rank`: the same part (same id, same runtime), its numbers scaled. Rank 1 is `base` itself. */
-export function tempered(base: AbilityDef, rank: number): AbilityDef {
+/**
+ * `base` at `rank`: the same part (same id, same runtime), its numbers scaled. Rank 1 is `base` itself. `flat`: the build layer's table
+ * (TEMPER_FLAT's damage and cooldown). An explicit parameter, not a module switch, so this stays pure and every older caller is unchanged.
+ */
+export function tempered(base: AbilityDef, rank: number, flat = false): AbilityDef {
   const r = Math.max(1, Math.min(TEMPER.maxRank, Math.floor(rank)))
   if (r === 1) return base
   const i = r - 1
-  const dmg = TEMPER.damage[i]!
-  const cd = TEMPER.cooldown[i]!
+  const dmg = (flat ? TEMPER_FLAT : TEMPER).damage[i]!
+  const cd = (flat ? TEMPER_FLAT : TEMPER).cooldown[i]!
   const area = TEMPER.area[i]!
   const held = HELD.has(base.shape) || base.mod?.kind === 'brace'
   return {

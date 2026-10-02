@@ -7,7 +7,7 @@ import { pieceData } from './kit'
 import { LOOT, type PickKind } from './drops'
 
 // The drop rules themselves live in drops.ts, free of three.js, so tools/dropsim.ts can run them.
-export { LOOT, KILL_WEIGHT, dropChance, rollPart, rollPicks, emptySlots, leanOf, PEDESTALS, PEDESTALS_ON, type DropSource, type PickKind } from './drops'
+export { LOOT, KILL_WEIGHT, dropChance, rollPart, rollPicks, emptySlots, PEDESTALS, PEDESTALS_ON, type DropSource, type PickKind } from './drops'
 
 export const TIER_COLOR: Record<Tier, number> = {
   white: 0xdfe6ee,

@@ -5,13 +5,14 @@ import { Still } from './still'
 import { createHud, tapAnswer, type Press } from './hud'
 import { createGradePanel, apply as applyGrade } from './grade'
 import { createPacer, createQuality, createReadout, FRAME_S, BEHIND_CARD_S, IDLE_ROOM_S } from './perf'
-import { Combat, eliteLine, PARRY, HAND, HAND_REACH, EYE, type Archetype, type AutoForm, type CastResult, type EliteMod, type Pack } from './combat'
-import { STARTING, PARTS, byId, type AbilityDef, type AbilityShape, type BeatKey, type Lean } from './abilities'
+import { Combat, eliteLine, PARRY, HAND, HAND_REACH, EYE, type Archetype, type BreakForm, type CastResult, type EliteMod, type Pack } from './combat'
+import { STARTING, PARTS, byId, type AbilityDef, type AbilityShape, type BeatKey } from './abilities'
 import { SLOT_NAMES, type SlotName } from './still'
 import { TEMPER, ROMAN, tempered } from './temper'
 import { presetId as weightPresetId, setPreset as setWeightPreset, weighed, baseCooldownS, WEIGHT_FEEL, WEIGHT_PRESETS, type PresetId } from './weight'
 import { curveAt } from './curve'
-import { MASTERY, MASTERY_MAX, FORM_NAME, masteryOffer, type MasteryId, type MasteryForm } from './mastery'
+import { MASTERY, MASTERY_FORM, MASTERY_MAX, FORM_NAME, masteryOffer, type MasteryId, type MasteryForm } from './mastery'
+import { WORDS, variant, type CoreId, type KeystoneId, type UpgradeId } from './cores'
 import { STATE_IDS, pairWith, paired, type StateId } from './states'
 import type { Enemy, EnemyEvent } from './enemy'
 import { isBoss, Assembler } from './boss'
@@ -38,7 +39,7 @@ import { Sightline } from './sightline'
 import { createCameraRig } from './camera'
 import { updateMusic, musicNow } from './music'
 import { updateAmbience, type AmbienceMood } from './ambience'
-import { Loot, LOOT, dropChance, rollPart, rollPicks, leanOf, PEDESTALS, PEDESTALS_ON, type GroundPart, type PickKind, type PickSet } from './loot'
+import { Loot, LOOT, dropChance, rollPart, rollPicks, PEDESTALS, PEDESTALS_ON, type GroundPart, type PickKind, type PickSet } from './loot'
 import { createPauseScreen } from './pause'
 import { createOverlay } from './ending'
 import { loadKit, setSurfaces, pieceData, surfaceNow, buildInstanced, PIECES, type Piece } from './kit'
@@ -81,6 +82,11 @@ const DEPTH_PARAM = params.get('depth')
 const START_DEPTH = Math.min(RUN_DEPTHS, Math.max(1, Number(DEPTH_PARAM) || 1))
 /** DEV only: a URL param as given, or null (production builds never read them). */
 const devParam = (k: string): string | null => (import.meta.env.DEV ? params.get(k) : null)
+/**
+ * `?core=wake|ram` (DEV, with `?depth=`): the run starts wearing that core (design/buildlayer/BUILD.md §2.4); it needs no switch. Without it a dev boot is bare,
+ * so every suite stays bare. A `?depth=` boot never shows the pick.
+ */
+const CORE_PARAM: CoreId | null = DEPTH_PARAM !== null && (devParam('core') === 'wake' || devParam('core') === 'ram') ? (devParam('core') as CoreId) : null
 /** `?route=II|III` (DEV): the run starts on that road and never sees the crossroads; with ?depth=4-6 it starts there. */
 const ROUTE_PARAM: RouteId | null = devParam('route') === 'III' ? 'III' : devParam('route') === 'II' ? 'II' : null
 /** `?crossroads=1` (DEV): the crossroads after the Assembler, whatever the switch and the save say. */
@@ -549,7 +555,7 @@ const combat = new Combat(world.scene, OPEN, {
   onLance: (_e, broke) => {
     const st = run.stats[run.stats.length - 1]
     if (!st) return
-    st.autoDmg = { hand: st.autoDmg?.hand ?? 0, eye: (st.autoDmg?.eye ?? 0) + EYE.damage }
+    st.autoDmg = { hand: st.autoDmg?.hand ?? 0, eye: (st.autoDmg?.eye ?? 0) + EYE.damage, core: st.autoDmg?.core ?? 0 }
     if (broke) st.eyeBreaks = (st.eyeBreaks ?? 0) + 1
   },
   onAutoDmg: (form, damage) => {
@@ -614,7 +620,7 @@ const combat = new Combat(world.scene, OPEN, {
     const st = run.stats[run.stats.length - 1]
     if (st) {
       st.hand++
-      st.autoDmg = { hand: (st.autoDmg?.hand ?? 0) + HAND.damage, eye: st.autoDmg?.eye ?? 0 }
+      st.autoDmg = { hand: (st.autoDmg?.hand ?? 0) + HAND.damage, eye: st.autoDmg?.eye ?? 0, core: st.autoDmg?.core ?? 0 }
       if (broke) st.handBreaks = (st.handBreaks ?? 0) + 1
     }
   },
@@ -1306,7 +1312,7 @@ function landFx(at: THREE.Vector3, what: 'flare' | 'signal' | 'throw' | 'wall', 
  * A windup broken, or a boss's opening taken as one: the tell shatters, the break's tone, and the
  * moment holds. The hand's break shatters ember, the eye's cold with a frost ring; a part's as always.
  */
-function breakFx(e: Enemy, by?: AutoForm) {
+function breakFx(e: Enemy, by?: BreakForm) {
   const color = by === 'hand' ? EMBER : COLD
   const at = at3(e.pos, 1.0)
   tellBreak(e, color)
@@ -1602,7 +1608,7 @@ interface DepthStats {
    * (nominal: HAND.damage a strike, EYE.damage a body the planted shot hits). Old logs also carry `riders` (fires by part id; cut 2 Oct).
    */
   eyeBreaks?: number; openings?: number; plantedS?: number
-  autoDmg?: { hand: number; eye: number }
+  autoDmg?: { hand: number; eye: number; core: number }
   /**
    * The follow-through trial (design/autos/BUILD-1.md), logged with the switch on or off. `followThrough`: on at this depth.
    * `autoDmgReal`: what the autos actually dealt (after a boss's half, with the hand-cleave and the eye's splits), where
@@ -1613,7 +1619,7 @@ interface DepthStats {
   followThrough?: boolean
   /** The switch was flipped during this depth: its numbers are half one rule, half the other. */
   followThroughMixed?: boolean
-  autoDmgReal?: { hand: number; eye: number }
+  autoDmgReal?: { hand: number; eye: number; core: number }
   kills?: { part: number; auto: number; other: number }
   fightS?: number
   bankBeats?: number; emptyBeats?: number
@@ -1677,6 +1683,31 @@ interface DepthStats {
   maxMul?: number
   /** Menders (mender.ts): met (their pack woke), cables cut by his body, menders killed, HP their cables restored. */
   menders?: { met: number; cut: number; killed: number; healed: number }
+  /**
+   * The build layer (design/buildlayer/BUILD.md §2.11), logged with the switch on or off; B1 lands the fields, B2-B5 fill them (zeros until then).
+   * `core`: combat.core at entry (null: bare). `coreMixed`: only on a depth where the switch flip changed the fight (leave it out when judging).
+   * `temperFlat`: the flat temper table was in force at entry. `keystone`, `upgrades`: at entry; `upgraded`: learned here. `movingS`: fight seconds with
+   * the stick out. `nearBins` / `nearMovingBins`: fight seconds by distance to the nearest awake body (edges 2 / 3.5 / 6 / 11 u, 5 numbers; the second only while
+   * moving). `wallS` / `closeS`: fight seconds within 2 u of a wall; and of a wall or a body. `marks`: made (the number actually added), by the core and by a
+   * part, spent (by a spend or Burst) and expired unspent. `spends`: spending hits, the flat damage they added, and seconds from the stack's first mark
+   * (<=1, <=2, <=4, >4). `spendsPerFight`: one number per fight closed this depth. `shoves` (Ram) and `skims` (Wake): what the core did.
+   */
+  core: CoreId | null
+  coreMixed?: true
+  temperFlat: boolean
+  keystone: KeystoneId | null
+  upgrades: UpgradeId[]
+  upgraded?: UpgradeId[]
+  movingS: number
+  nearBins: number[]
+  nearMovingBins: number[]
+  wallS: number
+  closeS: number
+  marks: { made: number; byCore: number; byPart: number; spent: number; expired: number }
+  spends: { hits: number; bonus: number; lag: [number, number, number, number] }
+  spendsPerFight: number[]
+  shoves?: { n: number; wall: number; body: number; still: number; tell: number; plain: number; chained: number; caught: number }
+  skims?: { n: number; burst: number; spray: number }
 }
 /** One press on a filled button, for the playtest file: how long taps really last on the phone. */
 interface TapLog { depth: number; slot: SlotName; ms: number; ready: boolean; result: Press['result']; leftMs: number; at: number; nbMs?: number; nbSlot?: SlotName; tp?: true }
@@ -1724,8 +1755,14 @@ const run = {
   swaps: [] as { slot: SlotName; from: string; to: string; rankLost: number }[],
   /** Mastery learned this run (mastery.ts): combat reads the same set. */
   mastery: new Set<MasteryId>(),
-  /** His last tagged pick's lean: the match's tie-break (LEAN_MATCH). Not kept by a resume. */
-  lastLean: null as Lean | null,
+  /**
+   * The build layer (design/buildlayer/BUILD.md §2.4): the core worn this run, its socketed keystone and learned upgrades. Null: a bare run (picked nothing,
+   * begun with "builds" off, or an old snapshot). Nothing reads them but `coreActive()`. `corePick`: what the pick said (B4); once a run, in the playtest body.
+   */
+  core: null as CoreId | null,
+  keystone: null as KeystoneId | null,
+  upgrades: [] as UpgradeId[],
+  corePick: null as { at: 'start' | 'resume'; offered: CoreId[]; took: CoreId; s: number } | null,
   /**
    * The road through depths 4-6 (design/area3/SPEC.md §3). null until it's chosen: at the
    * Assembler's descend, or in the crossroads. Depths 1-3 ignore it; null reads as 'II'.
@@ -1996,7 +2033,7 @@ function raisePicks(kind: PickKind, at: THREE.Vector3, from: THREE.Vector3, ids?
   const known = new Set(PARTS.map((p) => p.id))
   const defs = ids
     ? ids.filter((id) => known.has(id) && !on.has(id) && !save.turned.includes(id)).map((id) => byId(id))
-    : rollPicks(kind, hud.loadout, [...hud.loadout, ...loot.ground.map((g) => g.def)], pool(), leanOf(hud.loadout, run.lastLean))
+    : rollPicks(kind, hud.loadout, [...hud.loadout, ...loot.ground.map((g) => g.def)], pool())
   const spots = pickSpots(at, from, PICK_RING[kind], defs.length)
   const set: PickSet = { kind, took: 0 }
   const rose = defs.slice(0, spots.length)
@@ -2416,6 +2453,61 @@ pause.setSwitch('tap push', () => tapPushOn, (on) => {
     // private window: it holds for this session
   }
 })
+/**
+ * The "builds" trial (design/buildlayer/BUILD.md; the word is a PLACEHOLDER, WORDS.switch). A pause switch, kept per device, ON by default (the lead's
+ * call, 2 Oct: his rule is no dark stages; it costs nothing, because no core can be worn before B4's pick and with no core the game is today's, K-M1).
+ * Flipped during a crawl with a core worn, the core goes on or off at once, the worn parts are re-tempered with their cooldowns' fractions kept,
+ * and the depth is logged `coreMixed`. Every effect keys on `coreActive()`, never on this switch alone.
+ */
+const BUILDS_KEY = 'still-action.builds'
+let buildsOn = (() => {
+  try {
+    return localStorage.getItem(BUILDS_KEY) !== '0'
+  } catch {
+    return true
+  }
+})()
+// `?core=` needs no switch: for this page, builds are on (nothing is stored)
+if (CORE_PARAM) buildsOn = true
+pause.setSwitch(WORDS.switch, () => buildsOn, (on) => {
+  buildsOn = on
+  if (run.phase === 'crawl' && run.core && (combat.core !== null) !== on) {
+    applyBuilds()
+    const st = run.stats[run.stats.length - 1]
+    if (st) st.coreMixed = true
+  }
+  try {
+    localStorage.setItem(BUILDS_KEY, on ? '1' : '0')
+  } catch {
+    // private window: it holds for this session
+  }
+})
+/** A core is worn and the switch is on: the one gate every build effect keys on. With none worn the game is today's, flat temper included. */
+const coreActive = () => buildsOn && run.core !== null
+const coreNow = (): CoreId | null => (coreActive() ? run.core : null)
+/** The one way main builds a worn part: its reshape under the core worn, then temper, flat while a core is on. With no core: `tempered(base, rank)`. */
+const asWorn = (base: AbilityDef, rank: number): AbilityDef => tempered(variant(base, coreNow()), rank, coreActive())
+const NO_UPGRADES: ReadonlySet<UpgradeId> = new Set()
+const NO_MASTERY: ReadonlySet<MasteryId> = new Set()
+/** The gate's state, written to Combat. Cheap and idempotent: at every level entry, a flip, a pick, a resume. */
+function syncCore() {
+  const on = coreActive()
+  combat.core = coreNow()
+  combat.keystone = on ? run.keystone : null
+  combat.upgrades = on ? new Set(run.upgrades) : NO_UPGRADES
+  combat.mastery = on ? NO_MASTERY : run.mastery // no mastery with a core
+}
+/**
+ * `syncCore`, and when the core went on, off or changed, the worn parts again, as `asWorn` says: the button keeps its cooldown fraction (hud.equip).
+ * A level entry with the core unchanged touches no button. The rank is the worn def's own, so a part tempered by a dev hook keeps it.
+ */
+function applyBuilds() {
+  const was = combat.core
+  syncCore()
+  if (was === combat.core) return
+  for (const sl of hud.slots) if (sl.def) hud.equip(asWorn(byId(sl.def.id), sl.def.rank ?? 1))
+}
+
 /** The switch's state applied to Combat: at each level, when it's flipped mid-depth, and by the DEV hook. (The freeze merge state resets here.) */
 function applyWeight(on: boolean) {
   combat.weight = on
@@ -2510,8 +2602,8 @@ function meltLabel(g: GroundPart): string | null {
   return form ? `melt: master the ${FORM_NAME[form]}` : 'melt: master strike or shot'
 }
 
-/** Which auto a part at III feeds: close the hand, marksman the eye, no lean either (null). */
-const masteryForm = (d: AbilityDef): MasteryForm | null => (d.lean === 'close' ? 'hand' : d.lean === 'marksman' ? 'eye' : null)
+/** Which auto a part at III feeds: close the hand, marksman the eye, no lean either (null). A table since B1 (mastery.ts MASTERY_FORM): the tags are gone from the defs. */
+const masteryForm = (d: AbilityDef): MasteryForm | null => MASTERY_FORM[d.id] ?? null
 
 pause.setLearned(() => [...run.mastery].map((id) => MASTERY[id]))
 
@@ -2568,7 +2660,7 @@ function meltPart(g: GroundPart) {
   run.ranks[g.def.slot] = rank
   endDrop(g, 'melted')
   loot.remove(g)
-  hud.equip(tempered(byId(cur.id), rank))
+  hud.equip(asWorn(byId(cur.id), rank))
   const st = run.stats[run.stats.length - 1]
   if (st) st.melts = (st.melts ?? 0) + 1
   offered = null
@@ -2618,7 +2710,7 @@ function swapsIn(d: AbilityDef): AbilityDef | null {
 /** What the card and the compare say a take does: "take · Piston II", "Scrap Cleaver III melts in". Null: no swap. */
 function swapWords(d: AbilityDef): { take: string; melts: string } | null {
   const cur = swapsIn(d)
-  return cur ? { take: `take \u00b7 ${tempered(d, TEMPER.swapRank).name}`, melts: `${cur.name} melts in` } : null
+  return cur ? { take: `take \u00b7 ${asWorn(d, TEMPER.swapRank).name}`, melts: `${cur.name} melts in` } : null
 }
 
 /** The card's one spare line: the pair this part makes with what's worn (parts or mastery), else the pair it ends. */
@@ -2638,7 +2730,7 @@ function takePart(g: GroundPart) {
   saw(g.def.id)
   const slot = g.def.slot
   const melts = swapsIn(g.def)
-  const old = swapIn(melts ? tempered(g.def, TEMPER.swapRank) : g.def)
+  const old = swapIn(asWorn(g.def, melts ? TEMPER.swapRank : 1))
   if (melts) {
     // the part he gave up melts into this one: it lands at II, and nothing falls out
     run.ranks[slot] = TEMPER.swapRank
@@ -2648,7 +2740,6 @@ function takePart(g: GroundPart) {
     // an empty slot starts at I; so does a swap from a part at I, or with temper off
     delete run.ranks[slot]
   }
-  if (g.def.lean) run.lastLean = g.def.lean
   endDrop(g, 'taken')
   loot.remove(g)
   // no melt (a part at I, or temper off): the part he gave up lands at his feet as itself
@@ -2891,21 +2982,20 @@ function resumeRun(snap: RunSnapshot) {
   const route: RouteId | null = snap.crossroads ? null
     : snap.route === 'III' && flag('line') ? 'III' : snap.route === 'II' || depth >= 4 || snap.route === 'III' ? 'II' : null
   Object.assign(run, {
-    phase: 'crawl', t: 0, swapped: false, ramStunSeen: false, dev: false, committed: false, ending: null, stats: [], taps: [], walkS: 0, lastLean: null, swaps: [],
+    phase: 'crawl', t: 0, swapped: false, ramStunSeen: false, dev: false, committed: false, ending: null, stats: [], taps: [], walkS: 0, swaps: [], core: null, keystone: null, upgrades: [], corePick: null,
     breakRule: combat.breakRule, hand: combat.closeHand, eye: combat.eye, drops: [], id: snap.id, startedAt: snap.startedAt, strain: Math.min(19, Math.max(0, Math.round(snap.strain) || 0)), tally, route,
   })
   run.kept = Math.min(run.strain, Math.max(0, Math.round(snap.kept ?? 0) || 0))
   // mastery and temper's ranks come back as they were earned
   run.mastery = new Set((snap.mastery ?? []).filter((id): id is MasteryId => id in MASTERY))
-  combat.mastery = run.mastery
+  syncCore()
   run.ranks = {}
   SLOT_NAMES.forEach((slot, i) => {
     const r = Math.floor(snap.ranks?.[slot] ?? 1)
     const d = loadout[i]
-    if (d && r > 1) {
-      run.ranks[slot] = Math.min(TEMPER.maxRank, r)
-      loadout[i] = tempered(d, r)
-    }
+    if (d && r > 1) run.ranks[slot] = Math.min(TEMPER.maxRank, r)
+    // every part comes back as it is worn: re-tempered, and reshaped and flat while a core is on (asWorn); with none, today's tempered(d, r) / d
+    if (d) loadout[i] = asWorn(d, r)
   })
   // a resume starts its stats over, so it's its own entry in the playtest file, not an overwrite
   playKey = `${run.id}.${Date.now().toString(36)}`
@@ -3049,6 +3139,7 @@ function enterLevel(depth: number, o: { seed?: number; bossFelled?: boolean; res
   applyParryCatch(parryCatchOn)
   applyFollowThrough(followThroughOn)
   applyWeight(weightOn)
+  applyBuilds()
   combat.curve = curveAt(depth, RUN_DEPTHS)
   // weight (design/lean/WEIGHT.md §2.2): ordinary bodies' HP on top of the depth curve, from this level on; a boss level and the switch off stay 1
   {
@@ -3114,13 +3205,15 @@ function enterLevel(depth: number, o: { seed?: number; bossFelled?: boolean; res
   prev.copy(still.pos)
   run.depth = depth
   closeStats()
-  run.stats.push({ depth, fights: 0, pushes: 0, breaks: 0, deadTaps: 0, quiets: 0, strainIn: run.strain, strainOut: null, hand: 0, shots: 0, eye: 0, eyeCasts: 0, handBreaks: 0, braced: 0, playS: 0, eyeBreaks: 0, openings: 0, plantedS: 0, autoDmg: { hand: 0, eye: 0 }, pressure: combat.pressure, hpLost: 0,
-    followThrough: combat.followThrough, weight: combat.weight, breaksBy: { ready: 0, pushed: 0 }, freezeMs: 0, freezePartMs: 0, freezeAutoMs: 0, tapPush: hud.tapPush, tapPushes: 0, queued: 0, queueDropped: 0, guarded: 0, autoDmgReal: { hand: 0, eye: 0 }, kills: { part: 0, auto: 0, other: 0 }, fightS: 0, bankBeats: 0, emptyBeats: 0, temper: temperOn, melts: 0,
+  run.stats.push({ depth, fights: 0, pushes: 0, breaks: 0, deadTaps: 0, quiets: 0, strainIn: run.strain, strainOut: null, hand: 0, shots: 0, eye: 0, eyeCasts: 0, handBreaks: 0, braced: 0, playS: 0, eyeBreaks: 0, openings: 0, plantedS: 0, autoDmg: { hand: 0, eye: 0, core: 0 }, pressure: combat.pressure, hpLost: 0,
+    followThrough: combat.followThrough, weight: combat.weight, breaksBy: { ready: 0, pushed: 0 }, freezeMs: 0, freezePartMs: 0, freezeAutoMs: 0, tapPush: hud.tapPush, tapPushes: 0, queued: 0, queueDropped: 0, guarded: 0, autoDmgReal: { hand: 0, eye: 0, core: 0 }, kills: { part: 0, auto: 0, other: 0 }, fightS: 0, bankBeats: 0, emptyBeats: 0, temper: temperOn, melts: 0,
     counters: combat.counters, lunges: { started: 0, hit: 0, broken: 0 }, catches: { hulk: 0, sentinel: 0, mite: 0 }, parryCatch: combat.parryCatch, parryReadies: 0, ducks: { started: 0, peeked: 0, backed: 0 },
     states: Object.fromEntries(STATE_IDS.map((id) => [id, { set: 0, paid: 0, expired: 0 }])) as DepthStats['states'],
     stateBonus: Object.fromEntries(STATE_IDS.map((id) => [id, 0])) as DepthStats['stateBonus'],
     paidBy: { head: 0, torso: 0, arms: 0, legs: 0, hand: 0, eye: 0 }, pushedIntoState: 0, shatter: { n: 0, dmg: 0 }, maxMul: 1,
-    menders: { met: 0, cut: 0, killed: 0, healed: 0 } })
+    menders: { met: 0, cut: 0, killed: 0, healed: 0 },
+    core: combat.core, temperFlat: coreActive(), keystone: combat.keystone, upgrades: [...combat.upgrades], movingS: 0, nearBins: [0, 0, 0, 0, 0], nearMovingBins: [0, 0, 0, 0, 0], wallS: 0, closeS: 0,
+    marks: { made: 0, byCore: 0, byPart: 0, spent: 0, expired: 0 }, spends: { hits: 0, bonus: 0, lag: [0, 0, 0, 0] }, spendsPerFight: [] })
   // the card's line gets a tick where this depth began (a resumed depth already has its tick)
   if (!o.resume) run.tally.marks.push(run.tally.line.length)
   // parts remember how deep they went
@@ -3132,11 +3225,11 @@ function startRun() {
   leaveRoom()
   still.reassemble()
   Object.assign(run, {
-    phase: 'crawl', strain: 0, kept: 0, ranks: {}, swaps: [], mastery: new Set<MasteryId>(), lastLean: null, t: 0, swapped: false, ramStunSeen: false,
+    phase: 'crawl', strain: 0, kept: 0, ranks: {}, swaps: [], mastery: new Set<MasteryId>(), core: CORE_PARAM, keystone: null, upgrades: [], corePick: null, t: 0, swapped: false, ramStunSeen: false,
     id: newRunId(), dev: DEPTH_PARAM !== null, committed: false, ending: null, stats: [], drops: [], taps: [], walkS: 0, tally: freshTally(),
     startedAt: new Date().toISOString(), breakRule: combat.breakRule, hand: combat.closeHand, eye: combat.eye, route: ROUTE_PARAM,
   })
-  combat.mastery = run.mastery
+  syncCore()
   playKey = `${run.id}.${Date.now().toString(36)}`
   if (!run.dev) {
     // the first night: the doorframe's marks grow from here, in calendar time
@@ -3153,7 +3246,7 @@ function startRun() {
   for (const p of start) carry(p.id)
   // the last run's anchor or decoy goes before the new loadout arrives, so nothing carries over onto its buttons
   combat.reset()
-  hud.resetLoadout(start)
+  hud.resetLoadout(start.map((d) => asWorn(d, 1)))
   for (const slot of SLOT_NAMES) still.wear(slot, start.find((p) => p.slot === slot) ?? null)
   enterLevel(START_DEPTH)
   hud.bossBar(null)
@@ -4988,7 +5081,7 @@ if (import.meta.env.DEV) {
     __fire: (slot: SlotName, pushed = false) => hud.fireSlot(slot, pushed),
     /** Put a part on its button without the ground. */
     __equip: (id: string) => {
-      const def = byId(id)
+      const def = asWorn(byId(id), 1)
       swapIn(def)
       still.wear(def.slot, def)
     },
@@ -5250,11 +5343,54 @@ if (import.meta.env.DEV) {
       }
       return weightPresetId()
     },
+    /**
+     * The "builds" switch applied now, as the pause switch's flip does it (but never logging `coreMixed`); returns whether it is on. With no core worn it changes
+     * nothing (K-M1). Nothing persists it.
+     */
+    __builds: (on?: boolean) => {
+      if (on !== undefined) {
+        buildsOn = on
+        applyBuilds()
+      }
+      return buildsOn
+    },
+    /** Wear a core now (or none): forces "builds" on for the page, clears the keystone and the upgrades, and re-wears the loadout. Returns combat.core. */
+    __core: (id: CoreId | null) => {
+      run.core = id
+      run.keystone = null
+      run.upgrades = []
+      buildsOn = true
+      applyBuilds()
+      return combat.core
+    },
+    /** Socket a keystone (or empty the socket) without the floor. */
+    __keystone: (id: KeystoneId | null) => {
+      run.keystone = id
+      syncCore()
+      return combat.keystone
+    },
+    /** Learn an upgrade without the melt. */
+    __upgrade: (id: UpgradeId) => {
+      if (!run.upgrades.includes(id)) run.upgrades.push(id)
+      syncCore()
+      return [...combat.upgrades]
+    },
+    /** Every body holding core marks: its index in __combat.enemies, its kind, where it stands, its count and seconds left. */
+    __coreMarks: () => [...combat.statuses()].flatMap(([e, st]) => (st.marks.n > 0
+      ? [{ i: combat.enemies.indexOf(e), kind: e.kind, x: e.pos.x, z: e.pos.z, n: st.marks.n, t: st.marks.t }]
+      : [])),
+    /** `n` marks on body `i` of __combat.enemies, by the core. Does nothing with no core worn. */
+    __setMarks: (i: number, n: number) => {
+      const e = combat.enemies[i]
+      if (e) combat.addMarks(e, n, 'core')
+    },
     /** A part as the weight trial weighs it, at a rank: weighed(tempered(byId(id), rank)), as plain JSON. */
     __weighed: (id: string, rank = 1) => JSON.parse(JSON.stringify(weighed(tempered(byId(id), rank)))),
+    /** A part at a rank as temper makes it, as plain JSON (K-M3); `flat` given: the build layer's table or not, else tempered(d, r) with no flag at all. */
+    __tempered: (id: string, rank = 1, flat?: boolean) => JSON.parse(JSON.stringify(flat === undefined ? tempered(byId(id), rank) : tempered(byId(id), rank, flat))),
     /** __equip at a temper rank. */
     __equipRank: (id: string, rank: number) => {
-      const def = tempered(byId(id), rank)
+      const def = asWorn(byId(id), rank)
       swapIn(def)
       still.wear(def.slot, def)
     },

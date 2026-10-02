@@ -30,8 +30,11 @@ export interface StateMark { t: number; by: StateBy }
 /** A body's states. EnemyStatus carries one of each. */
 export type StateSet = { readonly [K in StateId]?: Readonly<StateMark> }
 
-/** Who pays: a part's slot and what it pays. The autos never pay. */
-export type Payer = Pick<AbilityDef, 'slot' | 'pays'>
+/**
+ * Who pays: a part's slot and what it pays. The autos never pay. `fits` (the build layer, BUILD.md §2.2): with a core worn, a payer that
+ * fits it as a spender also cashes the body's core marks. The mirror's reflected shot has none, so it spends nothing.
+ */
+export type Payer = Pick<AbilityDef, 'slot' | 'pays' | 'fits'>
 
 /** The words on screen for each state, and the verb its setter's card uses. */
 export const STATE_WORD: Record<StateId, { adj: string; verb: string }> = {

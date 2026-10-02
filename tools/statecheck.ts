@@ -12,7 +12,7 @@
  */
 import { PARTS, byId, type AbilityDef } from '../src/abilities'
 import { MASTERY, type MasteryId } from '../src/mastery'
-import { TEMPER, tempered } from '../src/temper'
+import { TEMPER, TEMPER_FLAT, tempered } from '../src/temper'
 import { MUL_CAP, STATE, STATE_IDS, STATE_WORD, stateMul, type StateBy, type StateId } from '../src/states'
 
 const fails: string[] = []
@@ -91,9 +91,13 @@ for (const id of Object.keys(MASTERY) as MasteryId[]) {
 }
 
 // temper's tables, I II III. Today's: damage x1 / 1.3 / 1.6, cooldown x1 / 0.85 / 0.72 (a part's damage a second at III is x2.22). A change to them is a design
-// change (the flat temper trial, design/buildlayer: 1 / 1.15 / 1.3 and 1 / 0.92 / 0.85, behind its switch): update these numbers with it, on purpose.
+// change: update these numbers with it, on purpose. The build layer's flat table (design/buildlayer: 1 / 1.15 / 1.3 and 1 / 0.92 / 0.85, used only while a core
+// is worn, B1 2 Oct) is asserted beside them, and `tempered(d, r)` with no `flat` argument stays on the shipped table.
 check(JSON.stringify(TEMPER.damage) === '[1,1.3,1.6]', `temper damage table ${JSON.stringify(TEMPER.damage)}, shipped [1,1.3,1.6]`)
 check(JSON.stringify(TEMPER.cooldown) === '[1,0.85,0.72]', `temper cooldown table ${JSON.stringify(TEMPER.cooldown)}, shipped [1,0.85,0.72]`)
+check(JSON.stringify(TEMPER_FLAT.damage) === '[1,1.15,1.3]', `flat temper damage table ${JSON.stringify(TEMPER_FLAT.damage)}, agreed [1,1.15,1.3]`)
+check(JSON.stringify(TEMPER_FLAT.cooldown) === '[1,0.92,0.85]', `flat temper cooldown table ${JSON.stringify(TEMPER_FLAT.cooldown)}, agreed [1,0.92,0.85]`)
+check(JSON.stringify(TEMPER.area) === '[1,1.15,1.3]', `temper area table ${JSON.stringify(TEMPER.area)}, shipped (and flat's) [1,1.15,1.3]`)
 // and every card and mod reads them: a plain damage part at II and III, and its cooldown
 {
   const cl = byId('scrap-cleaver')
@@ -101,6 +105,13 @@ check(JSON.stringify(TEMPER.cooldown) === '[1,0.85,0.72]', `temper cooldown tabl
     const t = tempered(cl, rank)
     check(t.damage === Math.round(cl.damage * dmg), `Scrap Cleaver at ${rank}: damage ${t.damage}, want ${Math.round(cl.damage * dmg)}`)
     check(t.cooldownMs === Math.round(cl.cooldownMs * cd), `Scrap Cleaver at ${rank}: cooldown ${t.cooldownMs} ms, want ${Math.round(cl.cooldownMs * cd)}`)
+  }
+  // flat: damage and cooldown from TEMPER_FLAT, the area as ever
+  for (const [rank, dmg, cd] of [[2, 1.15, 0.92], [3, 1.3, 0.85]] as const) {
+    const t = tempered(cl, rank, true)
+    check(t.damage === Math.round(cl.damage * dmg), `Scrap Cleaver at ${rank} (flat): damage ${t.damage}, want ${Math.round(cl.damage * dmg)}`)
+    check(t.cooldownMs === Math.round(cl.cooldownMs * cd), `Scrap Cleaver at ${rank} (flat): cooldown ${t.cooldownMs} ms, want ${Math.round(cl.cooldownMs * cd)}`)
+    check(tempered(cl, rank, true).cone === tempered(cl, rank).cone, `Scrap Cleaver at ${rank} (flat): the cone is temper's area in both`)
   }
 }
 
