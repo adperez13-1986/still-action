@@ -25,7 +25,8 @@ pushed** (skim beside not behind, full skim on immovable bodies every 0.5 s, Bur
 VARIANTS, src/markfx.ts rings: normal-blended cold ring with a dark rim, +3 draw calls, read on warm and dark floors; spend/fizzle
 sounds; log fields filled; K-M6..M12, K-M7b, K-M30). Still unreachable live (no pick yet). Watch at B6: Backhand turns him to the
 swing (at rest the next Backhand's "behind" flips); its push hint can point at a front windup it can't hit; spend drain is a blink;
-Backhand whiffs not logged (balancer wants it; add at B5). **Next: B3 Ram.**
+Backhand whiffs not logged (balancer wants it; add at B5). **B3 Ram RUNNING.** His ask for B4 (2 Oct): `?perf=1` shows the perf
+readout on the live build, so the phone frame-rate number no longer needs the LAN dev server (in BUILD.md's B4).
 For him (§9): 3 the core never breaks a windup or moves a body in its tell (is it still Ram?); 4 the filter ignores "found";
 5 the planted brace goes with the eye. If a session dies mid-step: review the uncommitted diff against BUILD.md first.
 

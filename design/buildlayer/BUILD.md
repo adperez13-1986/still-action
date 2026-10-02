@@ -636,6 +636,11 @@ S5a (rings only), S10.
   - `screens.mjs` (the pick screen at four sizes);
   - `builds.mjs` (the bots).
 
+- **His ask (2 Oct): the perf readout on the live build with `?perf=1`.** `main.ts:126` builds it only under `import.meta.env.DEV`;
+  make it `import.meta.env.DEV || new URLSearchParams(location.search).has('perf')`. Without the query the live game is unchanged (no
+  readout, nothing created). Check what `createReadout` and `perf.ts`'s DEV-only block (line ~118) pull in, so the readout works in a
+  production build without dragging in DEV-only hooks; report its frame-cost. The number he reads: Wake vs bare in a d5 big room.
+
 **Done when:**
 - the regression set passes, stageb's K-T13 included;
 - K-M20 to K-M23 PASS;
