@@ -3,7 +3,7 @@
 For the next session. Read this, then `DESIGN.md` (the settled decisions), then the design
 folder for whatever you're touching. Don't re-derive any of them.
 
-## Start here (2 Oct: his calls made, B0-B3 done, B4 pick next)
+## Start here (2 Oct: B0-B4 LIVE, cores playable; B5 the hunt next)
 
 **If a session died here (his weekly limit may run out, 2 Oct evening):** he said "continue until all the development tasks are done,
 then commit and push". Resume: if B4's diff is uncommitted, review it against BUILD.md B4 (+ `?perf=1`), rerun tsc / vite build /
@@ -36,7 +36,13 @@ Domino, Catch (immovable only, spends), Wide, Rubble; Piston variant cd 2600; st
 Numbers: K-M17 free defence 0.833 (line 0.75; Ram takes ~1.49x the bare game's HP in that test); K-M23 bot slams per beat shove on
 packs 0.22 eager / 0.26 hesitant, under the 0.3 line (reported, not tuned; his log at B6 decides). Lead call: kept the engineer's
 `bodyAhead: true` (a neighbour the shove leaves behind is not a slam; literal BUILD.md gives 0.24 / 0.47). For his feel: the hit
-flash turns a slammed hulk into a pale blob (old flash); whether the ring reads "cracked". His ask for B4 (2 Oct): `?perf=1` shows the perf
+flash turns a slammed hulk into a pale blob (old flash); whether the ring reads "cracked".
+**B4 DONE + pushed: the cores are playable live.** Two cards (Wake, Ram) at the run's start before he can move (world paused); core,
+keystone, upgrades in the snapshot (no version bump; old saves resume bare; d1 with no core re-offers); no mastery with a core (a
+part at III has no melt line until B5's upgrades); `corePick` in the playtest body; `?perf=1` shows the perf readout on the live
+build (voices shows "-" outside DEV). K-M20..M22, K-M23 both cores (Wake bot: Assembler 3/3 eager, spent/made 0.84 on packs),
+screens K-S10 = the pick (endings now K-S11..S13). `CORE=wake|ram` env runs any suite cored (report only). Not in yet (B5): drop
+filter, keystone/upgrade drops, the button's spend count, the pause readout. His ask for B4 (2 Oct): `?perf=1` shows the perf
 readout on the live build, so the phone frame-rate number no longer needs the LAN dev server (in BUILD.md's B4).
 For him (§9): 3 the core never breaks a windup or moves a body in its tell (is it still Ram?); 4 the filter ignores "found";
 5 the planted brace goes with the eye. If a session dies mid-step: review the uncommitted diff against BUILD.md first.

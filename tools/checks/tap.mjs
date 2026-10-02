@@ -134,7 +134,7 @@ const RECORD = {
   'autos.mjs': { args: [], pass: ['K-A2', 'K-A3', 'K-A4', 'K-A5', 'K-A6', 'K-A7', 'K-A8', 'K-A9', 'K-A10'], fail: [] },
   'area3.mjs': { args: [], pass: ['K-R2', 'K-R3', 'K-X1', 'K-X2', 'K-X4', 'K-X5', 'K-X6', 'K-X7'], fail: [] },
   'home.mjs': { args: [], pass: ['K-H1', 'K-H2', 'K-H3', 'K-H4'], fail: [] },
-  'screens.mjs': { args: [], pass: ['K-S1', 'K-S2', 'K-S3', 'K-S4', 'K-S5', 'K-S6', 'K-S7', 'K-S8', 'K-S9', 'K-S10', 'K-S11', 'K-S12'], fail: [] },
+  'screens.mjs': { args: [], pass: ['K-S1', 'K-S2', 'K-S3', 'K-S4', 'K-S5', 'K-S6', 'K-S7', 'K-S8', 'K-S9', 'K-S10', 'K-S11', 'K-S12', 'K-S13'], fail: [] },
   'stagec.mjs': {
     args: [],
     pass: [

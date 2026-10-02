@@ -596,7 +596,9 @@ check('K-96c', OFF, async ({ page }) => {
 
 // --- K-9C: a resume at 7, on a real save (R8) ----------------------------------------------------
 check('K-9C', '?roads=1&line=0&engine=0', async ({ page }) => {
-  // a fresh context, no ?depth: the first boot is a real run, and it writes localStorage
+  // a fresh context, no ?depth: the first boot is a real run, and it writes localStorage. B4: it opens on the core's pick; one real click on the first card (Wake) answers it,
+  // so the walk and the reload below are a cored run's (the snapshot then carries the core and the resume brings it back)
+  await page.locator('#pause .core').first().click()
   const got = await evalJson(page, WALK, { order: 'II', upTo: 7, stopAt7: true, keepSave: true })
   assertEq('walking W to 7: problems', got.bad, [])
   const snap = await evalJson(page, () => window.__snapshot())
@@ -610,6 +612,7 @@ check('K-9C', '?roads=1&line=0&engine=0', async ({ page }) => {
   assertEq('after the reload: __run.depth', back.depth, 7)
   assertEq('after the reload: place', back.place, 'sidings')
   assertEq('after the reload: route', back.route, 'II')
+  assertEq('after the reload: the core taken at the pick is worn again', await evalJson(page, () => window.__combat.core), 'wake')
   assert(back.lanes > 0, `after the reload: __level().lanes.length is ${back.lanes}`)
 })
 

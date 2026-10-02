@@ -151,6 +151,15 @@ export interface RunSnapshot {
   ranks?: Partial<Record<'head' | 'torso' | 'arms' | 'legs', number>>
   /** Mastery learned this run (mastery.ts ids). Absent: none. */
   mastery?: string[]
+  /**
+   * The build layer (design/buildlayer/BUILD.md §2.8): the core picked at the run's start (a CoreId). Absent: a bare run (picked nothing, or begun with "builds"
+   * off, or saved before the layer). Read back only when it names a core this build knows: any other value resumes bare. No version bump: an old snapshot loads as it was.
+   */
+  core?: string
+  /** The core's socket (a KeystoneId). Absent: empty. Dropped on resume unless it belongs to the core read back. */
+  keystone?: string
+  /** Core upgrades learned (UpgradeId list). Absent: none. Filtered on resume the same way as the keystone. */
+  upgrades?: string[]
 }
 
 export interface Save {

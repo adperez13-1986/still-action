@@ -6,6 +6,7 @@
  * centre, either as it stands or after scrolling a container a thumb can scroll (overflow auto/scroll,
  * touch-action not none). The page itself never scrolls (html/body are overflow hidden), so a scroll of
  * those doesn't count, and nothing may start above the top edge or past the right one.
+ * B4 added the core's pick after the chooser, so the three endings are K-S11..K-S13 now (they were K-S10..K-S12).
  * `node tools/checks/screens.mjs [K-S1 ...]`.
  */
 import { assert, evalJson, suite } from './lib.mjs'
@@ -132,6 +133,14 @@ const SCREENS = {
       detail: { name: 'Clamp Toss III, that saw the Arbiter', line: window.__parts[0].line, history: 'carried 3 runs, saw depth 9', tier: 'gold', note: 'hung on the wall since the second run', rider: 'On a windup: throws it twice as far.' },
       action: 'turn to the wall' }))`,
     close: `() => window.__hud.chooser(null)`,
+  },
+  // B4: the core's pick at the run's start. Two cards and no actions row, so the cards themselves are the buttons to reach; the lines are twice the length of the placeholder words
+  pick: {
+    sel: '#pause',
+    open: `() => window.__pause.pickCore('Choose a core', 'One way to fight, for the whole run, and the only one you will have until the run is over.', [
+      { id: 'wake', name: 'Wake', thumb: 'Pass beside them, and never stop, and never turn your back on the ones that come.', leaves: 'What you pass beside is rimed, and the rime holds for a while after you have gone.', },
+      { id: 'ram', name: 'Ram', thumb: 'Put them against something, a wall, or another one of them, and hold them there.', leaves: 'What hits a wall or a body is slammed, and a slammed body pays what the parts that fit it spend.', },
+    ], () => {})`,
   },
 }
 

@@ -113,7 +113,7 @@ export function createQuality(world: World): Quality {
 
 // --- dev only: what the phone is doing, on the phone ---
 
-/** Web Audio sources playing now; counted only in a dev build. */
+/** Web Audio sources playing now; counted only in a dev build (the live build's `?perf=1` readout shows "voices -": counting means patching the audio prototypes, a dev hook). */
 let voices = 0
 if (import.meta.env.DEV && typeof AudioScheduledSourceNode !== 'undefined') {
   const count = (proto: { start: (...a: never[]) => void }) => {
@@ -139,14 +139,15 @@ export interface Readout {
 /**
  * A corner of text the owner can read on the phone (it has no console): drawn frames a second,
  * the ms between them and the main thread's share, the pixel ratio, live audio voices, draw calls.
- * Switched from the grade panel; remembered on this phone.
+ * Switched from the grade panel; remembered on this phone. `startOn` (the live build's `?perf=1`): on for this page whatever was remembered; the toggle still turns it off.
  */
-export function createReadout(root: HTMLElement, panel: HTMLElement, world: World, quality: Quality): Readout {
+export function createReadout(root: HTMLElement, panel: HTMLElement, world: World, quality: Quality, startOn = false): Readout {
   const el = document.createElement('div')
   el.id = 'perf'
   root.appendChild(el)
   let on = false
   try { on = localStorage.getItem(READOUT_KEY) === '1' } catch { /* private window: off */ }
+  if (startOn) on = true
 
   const toggle = document.createElement('button')
   toggle.className = 'perfToggle'
@@ -181,7 +182,7 @@ export function createReadout(root: HTMLElement, panel: HTMLElement, world: Worl
       if (span < 0.5) return
       el.textContent =
         `${(drawn / span).toFixed(0)} fps  ${((span * 1000) / drawn).toFixed(1)} ms  cpu ${(cpu / drawn).toFixed(1)}/${cpuMax.toFixed(0)}\n` +
-        `px ${world.pixelRatio.toFixed(2)} (${quality.level + 1}/${quality.levels.length})  voices ${voices}  calls ${calls}  tris ${(tris / 1000).toFixed(0)}k`
+        `px ${world.pixelRatio.toFixed(2)} (${quality.level + 1}/${quality.levels.length})  voices ${import.meta.env.DEV ? voices : '-'}  calls ${calls}  tris ${(tris / 1000).toFixed(0)}k`
       t0 = now
       drawn = 0
       cpu = 0

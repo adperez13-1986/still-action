@@ -77,12 +77,13 @@ const RECORD = {
   'tap.mjs': { args: [], pass: ['K-P1', 'K-P2', 'K-P3', 'K-P9', 'K-P4', 'K-P5', 'K-P6', 'K-P8', 'K-P10', 'K-P13', 'K-P7', 'K-P11', 'K-P12'], fail: [] },
 }
 
-/** Run one suite as a child process, the switches' env stripped (a WEIGHT=0 or TAP=0 run of this file must not turn the children off): its PASS / FAIL lines, in order. */
+/** Run one suite as a child process, the switches' env stripped (a WEIGHT=0, TAP=0 or CORE= run of this file must not change the children): its PASS / FAIL lines, in order. */
 function suiteLines(file, args) {
   return new Promise((resolve, reject) => {
     const env = { ...process.env }
     delete env.TAP
     delete env.WEIGHT
+    delete env.CORE
     const child = spawn(process.execPath, [HERE + file, ...args], { cwd: HERE + '../../', env })
     let out = ''
     child.stdout.on('data', (d) => (out += d))
@@ -1616,13 +1617,185 @@ check('K-M19', RUN, async ({ page }) => {
   assert(r.shorts >= 5 && r.shorts <= 25, `...and the setups reach both sides of the wall test (${r.shorts} of 30 came up short)`)
 })
 
-// K-M23 (Ram's half, here early for the slam line; the pick, the Wake bot and the rest are B4's). Headless d1-d3 in real generated levels, seeds 1-3, the Ram core worn, the starting
+// ---------------------------------------------------------------------------------------------------------------------------------------------------------------
+// B4: the pick, the save, resume. K-M20 to K-M22 (K-M23, the bots, is below; Ram's half has been here since B3).
+// ---------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+/** In the page: what the pick screen shows and what the run says about it. */
+const PICK_STATE = `() => {
+  const W = window
+  const pause = document.querySelector('#pause')
+  const st = W.__run.stats.at(-1)
+  const snap = W.__snapshot()
+  return {
+    open: pause.classList.contains('show'),
+    cards: [...pause.querySelectorAll('.core')].map((b) => b.dataset.core),
+    names: [...pause.querySelectorAll('.core .pname')].map((b) => b.textContent),
+    buttons: pause.querySelectorAll('.actions button').length,
+    core: W.__combat.core, runCore: W.__run.core, keystone: W.__run.keystone, upgrades: [...W.__run.upgrades], combatKeystone: W.__combat.keystone, combatUpgrades: [...W.__combat.upgrades],
+    corePick: W.__run.corePick, time: W.__combat.time, pos: [W.__still.pos.x, W.__still.pos.z], depth: W.__run.depth, dev: W.__run.dev, phase: W.__run.phase,
+    stat: st && { depth: st.depth, core: st.core, temperFlat: st.temperFlat, keystone: st.keystone, upgrades: st.upgrades },
+    snap: snap && { depth: snap.depth, core: snap.core ?? null, keystone: snap.keystone ?? null, upgrades: snap.upgrades ?? null, hasCoreKey: 'core' in snap, ranks: snap.ranks ?? null },
+    body: W.__playtestBody().corePick,
+    ranks: { ...W.__run.ranks },
+    arms: (W.__hud.loadout.find((d) => d.slot === 'arms') ?? {}).damage ?? null,
+    mastery: W.__combat.mastery.size,
+  }
+}`
+
+const hooksUp = (page) => page.waitForFunction(() => typeof window.__enter === 'function' && window.__level && window.__level(), null, { timeout: 60000 })
+
+// a real run, not a dev one: no ?depth=. A save in memory is past its first run only by the run it has just started: the first boot begins the run (FIRST_RUN_IN_MAZE), the door is `__run.phase = 'leaving'`
+check('K-M20', '?save=memory&roads=0&line=0&engine=0&pick=1', async ({ page }) => {
+  const read = () => evalJson(page, PICK_STATE)
+  // the boot began a run, depth 1 is entered, and the pick is up: two cards, Wake then Ram, and no back button
+  const a = await read()
+  assertEq('a real run (not dev) at depth 1, no core yet', [a.dev, a.depth, a.runCore, a.core, a.phase], [false, 1, null, null, 'crawl'])
+  assertEq('the pick is open with two cards, Wake then Ram', [a.open, a.cards, a.names], [true, ['wake', 'ram'], ['Wake', 'Ram']])
+  assertEq('...and no button but the cards: no back, no resume, no leave', [a.buttons, await page.locator('#pause button').count()], [0, 2])
+  // the world waits: with the stick pushed, one real second of frames moves neither the game clock nor Still
+  await evalJson(page, () => { window.__stick(1, 0) })
+  await page.waitForTimeout(1000)
+  const b = await read()
+  await evalJson(page, () => { window.__stick(0, 0) })
+  assertEq('over 1 s of real frames with the stick out: __combat.time and Still do not move', [b.time, b.pos], [a.time, a.pos])
+  // a real click on Ram
+  await page.locator('#pause .core[data-core="ram"]').click()
+  const c = await read()
+  assertEq('one real click on Ram: combat.core, the snapshot, and corePick.took say ram', [c.core, c.runCore, c.snap.core, c.corePick.took], ['ram', 'ram', 'ram', 'ram'])
+  assertEq('...corePick names what was offered and how it came', [c.corePick.offered, c.corePick.at, typeof c.corePick.s, c.corePick.s >= 0], [['wake', 'ram'], 'start', 'number', true])
+  assertEq('...the playtest body carries it', c.body, c.corePick)
+  assertEq('...the pick is closed, the open depth logs the core and the flat temper', [c.open, c.stat.depth, c.stat.core, c.stat.temperFlat], [false, 1, 'ram', true])
+  assertEq('...the snapshot keeps no keystone and no upgrades (none taken)', [c.snap.keystone, c.snap.upgrades], [null, null])
+  // through the door: the next run begins the same way, from a clean run (the core is not carried over), and the pick shows again
+  await evalJson(page, () => { window.__run.phase = 'leaving'; window.__run.t = 0 })
+  await page.waitForFunction(() => document.querySelector('#pause').classList.contains('show') && document.querySelectorAll('#pause .core').length === 2, null, { timeout: 15000 })
+  const d = await read()
+  assertEq('through the door into startRun: the pick shows again, no core worn, a fresh corePick', [d.open, d.cards, d.runCore, d.core, d.corePick, d.depth], [true, ['wake', 'ram'], null, null, null, 1])
+  await page.locator('#pause .core[data-core="wake"]').click()
+  const e = await read()
+  assertEq('...and Wake taken the second time', [e.core, e.snap.core, e.corePick.took, e.stat.core, e.open], ['wake', 'wake', 'wake', 'wake', false])
+  // builds off: no pick, and no core key in the snapshot
+  await page.evaluate(() => localStorage.setItem('still-action.builds', '0'))
+  await page.reload()
+  await hooksUp(page)
+  await page.waitForTimeout(400)
+  const f = await read()
+  assertEq('builds off: a run begins with no pick, bare', [f.open, f.cards, f.core, f.runCore, f.depth, f.dev], [false, [], null, null, 1, false])
+  assertEq('...and the snapshot has no core key at all, nor a keystone or upgrades', [f.snap.hasCoreKey, f.snap.keystone, f.snap.upgrades, f.stat.core, f.stat.temperFlat], [false, null, null, null, false])
+})
+
+/** The snapshot K-M21 builds its cases from: this page's own depth-1 snapshot, with the depth, loadout and ranks a mid-run one has. */
+const SNAP = `(o) => {
+  const W = window
+  const base = W.__snapshot()
+  const snap = { ...base, depth: o.depth, seed: o.seed ?? 7, bossFelled: false, bossLoot: [], loadout: ['focusing-lens', 'pressure-vent', 'scrap-cleaver', 'kickstart'], route: o.depth >= 4 ? 'II' : null }
+  delete snap.core; delete snap.keystone; delete snap.upgrades; delete snap.ranks; delete snap.picks; delete snap.crossroads
+  if (o.ranks) snap.ranks = o.ranks
+  for (const k of ['core', 'keystone', 'upgrades']) if (o[k] !== undefined) snap[k] = o[k]
+  W.__setSave({ run: snap })
+  return true
+}`
+
+// real localStorage (no save=memory, no ?depth=): the boot's first run writes a depth-1 snapshot, and each case replaces it and reloads, so the real resumeRun reads it
+check('K-M21', '?roads=1&line=0&engine=0&resume=1', async ({ page }) => {
+  const read = () => evalJson(page, PICK_STATE)
+  const resumeWith = async (o, builds) => {
+    await evalJson(page, SNAP, o)
+    if (builds !== undefined) await page.evaluate((b) => localStorage.setItem('still-action.builds', b), builds)
+    await page.reload()
+    await hooksUp(page)
+    await page.waitForTimeout(300)
+    return read()
+  }
+  await evalJson(page, () => { window.__setSave({ runs: 3 }) })
+  const full = (core, keystone, upgrades) => ({ core, keystone, upgrades })
+  // d2 and d5 carrying a core, a keystone, upgrades and Cleaver at III: they come back with all four, the Cleaver flat (23)
+  for (const [depth, core, keystone, upgrades] of [[2, 'wake', 'wake-deep', ['wake-slip']], [5, 'ram', 'ram-domino', ['ram-wide', 'ram-rubble']]]) {
+    const r = await resumeWith({ depth, core, keystone, upgrades, ranks: { arms: 3 } })
+    assertEq(`d${depth}: resumes at the depth with no pick`, [r.depth, r.open, r.cards], [depth, false, []])
+    assertEq(`d${depth}: the core, keystone, upgrades and the ranks come back, in the run and in combat`, [r.runCore, r.core, r.keystone, r.combatKeystone, r.upgrades, r.combatUpgrades, r.ranks], [core, core, keystone, keystone, upgrades, upgrades, { arms: 3 }])
+    assertEq(`d${depth}: Scrap Cleaver at III is the flat one, 23`, r.arms, 23)
+    assertEq(`d${depth}: the depth logs the core, the flat temper, the keystone and the upgrades`, r.stat, { depth, core, temperFlat: true, keystone, upgrades })
+    assertEq(`d${depth}: the snapshot it wrote on resuming still carries them`, [r.snap.core, r.snap.keystone, r.snap.upgrades], [core, keystone, upgrades])
+    assertEq(`d${depth}: no mastery with a core`, r.mastery, 0)
+  }
+  // each of these resumes bare, with no pick, the depth logging core null: an unknown core, no core at d2, an old snapshot
+  for (const [what, o] of [["core 'sight' (a core this build does not know)", { depth: 2, core: 'sight', keystone: 'wake-deep', upgrades: ['wake-slip'], ranks: { arms: 3 } }], ['no core at depth 2 (a run begun before the layer)', { depth: 2, ranks: { arms: 3 } }]]) {
+    const r = await resumeWith(o)
+    assertEq(`${what}: no pick, bare, depth 2`, [r.open, r.cards, r.depth, r.runCore, r.core, r.keystone, r.upgrades], [false, [], 2, null, null, null, []])
+    assertEq(`${what}: the depth logs core null and the table of today (Cleaver III is 29), and the snapshot has no core key`, [r.stat.core, r.stat.temperFlat, r.arms, r.snap.hasCoreKey], [null, false, 29, false])
+  }
+  // a keystone and an upgrade of the other core: dropped, the core kept
+  const x = await resumeWith({ depth: 2, core: 'wake', keystone: 'ram-domino', upgrades: ['ram-wide', 'wake-slip'], ranks: { arms: 3 } })
+  assertEq('a keystone of the other core is dropped, the core kept, and the upgrade of the other core with it', [x.open, x.runCore, x.keystone, x.upgrades, x.snap.keystone, x.snap.upgrades], [false, 'wake', null, ['wake-slip'], null, ['wake-slip']])
+  // no core at depth 1 with builds on: the pick shows (he reloaded on it, or the run began with the switch off); the world waits; the pick is logged as a resume
+  const p = await resumeWith({ depth: 1 })
+  assertEq('depth 1, no core, builds on: the pick shows, two cards, nothing worn', [p.open, p.cards, p.runCore, p.core, p.depth], [true, ['wake', 'ram'], null, null, 1])
+  await page.waitForTimeout(700)
+  const p2 = await read()
+  assertEq('...and the world waits behind it', [p2.time, p2.pos], [p.time, p.pos])
+  await page.locator('#pause .core[data-core="ram"]').click()
+  const q = await read()
+  assertEq('...taking Ram on a resume logs it as one', [q.core, q.corePick && q.corePick.at, q.corePick && q.corePick.took, q.snap.core, q.stat.core, q.stat.temperFlat, q.open], ['ram', 'resume', 'ram', 'ram', 'ram', true, false])
+  // depth 1, no core, builds OFF: no pick (the run is bare, and stays so until the next run)
+  const o = await resumeWith({ depth: 1 }, '0')
+  assertEq('depth 1, no core, builds off: no pick, bare', [o.open, o.cards, o.core, o.runCore], [false, [], null, null])
+  await page.evaluate(() => localStorage.removeItem('still-action.builds'))
+})
+
+// K-M22. A part melted past III: with a core there is no mastery (no hand and no eye to teach), and B5's upgrade is not built yet, so nothing happens; builds off it is the mastery card as today
+check('K-M22', RUN, async ({ page }) => {
+  const leans = JSON.parse((await import('node:fs')).readFileSync(HERE + 'baseline/leans.json', 'utf8'))
+  const FORM = { close: 'close strike', marksman: 'planted shot' }
+  const r = await evalJson(page, `() => {
+    ${HELPERS}
+    const setup = (builds) => {
+      (${SETUP})({ parts: ['focusing-lens', 'pressure-vent', 'piston', 'kickstart'] })
+      W.__run.mastery = new Set()
+      W.__core('ram')
+      W.__builds(builds)
+      W.__equipRank('piston', 3)
+      W.__run.ranks.arms = 3
+      W.__dropAt('piston', 0, 0)
+      secs(1.5)
+      const melt = document.querySelector('#offer .melt')
+      return { shown: document.querySelector('#offer').classList.contains('show'), meltHidden: melt.style.display === 'none', meltText: melt.textContent, ground: W.__loot.ground.length }
+    }
+    const out = {}
+    // the pickup card's buttons act on pointerdown (a mid-fight tap lands the first time): a forced press works on the hidden melt button too
+    const press = (el) => el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true }))
+    // a core worn, builds on: no melt label, and a melt forced anyway opens no card
+    out.on = setup(true)
+    press(document.querySelector('#offer .melt'))
+    out.on.after = { masterCards: document.querySelectorAll('#pause .master').length, pauseOpen: document.querySelector('#pause').classList.contains('show'), combatMastery: C.mastery.size, runMastery: W.__run.mastery.size, rank: W.__run.ranks.arms, ground: W.__loot.ground.length }
+    // builds off, the core still on the run: the mastery card as today
+    out.off = setup(false)
+    press(document.querySelector('#offer .melt'))
+    out.off.cards = document.querySelectorAll('#pause .master').length
+    out.off.title = document.querySelector('#pause h2')?.textContent ?? null
+    document.querySelector('#pause .master').click()
+    out.off.after = { runMastery: W.__run.mastery.size, combatMastery: C.mastery.size, ground: W.__loot.ground.length, rank: W.__run.ranks.arms }
+    W.__builds(true)
+    out.off.backOn = C.mastery.size
+    return out
+  }`)
+  assertEq('a core worn, builds on, a floor Piston under a Piston at III: the card shows, with no melt line', [r.on.shown, r.on.meltHidden], [true, true])
+  assertEq('...a melt forced anyway opens no mastery card, learns none, and leaves the floor part and the rank as they were', r.on.after, { masterCards: 0, pauseOpen: false, combatMastery: 0, runMastery: 0, rank: 3, ground: 1 })
+  assertEq('builds off, the same floor: the melt line is the mastery one, its form from MASTERY_FORM (leans.json)', [r.off.shown, r.off.meltHidden, r.off.meltText], [true, false, `melt: master the ${FORM[leans.piston]}`])
+  assertEq('...and the card opens with two masteries; taking one learns it (the floor part is spent)', [r.off.cards, r.off.after.runMastery, r.off.after.combatMastery, r.off.after.ground], [2, 1, 1, 0])
+  assertEq('...and with the switch back on the core wears no mastery again', r.off.backOn, 0)
+})
+
+// K-M23 the bots (B3 built Ram's half early for the slam line; B4 adds Wake's). Headless d1-d3 in real generated levels, seeds 1-3, each core worn in turn, the starting
 // loadout, weight and tap push as booted. A fight is one pack (d1 and d2: the first 3 packs each, woken with Still in their room) or the Assembler (d3, Still 9 u from it), played to the
-// clear or a cap (40 s a pack, 150 s the Assembler), HP put back each tick. The bot is the brief's: it steps toward the nearest awake body until it is `1.45 + radius` from it (2.0 u from a
-// hulk) and stops there, and it casts either as soon as a part is ready ('eager') or 3.7 s after ('hesitant', never-melt's hesitation). Math.random is seeded. PASS: the eager bot fells the
-// Assembler in 2 of 3 seeds. REPORTED, not a pass line here: HP lost, marks spent / made, shoves, and slams per core shove (3-balancer.md: the line is 0.3 on the core's BEAT shoves; Piston's
-// and Kickstart's knocks are counted apart). Nothing is tuned to make it pass.
-const RAM_BOT = `(arg) => {
+// clear or a cap (40 s a pack, 150 s the Assembler), HP put back each tick. Math.random is seeded. Both bots cast either as soon as a part is ready ('eager') or 3.7 s after ('hesitant',
+// never-melt's hesitation). Ram's bot is the brief's: it steps toward the nearest body until it is `1.45 + radius` from it (2.0 u from a hulk) and stops there. Wake's is the brief's:
+// it circles the nearest awake body at radius 3 at the stick's full 5.5 u/s (the path code of stagec's K-N17 circler, which circles a fixed point: here the point is the nearest body's
+// centre, re-read each tick, and the bot aims 0.4 rad on round the circle, and goes round the other way when a wall pins it for 12 ticks: the first version, which did not, stood on a wall for 140 s of two of the three Assembler fights). PASS: each core's eager bot fells the Assembler in 2 of 3 seeds. REPORTED, not a pass
+// line here: HP lost, marks spent / made, shoves (Ram; 3-balancer.md: the line is 0.3 slams on the core's BEAT shoves, Piston's and Kickstart's knocks counted apart) or skims (Wake),
+// and the hesitant bot beside the eager one. Nothing is tuned to make it pass.
+const CORE_BOT = `(arg) => {
   const W = window
   const C = W.__combat
   const mulberry32 = (a) => () => { a |= 0; a = (a + 0x6d2b79f5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296 }
@@ -1663,12 +1836,13 @@ const RAM_BOT = `(arg) => {
     C.hasPrev = false
     C.wake(pack)
     const st = W.__run.stats[W.__run.stats.length - 1]
-    const base = JSON.parse(JSON.stringify({ marks: st.marks, spends: st.spends, shoves: st.shoves ?? null, hand: st.hand ?? 0 }))
+    const base = JSON.parse(JSON.stringify({ marks: st.marks, spends: st.spends, shoves: st.shoves ?? null, skims: st.skims ?? null, hand: st.hand ?? 0 }))
     const readySince = {}
     const body = pack.members.map((e) => e.kind)
     const hp0 = pack.members.map((e) => e.hp)
     W.__fx()
     let lost = 0, ticks = 0, cleared = false
+    let cdir = 1, pinned = 0, lastP = null
     const cap = (arg.boss ? 150 : 40) * 60
     for (let i = 0; i < cap; i++) {
       for (const slot of SLOTS) {
@@ -1684,7 +1858,25 @@ const RAM_BOT = `(arg) => {
         const d = Math.hypot(e.pos.x - p.x, e.pos.z - p.z)
         if (d < nd) { nd = d; near = e }
       }
-      if (near && nd > 1.45 + near.radius) W.__stick((near.pos.x - p.x) / nd, (near.pos.z - p.z) / nd)
+      if (arg.core === 'wake') {
+        // Wake's bot: round the nearest AWAKE body at radius 3, 0.4 rad on round the circle from where it stands now (the stick is the full 5.5 u/s)
+        let aw = null, ad = Infinity
+        for (const e of C.enemies) {
+          if (e.dead || !C.awakeNow(e)) continue
+          const d = Math.hypot(e.pos.x - p.x, e.pos.z - p.z)
+          if (d < ad) { ad = d; aw = e }
+        }
+        if (aw) {
+          // pinned on a wall (the stick out and the body hardly moving for 12 ticks): go round the other way, as a player would
+          if (lastP && Math.hypot(p.x - lastP.x, p.z - lastP.z) < 0.4 * 5.5 / 60) pinned++
+          else pinned = 0
+          if (pinned >= 12) { cdir = -cdir; pinned = 0 }
+          lastP = { x: p.x, z: p.z }
+          const a = Math.atan2(p.z - aw.pos.z, p.x - aw.pos.x) + 0.4 * cdir
+          const dx = aw.pos.x + Math.cos(a) * 3 - p.x, dz = aw.pos.z + Math.sin(a) * 3 - p.z, dd = Math.hypot(dx, dz) || 1
+          W.__stick(dx / dd, dz / dd)
+        } else W.__stick(0, 0)
+      } else if (near && nd > 1.45 + near.radius) W.__stick((near.pos.x - p.x) / nd, (near.pos.z - p.z) / nd)
       else W.__stick(0, 0)
       C.hp = 100
       W.__step(1 / 60)
@@ -1698,7 +1890,7 @@ const RAM_BOT = `(arg) => {
     const sh = now.shoves ? sub(now.shoves, base.shoves) : null
     return {
       body, hp: hp0, cleared, lost, s: ticks / 60, boss: !!arg.boss,
-      marks: sub(now.marks, base.marks), spends: { hits: now.spends.hits - base.spends.hits, bonus: now.spends.bonus - base.spends.bonus }, shoves: sh, skims: now.skims ?? null,
+      marks: sub(now.marks, base.marks), spends: { hits: now.spends.hits - base.spends.hits, bonus: now.spends.bonus - base.spends.bonus }, shoves: sh, skims: now.skims ? sub(now.skims, base.skims) : null,
       hand: (now.hand ?? 0) - base.hand,
     }
   } finally {
@@ -1710,53 +1902,72 @@ const RAM_BOT = `(arg) => {
 check('K-M23', RUN + '&bots=1', async ({ page }) => {
   const mean = (xs) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : NaN)
   const sum = (xs) => xs.reduce((a, b) => a + b, 0)
-  const rows = []
-  for (const bot of ['eager', 'hesitant']) {
-    for (const depth of [1, 2, 3]) {
-      for (const seed of [1, 2, 3]) {
-        if (depth === 3) {
-          const r = await evalJson(page, RAM_BOT, { core: 'ram', bot, depth, seed, pack: 0, boss: true })
-          if (r) rows.push({ bot, depth, seed, ...r })
-        } else {
-          for (let pack = 0; pack < 3; pack++) {
-            const r = await evalJson(page, RAM_BOT, { core: 'ram', bot, depth, seed, pack, boss: false })
-            if (r) rows.push({ bot, depth, seed, pack, ...r })
+  const f = (x, d = 2) => (Number.isFinite(x) ? x.toFixed(d) : '-')
+  const felledBy = {}
+  for (const core of ['ram', 'wake']) {
+    const Name = core === 'ram' ? 'Ram' : 'Wake'
+    const rows = []
+    for (const bot of ['eager', 'hesitant']) {
+      for (const depth of [1, 2, 3]) {
+        for (const seed of [1, 2, 3]) {
+          if (depth === 3) {
+            const r = await evalJson(page, CORE_BOT, { core, bot, depth, seed, pack: 0, boss: true })
+            if (r) rows.push({ bot, depth, seed, ...r })
+          } else {
+            for (let pack = 0; pack < 3; pack++) {
+              const r = await evalJson(page, CORE_BOT, { core, bot, depth, seed, pack, boss: false })
+              if (r) rows.push({ bot, depth, seed, pack, ...r })
+            }
           }
         }
       }
     }
-  }
-  const z = { n: 0, wall: 0, body: 0, still: 0, tell: 0, plain: 0, chained: 0, caught: 0, beat: { n: 0, wall: 0, body: 0, still: 0, tell: 0 } }
-  const tot = (rs) => {
-    const t = JSON.parse(JSON.stringify(z))
-    for (const r of rs) if (r.shoves) {
-      for (const k of ['n', 'wall', 'body', 'still', 'tell', 'plain', 'chained', 'caught']) t[k] += r.shoves[k] ?? 0
-      for (const k of ['n', 'wall', 'body', 'still', 'tell']) t.beat[k] += r.shoves.beat?.[k] ?? 0
+    const z = { n: 0, wall: 0, body: 0, still: 0, tell: 0, plain: 0, chained: 0, caught: 0, beat: { n: 0, wall: 0, body: 0, still: 0, tell: 0 } }
+    const tot = (rs) => {
+      const t = JSON.parse(JSON.stringify(z))
+      for (const r of rs) if (r.shoves) {
+        for (const k of ['n', 'wall', 'body', 'still', 'tell', 'plain', 'chained', 'caught']) t[k] += r.shoves[k] ?? 0
+        for (const k of ['n', 'wall', 'body', 'still', 'tell']) t.beat[k] += r.shoves.beat?.[k] ?? 0
+      }
+      return t
     }
-    return t
-  }
-  const f = (x, d = 2) => (Number.isFinite(x) ? x.toFixed(d) : '-')
-  for (const bot of ['eager', 'hesitant']) {
-    const mine = rows.filter((r) => r.bot === bot)
-    for (const [label, rs] of [['d1', mine.filter((r) => r.depth === 1)], ['d2', mine.filter((r) => r.depth === 2)], ['d3 (the Assembler)', mine.filter((r) => r.depth === 3)]]) {
-      const t = tot(rs)
-      const slams = t.wall + t.body + t.still + t.tell
-      const bslams = t.beat.wall + t.beat.body + t.beat.still + t.beat.tell
-      const made = sum(rs.map((r) => r.marks.made)), spent = sum(rs.map((r) => r.marks.spent))
-      console.log(`INFO K-M23 Ram ${bot} ${label}: ${rs.length} fights, cleared ${rs.filter((r) => r.cleared).length}, ${f(mean(rs.map((r) => r.s)), 1)} s each, HP lost ${f(mean(rs.map((r) => r.lost)), 0)} each (${f(sum(rs.map((r) => r.lost)), 0)} in all), marks made ${made} spent ${spent} (${f(made ? spent / made : NaN)}), spends ${sum(rs.map((r) => r.spends.hits))} for ${sum(rs.map((r) => r.spends.bonus))}; shoves ${t.n} (beat ${t.beat.n}): wall ${t.wall} body ${t.body} still ${t.still} tell ${t.tell} plain ${t.plain}, slams per shove ${f(t.n ? slams / t.n : NaN)}, per beat shove ${f(t.beat.n ? bslams / t.beat.n : NaN)}, per beat shove without still ${f(t.beat.n ? (bslams - t.beat.still) / t.beat.n : NaN)}`)
+    for (const bot of ['eager', 'hesitant']) {
+      const mine = rows.filter((r) => r.bot === bot)
+      for (const [label, rs] of [['d1', mine.filter((r) => r.depth === 1)], ['d2', mine.filter((r) => r.depth === 2)], ['d3 (the Assembler)', mine.filter((r) => r.depth === 3)]]) {
+        const made = sum(rs.map((r) => r.marks.made)), spent = sum(rs.map((r) => r.marks.spent))
+        const head = `INFO K-M23 ${Name} ${bot} ${label}: ${rs.length} fights, cleared ${rs.filter((r) => r.cleared).length}, ${f(mean(rs.map((r) => r.s)), 1)} s each, HP lost ${f(mean(rs.map((r) => r.lost)), 0)} each (${f(sum(rs.map((r) => r.lost)), 0)} in all), marks made ${made} spent ${spent} (${f(made ? spent / made : NaN)}), spends ${sum(rs.map((r) => r.spends.hits))} for ${sum(rs.map((r) => r.spends.bonus))}`
+        if (core === 'ram') {
+          const t = tot(rs)
+          const slams = t.wall + t.body + t.still + t.tell
+          const bslams = t.beat.wall + t.beat.body + t.beat.still + t.beat.tell
+          console.log(`${head}; shoves ${t.n} (beat ${t.beat.n}): wall ${t.wall} body ${t.body} still ${t.still} tell ${t.tell} plain ${t.plain}, slams per shove ${f(t.n ? slams / t.n : NaN)}, per beat shove ${f(t.beat.n ? bslams / t.beat.n : NaN)}, per beat shove without still ${f(t.beat.n ? (bslams - t.beat.still) / t.beat.n : NaN)}`)
+        } else {
+          const sk = (k) => sum(rs.map((r) => r.skims?.[k] ?? 0))
+          const secs = sum(rs.map((r) => r.s))
+          console.log(`${head}; skims ${sk('n')} (burst ${sk('burst')}, spray ${sk('spray')}), ${f(secs ? sk('n') / secs : NaN)} a second, marks made by the core ${sum(rs.map((r) => r.marks.byCore))}, by parts ${sum(rs.map((r) => r.marks.byPart))}, expired ${sum(rs.map((r) => r.marks.expired))}`)
+        }
+      }
+      if (core === 'ram') {
+        // the slam line, on the pack fights (d1 and d2) and on the beat shoves alone (3-balancer.md)
+        const t = tot(mine.filter((r) => r.depth < 3))
+        const bg = t.beat.wall + t.beat.body + t.beat.tell + t.beat.still
+        console.log(`INFO K-M23 Ram ${bot}, pack fights d1-d2: ${f(t.beat.n ? bg / t.beat.n : NaN)} slams per core beat shove over ${t.beat.n} beats (the line is >= 0.3: ${t.beat.n && bg / t.beat.n >= 0.3 ? 'met' : 'NOT met'}); wall ${t.beat.wall} body ${t.beat.body} tell ${t.beat.tell} of them, ${t.n - t.beat.n} shoves were Piston's or Kickstart's`)
+      } else {
+        const packs = mine.filter((r) => r.depth < 3)
+        const made = sum(packs.map((r) => r.marks.made)), spent = sum(packs.map((r) => r.marks.spent))
+        console.log(`INFO K-M23 Wake ${bot}, pack fights d1-d2: marks spent / made ${f(made ? spent / made : NaN)} (${spent} of ${made}; the line from his runs is >= 0.5), ${sum(packs.map((r) => r.skims?.n ?? 0))} skims over ${f(sum(packs.map((r) => r.s)), 0)} s`)
+      }
     }
-    // the slam line, on the pack fights (d1 and d2) and on the beat shoves alone (3-balancer.md)
-    const t = tot(mine.filter((r) => r.depth < 3))
-    const bg = t.beat.wall + t.beat.body + t.beat.tell + t.beat.still
-    console.log(`INFO K-M23 Ram ${bot}, pack fights d1-d2: ${f(t.beat.n ? bg / t.beat.n : NaN)} slams per core beat shove over ${t.beat.n} beats (the line is >= 0.3: ${t.beat.n && bg / t.beat.n >= 0.3 ? 'met' : 'NOT met'}); wall ${t.beat.wall} body ${t.beat.body} tell ${t.beat.tell} of them, ${t.n - t.beat.n} shoves were Piston's or Kickstart's`)
+    const boss = rows.filter((r) => r.bot === 'eager' && r.depth === 3)
+    const felled = boss.filter((r) => r.cleared).length
+    felledBy[core] = [felled, boss.length]
+    console.log(`INFO K-M23 ${Name} eager, the Assembler: felled ${felled} of ${boss.length} (${boss.map((r) => `seed ${r.seed}: ${r.cleared ? f(r.s, 1) + ' s' : 'not in 150 s'}, HP lost ${f(r.lost, 0)}`).join('; ')})`)
+    const hb = rows.filter((r) => r.bot === 'hesitant' && r.depth === 3)
+    console.log(`INFO K-M23 ${Name} hesitant, the Assembler: felled ${hb.filter((r) => r.cleared).length} of ${hb.length} (${hb.map((r) => `seed ${r.seed}: ${r.cleared ? f(r.s, 1) + ' s' : 'not in 150 s'}`).join('; ')})`)
   }
-  const boss = rows.filter((r) => r.bot === 'eager' && r.depth === 3)
-  const felled = boss.filter((r) => r.cleared).length
-  console.log(`INFO K-M23 Ram eager, the Assembler: felled ${felled} of ${boss.length} (${boss.map((r) => `seed ${r.seed}: ${r.cleared ? f(r.s, 1) + ' s' : 'not in 150 s'}, HP lost ${f(r.lost, 0)}`).join('; ')})`)
-  const hb = rows.filter((r) => r.bot === 'hesitant' && r.depth === 3)
-  console.log(`INFO K-M23 Ram hesitant, the Assembler: felled ${hb.filter((r) => r.cleared).length} of ${hb.length} (${hb.map((r) => `seed ${r.seed}: ${r.cleared ? f(r.s, 1) + ' s' : 'not in 150 s'}`).join('; ')})`)
-  assert(boss.length === 3 && felled >= 2, `the eager Ram bot fells the Assembler in 2 of 3 seeds (${felled} of ${boss.length})`)
+  for (const core of ['ram', 'wake']) assert(felledBy[core][1] === 3 && felledBy[core][0] >= 2, `the eager ${core === 'ram' ? 'Ram' : 'Wake'} bot fells the Assembler in 2 of 3 seeds (${felledBy[core][0]} of ${felledBy[core][1]})`)
 })
+
 
 check('K-M30', RUN, async ({ page }) => {
   // the frame budget: draw calls whatever the marked bodies, nothing created after the build, drawMarks cheap

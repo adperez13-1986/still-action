@@ -61,6 +61,11 @@ export async function openPage(url, query) {
       if (localStorage.getItem('still-action.weight') === null) localStorage.setItem('still-action.weight', pin.weight)
       if (localStorage.getItem('still-action.tapPush') === null) localStorage.setItem('still-action.tapPush', pin.tapPush)
     }, pin)
+    // CORE=wake|ram runs any suite with that core worn (B4: BUILD.md §2.8's `?core=` dev boot added to every ?depth= query), report only: those suites differ by design. Unset: the bare game,
+    // as every suite has run it. A query that already carries `core=` keeps its own, and a boot without ?depth= (a real run) gets the pick instead, which a suite answers itself.
+    if (process.env.CORE === 'wake' || process.env.CORE === 'ram') {
+      if (/[?&]depth=/.test(query) && !/[?&]core=/.test(query)) query += '&core=' + process.env.CORE
+    }
     const page = await context.newPage()
     /** @type {string[]} */
     const errors = []

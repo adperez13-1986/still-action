@@ -12,7 +12,7 @@ import { TEMPER, ROMAN, tempered } from './temper'
 import { presetId as weightPresetId, setPreset as setWeightPreset, weighed, baseCooldownS, WEIGHT_FEEL, WEIGHT_PRESETS, type PresetId } from './weight'
 import { curveAt } from './curve'
 import { MASTERY, MASTERY_FORM, MASTERY_MAX, FORM_NAME, masteryOffer, type MasteryId, type MasteryForm } from './mastery'
-import { CORES, UPGRADES, WORDS, variant, type CoreId, type KeystoneId, type UpgradeId } from './cores'
+import { CORES, CORE_IDS, KEYSTONES, UPGRADES, WORDS, variant, type CoreId, type KeystoneId, type UpgradeId } from './cores'
 import { STATE_IDS, pairWith, paired, type StateId } from './states'
 import type { Enemy, EnemyEvent } from './enemy'
 import { isBoss, Assembler } from './boss'
@@ -123,7 +123,12 @@ const vfx = new Vfx(world.scene)
 /** At most 60 drawn frames a second, fewer behind a card; a coarser buffer when frames run long. */
 const pacer = createPacer()
 const quality = createQuality(world)
-const readout = import.meta.env.DEV ? createReadout(hudRoot, gradePanel, world, quality) : null
+/**
+ * The perf readout: always in a dev build; on the live build only when the URL has `perf` (`?perf=1`, his ask of 2 Oct: the phone's frame rate with no dev server). Without the query
+ * nothing is created. With it the readout starts on (the toggle in the grade panel still turns it off, and remembers).
+ */
+const PERF_QUERY = params.has('perf')
+const readout = import.meta.env.DEV || PERF_QUERY ? createReadout(hudRoot, gradePanel, world, quality, PERF_QUERY) : null
 /** Dev only: every onPart event, for headless checks to read back. */
 const partLog: PartEvent[] = []
 /** DEV: Ram's shoves since __shoveLog() was last called. */
@@ -2731,6 +2736,8 @@ function meltLabel(g: GroundPart): string | null {
   const rank = run.ranks[g.def.slot] ?? 1
   if (!cur) return null
   if (rank < TEMPER.maxRank) return `melt into ${byId(cur.id).name} ${ROMAN[rank + 1]}`
+  // with a core there is no mastery (no hand, no eye to teach); the core's upgrade takes this place in B5 (BUILD.md §2.8, §2.9)
+  if (coreActive()) return null
   // at III: melting masters the auto its lean feeds (mastery.ts)
   const form = masteryForm(cur)
   if (run.mastery.size >= MASTERY_MAX || !masteryOffer(form, run.mastery).length) return null
@@ -2787,7 +2794,8 @@ function meltPart(g: GroundPart) {
   const rank = (run.ranks[g.def.slot] ?? 1) + 1
   if (!cur || g.set) return
   if (rank > TEMPER.maxRank) {
-    masterWith(g, cur)
+    // never mastery with a core (meltLabel offers no melt here): the core's upgrade is B5's
+    if (!coreActive()) masterWith(g, cur)
     return
   }
   // melted is found: it joins the pool like a part taken
@@ -3074,6 +3082,37 @@ function saw(id: string) {
 }
 
 /**
+ * The core's pick (BUILD.md §2.8): the run's start, two cards, Wake then Ram, no reroll and nothing random. It shows once depth 1 is entered and before he can move: the world waits
+ * (openPause stops the windups; Combat's clock does not run while `paused`). `at` is how it came: 'start' at the run's beginning, 'resume' when a reload found depth 1 with no core.
+ * The pick: the core is worn (`applyBuilds` re-wears the one part he has, flat and reshaped), the open depth's stats are corrected to say so (depth 1's entry was pushed before the pick
+ * and nothing has been fought), and the snapshot is written with it.
+ */
+function offerCore(at: 'start' | 'resume') {
+  if (!canPause()) return
+  const t0 = performance.now()
+  const offered: CoreId[] = [...CORE_IDS]
+  openPause()
+  pause.pickCore(WORDS.pickTitle, WORDS.pickIntro, offered.map((id) => ({ id, name: WORDS.core[id], thumb: WORDS.thumb[id], leaves: WORDS.leaves[id] })), (picked) => {
+    const id = offered.find((c) => c === picked)
+    if (!id || run.core) return
+    run.core = id
+    run.corePick = { at, offered, took: id, s: Math.round((performance.now() - t0) / 100) / 10 }
+    applyBuilds()
+    const st = run.stats[run.stats.length - 1]
+    if (st) {
+      st.core = combat.core
+      st.temperFlat = coreActive()
+      st.keystone = combat.keystone
+      st.upgrades = [...combat.upgrades]
+    }
+    resume()
+    sfx.uiClick()
+    writeSnapshot()
+    overlay.banner(WORDS.core[id])
+  })
+}
+
+/**
  * A beam save (§4.15): the run at the start of this depth, to come back to. Never for a
  * dev run; cleared at the ending. Loot left on the floor is lost at a beam, as ever.
  */
@@ -3088,6 +3127,9 @@ function writeSnapshot() {
     ...(run.kept ? { kept: run.kept } : {}),
     ...(Object.keys(run.ranks).length ? { ranks: { ...run.ranks } } : {}),
     ...(run.mastery.size ? { mastery: [...run.mastery] } : {}),
+    ...(run.core ? { core: run.core } : {}),
+    ...(run.core && run.keystone ? { keystone: run.keystone } : {}),
+    ...(run.core && run.upgrades.length ? { upgrades: [...run.upgrades] } : {}),
   }
   save.run = snap
   store.write()
@@ -3123,6 +3165,12 @@ function resumeRun(snap: RunSnapshot) {
   run.kept = Math.min(run.strain, Math.max(0, Math.round(snap.kept ?? 0) || 0))
   // mastery and temper's ranks come back as they were earned
   run.mastery = new Set((snap.mastery ?? []).filter((id): id is MasteryId => id in MASTERY))
+  // the build layer (BUILD.md §2.8): a core this build knows comes back, with the keystone and upgrades that belong to it; anything else resumes bare, and stays bare
+  run.core = typeof snap.core === 'string' && Object.prototype.hasOwnProperty.call(CORES, snap.core) ? (snap.core as CoreId) : null
+  run.keystone = run.core && typeof snap.keystone === 'string' && Object.prototype.hasOwnProperty.call(KEYSTONES, snap.keystone) && KEYSTONES[snap.keystone as KeystoneId].core === run.core ? (snap.keystone as KeystoneId) : null
+  run.upgrades = run.core && Array.isArray(snap.upgrades)
+    ? snap.upgrades.filter((id, i, all): id is UpgradeId => typeof id === 'string' && Object.prototype.hasOwnProperty.call(UPGRADES, id) && UPGRADES[id as UpgradeId].core === run.core && all.indexOf(id) === i)
+    : []
   syncCore()
   run.ranks = {}
   SLOT_NAMES.forEach((slot, i) => {
@@ -3162,6 +3210,8 @@ function resumeRun(snap: RunSnapshot) {
   overlay.hide()
   sfx.restore()
   writeSnapshot()
+  // still the run's start (depth 1, nothing fought, no core): he reloaded on the pick, or began the run with "builds" off. At depth 2 and deeper, no core means a bare run for good
+  if (buildsOn && !run.core && depth === 1 && !run.bossFelled && !snap.crossroads) offerCore('resume')
 }
 
 /** Each train's rail hum, while it sounds. At most two at once (§5.3). */
@@ -3391,6 +3441,8 @@ function startRun() {
   overlay.hide()
   sfx.restore()
   writeSnapshot()
+  // the pick (BUILD.md §2.8): depth 1 is entered, nothing is fought yet. A dev run never shows it (`?core=` is its way); builds off: a bare run
+  if (buildsOn && !run.dev) offerCore('start')
 }
 
 /** Not crypto.randomUUID: that needs a secure context, and the phone plays over plain http on the LAN. */
@@ -3420,18 +3472,24 @@ let playKey = ''
 function savePlaytest() {
   // the owner's phone runs only: a headless check (webdriver) never lands in his numbers
   if (!playKey || navigator.webdriver || (!import.meta.env.DEV && !owner)) return
-  const body = {
+  const body = playtestBody()
+  if (owner) playlog.keep(body)
+  if (import.meta.env.DEV) void fetch('/__save/playtest', { method: 'POST', body: JSON.stringify(body) }).catch(() => {})
+}
+
+/** The run so far, as the playtest file and the owner's export keep it (also a DEV hook, for K-M20: a headless run never saves one). */
+function playtestBody() {
+  return {
     key: playKey, id: run.id, build: __BUILD__, startedAt: run.startedAt, savedAt: new Date().toISOString(),
     dev: run.dev, end: run.ending?.kind ?? null, depth: run.depth, runDepths: RUN_DEPTHS, route: run.route, breakRule: run.breakRule, hand: run.hand, eye: run.eye,
     stats: statsOut(),
     walkS: Math.round(run.walkS),
     taps: run.taps,
     swaps: run.swaps,
+    corePick: run.corePick,
     parts: partDrops(),
     drops: run.drops,
   }
-  if (owner) playlog.keep(body)
-  if (import.meta.env.DEV) void fetch('/__save/playtest', { method: 'POST', body: JSON.stringify(body) }).catch(() => {})
 }
 
 /** The open field's map: filled in as he walks, drawn on the pause screen. */
@@ -5467,6 +5525,8 @@ if (import.meta.env.DEV) {
       return true
     },
     __snapshot: () => (save.run ? JSON.parse(JSON.stringify(save.run)) : null),
+    /** The run so far as the playtest body keeps it (`corePick` among it); a headless run never saves one, so this is how a check reads it. */
+    __playtestBody: () => JSON.parse(JSON.stringify(playtestBody())),
     __hold: (on: boolean) => { held = on },
     /** The "tap push" switch, applied now (no pause screen, no log flag); returns whether it is on. */
     __tapPush: (on?: boolean) => {
