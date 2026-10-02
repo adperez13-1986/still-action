@@ -5,6 +5,12 @@ folder for whatever you're touching. Don't re-derive any of them.
 
 ## Start here (2 Oct: B0-B4 LIVE, cores playable; B5 the hunt next)
 
+**Queued after B5 (his ask, 2 Oct evening, only if usage remains):** a design round on the overall look, parts' animations first:
+"they are too basic right now.. maybe make their animations more dramatic as they get upgraded, but hopefully not just bigger".
+Run it like the other rounds but lean (his weekly limit is low): `design/look/BRIEF.md` (his words, what exists: partfx.ts, vfx.ts,
+markfx.ts, temper ranks I-III, weight's freeze; the constraint "not just bigger"; phone perf budget), balancer + translator +
+verifier + my lean in one round, then `design/look/PITCHES.md` for him. Design only, nothing built until he picks.
+
 **If a session died here (his weekly limit may run out, 2 Oct evening):** he said "continue until all the development tasks are done,
 then commit and push". Resume: if B4's diff is uncommitted, review it against BUILD.md B4 (+ `?perf=1`), rerun tsc / vite build /
 corecheck / baseline + fights compare / builds.mjs / screens.mjs, look at the B4-* screenshots, commit + push. Then B5 the same way (one
