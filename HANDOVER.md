@@ -5,6 +5,11 @@ folder for whatever you're touching. Don't re-derive any of them.
 
 ## Start here (2 Oct: his calls made, B0-B3 done, B4 pick next)
 
+**If a session died here (his weekly limit may run out, 2 Oct evening):** he said "continue until all the development tasks are done,
+then commit and push". Resume: if B4's diff is uncommitted, review it against BUILD.md B4 (+ `?perf=1`), rerun tsc / vite build /
+corecheck / baseline + fights compare / builds.mjs / screens.mjs, look at the B4-* screenshots, commit + push. Then B5 the same way (one
+Sonnet engineer, review, push). Then tell him what to try (pick cards at run start; `?perf=1`) and ask his feel first (B6).
+
 **His calls (2 Oct):** the second core is **Ram** (beside Wake); the pick is **at run start, from two cards**. Both my recs.
 Building now like stage C: the verifier writes `design/buildlayer/BUILD.md` (B0-B6, Ram in Breaker's place, run-start pick,
 the lead's settlements in PITCHES); a Sonnet 5.5 engineer per step, I review every diff. **B0 (measure first)** started from
