@@ -202,6 +202,8 @@ export type PartEvent =
   | { kind: 'spend'; enemy: Enemy; n: number; bonus: number; payer: 'core' | SlotName; killed: boolean; lagS: number }
   /** Wake's skim (B2): a body passed beside. `burst`: the skim filled it to the cap and Burst spent the marks (its `spend` event comes first); `spray`: the body Spray marked too. */
   | { kind: 'skim'; enemy: Enemy; burst?: true; spray?: Enemy }
+  /** Backhand's cast (B5): a swing behind him; `whiff`: there was nothing behind (the balancer's whiff share). Only with Wake worn. */
+  | { kind: 'backhand'; whiff: boolean }
   /**
    * Ram's shove (B3): `slam` says what the body hit, or null for a plain shove; `other` is the body it hit; `why` the source. `at`: the contact point (a wall's face,
    * the gap between two bodies, a body's near face when it can't be moved); `dmg`: the nominal core damage the shove dealt (the beat's, a chain link's, Rubble's);

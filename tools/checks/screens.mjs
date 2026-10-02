@@ -6,7 +6,8 @@
  * centre, either as it stands or after scrolling a container a thumb can scroll (overflow auto/scroll,
  * touch-action not none). The page itself never scrolls (html/body are overflow hidden), so a scroll of
  * those doesn't count, and nothing may start above the top edge or past the right one.
- * B4 added the core's pick after the chooser, so the three endings are K-S11..K-S13 now (they were K-S10..K-S12).
+ * B4 added the core's pick after the chooser, so the three endings are K-S11..K-S13 now (they were K-S10..K-S12). B5 adds K-S14 the socket card, K-S15 the upgrade choose, K-S16 the
+ * loadout with the core block and the readout, K-S17 a spender's button showing 9 with its pulse (after the endings, so the ids above stay put).
  * `node tools/checks/screens.mjs [K-S1 ...]`.
  */
 import { assert, evalJson, suite } from './lib.mjs'
@@ -188,5 +189,87 @@ for (const kind of ENDS) {
     assert(!fails.length, `ending ${kind}: ${fails.join(' | ')}`)
   })
 }
+
+// B5: the hunt's screens, at the same four sizes. Each is opened with its longest content (twice the placeholder words), and every button must be reachable.
+const B5_SCREENS = [
+  // the socket card: a keystone socketed beside the one on the floor, with "you lose", and the card with an empty socket
+  ['K-S14', 'socket', `() => window.__pause.socket('Wake', { name: 'Deep Frost, that holds five and lasts longer', line: 'Rings hold five and last longer, and the fifth ring breaks the body open on its own.', tag: 'for bosses' },
+      { name: 'Burst, that breaks them open', line: 'The third ring breaks the body open on its own, and what it breaks passes what is left to the next.', tag: 'for packs' },
+      { title: 'Wake \\u00b7 socket', socket: 'socket', empty: 'empty', floor: 'on the floor', lose: 'you lose: Deep Frost, that holds five and lasts longer', take: 'take it', leave: 'leave it' }, () => {}, () => {})`],
+  ['K-S14', 'socket, empty', `() => window.__pause.socket('Ram', null, { name: 'Domino', line: 'A slammed body slams what it hits.', tag: 'for packs' },
+      { title: 'Ram \\u00b7 socket', socket: 'socket', empty: 'empty', floor: 'on the floor', lose: null, take: 'take it', leave: 'leave it' }, () => {}, () => {})`],
+  // the upgrade at a melt past III: the same card as mastery's, titled for the core
+  ['K-S15', 'upgrade', `() => window.__pause.choose('Wake \\u00b7 upgrade', 'Scrap Cleaver III, that saw the Arbiter, is at its best. What it knows goes to Wake, and the run is the longer for it.', [
+      { name: 'Slipstream, that speeds you', line: 'Every pass speeds you up a little, and a long pass a little more, for as long as you keep passing.', onPick: () => {} },
+      { name: 'Spray, that carries on', line: 'Rime carries to the one behind, and to the one behind that if it stands near, and cold on cold.', onPick: () => {} },
+    ])`],
+  // the loadout with the core block: the name, the socket and the upgrades (long), and the readout
+  ['K-S16', 'readout', `(slots) => { window.__pause.setCore(() => ({ name: 'Wake', parts: ['socket: Deep Frost, that holds five and lasts longer', 'upgrades: Slipstream, that speeds you, Spray, that carries on'], readout: 'marked 128 \\u00b7 spent 96' }))
+      window.__pause.loadout(() => slots, () => {}) }`, `() => { window.__pause.setCore(() => null); window.__pause.hide() }`],
+]
+// their own page (an unused `b5` query key): the endings above leave the page in an ending, which would cover these
+const B5_RUN = RUN + '&b5=1'
+for (const [id, what, open, close] of B5_SCREENS) {
+  check(id, B5_RUN, async ({ page }) => {
+    const fails = []
+    for (const [w, h] of SIZES) {
+      await page.setViewportSize({ width: w, height: h })
+      await page.waitForTimeout(250)
+      const slots = await evalJson(page, WORST)
+      await page.evaluate(({ f, a }) => new Function('return ' + f)()(a), { f: open, a: slots })
+      await page.waitForTimeout(80)
+      const bad = await evalJson(page, REACH, '#pause')
+      await page.evaluate((f) => new Function('return ' + f)()(), close ?? '() => window.__pause.hide()')
+      if (bad.length) fails.push(`${w}x${h}: ${bad.join('; ')}`)
+    }
+    assert(!fails.length, `${what}: ${fails.join(' | ')}`)
+  })
+}
+
+// K-S17: a spender's button showing 9 with its pulse. The digit is a badge on the rim's upper left: inside the screen, clear of the icon, the price pips and the push cue's glyph, and clear of
+// the neighbouring buttons (the arc leaves 8 px between them), at all four sizes, on all four buttons at once (the worst case); its size is the one the arc has (BTN 60)
+check('K-S17', B5_RUN, async ({ page }) => {
+  const fails = []
+  for (const [w, h] of SIZES) {
+    await page.setViewportSize({ width: w, height: h })
+    await page.waitForTimeout(250)
+    const bad = await evalJson(page, `() => {
+      const W = window
+      for (const id of ['focusing-lens', 'pressure-vent', 'scrap-cleaver', 'kickstart']) W.__equip(id)
+      W.__core('wake')
+      for (const sl of ['head', 'torso', 'arms', 'legs']) W.__hud.spendCue(sl, 9)
+      const btns = [...document.querySelectorAll('#hud .btn')]
+      const vw = innerWidth, vh = innerHeight
+      const hit = (a, b) => a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom
+      const out = []
+      btns.forEach((b, i) => {
+        const badge = b.querySelector('.spend')
+        const r = badge.getBoundingClientRect()
+        if (!r.width) { out.push('button ' + i + ': no badge'); return }
+        if (badge.textContent !== '9') out.push('button ' + i + ': reads ' + badge.textContent)
+        if (!b.classList.contains('spend3')) out.push('button ' + i + ': no pulse class')
+        if (r.left < 0 || r.top < 0 || r.right > vw || r.bottom > vh) out.push('button ' + i + ': badge off screen')
+        for (const sel of ['.lbl svg', '.pips', '.scue']) {
+          const el = b.querySelector(sel)
+          if (!el || !(el.children.length || el.textContent) ) continue
+          const e = el.getBoundingClientRect()
+          if (e.width && hit(r, e)) out.push('button ' + i + ': badge over ' + sel)
+        }
+        const cx = r.left + r.width / 2, cy = r.top + r.height / 2
+        btns.forEach((o, j) => {
+          if (j === i) return
+          const q = o.getBoundingClientRect()
+          const d = Math.hypot(cx - (q.left + q.width / 2), cy - (q.top + q.height / 2))
+          if (d < q.width / 2 + r.width / 2 - 1) out.push('button ' + i + ': badge on button ' + j)
+        })
+      })
+      for (const sl of ['head', 'torso', 'arms', 'legs']) W.__hud.spendCue(sl, null)
+      W.__core(null)
+      return out
+    }`)
+    if (bad.length) fails.push(`${w}x${h}: ${bad.join('; ')}`)
+  }
+  assert(!fails.length, `spender button: ${fails.join(' | ')}`)
+})
 
 process.exit(await run(process.argv.slice(2)))

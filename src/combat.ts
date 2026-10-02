@@ -2516,12 +2516,11 @@ export class Combat {
         r.aim = aimed
         const fx = Math.sin(aimed)
         const fz = Math.cos(aimed)
+        // Backhand's cast, counted (B5, the balancer's whiff share): a swing at nothing behind him is a whiff
+        if (behind) this.events.onPart({ kind: 'backhand', whiff: snap === null })
         for (const e of this.enemies) {
-          if (!this.inReach(o, e, def.range)) continue
-          const d = Math.hypot(e.pos.x - o.x, e.pos.z - o.z)
-          if (d > 0.001 && ((e.pos.x - o.x) / d) * fx + ((e.pos.z - o.z) / d) * fz < coneCos) continue
-          // behind a wall: no spark, no sound. The swing visibly fails to reach it.
-          if (this.shaded(o, e)) continue
+          // behind a wall: no spark, no sound. The swing visibly fails to reach it. (inArc: reach, cone, wall; spendCount asks it too)
+          if (!this.inArc(o, e, def.range, fx, fz, coneCos)) continue
           const winding = e.phase === 'windup'
           this.hitPart(e, def.damage, ctx.full && !parry, def, real && !parry)
           if (parry) {
@@ -2664,6 +2663,93 @@ export class Combat {
       return runs === 1 ? { x: px, z: pz } : null
     }
     return null
+  }
+
+  /** An arc's hit test, one body: the blade reaches it, it is inside the cone (`coneCos`, about the unit aim `fx`, `fz`) and no wall is between. The cast and `spendCount` both read it. */
+  private inArc(o: THREE.Vector3, e: Enemy, range: number, fx: number, fz: number, coneCos: number): boolean {
+    if (!this.inReach(o, e, range)) return false
+    const d = Math.hypot(e.pos.x - o.x, e.pos.z - o.z)
+    if (d > 0.001 && ((e.pos.x - o.x) / d) * fx + ((e.pos.z - o.z) / d) * fz < coneCos) return false
+    return !this.shaded(o, e)
+  }
+
+  /**
+   * The button's number (BUILD.md §2.9): the core marks `def` would spend if it were cast now, by the cast's own target and hit test. Null: it is not a spender (or no core).
+   * `move` is the stick (x, z; at rest, `facing` is his way), `full` the cast's push effect (a ready cast under "weight", or a real push), `strain` the run's. Read-only: nothing is
+   * marked, spent or moved. Not modelled: a bolt stopped by a body in its line (no bolt part spends), and a spend that marks a body later in the same swing (Piston's slam, a Domino link).
+   */
+  spendCount(def: AbilityDef, o: THREE.Vector3, move: { x: number; z: number }, facing: number, full = this.weight, strain = 0): number | null {
+    if (!this.core || fitOf(def, this.core)?.role !== 'spend') return null
+    if (this.weight) def = weighed(def)
+    const marks = (e: Enemy) => this.status.get(e)?.marks.n ?? 0
+    const mod = def.mod
+    const m = Math.hypot(move.x, move.z)
+    const steer = m < 0.1 ? { x: Math.sin(facing), z: Math.cos(facing) } : { x: move.x / m, z: move.z / m }
+    switch (def.shape) {
+      case 'bolt': {
+        const t = (full && this.threat(o, def)) || this.prefer(o, def, this.eyeCast(o, def, this.nearest(o, def.range)))
+        return t ? marks(t) : 0
+      }
+      case 'lob': {
+        const t = (full && this.threat(o, def)) || this.prefer(o, def, this.eyeCast(o, def, this.pickTarget(o, def.range, true)))
+        const to = t ? { x: t.pos.x, z: t.pos.z } : this.ahead(o, facing, Math.min(def.range, PART.lobNoTarget))
+        let n = 0
+        for (const e of this.enemies) if (Math.hypot(e.pos.x - to.x, e.pos.z - to.z) <= def.radius + e.radius) n += marks(e)
+        return n
+      }
+      case 'nova': {
+        let n = 0
+        for (const e of this.enemies) if (this.inBlast(o, e, def.radius) && !this.shaded(o, e)) n += marks(e)
+        return n
+      }
+      case 'grab': {
+        let t: Enemy | null = null
+        let best = Infinity
+        for (const c of this.enemies) {
+          const d = Math.hypot(c.pos.x - o.x, c.pos.z - o.z)
+          if (d < best && !this.held.has(c) && this.inReach(o, c, def.range) && !this.shaded(o, c)) {
+            t = c
+            best = d
+          }
+        }
+        if (full) t = this.threat(o, def) ?? t
+        return t ? marks(t) : 0
+      }
+      case 'arc': {
+        const fray = mod?.kind === 'fray' ? mod : null
+        const coneDeg = fray ? fray.cones[strain < fray.at[0] ? 0 : strain < fray.at[1] ? 1 : 2]! : def.cone ?? 120
+        const coneCos = coneDeg >= 360 ? -1.01 : Math.cos((coneDeg * Math.PI) / 360)
+        const behind = mod?.kind === 'behind'
+        let snap: Enemy | null = null
+        let snapD = Infinity
+        for (const e of this.enemies) {
+          const d = Math.hypot(e.pos.x - o.x, e.pos.z - o.z)
+          if (d < snapD && targetable(e) && this.inReach(o, e, def.range) && !this.shaded(o, e)) {
+            snap = e
+            snapD = d
+          }
+        }
+        const ctx = { full } as CastContext
+        if (behind) snap = this.behindTarget(o, def, ctx, -steer.x, -steer.z)
+        else snap = (full ? this.threat(o, def) : null) ?? this.prefer(o, def, snap)
+        const face = behind ? snap : snap ?? this.nearest(o, 9.5)
+        const aimed = face ? Math.atan2(face.pos.x - o.x, face.pos.z - o.z) : behind ? Math.atan2(-steer.x, -steer.z) : facing
+        const fx = Math.sin(aimed)
+        const fz = Math.cos(aimed)
+        let n = 0
+        for (const e of this.enemies) if (this.inArc(o, e, def.range, fx, fz, coneCos)) n += marks(e)
+        return n
+      }
+      case 'dash': {
+        const end = this.terrain.clampMove(o.x, o.z, o.x + steer.x * def.range, o.z + steer.z * def.range, PLAYER_RADIUS)
+        if (def.damage <= 0) return 0
+        let n = 0
+        for (const e of this.enemies) if (distToSegment(e.pos.x, e.pos.z, o.x, o.z, end.x, end.z) <= def.radius + e.radius) n += marks(e)
+        return n
+      }
+      default:
+        return 0
+    }
   }
 
   /**

@@ -10,8 +10,9 @@
  */
 import { readFileSync } from 'node:fs'
 import { PARTS, byId } from '../src/abilities'
-import { CORE_IDS, CORES, FILTER, KEYSTONES, RESHAPES, UPGRADES, UPGRADE_FROM, fitOf, markCap, markLife, variant, type CoreId, type FitRole } from '../src/cores'
+import { CORE_IDS, CORES, FILTER, KEYSTONES, RESHAPES, UPGRADES, UPGRADE_FROM, UPGRADE_MAX, fitOf, markCap, markLife, variant, type CoreId, type FitRole } from '../src/cores'
 import { MASTERY_FORM } from '../src/mastery'
+import { rollForCore } from '../src/drops'
 import { STARTER_POOL } from '../src/pool'
 import type { SlotName } from '../src/still'
 
@@ -75,6 +76,21 @@ check(CORES.wake.damage === 6 && CORES.ram.damage === 8, `a skim ${CORES.wake.da
 check(CORES.wake.bossSkim.mul === 1 && CORES.wake.bossSkim.perBodyS === 0.5, 'bossSkim: full damage, once per 0.5 s')
 check(KEYSTONES['wake-burst'].share === 1.0 && KEYSTONES['ram-domino'].hit === 8 && KEYSTONES['ram-catch'].icdS === 1.0, 'Burst share 1.0, Domino hit 8, Catch icdS 1.0')
 check(FILTER.share === 0.5 && FILTER.keyWeight === 1 && UPGRADE_FROM === 7, `FILTER.share ${FILTER.share}, keyWeight ${FILTER.keyWeight}, UPGRADE_FROM ${UPGRADE_FROM}, ship 0.5, 1 and 7`)
+// B5: the hunt's gates and the upgrade cap (rollForCore draws nothing with no core, nor for a source the filter does not take)
+check(UPGRADE_MAX === 2 && CORE_IDS.every((c) => Object.values(UPGRADES).filter((u) => u.core === c).length === UPGRADE_MAX), `UPGRADE_MAX ${UPGRADE_MAX}: each core has exactly that many upgrades`)
+{
+  const view = { found: new Set<string>(), turned: new Set<string>(), depth: 5 }
+  const real = Math.random
+  let drew = 0
+  Math.random = () => { drew++; return 0.1 }
+  try {
+    check(rollForCore(null, 'elite', [], { socketed: null, onFloor: [] }, view) === null && drew === 0, 'rollForCore with no core returns null and draws nothing')
+    for (const src of ['kill', 'crate', 'boss-gold'] as const) check(rollForCore('wake', src, [], { socketed: null, onFloor: [] }, view) === null && drew === 0, `rollForCore for ${src} returns null and draws nothing`)
+    check(rollForCore('ram', 'elite', [], { socketed: null, onFloor: [] }, view) !== null, 'rollForCore for an elite with Ram worn returns something at a low roll')
+  } finally {
+    Math.random = real
+  }
+}
 check(JSON.stringify(RESHAPES) === JSON.stringify({
   backhand: { base: 'frayed-cleaver', core: 'wake', damage: 18, cone: 150, cooldownMs: 2400 },
   skate: { base: 'frost-trail', core: 'wake', damage: 12, cooldownMs: 5500 },

@@ -76,10 +76,12 @@ let describe: (d: AbilityDef) => { name: string; history: string | null } = (d) 
 const playSwitches: { label: string; read: () => boolean; write: (on: boolean) => void }[] = []
 /** Mastery learned this run, for the loadout screen: set by main. */
 let learned: () => { name: string; line: string }[] = () => []
+/** The core block under the loadout, set by main (B5): null with no core worn. */
+let coreBlock: () => CoreBlock | null = () => null
 /** One-press buttons after the switches (the owner's log export), in the order main gave them. */
 const playActions: { label: () => string; run: () => void; show?: () => boolean }[] = []
 
-function card(d: AbilityDef, tag: string, other?: AbilityDef, conflict?: string | null, fresh = false, cost?: string, note?: string, cold: string[] = []) {
+function card(d: AbilityDef, tag: string, other?: AbilityDef, conflict?: string | null, fresh = false, cost?: string, note?: string, cold: string[] = [], fit?: string) {
   const past = describe(d)
   // the price on every cast, the same pips the button carries, so the card and the button agree
   const pips = d.pips ? ` <span class="ppips">${(d.pips.hollow ? '\u25cb' : '\u25cf').repeat(d.pips.n)}</span>` : ''
@@ -91,6 +93,7 @@ function card(d: AbilityDef, tag: string, other?: AbilityDef, conflict?: string 
       ${past.history ? `<p class="pline phist">${past.history}</p>` : ''}
       <div class="stats">${stats(d, other)}</div>
       ${cold.map((l) => `<p class="ppair">${l}</p>`).join('')}
+      ${fit ? `<p class="pfit">${fit}</p>` : ''}
       ${conflict ? `<p class="pconflict">${conflict}</p>` : ''}
       ${cost ? `<p class="pcost">${cost}</p>` : ''}
       ${note ? `<p class="pconflict">${note}</p>` : ''}
@@ -108,19 +111,31 @@ function emptyCard(slot: SlotName, tag: string) {
 
 export interface PauseScreen {
   readonly open: boolean
-  loadout: (slots: readonly { slot: SlotName; def: AbilityDef | null }[], onResume: () => void) => void
+  /** `slots` may be a getter: the cards are drawn from it again when a switch is flipped on the screen (a flip re-wears the parts, so the numbers a card shows change). */
+  loadout: (slots: LoadoutSlots | (() => LoadoutSlots), onResume: () => void) => void
   /** `equipped` is everything on Still, for the conflict line under the incoming card. */
   /** `fresh`: the incoming part has never been found, and its card says so. */
   /**
    * `o.tag` says where it is ("on the floor" if not given); `o.cost`, its price in strain, on the card
    * and the take button; `o.stays`, no quiet takes it back; `o.note`, what taking it does to the rest.
    * A swap (design/synergy): `o.take` is the take button's words ("take · Piston II"), `o.melts` what
-   * melts into it; `o.pair`, the pair it makes or ends with what's worn.
+   * melts into it; `o.pair`, the pair it makes or ends with what's worn. `o.fit` (B5, with a core worn): how the incoming part fits it.
    */
   compare: (
     current: AbilityDef | null, incoming: AbilityDef, equipped: readonly AbilityDef[], onTake: () => void, onLeave: () => void, fresh?: boolean,
-    o?: { tag?: string; cost?: number; stays?: boolean; note?: string; take?: string; melts?: string; pair?: string },
+    o?: { tag?: string; cost?: number; stays?: boolean; note?: string; take?: string; melts?: string; pair?: string; fit?: string },
   ) => void
+  /**
+   * The keystone socket (BUILD.md §2.9, B5): walked onto, a keystone on the floor opens it and the world waits. The core's name, the socket now (or empty) beside the keystone on the floor,
+   * each with its words and its packs / bosses tag, and "you lose: ..." when one is socketed. `words` carries every string (this file has none of its own); take or leave.
+   */
+  socket: (
+    core: string, current: KeyCard | null, incoming: KeyCard,
+    words: { title: string; socket: string; empty: string; floor: string; lose: string | null; take: string; leave: string },
+    onTake: () => void, onLeave: () => void,
+  ) => void
+  /** What the loadout screen shows under the cards with a core worn: the core's name, its socket and upgrades, and the open depth's marks (words from main). Null: nothing (no core). */
+  setCore: (fn: () => CoreBlock | null) => void
   /**
    * The look-back screen: every run's card, large, newest first, with the arrows to
    * page through them and close. `render` draws card i (0 is the newest).
@@ -149,6 +164,13 @@ export interface PauseScreen {
   map: (canvas: HTMLCanvasElement, onBack: () => void) => void
   hide: () => void
 }
+
+/** One slot's part (or none) on the loadout screen. */
+type LoadoutSlots = readonly { slot: SlotName; def: AbilityDef | null }[]
+/** A keystone on the socket card: its name and line, and the tag that says what it is for. */
+export interface KeyCard { name: string; line: string; tag: string }
+/** The core block under the loadout (main builds it from WORDS): `name`, then `parts` (the socket, the upgrades), then the `readout` line. */
+export interface CoreBlock { name: string; parts: string[]; readout: string }
 
 /** A notebook page, laid out (main builds these from the save and the roster). */
 export interface NotebookPage { name: string; what: string; line: string | null; facts: string; leaders: string | null }
@@ -179,11 +201,16 @@ export function createPauseScreen(root: HTMLElement): PauseScreen {
   return {
     get open() { return isOpen },
 
-    loadout(slots, onResume) {
-      const cardsOf = (ss: typeof slots) => ss.map((s) => (s.def ? card(s.def, SLOT_LABEL[s.slot]) : emptyCard(s.slot, SLOT_LABEL[s.slot]))).join('')
+    loadout(slotsOrFn, onResume) {
+      const read = typeof slotsOrFn === 'function' ? slotsOrFn : () => slotsOrFn
+      const cardsOf = (ss: LoadoutSlots) => ss.map((s) => (s.def ? card(s.def, SLOT_LABEL[s.slot]) : emptyCard(s.slot, SLOT_LABEL[s.slot]))).join('')
       const known = learned()
+      const blockOf = () => {
+        const c = coreBlock()
+        return c ? `<p class="pcore"><b>${c.name}</b>${c.parts.map((x) => `<span>${x}</span>`).join('')}<em>${c.readout}</em></p>` : ''
+      }
       show(
-        `<h2>Paused</h2><div class="row four">${cardsOf(slots)}</div>` +
+        `<h2>Paused</h2><div class="row four">${cardsOf(read())}</div><div class="coreblock">${blockOf()}</div>` +
         (known.length ? `<p class="learned">${known.map((m) => `<b>${m.name}</b> ${m.line}`).join('<br>')}</p>` : ''),
         [['resume', 'resume', onResume]],
       )
@@ -202,9 +229,11 @@ export function createPauseScreen(root: HTMLElement): PauseScreen {
         btn.addEventListener('click', () => {
           rule.write(!rule.read())
           paint()
-          // a switch can change the numbers a card shows (weight): the cards follow it
+          // a switch can change the numbers a card shows (weight, builds): the cards follow it, drawn from what is worn now, and so does the core block
           const row = el.querySelector('.row.four')
-          if (row) row.innerHTML = cardsOf(slots)
+          if (row) row.innerHTML = cardsOf(read())
+          const cb = el.querySelector('.coreblock')
+          if (cb) cb.innerHTML = blockOf()
         })
         paint()
         resume.before(btn)
@@ -228,7 +257,7 @@ export function createPauseScreen(root: HTMLElement): PauseScreen {
            ${current ? card(current, 'on Still now', incoming) : emptyCard(incoming.slot, 'on Still now')}
            <div class="arrow">&rarr;</div>
            ${card(incoming, o.tag ?? 'on the floor', current ?? undefined, conflictLine(incoming, equipped), fresh, price && (o.stays ? `${price}, and it stays` : price), o.note,
-             [o.melts, o.pair].filter((l): l is string => !!l))}
+             [o.melts, o.pair].filter((l): l is string => !!l), o.fit)}
          </div>`,
         [['leave', 'leave it', onLeave], ['take', [o.take ?? 'take it', price].filter(Boolean).join(' \u00b7 '), onTake]],
       )
@@ -251,6 +280,24 @@ export function createPauseScreen(root: HTMLElement): PauseScreen {
         [],
       )
       el.querySelectorAll<HTMLElement>('.core').forEach((b) => b.addEventListener('click', () => onPick(cards[Number(b.dataset.i)]?.id ?? '')))
+    },
+
+    socket(core, current, incoming, words, onTake, onLeave) {
+      const keyCard = (k: KeyCard, tag: string, extra = '') =>
+        `<div class="pcard tier-gold pkey" data-core="${core}"><div class="tag">${tag}</div><div class="pname">${k.name}</div><p class="pline">${k.line}</p><div class="stats"><div class="stat"><span>${k.tag}</span></div></div>${extra}</div>`
+      show(
+        `<h2>${words.title}</h2>
+         <div class="row two">
+           ${current ? keyCard(current, words.socket) : `<div class="pcard empty"><div class="tag">${words.socket}</div><div class="pname">${words.empty}</div></div>`}
+           <div class="arrow">&rarr;</div>
+           ${keyCard(incoming, words.floor, words.lose ? `<p class="pconflict plose">${words.lose}</p>` : '')}
+         </div>`,
+        [['leave', words.leave, onLeave], ['take', words.take, onTake]],
+      )
+    },
+
+    setCore(fn) {
+      coreBlock = fn
     },
 
     setShown(fn) {

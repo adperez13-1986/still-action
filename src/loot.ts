@@ -5,9 +5,10 @@ import { centred, DISPLAY_EYE, EYE_ON, FLOOR_SCALE, partModel } from './partmode
 import type { Terrain } from './terrain'
 import { pieceData } from './kit'
 import { LOOT, type PickKind } from './drops'
+import type { KeystoneDef } from './cores'
 
 // The drop rules themselves live in drops.ts, free of three.js, so tools/dropsim.ts can run them.
-export { LOOT, KILL_WEIGHT, dropChance, rollPart, rollPicks, emptySlots, PEDESTALS, PEDESTALS_ON, type DropSource, type PickKind } from './drops'
+export { LOOT, KILL_WEIGHT, dropChance, rollPart, rollForCore, rollPicks, emptySlots, PEDESTALS, PEDESTALS_ON, type DropSource, type PickKind } from './drops'
 
 export const TIER_COLOR: Record<Tier, number> = {
   white: 0xdfe6ee,
@@ -74,7 +75,27 @@ export interface GroundPart {
   /** Risen on a pedestal, with the rest of its set. */
   set?: PickSet
   stone?: Stone
+  /** It fits the core worn when it landed (B5): a second thin cold ring on its disc that breathes slowly. Decided at the drop. A plain part has none. */
+  fitRing?: THREE.Mesh
 }
+
+/**
+ * A keystone on the floor (design/buildlayer/BUILD.md §2.9): a separate list from `ground`, so nothing that reads `GroundPart.def` (melts, the thief, the compare card, `partModel`)
+ * ever sees one. A gold beam like a gold part's, a small cold torus turning in it, and on the disc the core's ring glyph in thirds (Wake's plain, Ram's split).
+ * `seen`: the socket card has shown for it (the drop record's `offered`).
+ */
+export interface GroundKey {
+  key: KeystoneDef
+  pos: THREE.Vector3
+  group: THREE.Group
+  fly: number
+  from: THREE.Vector3
+  bob: number
+  seen: boolean
+  spinner: THREE.Mesh
+}
+/** The keystone's cold: Wake's frost-bright, Ram's steel (markfx.ts' two looks). */
+const KEY_COLOR = { wake: 0x9fd8ff, ram: 0x7fa7d8 } as const
 
 const FLY = 0.42
 /** How long the offered part's glass takes to light. */
@@ -84,6 +105,8 @@ const SPIN = 1.6
 
 export class Loot {
   readonly ground: GroundPart[] = []
+  /** Keystones lying on the floor (GroundKey): walked onto, they open the socket card. Never in `ground`. */
+  readonly keys: GroundKey[] = []
   /** Repair scrap on the floor: walked over, not taken. */
   private scraps: { mesh: THREE.Mesh; pos: THREE.Vector3; bob: number }[] = []
   private readonly scrapGeo = new THREE.TorusGeometry(0.16, 0.06, 6, 10)
@@ -91,6 +114,11 @@ export class Loot {
   private readonly beamGeo = new THREE.CylinderGeometry(0.07, 0.16, 5, 8, 1, true)
   private readonly discGeo = new THREE.CircleGeometry(0.55, 24)
   private readonly poolGeo = new THREE.RingGeometry(0.55, 0.85, 32)
+  /** A fitting part's breathing ring, just outside its disc. */
+  private readonly fitGeo = new THREE.RingGeometry(0.66, 0.76, 40)
+  private readonly keyGeo = new THREE.TorusGeometry(0.2, 0.07, 8, 22)
+  /** The core's glyph on a keystone's disc: three arcs of a ring (the marks' thirds), gaps between. */
+  private readonly glyphGeo = [0, 1, 2].map((i) => new THREE.RingGeometry(0.4, 0.55, 14, 1, (i * 2 * Math.PI) / 3 + 0.18, (2 * Math.PI) / 3 - 0.36))
   private stones: Stone[] = []
 
   /** Swapped for each level, so drops never land on the far side of a wall. */
@@ -107,7 +135,7 @@ export class Loot {
    * part itself (shared geometry and steel, cold, no emissive): tier colour lives
    * only in the beam and the disc.
    */
-  drop(def: AbilityDef, at: THREE.Vector3, toward?: THREE.Vector3, owed?: object): GroundPart {
+  drop(def: AbilityDef, at: THREE.Vector3, toward?: THREE.Vector3, owed?: object, fit = false): GroundPart {
     const color = TIER_COLOR[def.tier]
     const group = new THREE.Group()
 
@@ -138,6 +166,16 @@ export class Loot {
     disc.position.y = DECAL_Y
 
     group.add(spinner, beam, disc)
+    // fits the core worn (decided by the caller, at the drop): a second thin cold ring that breathes, so it reads from the camera without reading
+    let fitRing: THREE.Mesh | undefined
+    if (fit) {
+      fitRing = new THREE.Mesh(this.fitGeo, new THREE.MeshBasicMaterial({
+        color: 0xa8dcff, transparent: true, opacity: 0.5, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
+      }))
+      fitRing.rotation.x = -Math.PI / 2
+      fitRing.position.y = DECAL_Y + 0.01
+      group.add(fitRing)
+    }
 
     // land a short hop away from where it fell, never through a wall
     const a = toward
@@ -155,9 +193,72 @@ export class Loot {
       def, pos, group, fly: FLY, from: at.clone(), bob: Math.random() * 10,
       spinner, eye, half, yaw: Math.random() * Math.PI * 2, settle: 0, lit: 0, bare, owed, seen: false,
       tumble: new THREE.Vector3(Math.random() * 16 - 8, Math.random() * 10 - 5, Math.random() * 16 - 8),
+      fitRing,
     }
     this.ground.push(g)
     return g
+  }
+
+  /**
+   * A keystone at `at`, popping out toward `toward` like a part (a short hop, never through a wall). A gold beam, a small cold torus turning in it, and the core's glyph on the disc.
+   * It is its own kind of thing: `keys`, not `ground`.
+   */
+  dropKey(key: KeystoneDef, at: THREE.Vector3, toward?: THREE.Vector3): GroundKey {
+    const group = new THREE.Group()
+    const cold = KEY_COLOR[key.core]
+    const spinner = new THREE.Mesh(this.keyGeo, new THREE.MeshBasicMaterial({ color: cold }))
+    spinner.position.y = 0.55
+    spinner.rotation.x = Math.PI / 2.4
+    const beam = new THREE.Mesh(this.beamGeo, new THREE.MeshBasicMaterial({
+      color: TIER_COLOR.gold, transparent: true, opacity: 0.34, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending,
+    }))
+    beam.position.y = 2.5
+    const disc = new THREE.Mesh(this.discGeo, new THREE.MeshBasicMaterial({ color: TIER_COLOR.gold, transparent: true, opacity: 0.3, depthWrite: false }))
+    disc.rotation.x = -Math.PI / 2
+    disc.position.y = DECAL_Y
+    // the glyph: one material for the three arcs
+    const glyphMat = new THREE.MeshBasicMaterial({ color: cold, transparent: true, opacity: 0.9, depthWrite: false, side: THREE.DoubleSide })
+    const glyph = new THREE.Group()
+    for (const geo of this.glyphGeo) {
+      const arc = new THREE.Mesh(geo, glyphMat)
+      arc.rotation.x = -Math.PI / 2
+      arc.position.y = DECAL_Y + 0.01
+      glyph.add(arc)
+    }
+    group.add(spinner, beam, disc, glyph)
+    const a = toward ? Math.atan2(toward.x - at.x, toward.z - at.z) + (Math.random() - 0.5) * 1.6 : Math.random() * Math.PI * 2
+    const dist = 0.8 + Math.random() * 0.8
+    const tx = at.x + Math.sin(a) * dist
+    const tz = at.z + Math.cos(a) * dist
+    const land = this.terrain ? this.terrain.clampMove(at.x, at.z, tx, tz, 0.35) : { x: tx, z: tz }
+    const pos = new THREE.Vector3(land.x, 0, land.z)
+    group.position.copy(at)
+    this.scene.add(group)
+    const g: GroundKey = { key, pos, group, fly: FLY, from: at.clone(), bob: Math.random() * 10, seen: false, spinner }
+    this.keys.push(g)
+    return g
+  }
+
+  removeKey(g: GroundKey) {
+    const i = this.keys.indexOf(g)
+    if (i < 0) return
+    this.keys.splice(i, 1)
+    this.disposeKey(g)
+  }
+
+  /** The closest landed keystone Still is standing within the pickup radius of, if any. */
+  keyUnder(at: THREE.Vector3): GroundKey | null {
+    let best: GroundKey | null = null
+    let bestD = LOOT.pickupRadius
+    for (const g of this.keys) {
+      if (g.fly > 0) continue
+      const d = Math.hypot(g.pos.x - at.x, g.pos.z - at.z)
+      if (d < bestD) {
+        bestD = d
+        best = g
+      }
+    }
+    return best
   }
 
   /**
@@ -234,8 +335,25 @@ export class Loot {
       s.mesh.rotation.y += dt * 2
       s.mesh.rotation.x = 0.6
     }
+    for (const g of this.keys) {
+      g.bob += dt * 2.4
+      if (g.fly > 0) {
+        g.fly = Math.max(0, g.fly - dt)
+        const k = 1 - g.fly / FLY
+        g.group.position.lerpVectors(g.from, g.pos, k)
+        g.group.position.y = Math.sin(k * Math.PI) * 1.4
+      } else g.group.position.set(g.pos.x, 0, g.pos.z)
+      g.spinner.rotation.z += dt * 1.8
+      g.spinner.position.y = 0.55 + Math.sin(g.bob) * 0.08
+    }
     for (const g of this.ground) {
       g.bob += dt * 2.4
+      if (g.fitRing) {
+        // it breathes: slow (about 3.7 s), the ring swelling a hair as it brightens
+        const k = 0.5 + 0.5 * Math.sin(g.bob * 0.7)
+        ;(g.fitRing.material as THREE.MeshBasicMaterial).opacity = 0.35 + 0.55 * k
+        g.fitRing.scale.setScalar(1 + 0.1 * k)
+      }
       const sp = g.spinner
       let bounce = 0
       if (g.fly > 0) {
@@ -312,6 +430,8 @@ export class Loot {
   clear() {
     for (const g of this.ground) this.dispose(g)
     this.ground.length = 0
+    for (const g of this.keys) this.disposeKey(g)
+    this.keys.length = 0
     for (const st of this.stones) {
       this.scene.remove(st.group)
       st.pool.dispose()
@@ -320,6 +440,16 @@ export class Loot {
     this.stones.length = 0
     for (const s of this.scraps) this.scene.remove(s.mesh)
     this.scraps.length = 0
+  }
+
+  /** A keystone's own materials (the geometries are the loot's, shared). */
+  private disposeKey(g: GroundKey) {
+    this.scene.remove(g.group)
+    const own = new Set<THREE.Material>()
+    g.group.traverse((o) => {
+      if (o instanceof THREE.Mesh) own.add(o.material as THREE.Material)
+    })
+    for (const m of own) m.dispose()
   }
 
   /**

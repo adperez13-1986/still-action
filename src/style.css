@@ -152,6 +152,22 @@ html, body {
 .btn .scue { position: absolute; top: 2px; left: 50%; width: 14px; height: 14px; margin-left: -7px; z-index: 3; pointer-events: none; color: #6f9bd0; opacity: .45; transition: opacity .12s, color .12s; }
 .btn .scue svg { display: block; width: 100%; height: 100%; stroke-width: 2.6; }
 .btn .scue.lit { opacity: 1; color: #b8d6fa; filter: drop-shadow(0 0 2px rgba(143, 184, 232, .95)) drop-shadow(0 0 5px rgba(111, 155, 208, .6)); }
+/*
+ * The spend count (B5, BUILD.md §2.9): how many core marks a cast would spend now, a cold badge hung on the rim's upper left (2 px proud of it), beside the push cue (top centre) and clear of the icon and the
+ * price (bottom). Dim at 0, lit from 1; with 3 or more the ready button breathes cold (spend3), and a cooling one shows a lit rim (spendcue), the push cue's own lit look.
+ */
+.btn .spend {
+  position: absolute; top: -4px; left: -4px; width: 18px; height: 18px; z-index: 4; pointer-events: none; display: none;
+  place-items: center; border-radius: 50%; background: #0b1520; border: 1.5px solid #3a5878; box-sizing: border-box;
+  font: 700 12px/1 var(--display); color: #6f9bd0; opacity: .55; font-variant-numeric: tabular-nums;
+}
+.btn .spend.show { display: grid; }
+.btn .spend.lit { opacity: 1; color: #d8ecff; border-color: #8fb8e8; background: #14283c; box-shadow: 0 0 6px rgba(143, 184, 232, .7); }
+.btn.spend3 { border-color: #8fb8e8; animation: spend3 1.4s ease-in-out infinite; }
+.btn.spend3 .spend { border-color: #cfe6ff; box-shadow: 0 0 9px rgba(190, 222, 255, .95); }
+.btn.spendcue { border-color: #8fb8e8; box-shadow: 0 0 10px rgba(143, 184, 232, .55), 0 4px 12px rgba(0, 0, 0, .5); }
+.btn.spendcue .spend { color: #fff; border-color: #cfe6ff; box-shadow: 0 0 8px rgba(190, 222, 255, .9); }
+@keyframes spend3 { 0%, 100% { box-shadow: 0 0 5px rgba(111, 155, 208, .3), 0 4px 12px rgba(0, 0, 0, .5); } 50% { box-shadow: 0 0 0 3px rgba(190, 222, 255, .55), 0 0 18px rgba(143, 184, 232, .6), 0 4px 12px rgba(0, 0, 0, .5); } }
 /* parts that change when pushed show what the push buys: dim while ready, ember while a hold would push */
 .btn.ready .push { opacity: .35; }
 .btn:not(.ready) .push { stroke: var(--strain); }
@@ -328,6 +344,8 @@ html, body {
 #offer .replaces { color: #6f8196; white-space: pre-line; }
 /* the pair it makes or ends with what's worn: one spare line, in Still's cold */
 #offer .pair, .pcard .ppair { color: #a9cdea; }
+#offer .fit, .pcard .pfit { color: #8fd0ff; }
+.pcard .pfit { margin: 8px 0 0; font: 600 12px/1.35 var(--ui); }
 #offer .hist, .pcard .phist { color: #8fa3b8; font-style: italic; }
 /* a prompt's title may take two lines rather than hide behind its button */
 #prompt .name { white-space: normal; }
@@ -612,5 +630,12 @@ html, body {
   #pause .pcard.master.core .leaves { margin-top: 3px; font-size: 12px; }
   .coreglyph { width: 26px; height: 26px; }
 }
+/* B5: the core under the loadout (its name, its socket and upgrades, the open depth's marks), cold and quiet; and the socket card's "you lose" line */
+#pause .coreblock:empty { display: none; }
+#pause .pcore { margin: 0; display: flex; flex-wrap: wrap; justify-content: center; align-items: baseline; gap: 4px 14px; font: 500 12.5px/1.4 var(--ui); color: #9fb2c6; text-align: center; }
+#pause .pcore b { font: 700 13px/1.2 var(--display); letter-spacing: .08em; color: #bfe4f2; }
+#pause .pcore em { flex: 1 1 100%; font-style: normal; color: #6f8196; }
+.pcard.pkey .stat span { color: #8fd0ff; letter-spacing: .06em; text-transform: uppercase; font-size: 11px; }
+.pcard .plose { color: #d8b9a8; font-style: normal; font-weight: 600; }
 #pause .learned { margin: 10px 0 0; font-size: 12.5px; line-height: 1.5; color: #9fb2c6; text-align: center; }
 #pause .learned b { color: #bfe4f2; font-weight: 700; }

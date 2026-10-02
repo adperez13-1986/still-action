@@ -96,6 +96,8 @@ export const UPGRADES = {
  * a part reaches III by d3); with it, both at d7. B5 builds it.
  */
 export const UPGRADE_FROM = 7
+/** At most this many upgrades a run (each core has exactly this many, so "all learned" ends the offer). */
+export const UPGRADE_MAX = 2
 
 /** The hunt (§2.9). `sources`: the drops the filter may replace. A keystone's weight against 1 for each part, in a filtered draw. Ship `share` 0.5 (BUILD.md: 0.45). */
 export const FILTER = { share: 0.5, keyWeight: 1, sources: ['elite', 'plenty', 'boss-blue'] as const }
@@ -130,9 +132,9 @@ export const WORDS = {
   mark: { wake: 'rimed', ram: 'slammed' },
   pickTitle: 'Choose a core', pickIntro: 'One way to fight, for the whole run.',
   keystone: { 'ram-domino': ['Domino', 'A slammed body slams what it hits.'], 'ram-catch': ['Catch', 'The shove fires the moment something in reach winds up.'],
-    'wake-burst': ['Burst', 'The third ring breaks the body open on its own.'], 'wake-deep': ['Deep Frost', 'Rings hold five and last longer.'] },
+    'wake-burst': ['Burst', 'The third ring breaks the body open on its own.'], 'wake-deep': ['Deep Frost', 'Rings hold five and last longer.'] } as Record<KeystoneId, readonly [string, string]>,
   upgrade: { 'ram-wide': ['Wide Shove', 'Shoves the two nearest.'], 'ram-rubble': ['Rubble', 'A wall slam throws stone at whoever is near.'],
-    'wake-spray': ['Spray', 'Rime carries to the one behind.'], 'wake-slip': ['Slipstream', 'Every pass speeds you up a little.'] },
+    'wake-spray': ['Spray', 'Rime carries to the one behind.'], 'wake-slip': ['Slipstream', 'Every pass speeds you up a little.'] } as Record<UpgradeId, readonly [string, string]>,
   /** Shapers' and guards' fit lines; a spender's is built: `spends ${mark}: +${k} each`, with `k = fit.k ?? CORES[core].K` (B5). */
   fitLine: { 'backdraft-vent': 'pulls them together, so a shove slams two', kickstart: 'runs them into walls', brace: 'holds your ground',
     'signal-flare': 'rimes what will not come to you', 'spring-heels': 'over a wall, they string out after you', ward: 'covers the pass' },
@@ -140,6 +142,23 @@ export const WORDS = {
   reshape: { backhand: ['Backhand', 'A swing behind you, at what you just passed.'], skate: ['Skate', 'A slow glide through them.'], frostFlare: ['Frost Flare', 'Rimes what it lands on, and slows it.'] },
   readout: (made: number, spent: number) => `marked ${made} · spent ${spent}`,
   spendCaption: 'tap · spend them',
+  /** B5, the hunt. The socket card: its title, the labels, what the floor keystone is called, the tags, "you lose", take and leave. */
+  socketTitle: (core: string) => `${core} · socket`,
+  socketLabel: 'socket', socketEmpty: 'empty', socketFloor: 'on the floor',
+  forTag: { packs: 'for packs', bosses: 'for bosses' },
+  youLose: (name: string) => `you lose: ${name}`,
+  takeKey: 'take it', leaveKey: 'leave it',
+  /** The upgrade at a melt past III: the melt button's label, the card's title and intro. */
+  meltUpgrade: (core: string) => `melt: ${core} upgrade`,
+  upgradeTitle: (core: string) => `${core} · upgrade`,
+  upgradeIntro: (part: string, core: string) => `${part} is at its best. What it knows goes to ${core}.`,
+  /** The pause screen's core block: the labels beside the socket and the upgrades, and "none yet". */
+  upgradesLabel: 'upgrades', none: 'none yet',
+  /** The fit lines: a spender's is `fits ${core} · spends ${mark}: +${k} each`; a shaper's or guard's is `fits ${core} · ${fitLine}`. */
+  fits: (core: string, line: string) => `fits ${core} · ${line}`,
+  /** A fitting part with no line of its own (none ship without one). */
+  fitsPlain: (core: string) => `fits ${core}`,
+  spends: (mark: string, k: number) => `spends ${mark}: +${k} each`,
 }
 
 /**

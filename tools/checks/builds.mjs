@@ -173,7 +173,8 @@ const F1 = `(builds) => {
   }
 }`
 
-check('K-M1', RUN, async ({ page }) => {
+// `trialDefaults`: the page boots as a fresh phone does, with no key pinned (lib.mjs pins an unset builds key to '1' like weight's and tap push's)
+check('K-M1', RUN + '&trialDefaults', async ({ page }) => {
   const boot = await evalJson(page, () => ({ stored: localStorage.getItem('still-action.builds'), core: window.__combat.core, runCore: window.__run.core, builds: window.__builds() }))
   assertEq("a fresh context has the builds key unset, no core, and the switch on (the default)", boot, { stored: null, core: null, runCore: null, builds: true })
   const sha = (v) => createHash('sha1').update(JSON.stringify(v)).digest('hex')
@@ -499,7 +500,7 @@ const FLIP = `() => {
   W.__pause.hide()
 }`
 
-check('K-M5', RUN, async ({ page }) => {
+check('K-M5', RUN + '&trialDefaults', async ({ page }) => {
   await evalJson(page, `() => { window.__run.dev = false }`)
   // the loadout screen shows one switch labelled builds; one real click flips it and localStorage follows
   await evalJson(page, `() => { (${SETUP})(); window.__pause.loadout(window.__hud.slots, () => {}) }`)
@@ -1744,7 +1745,7 @@ check('K-M21', '?roads=1&line=0&engine=0&resume=1', async ({ page }) => {
   await page.evaluate(() => localStorage.removeItem('still-action.builds'))
 })
 
-// K-M22. A part melted past III: with a core there is no mastery (no hand and no eye to teach), and B5's upgrade is not built yet, so nothing happens; builds off it is the mastery card as today
+// K-M22. A part melted past III: with a core there is no mastery (no hand and no eye to teach), and before depth 7 (UPGRADE_FROM) nothing happens at all; builds off it is the mastery card as today. The second part (B5): from depth 7 it is the core's upgrade card instead
 check('K-M22', RUN, async ({ page }) => {
   const leans = JSON.parse((await import('node:fs')).readFileSync(HERE + 'baseline/leans.json', 'utf8'))
   const FORM = { close: 'close strike', marksman: 'planted shot' }
@@ -1785,6 +1786,80 @@ check('K-M22', RUN, async ({ page }) => {
   assertEq('builds off, the same floor: the melt line is the mastery one, its form from MASTERY_FORM (leans.json)', [r.off.shown, r.off.meltHidden, r.off.meltText], [true, false, `melt: master the ${FORM[leans.piston]}`])
   assertEq('...and the card opens with two masteries; taking one learns it (the floor part is spent)', [r.off.cards, r.off.after.runMastery, r.off.after.combatMastery, r.off.after.ground], [2, 1, 1, 0])
   assertEq('...and with the switch back on the core wears no mastery again', r.off.backOn, 0)
+})
+
+check('K-M22', RUN, async ({ page }) => {
+  // B5: from depth 7 (3-balancer.md UPGRADE_FROM) a melt past III offers the core's upgrades, mastery's twin: 2 cards the first time, 1 the second, none the third
+  const r = await evalJson(page, `async () => {
+    ${HELPERS}
+    const press = (el) => el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true }))
+    const out = {}
+    const setup = (core, part, id) => {
+      (${SETUP})({ parts: ['focusing-lens', 'pressure-vent', part, 'kickstart'] })
+      W.__loot.clear()
+      W.__pause.hide()
+      W.__run.mastery = new Set()
+      W.__run.stats.at(-1).upgraded = undefined
+      W.__core(core)
+      W.__equipRank(part, 3)
+      W.__run.ranks.arms = 3
+    }
+    const floor = (id) => { W.__dropAt(id, 0, 0); secs(1.5) }
+    const cardState = () => ({
+      shown: document.querySelector('#offer').classList.contains('show'),
+      melt: document.querySelector('#offer .melt').style.display === 'none' ? null : document.querySelector('#offer .melt').textContent,
+      pause: document.querySelector('#pause').classList.contains('show'),
+      title: document.querySelector('#pause h2')?.textContent ?? null,
+      cards: [...document.querySelectorAll('#pause .master')].map((b) => b.querySelector('.pname').textContent),
+    })
+    // Ram, depth 6: the label is null and a forced melt does nothing
+    setup('ram', 'piston')
+    W.__run.depth = 6
+    floor('piston')
+    out.d6 = cardState()
+    press(document.querySelector('#offer .melt'))
+    out.d6.after = { pause: document.querySelector('#pause').classList.contains('show'), ground: W.__loot.ground.length, upgrades: [...W.__run.upgrades] }
+    // depth 7: the label, the card with both upgrades
+    W.__run.depth = 7
+    W.__loot.clear()
+    floor('piston')
+    out.d7 = cardState()
+    press(document.querySelector('#offer .melt'))
+    out.d7.card = cardState()
+    document.querySelector('#pause .master').click()
+    out.first = { upgrades: [...W.__run.upgrades], combat: [...C.upgrades], mastery: C.mastery.size, ground: W.__loot.ground.length, pause: document.querySelector('#pause').classList.contains('show'),
+      melts: last().melts, upgraded: [...(last().upgraded ?? [])] }
+    // the second: one card left
+    floor('piston')
+    out.second0 = cardState()
+    press(document.querySelector('#offer .melt'))
+    out.second = cardState()
+    document.querySelector('#pause .master').click()
+    out.after2 = { upgrades: [...W.__run.upgrades], combat: [...C.upgrades], upgraded: [...(last().upgraded ?? [])] }
+    // the third: nothing left to learn, no melt line, a forced melt does nothing and the part stays
+    floor('piston')
+    out.third = cardState()
+    press(document.querySelector('#offer .melt'))
+    out.third.after = { pause: document.querySelector('#pause').classList.contains('show'), ground: W.__loot.ground.length, upgrades: [...W.__run.upgrades] }
+    // Wake: its own two
+    setup('wake', 'scrap-cleaver')
+    W.__run.depth = 8
+    floor('scrap-cleaver')
+    out.wake = cardState()
+    press(document.querySelector('#offer .melt'))
+    out.wake.card = cardState()
+    document.querySelector('#pause .master').click()
+    out.wake.after = [...W.__run.upgrades]
+    W.__run.depth = 1
+    return out
+  }`)
+  assertEq('depth 6 with Ram: the card shows with no melt line, and a melt forced anyway does nothing', [r.d6.shown, r.d6.melt, r.d6.after], [true, null, { pause: false, ground: 1, upgrades: [] }])
+  assertEq('depth 7: the melt line is the core\'s upgrade, and the card opens with both of Ram\'s, titled for the core', [r.d7.melt, r.d7.card.pause, r.d7.card.title, r.d7.card.cards], ['melt: Ram upgrade', true, 'Ram · upgrade', ['Wide Shove', 'Rubble']])
+  assertEq('picking one: learned in the run and in combat, the floor part spent, no mastery, the card closed, logged on the depth', [r.first.upgrades, r.first.combat, r.first.mastery, r.first.ground, r.first.pause, r.first.upgraded], [['ram-wide'], ['ram-wide'], 0, 0, false, ['ram-wide']])
+  assertEq('the second melt past III: one card, the one not learned', [r.second0.melt, r.second.cards], ['melt: Ram upgrade', ['Rubble']])
+  assertEq('...and both are learned after it', [r.after2.upgrades, r.after2.combat, r.after2.upgraded], [['ram-wide', 'ram-rubble'], ['ram-wide', 'ram-rubble'], ['ram-wide', 'ram-rubble']])
+  assertEq('a third melt past III with both learned: no melt line, a melt forced anyway does nothing and the floor part stays', [r.third.melt, r.third.after], [null, { pause: false, ground: 1, upgrades: ['ram-wide', 'ram-rubble'] }])
+  assertEq("Wake's own two at depth 8", [r.wake.melt, r.wake.card.title, r.wake.card.cards, r.wake.after], ['melt: Wake upgrade', 'Wake · upgrade', ['Spray', 'Slipstream'], ['wake-spray']])
 })
 
 // K-M23 the bots (B3 built Ram's half early for the slam line; B4 adds Wake's). Headless d1-d3 in real generated levels, seeds 1-3, each core worn in turn, the starting
@@ -1845,6 +1920,8 @@ const CORE_BOT = `(arg) => {
     let cdir = 1, pinned = 0, lastP = null
     const cap = (arg.boss ? 150 : 40) * 60
     for (let i = 0; i < cap; i++) {
+      // B5: a keystone dropped by an elite opens the socket card when walked onto, and the card is modal (the buttons are off behind it): the bot leaves it, as the hesitant player who looks at it and walks on
+      if (document.querySelector('#pause .pkey')) { document.querySelector('#pause .leave').click(); W.__sockets = (W.__sockets ?? 0) + 1 }
       for (const slot of SLOTS) {
         if (!W.__hud.isReady(slot)) { readySince[slot] = null; continue }
         readySince[slot] ??= C.time
@@ -1966,6 +2043,538 @@ check('K-M23', RUN + '&bots=1', async ({ page }) => {
     console.log(`INFO K-M23 ${Name} hesitant, the Assembler: felled ${hb.filter((r) => r.cleared).length} of ${hb.length} (${hb.map((r) => `seed ${r.seed}: ${r.cleared ? f(r.s, 1) + ' s' : 'not in 150 s'}`).join('; ')})`)
   }
   for (const core of ['ram', 'wake']) assert(felledBy[core][1] === 3 && felledBy[core][0] >= 2, `the eager ${core === 'ram' ? 'Ram' : 'Wake'} bot fells the Assembler in 2 of 3 seeds (${felledBy[core][0]} of ${felledBy[core][1]})`)
+})
+
+
+// ---------------------------------------------------------------------------------------------------------------------------------------------------------------
+// B5: the hunt and the HUD. K-M24 to K-M29 (and K-M22's upgrade half, above). Numbers: 3-balancer.md (FILTER.share 0.5, upgrades from depth 7, Fit.k per part: Piston +12, Backhand +10,
+// Scrap Cleaver +3 under Wake and +4 under Ram), which is binding over BUILD.md's where they differ (its K-M26 says Piston "+8 each"; it is +12).
+// ---------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+/** In the page: a seeded Math.random (mulberry32), so a draw count is the same every run; `unseed()` gives it back. */
+const SEEDED = `
+  const mulberry32 = (a) => () => { a |= 0; a = (a + 0x6d2b79f5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296 }
+  const realRandom = Math.random
+  const seed = (n) => { Math.random = mulberry32(n) }
+  const unseed = () => { Math.random = realRandom }
+`
+
+check('K-M24', RUN, async ({ page }) => {
+  // the filter: 1000 draws a source with Wake worn, through the real hunt (rollForCore, then rollPart). BUILD.md says 400; at 400 a seeded draw sits 2.8 sigma from the band's edge (seed 11 gave 57.5% for boss-blue), so 1000 (4.4 sigma)
+  const r = await evalJson(page, `() => {
+    (${SETUP})()
+    ${SEEDED}
+    const W = window
+    W.__core('wake')
+    const out = { share: {}, kill: {} }
+    const N = 1000
+    try {
+      for (const source of ['elite', 'plenty', 'boss-blue']) {
+        seed(11)
+        const x = W.__rollMoment({ source, depth: 5, n: N, socketed: null, onFloor: [], taken: [] })
+        out.share[source] = { filtered: x.filtered / N, got: x.got, keys: x.keys }
+      }
+      for (const source of ['kill', 'crate', 'boss-gold']) {
+        seed(12)
+        const x = W.__rollMoment({ source, depth: 5, n: N, socketed: null, onFloor: [], taken: [] })
+        out.kill[source] = { filtered: x.filtered, keys: Object.keys(x.keys).length }
+      }
+      // a turned part never comes; a Wake part never found can; the socketed keystone never comes, the other can
+      seed(13)
+      const turned = W.__rollMoment({ source: 'elite', depth: 5, n: N, socketed: null, onFloor: [], taken: [], turned: ['frost-trail'] })
+      out.turned = { frost: turned.ids['frost-trail'] ?? 0, others: ['frayed-cleaver', 'spring-heels', 'signal-flare'].filter((id) => (turned.ids[id] ?? 0) > 0).length, got: turned.got }
+      seed(14)
+      const open = W.__rollMoment({ source: 'elite', depth: 5, n: N, socketed: null, onFloor: [], taken: [] })
+      const found = W.__save().found
+      out.unfound = Object.keys(open.ids).filter((id) => ['frayed-cleaver', 'frost-trail', 'spring-heels', 'signal-flare', 'ward', 'scrap-cleaver'].includes(id) && !found.includes(id))
+      seed(15)
+      const sock = W.__rollMoment({ source: 'elite', depth: 5, n: N, socketed: 'wake-burst', onFloor: [], taken: [] })
+      out.socket = { burst: sock.keys['wake-burst'] ?? 0, deep: sock.keys['wake-deep'] ?? 0 }
+      seed(16)
+      const floor = W.__rollMoment({ source: 'plenty', depth: 5, n: N, socketed: 'wake-deep', onFloor: ['wake-burst'], taken: [] })
+      out.both = { keys: Object.keys(floor.keys).length }
+      // what is worn or lying never comes again
+      seed(17)
+      const worn = ['scrap-cleaver', 'frayed-cleaver', 'frost-trail', 'signal-flare', 'spring-heels']
+      const rest = W.__rollMoment({ source: 'elite', depth: 5, n: N, socketed: 'wake-burst', onFloor: ['wake-deep'], taken: worn })
+      out.rest = { wornAgain: worn.filter((id) => (rest.ids[id] ?? 0) > 0), ward: rest.ids['ward'] ?? 0, keys: Object.keys(rest.keys).length, filtered: rest.filtered }
+      // builds off, and no core: the draws are rollPart's, on the same seeds
+      const same = (setup) => {
+        setup()
+        return ['elite', 'plenty', 'boss-blue', 'kill'].map((source) => {
+          seed(21)
+          const a = W.__rollMoment({ source, depth: 5, n: 200, socketed: null, onFloor: [], taken: [] })
+          seed(21)
+          const b = W.__rollMany({ source, depth: 5, n: 200 })
+          return a.filtered === 0 && JSON.stringify([a.ids, a.got]) === JSON.stringify([b.ids, b.got])
+        })
+      }
+      out.noCore = same(() => W.__core(null))
+      out.off = same(() => { W.__core('wake'); W.__builds(false) })
+      W.__builds(true)
+    } finally { unseed() }
+    return out
+  }`)
+  for (const source of ['elite', 'plenty', 'boss-blue']) {
+    const x = r.share[source]
+    assert(Math.abs(x.filtered - 0.5) <= 0.07, `${source}: ${(x.filtered * 100).toFixed(1)}% of 1000 draws came from Wake's pool, want 50% +-7 (FILTER.share 0.5)`)
+    assert(Object.keys(x.keys).length === 2, `${source}: both of Wake's keystones can come (${JSON.stringify(x.keys)})`)
+    console.log(`INFO K-M24 ${source}: ${(x.filtered * 100).toFixed(1)}% from Wake's pool (1000 draws), keystones ${JSON.stringify(x.keys)}`)
+  }
+  assertEq('kill, crate and boss-gold: nothing comes from the filter, no keystone', r.kill, { kill: { filtered: 0, keys: 0 }, crate: { filtered: 0, keys: 0 }, 'boss-gold': { filtered: 0, keys: 0 } })
+  assertEq("a turned part never comes (Skate's base part turned to the wall: 0 in 1000), while the others still do", [r.turned.frost, r.turned.others, r.turned.got], [0, 3, 1000])
+  assert(r.unfound.length > 0, `a Wake part never found can come: ${r.unfound.join(', ') || 'none came'}`)
+  assertEq('the socketed keystone never comes, the other can', [r.socket.burst, r.socket.deep > 0], [0, true])
+  assertEq('with one socketed and the other lying, no keystone comes at all', r.both.keys, 0)
+  assertEq('what is worn is never drawn again; with the rest lying or socketed the pool is Ward alone, and the filter still takes half the draws', [r.rest.wornAgain, r.rest.ward > 0, r.rest.keys, r.rest.filtered > 400 && r.rest.filtered < 600], [[], true, 0, true])
+  assertEq("no core worn: the draws are rollPart's on the same seeds, in every source", r.noCore, [true, true, true, true])
+  assertEq('builds off with a core on the run: the same', r.off, [true, true, true, true])
+})
+
+const K25_SEED = 5
+check('K-M25', RUN, async ({ page }) => {
+  // keystones on the floor: walked onto, the socket opens; take / leave; the one given up lies at his feet; the thief never sees one; the level's end logs it left
+  const r = await evalJson(page, `async () => {
+    (${SETUP})({ parts: ['focusing-lens'] })
+    ${WAKE}
+    ${SEEDED}
+    W.__loot.clear()
+    W.__pause.hide()
+    W.__core('wake')
+    // seeded: where the keystone he gives up lands (0.8 to 1.6 u from his feet) is then the same every run, and this seed lands it inside the pickup radius, where the hold is what keeps the card shut
+    seed(${K25_SEED})
+    const out = {}
+    const open = () => document.querySelector('#pause').classList.contains('show') && !!document.querySelector('#pause .pkey')
+    const stepN = (n) => { for (let i = 0; i < n; i++) { C.hp = 100; W.__step(1 / 60) } }
+    const keys = () => W.__keys()
+    const card = () => ({
+      title: document.querySelector('#pause h2')?.textContent,
+      cards: [...document.querySelectorAll('#pause .pcard')].map((c) => [c.querySelector('.tag')?.textContent, c.querySelector('.pname')?.textContent]),
+      tags: [...document.querySelectorAll('#pause .pkey .stat span')].map((s) => s.textContent),
+      lose: document.querySelector('#pause .plose')?.textContent ?? null,
+      buttons: [...document.querySelectorAll('#pause .actions button')].map((b) => b.textContent),
+    })
+    const press = (cls) => document.querySelector('#pause .' + cls).click()
+    // 1: a keystone at 2 u: not under him, then walked onto
+    W.__dropKey('wake-burst', 2, 0)
+    place(0, 0)
+    stepN(40)
+    out.far = { open: open(), keys: keys().keys.length, offer: document.querySelector('#offer').classList.contains('show') }
+    place(2, 0)
+    stepN(2)
+    out.card1 = { open: open(), ...card() }
+    // the world waits: 0.6 s of real frames (the loop held off since SETUP) move neither the game clock nor Still
+    const t0 = C.time
+    const p0 = W.__still.pos.x
+    W.__stick(1, 0)
+    W.__hold(false)
+    await new Promise((r) => setTimeout(r, 600))
+    W.__hold(true)
+    W.__stick(0, 0)
+    out.frozen = C.time === t0 && W.__still.pos.x === p0
+    out.seen1 = keys().keys[0]?.seen
+    press('take')
+    stepN(10)
+    out.take1 = { open: open(), socket: keys().socket, combat: C.keystone, floor: keys().keys.length, recs: W.__run.drops.filter((d) => d.fit === 'key').map((d) => [d.id, d.end, d.offered]) }
+    // 2: a second keystone with Burst socketed: "you lose" reads; taking it drops Burst at his feet, shut while he stands there
+    W.__dropKey('wake-deep', 5, 0)
+    place(2, 0)
+    stepN(40)
+    place(5, 0)
+    stepN(2)
+    out.card2 = { open: open(), ...card() }
+    press('take')
+    stepN(45)
+    const lying = keys()
+    const kd = lying.keys[0] ? Math.hypot(lying.keys[0].x - 5, lying.keys[0].z) : 99
+    out.take2 = { socket: lying.socket, combat: C.keystone, floor: lying.keys.map((k) => [k.id, Math.hypot(k.x - 5, k.z) < 1.7]), held: lying.held === 'wake-burst', near: kd < 1.15, open: open() }
+    // away and back: the hold lifts, and the one he gave up can be taken back
+    place(9, 0)
+    stepN(2)
+    out.away = { open: open(), held: keys().held }
+    const b = keys().keys[0]
+    place(b.x, b.z)
+    stepN(2)
+    out.back = { open: open(), ...card() }
+    // 3: leave it: it stays, seen; shut while he stands on it; away and back reopens it
+    press('leave')
+    stepN(30)
+    out.left = { open: open(), floor: keys().keys.map((k) => [k.id, k.seen]), socket: keys().socket, held: keys().held, offer: document.querySelector('#offer').classList.contains('show') }
+    place(b.x + 6, b.z)
+    stepN(2)
+    place(b.x, b.z)
+    stepN(2)
+    out.reopened = open()
+    press('leave')
+    // the thief and the melt line never see one: no part on the floor is a keystone, and the thief's ground is empty of them
+    out.thief = { ground: W.__thiefGround(), lootGround: W.__loot.ground.length, keys: W.__loot.keys.length }
+    // 4: a keystone never walked onto, the level ends: every keystone record ends, the lying ones 'left' (and the one he saw but left, offered)
+    W.__dropKey('wake-burst', 12, 0)
+    place(0, 0)
+    stepN(40)
+    const lyingNow = W.__loot.keys.length
+    W.__enter(2, 1)
+    out.clear = { lyingNow, keysAfter: W.__loot.keys.length, recs: W.__run.drops.filter((d) => d.fit === 'key').map((d) => [d.id, d.source, d.end, d.offered]) }
+    unseed()
+    return out
+  }`)
+  assertEq('a keystone 2 u away opens nothing, shows no pickup card and no melt line', [r.far.open, r.far.keys, r.far.offer], [false, 1, false])
+  assertEq("walked onto, the socket card opens: the core's name, the socket empty, Burst with its tag, take and leave", [r.card1.open, r.card1.title, r.card1.cards, r.card1.tags, r.card1.lose, r.card1.buttons], [true, 'Wake · socket', [['socket', 'empty'], ['on the floor', 'Burst']], ['for packs'], null, ['leave it', 'take it']])
+  assertEq('...the world waits behind it, and the keystone is marked seen', [r.frozen, r.seen1], [true, true])
+  assertEq('take: socketed (combat.keystone ran), nothing left on the floor, the card closed, the record taken and offered', [r.take1.open, r.take1.socket, r.take1.combat, r.take1.floor, r.take1.recs], [false, 'wake-burst', 'wake-burst', 0, [['wake-burst', 'taken', true]]])
+  assertEq('with Burst socketed, Deep Frost\'s card shows both and "you lose: Burst"', [r.card2.open, r.card2.cards, r.card2.tags, r.card2.lose], [true, [['socket', 'Burst'], ['on the floor', 'Deep Frost']], ['for packs', 'for bosses'], 'you lose: Burst'])
+  assertEq('taking it: Deep Frost is socketed, Burst lies at his feet, and the card stays shut while he stands there', [r.take2.socket, r.take2.combat, r.take2.floor, r.take2.near, r.take2.held, r.take2.open], ['wake-deep', 'wake-deep', [['wake-burst', true]], true, true, false])
+  assertEq('stepped away the hold lifts; stepped back, the keystone he gave up can be taken back', [r.away.open, r.away.held, r.back.open, r.back.lose], [false, null, true, 'you lose: Deep Frost'])
+  assertEq('leave: the keystone stays, seen, the socket as it was; shut while he stands on it, no pickup card; away and back reopens it', [r.left.open, r.left.floor, r.left.socket, r.left.held, r.left.offer, r.reopened], [false, [['wake-burst', true]], 'wake-deep', 'wake-burst', false, true])
+  assertEq("the thief's want list holds no keystone, and the floor's part list neither (the keystones lie apart)", [r.thief.ground, r.thief.lootGround, r.thief.keys], [[], 0, 1])
+  assertEq('the level ends: no keystone is left lying in the scene, and the two that were are logged left: the one he saw (offered) and the one he never walked onto (not)', [r.clear.lyingNow, r.clear.keysAfter, r.clear.recs.filter((x) => x[2] === 'left').map((x) => [x[1], x[3]]).sort()], [2, 0, [['dev', false], ['swap', true]]])
+  assertEq('...and every keystone record ends (taken or left), none stays null', r.clear.recs.filter((x) => x[2] === null).length, 0)
+})
+
+check('K-M26', RUN, async ({ page }) => {
+  // the cards say the fit, with a core worn (the pickup card and the compare); the floor glyph is decided at the drop; builds off, nothing new shows
+  const r = await evalJson(page, `() => {
+    (${SETUP})({ parts: ['focusing-lens', 'pressure-vent', 'scrap-cleaver', 'kickstart'] })
+    ${WAKE}
+    W.__loot.clear()
+    W.__pause.hide()
+    const out = {}
+    const fit = () => { const el = document.querySelector('#offer .fit'); return document.querySelector('#offer').classList.contains('show') && el.style.display !== 'none' ? el.textContent : null }
+    const press = (sel) => document.querySelector(sel).dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true }))
+    const stepN = (n) => { for (let i = 0; i < n; i++) { C.hp = 100; W.__step(1 / 60) } }
+    const seen = (id) => {
+      W.__loot.clear()
+      W.__dropAt(id, 0, 0)
+      place(0, 0)
+      stepN(40)
+      const card = fit()
+      // the compare card: the same line
+      press('#offer .compare')
+      const cmp = document.querySelector('#pause .pfit')?.textContent ?? null
+      const cmpOpen = document.querySelector('#pause').classList.contains('show')
+      if (cmpOpen) document.querySelector('#pause .leave').click()
+      return { card, cmp }
+    }
+    W.__core('ram')
+    out.ram = { piston: seen('piston'), backdraft: seen('backdraft-vent'), kickstart: seen('kickstart'), brace: seen('brace'), flare: seen('flare'), cleaver: seen('scrap-cleaver'), lens: seen('focusing-lens') }
+    W.__core('wake')
+    out.wake = { cleaver: seen('scrap-cleaver'), backhand: seen('frayed-cleaver'), skate: seen('frost-trail'), flare: seen('signal-flare'), heels: seen('spring-heels'), ward: seen('ward'), lens: seen('focusing-lens'), cardName: document.querySelector('#offer .name').textContent }
+    // the glyph is decided at the drop, from the core worn then
+    W.__core('ram')
+    W.__loot.clear()
+    W.__dropAt('piston', 3, 0)
+    W.__dropAt('focusing-lens', -3, 0)
+    W.__dropAt('backdraft-vent', 0, 3)
+    W.__core(null)
+    W.__dropAt('piston', 0, -3)
+    out.ring = W.__loot.ground.map((g) => [g.def.id, !!g.fitRing])
+    // the drop records say so too
+    out.recs = W.__run.drops.filter((d) => d.source === 'dev').slice(-4).map((d) => [d.id, d.fit ?? null])
+    // builds off with the core on the run: no fit line anywhere
+    W.__core('ram')
+    W.__builds(false)
+    out.off = { piston: seen('piston'), backdraft: seen('backdraft-vent') }
+    W.__builds(true)
+    W.__core(null)
+    out.bare = { piston: seen('piston') }
+    return out
+  }`)
+  assertEq('Ram: Piston, spender, +12 each (3-balancer: its own k), on the pickup card and the compare', r.ram.piston, { card: 'fits Ram · spends slammed: +12 each', cmp: 'fits Ram · spends slammed: +12 each' })
+  assertEq('Ram: Backdraft, a shaper: its own line', r.ram.backdraft, { card: 'fits Ram · pulls them together, so a shove slams two', cmp: 'fits Ram · pulls them together, so a shove slams two' })
+  assertEq('Ram: Kickstart (shaper), Brace (guard), Flare (spender, the core\'s +8), Scrap Cleaver (the bridge, +4)', [r.ram.kickstart.card, r.ram.brace.card, r.ram.flare.card, r.ram.cleaver.card], ['fits Ram · runs them into walls', 'fits Ram · holds your ground', 'fits Ram · spends slammed: +8 each', 'fits Ram · spends slammed: +4 each'])
+  assertEq('Ram: Focusing Lens is plain: no fit line on either card', r.ram.lens, { card: null, cmp: null })
+  assertEq('Wake: Scrap Cleaver +3, Backhand (the reshaped Frayed Cleaver) +10, Skate +6, Frost Flare and Spring Heels and Ward their lines, the Lens none', [r.wake.cleaver.card, r.wake.backhand.card, r.wake.skate.card, r.wake.flare.card, r.wake.heels.card, r.wake.ward.card, r.wake.lens.card],
+    ['fits Wake · spends rimed: +3 each', 'fits Wake · spends rimed: +10 each', 'fits Wake · spends rimed: +6 each', 'fits Wake · rimes what will not come to you', 'fits Wake · over a wall, they string out after you', 'fits Wake · covers the pass', null])
+  assertEq('...and the compare card carries the same line', [r.wake.backhand.cmp, r.wake.ward.cmp], ['fits Wake · spends rimed: +10 each', 'fits Wake · covers the pass'])
+  assertEq("a part that fits has the glyph ring on the floor, a plain one none; decided at the drop (a Piston dropped with no core worn has none)", r.ring, [['piston', true], ['focusing-lens', false], ['backdraft-vent', true], ['piston', false]])
+  assertEq("the drop records carry fit with a core worn ('fits' / 'plain') and none bare", r.recs, [['piston', 'fits'], ['focusing-lens', 'plain'], ['backdraft-vent', 'fits'], ['piston', null]])
+  assertEq('builds off with a core on the run: no fit line on either card; bare, none', [r.off, r.bare], [{ piston: { card: null, cmp: null }, backdraft: { card: null, cmp: null } }, { piston: { card: null, cmp: null } }])
+})
+
+check('K-M27', RUN, async ({ page }) => {
+  // the number is honest: five setups, each read with __spendCount, then the cast fired with no step between and its spent marks counted from the spend events
+  const r = await evalJson(page, `() => {
+    ${WAKE}
+    const out = {}
+    const nSpent = () => ev('spend').reduce((a, x) => a + x.n, 0)
+    const stepN = (n) => { for (let i = 0; i < n; i++) { C.hp = 100; W.__step(1 / 60) } }
+    const fresh = (parts, core) => {
+      (${SETUP})({ parts, autos: false })
+      W.__core(core)
+      W.__loot.clear()
+      W.__still.facing = 0
+      W.__partLog.length = 0
+    }
+    const mark = (e, n) => W.__setMarks(idx(e), n)
+    const btn = (slot) => document.querySelectorAll('#hud .btn')[['head', 'torso', 'arms', 'legs'].indexOf(slot)]
+    const cueOf = (slot) => { const b = btn(slot); const s = b.querySelector('.spend'); return { text: s.textContent, cls: s.className, spend3: b.classList.contains('spend3'), spendcue: b.classList.contains('spendcue') } }
+    // (a) a bolt: a Lens given a spend fit (a def of the check's own: no part in the pool is a bolt spender), walls holding 1, 3 and 2 in reach
+    {
+      fresh(['focusing-lens'], 'wake')
+      const lens = { ...W.__hud.loadout[0], fits: { wake: { role: 'spend' } } }
+      const a = body(-3, 3), b = body(0, 5), c = body(3, 3)
+      mark(a, 1); mark(b, 3); mark(c, 2)
+      const n = W.__spendCount('head', lens)
+      C.useAbility(lens, { origin: W.__still.pos, facing: 0, moveX: 0, moveZ: 0, pushed: false, full: C.weight, strain: 0 })
+      stepN(40)
+      out.a = { n, spent: nSpent(), after: [a, b, c].map((e) => marks(e).n) }
+    }
+    // (b) Scrap Cleaver: 3 walls x 2 in the cone and one x 3 beyond its reach; then the cast's own re-aim: the 3 beats the 2s once it is in reach
+    {
+      fresh(['scrap-cleaver'], 'wake')
+      const ws = [body(0, 1.5), body(-0.8, 1.4), body(0.8, 1.4)]
+      const far = body(0, -5.5)
+      for (const w of ws) mark(w, 2)
+      mark(far, 3)
+      const n = W.__spendCount('arms')
+      W.__fire('arms', false)
+      out.b = { n, spent: nSpent(), far: marks(far).n }
+    }
+    {
+      fresh(['scrap-cleaver'], 'wake')
+      const ws = [body(0, 1.5), body(-0.8, 1.4), body(0.8, 1.4)]
+      const near = body(0, -1.6)
+      for (const w of ws) mark(w, 2)
+      mark(near, 3)
+      const n = W.__spendCount('arms')
+      W.__fire('arms', false)
+      out.b2 = { n, spent: nSpent() }
+    }
+    // (c) Backdraft: a shaper, no number and no span
+    {
+      fresh(['pressure-vent', 'backdraft-vent'], 'ram')
+      const w = body(0, 2)
+      mark(w, 3)
+      const n = W.__spendCount('torso')
+      out.c = { n, ...cueOf('torso') }
+    }
+    // (d) Skate along the stick through 2 walls x 2, with a third marked wall off the path
+    {
+      fresh(['frost-trail'], 'wake')
+      const a = body(0, 2), b = body(0.2, 4), off = body(3.2, 3)
+      mark(a, 2); mark(b, 2); mark(off, 3)
+      W.__stick(0, 1)
+      const n = W.__spendCount('legs')
+      W.__fire('legs', false)
+      stepN(45)
+      W.__stick(0, 0)
+      out.d = { n, spent: nSpent(), off: marks(off).n }
+    }
+    // (e) Flare (Ram's spender): a blast catching 3 bodies x 1
+    {
+      fresh(['flare'], 'ram')
+      const ws = [body(0, 6), body(0.9, 6.5), body(-0.9, 6.4)]
+      const out4 = body(6, 6)
+      for (const w of ws) mark(w, 1)
+      const n = W.__spendCount('head')
+      W.__fire('head', false)
+      stepN(70)
+      out.e = { n, spent: nSpent(), far: marks(out4).n }
+    }
+    // the button: 0 dim, 2 lit with no pulse, 3 ready pulses, 3 cooling shows the lit rim
+    {
+      fresh(['scrap-cleaver'], 'ram')
+      const w = body(0, 1.5)
+      const set = (n) => { W.__setMarks(idx(w), 3); const st = new Map(C.statuses()).get(w); st.marks.n = n; st.marks.t = n ? 3 : 0 }
+      const row = []
+      set(0); W.__spendCount('arms'); row.push(cueOf('arms'))
+      set(2); W.__spendCount('arms'); row.push(cueOf('arms'))
+      set(3); W.__spendCount('arms'); row.push(cueOf('arms'))
+      W.__hud.devCool('arms', 3000); W.__spendCount('arms'); row.push(cueOf('arms'))
+      W.__hud.devCool('arms', 0); W.__spendCount('arms'); row.push(cueOf('arms'))
+      out.button = row
+      // a 9 caps at 9: five more walls in the cone, all full
+      const more = [body(-0.9, 1.9), body(0.9, 1.9), body(-1.4, 1.1), body(1.4, 1.1)]
+      for (const m of more) mark(m, 3)
+      set(3)
+      out.nine = { n: W.__spendCount('arms'), ...cueOf('arms') }
+    }
+    // the refresh: with two spenders worn (Wake: Cleaver and Skate), 2 s of ticks make at most one spendCount a spender per 0.1 s of game time
+    {
+      fresh(['scrap-cleaver', 'frost-trail'], 'wake')
+      const w = body(0, 1.5)
+      mark(w, 1)
+      stepN(3)
+      let calls = 0
+      const real = C.spendCount.bind(C)
+      C.spendCount = (...a) => { calls++; return real(...a) }
+      const t0 = C.time
+      stepN(120)
+      C.spendCount = real
+      out.refresh = { calls, secs: C.time - t0 }
+    }
+    return out
+  }`)
+  assertEq('(a) a Lens given a spend fit, walls holding 1, 3 and 2: the number is 3, the bolt spends 3 (the 3-mark wall), the others keep theirs', [r.a.n, r.a.spent, r.a.after], [3, 3, [1, 0, 2]])
+  assertEq('(b) Scrap Cleaver, 3 walls x 2 in the cone and one x 3 beyond its reach: 6, and 6 spent; the far one keeps its 3', [r.b.n, r.b.spent, r.b.far], [6, 6, 3])
+  assertEq('(b) the cast re-aims at the most marks in reach: with the x 3 within reach behind him the swing turns to it, and the number is that swing\'s own: 3 and 3 spent', [r.b2.n, r.b2.spent], [3, 3])
+  assertEq('(c) Backdraft (a shaper): null, and no digit on its button', [r.c.n, r.c.text, r.c.cls], [null, '', 'spend'])
+  assertEq('(d) Skate along the stick through 2 walls x 2, a third marked wall off the path: 4, and 4 spent', [r.d.n, r.d.spent, r.d.off], [4, 4, 3])
+  assertEq('(e) a Flare blast catching 3 bodies x 1: 3, and 3 spent', [r.e.n, r.e.spent, r.e.far], [3, 3, 0])
+  assertEq('the button: 0 dim; 2 lit with no pulse; 3 ready pulses (spend3); 3 cooling shows the lit rim (spendcue); ready again pulses', r.button.map((x) => [x.text, x.cls.includes('dim') ? 'dim' : x.cls.includes('lit') ? 'lit' : '', x.spend3, x.spendcue]),
+    [['0', 'dim', false, false], ['2', 'lit', false, false], ['3', 'lit', true, false], ['3', 'lit', false, true], ['3', 'lit', true, false]])
+  assertEq('the digit stops at 9', [r.nine.n >= 9 ? 9 : r.nine.n, r.nine.text], [9, '9'])
+  assert(r.refresh.calls <= 2 * (Math.ceil(r.refresh.secs / 0.1) + 1) && r.refresh.calls >= 2 * 15, `the count is refreshed at most once a spender per 0.1 s: ${r.refresh.calls} calls for 2 spenders over ${r.refresh.secs.toFixed(2)} s of game time (at most ${2 * (Math.ceil(r.refresh.secs / 0.1) + 1)}, at least ${2 * 15})`)
+  console.log(`INFO K-M27 numbers: (a) ${r.a.n}/${r.a.spent}, (b) ${r.b.n}/${r.b.spent}, re-aim ${r.b2.n}/${r.b2.spent}, (d) ${r.d.n}/${r.d.spent}, (e) ${r.e.n}/${r.e.spent}; the digit ${r.nine.n} shows ${r.nine.text}; refresh ${r.refresh.calls} calls in ${r.refresh.secs.toFixed(2)} s`)
+})
+
+check('K-M28', RUN, async ({ page }) => {
+  // the readout: the pause screen shows the core, the socket, the upgrades and "marked N . spent M" for the open depth, as the words say; bare, no block
+  const r = await evalJson(page, `() => {
+    (${SETUP})({ parts: ['scrap-cleaver'] })
+    ${WAKE}
+    W.__pause.hide()
+    W.__equipRank('scrap-cleaver', 3)
+    const out = {}
+    const read = () => {
+      W.__pause.loadout(() => W.__hud.slots, () => {})
+      const b = document.querySelector('#pause .pcore')
+      const o = b ? { name: b.querySelector('b').textContent, parts: [...b.querySelectorAll('span')].map((s) => s.textContent), readout: b.querySelector('em').textContent } : null
+      W.__pause.hide()
+      return o
+    }
+    out.bare = read()
+    W.__core('wake')
+    zero()
+    out.first = read()
+    // a scripted fight: 3 marks on a wall in reach and 2 on one out of it: a Cleaver cast spends the 3, the 2 are made and not spent
+    const w = body(0, 1.5)
+    const far = body(6, 1.5)
+    W.__setMarks(idx(w), 3)
+    W.__setMarks(idx(far), 2)
+    place(0, 0)
+    W.__fire('arms', false)
+    for (let i = 0; i < 20; i++) { C.hp = 100; W.__step(1 / 60) }
+    const st = last()
+    out.stat = { made: st.marks.made, spent: st.marks.spent }
+    out.fight = read()
+    out.expected = W.__words.readout(st.marks.made, st.marks.spent)
+    W.__keystone('wake-burst')
+    W.__upgrade('wake-spray')
+    W.__upgrade('wake-slip')
+    out.full = read()
+    out.keyNames = [W.__words.keystone['wake-burst'][0], W.__words.upgrade['wake-spray'][0], W.__words.upgrade['wake-slip'][0]]
+    // builds off with the core on the run: no block
+    W.__builds(false)
+    out.off = read()
+    W.__builds(true)
+    // flipped with the screen open: the block and the cards follow it (the stale-card fix)
+    W.__pause.loadout(() => W.__hud.slots, () => {})
+    const row = [...document.querySelectorAll('#pause .rule')].find((b) => b.textContent.startsWith('builds'))
+    const dmg = () => document.querySelector('#pause .pcard .stat.changed b, #pause .pcard .stat b:nth-of-type(1)')?.textContent
+    const cards = () => [...document.querySelectorAll('#pause .row.four .pcard .stats')].map((s) => s.textContent).join('|')
+    out.open = { before: cards(), block: !!document.querySelector('#pause .pcore') }
+    row.click()
+    out.open.afterOff = cards()
+    out.open.blockOff = !!document.querySelector('#pause .pcore')
+    row.click()
+    out.open.afterOn = cards()
+    out.open.blockOn = !!document.querySelector('#pause .pcore')
+    W.__pause.hide()
+    return out
+  }`)
+  assertEq('no core: no core block under the loadout', r.bare, null)
+  assertEq('a core, nothing made yet: its name, the socket empty, no upgrades, marked 0 spent 0', r.first, { name: 'Wake', parts: ['socket: empty', 'upgrades: none yet'], readout: 'marked 0 · spent 0' })
+  assert(r.stat.made === 5 && r.stat.spent === 3, `the scripted fight made 5 marks and spent 3 (${JSON.stringify(r.stat)})`)
+  assertEq("after the fight the readout is WORDS.readout(made, spent) for the open depth", [r.fight.readout, r.fight.readout], [r.expected, 'marked 5 · spent 3'])
+  assertEq('...with a keystone socketed and both upgrades learned, it names them', [r.full.parts[0], r.full.parts[1]], [`socket: ${r.keyNames[0]}`, `upgrades: ${r.keyNames[1]}, ${r.keyNames[2]}`])
+  assertEq('builds off: no block even with the core on the run', r.off, null)
+  assert(r.open.block && !r.open.blockOff && r.open.blockOn, `the switch flipped on the open screen takes the core block away and brings it back (${JSON.stringify([r.open.block, r.open.blockOff, r.open.blockOn])})`)
+  assert(r.open.before !== r.open.afterOff && r.open.afterOn === r.open.before, `...and the open cards are drawn again from what is worn now: Scrap Cleaver reads its flat-temper numbers with builds on and today's with it off (known issue fixed)`)
+})
+
+check('K-M29', RUN, async ({ page }) => {
+  // the log: every field, on and off; marks and spends add up; the drop records say fit and filtered; Backhand's whiffs
+  const r = await evalJson(page, `() => {
+    // a fresh depth entry: this check reads one depth's log from zero (the page's earlier checks left theirs behind)
+    window.__core(null)
+    window.__enter(1, 3)
+    ;(${SETUP})({ parts: ['focusing-lens', 'pressure-vent', 'scrap-cleaver', 'kickstart'] })
+    ${WAKE}
+    ${SEEDED}
+    W.__pause.hide()
+    const out = {}
+    const FIELDS = ['core', 'temperFlat', 'keystone', 'upgrades', 'movingS', 'nearBins', 'nearMovingBins', 'wallS', 'closeS', 'marks', 'spends', 'spendsPerFight', 'backhand']
+    const has = () => FIELDS.filter((k) => !(k in last()))
+    out.bare = JSON.parse(JSON.stringify({ missing: has(), core: last().core, marks: last().marks, spends: last().spends, spendsPerFight: last().spendsPerFight, backhand: last().backhand }))
+    // Wake, a fight: marks made, spent, one run out unspent; the depth closes and the fight with it
+    W.__core('wake')
+    out.onMissing = has()
+    const a = body(0, 1.5), b = body(6, 1.5)
+    W.__setMarks(idx(a), 3)
+    W.__setMarks(idx(b), 2)
+    place(0, 0)
+    for (let i = 0; i < 5; i++) { C.hp = 100; W.__step(1 / 60) }
+    W.__fire('arms', false)
+    for (let i = 0; i < 30; i++) { C.hp = 100; W.__step(1 / 60) }
+    for (let i = 0; i < 60 * 4; i++) { C.hp = 100; W.__step(1 / 60) }
+    const st = last()
+    out.wake = { made: st.marks.made, spent: st.marks.spent, expired: st.marks.expired, hits: st.spends.hits, lag: st.spends.lag.reduce((x, y) => x + y, 0) }
+    W.__enter(2, 1)
+    const closed = W.__run.stats[W.__run.stats.length - 2]
+    out.closed = { hits: closed.spends.hits, perFight: closed.spendsPerFight.reduce((x, y) => x + y, 0), fights: closed.fights, lens: closed.spendsPerFight.length, skims: closed.skims ?? null }
+    // Ram: the shove record adds up
+    W.__core('ram')
+    ;(${SETUP})({ parts: ['focusing-lens', 'pressure-vent', 'scrap-cleaver', 'kickstart'], autos: true })
+    W.__core('ram')
+    W.__arena({ boxes: [{ minX: -12, maxX: 12, minZ: 3, maxZ: 4 }], auto: true })
+    C.autoAttack = true
+    C.autoTimer = 0
+    delete C.hurtPlayer
+    const h = W.__spawn('chaser', 0, 2, true)
+    h.hp = 1e6
+    h.speedMul = 0
+    place(0, 0)
+    for (let i = 0; i < 60 * 8; i++) { C.hp = 100; W.__step(1 / 60) }
+    const sh = last().shoves
+    out.ram = { n: sh?.n ?? 0, sum: sh ? sh.wall + sh.body + sh.still + sh.tell + sh.plain : 0, beat: sh ? sh.beat.n : 0 }
+    // the drop records: with a core fit says, a filtered one says so (and fits); bare, none
+    W.__loot.clear()
+    W.__core('wake')
+    seed(3)
+    let any = 0
+    try { for (let i = 0; i < 30; i++) if (W.__dropMoment(i % 2 ? 'elite' : 'plenty', -20 + i * 1.5, 12)) any++ } finally { unseed() }
+    const recs = W.__run.drops.filter((d) => d.source === 'elite' || d.source === 'plenty')
+    out.recs = { any, n: recs.length, withFit: recs.filter((d) => d.fit).length, filtered: recs.filter((d) => d.filtered).length, filteredNotFits: recs.filter((d) => d.filtered && d.fit === 'plain').length, keys: recs.filter((d) => d.fit === 'key').length, keysUnfiltered: recs.filter((d) => d.fit === 'key' && !d.filtered).length, kinds: [...new Set(recs.map((d) => d.fit))].sort() }
+    W.__loot.clear()
+    W.__core(null)
+    const before = W.__run.drops.length
+    W.__dropMoment('elite', 0, 14)
+    W.__dropMoment('plenty', 2, 14)
+    const bare = W.__run.drops.slice(before)
+    out.bareRecs = { n: bare.length, fit: bare.filter((d) => 'fit' in d).length, filtered: bare.filter((d) => 'filtered' in d).length }
+    // Backhand: a swing at nothing behind him is a whiff; with a body behind him it is not
+    ;(${SETUP})({ parts: ['frayed-cleaver'], autos: false })
+    W.__core('wake')
+    zero()
+    place(0, 0)
+    W.__stick(0, 1)
+    W.__fire('arms', false)
+    for (let i = 0; i < 3; i++) { C.hp = 100; W.__step(1 / 60) }
+    out.whiff1 = { ...last().backhand }
+    const e = body(0, -1.5)
+    W.__hud.devCool('arms', 0)
+    for (let i = 0; i < 60; i++) { C.hp = 100; W.__step(1 / 60) }
+    W.__stick(0, 1)
+    place(0, 0)
+    e.pos.set(0, 0, -1.5)
+    W.__fire('arms', false)
+    for (let i = 0; i < 3; i++) { C.hp = 100; W.__step(1 / 60) }
+    W.__stick(0, 0)
+    out.whiff2 = { ...last().backhand }
+    return out
+  }`)
+  assertEq('bare: every logged field is there, as zeros', [r.bare.missing, r.bare.core, r.bare.marks, r.bare.spends, r.bare.spendsPerFight, r.bare.backhand], [[], null, { made: 0, byCore: 0, byPart: 0, spent: 0, expired: 0 }, { hits: 0, bonus: 0, lag: [0, 0, 0, 0] }, [], { casts: 0, whiffs: 0 }])
+  assertEq('with a core worn: every field is there', r.onMissing, [])
+  assert(r.wake.made === 5 && r.wake.spent === 3 && r.wake.expired === 2 && r.wake.spent + r.wake.expired <= r.wake.made, `marks: made 5, spent 3 by one cast, 2 run out unspent: spent + expired <= made (${JSON.stringify(r.wake)})`)
+  assertEq('spends: one spending hit, in the lag bins', [r.wake.hits, r.wake.lag], [1, 1])
+  assertEq('the depth closed: spends.hits equals the sum of spendsPerFight', [r.closed.hits, r.closed.perFight], [1, 1])
+  assertEq('...and spendsPerFight has one number per fight closed', r.closed.lens, r.closed.fights)
+  assert(r.ram.n > 0 && r.ram.sum === r.ram.n, `Ram's shoves add up: wall + body + still + tell + plain = n (${JSON.stringify(r.ram)})`)
+  assertEq('drop records: every moment drop with a core carries fit (fits, plain or key); a filtered one is a fit or a key, never plain; a key is always filtered', [r.recs.n === r.recs.any, r.recs.withFit === r.recs.n, r.recs.filtered > 0, r.recs.filteredNotFits, r.recs.keysUnfiltered], [true, true, true, 0, 0])
+  assert(r.recs.keys > 0, 'the thirty moment drops include a keystone (a fit "key" record)')
+  assertEq('bare: the drop records carry no fit and no filtered', r.bareRecs, { n: 2, fit: 0, filtered: 0 })
+  assertEq("Backhand with nothing behind him: one cast, one whiff; with a body behind him: two casts, still one whiff", [r.whiff1, r.whiff2], [{ casts: 1, whiffs: 1 }, { casts: 2, whiffs: 1 }])
 })
 
 

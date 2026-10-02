@@ -3,6 +3,7 @@ import type { AbilityDef, IconState } from './abilities'
 import type { CastResult } from './combat'
 import { SLOT_NAMES, type SlotName } from './still'
 import { STATE_GLYPH, type StateId } from './states'
+import { SPEND_HUD, WORDS } from './cores'
 
 /**
  * The ability arc. Variant A's r96 packed 62px buttons only ~43px apart, so they
@@ -45,6 +46,8 @@ const BREAK_HINT = 'break'
 /** PLACEHOLDER words (Adrian's): the push cue's one-time caption, over the first cooling payer whose state is live in reach. */
 const PAY_CAPTION = 'hold \u00b7 pay it'
 const PAY_HINT = 'pay'
+/** The spend count's one-time caption (B5; the words are cores.ts WORDS.spendCaption, PLACEHOLDER): over the first cooling spender that would spend 3 or more marks. Its own hint id. */
+const SPEND_HINT = 'spend'
 /**
  * PLACEHOLDER words (Adrian's, design/lean/TAP-PUSH.md): the three captions above with "tap push" on, where nothing is held. The hint ids are unchanged,
  * so each shows once per save in either mode. (The dead tap's caption never shows with the switch on: no touch is dead.)
@@ -130,6 +133,8 @@ interface ButtonState {
   wasReady: boolean
   /** The push cue drawn now ('chilled', 'chilled lit'), or '' for none: repaints only on change. */
   cue: string
+  /** The marks a cast would spend now (B5, `spendCue`): null for a part that spends none, or no core. */
+  spendN: number | null
 }
 
 export interface Hud {
@@ -196,11 +201,12 @@ export interface Hud {
   /** `melt`: the melt button's label ("melt into Cleaver II"), or null for none (temper.ts). */
   /**
    * `o.swap`: a swap's words ("take · Piston II", "Scrap Cleaver III melts in") in place of "replaces";
-   * `o.pair`: the card's spare line, the pair it makes or ends ("pairs with Chill Vent").
+   * `o.pair`: the card's spare line, the pair it makes or ends ("pairs with Chill Vent");
+   * `o.fit` (B5, with a core worn): how the part fits it ("fits Ram · spends slammed: +8 each"). Absent: no line.
    */
   offer: (
     incoming: AbilityDef | null, fresh?: boolean, past?: { name: string; history: string | null }, melt?: string | null,
-    o?: { swap?: { take: string; melts: string } | null; pair?: string | null },
+    o?: { swap?: { take: string; melts: string } | null; pair?: string | null; fit?: string | null },
   ) => void
   onMelt: (cb: () => void) => void
   onTake: (cb: () => void) => void
@@ -262,6 +268,12 @@ export interface Hud {
    */
   stateCue: (slot: SlotName, id: StateId | null, lit: boolean) => void
   /**
+   * The spend count (BUILD.md §2.9, B5): a small number on the button's rim, beside the push cue, never over the icon or the price. `n` is the marks a cast would spend now. Null hides it
+   * (not a spender, or no core). 0: dim. 1 or more: cold-lit, the digit (9 at most). 3 or more: the button carries `spend3` (a slow cold pulse) while it is ready, and `spendcue` (a lit rim)
+   * while it cools; the first cooling time, once per save, a caption (`WORDS.spendCaption`). Repaints only on change.
+   */
+  spendCue: (slot: SlotName, n: number | null) => void
+  /**
    * The "tap push" trial (design/lean/TAP-PUSH.md; the words are PLACEHOLDER): on, a touch on a cooling button answers at once instead
    * of waiting for a hold: it pushes, queues or is guarded, inside the touch-down. Off is today's hold.
    */
@@ -302,6 +314,7 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
         <p class="hist"></p>
         <p class="replaces"></p>
         <p class="pair"></p>
+        <p class="fit"></p>
       </div>
       <div class="choices">
         <button type="button" class="take">take</button>
@@ -358,6 +371,7 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
   const offerNew = offerEl.querySelector<HTMLElement>('.new')!
   const offerHist = offerEl.querySelector<HTMLElement>('.hist')!
   const offerPair = offerEl.querySelector<HTMLElement>('.pair')!
+  const offerFit = offerEl.querySelector<HTMLElement>('.fit')!
   const chooserEl = root.querySelector<HTMLElement>('#chooser')!
   const chooseListeners: ((id: string) => void)[] = []
   const chooserActListeners: (() => void)[] = []
@@ -415,12 +429,12 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
   }
   const buttons: ButtonState[] = SLOT_NAMES.map((slot, i) => {
     const el = document.createElement('div')
-    el.innerHTML = `<div class="cd"></div><div class="heat"></div><div class="live"></div><div class="arm"></div><span class="lbl" aria-label="${KEYS[slot]}"></span><span class="scue"></span><span class="pips"></span>`
+    el.innerHTML = `<div class="cd"></div><div class="heat"></div><div class="live"></div><div class="arm"></div><span class="lbl" aria-label="${KEYS[slot]}"></span><span class="scue"></span><span class="spend"></span><span class="pips"></span>`
     const th = (ARC_DEG[i] ?? 0) * (Math.PI / 180)
     el.style.right = `calc(env(safe-area-inset-right, 0px) + ${PAD + ARC_R * Math.cos(th) - BTN / 2}px)`
     el.style.bottom = `calc(env(safe-area-inset-bottom, 0px) + ${PAD + ARC_R * Math.sin(th) - BTN / 2}px)`
     root.appendChild(el)
-    const b: ButtonState = { el, cdEl: el.querySelector<HTMLElement>('.cd')!, slot, def: null, icon: null, readyAt: 0, hotUntil: 0, hotMs: 0, pointerId: null, downAt: 0, downWall: 0, readyAtDown: true, leftAtDown: 0, pushed: false, pressed: null, queued: false, firedAt: -Infinity, touchedAt: -Infinity, answer: null, queueBy: 0, deadAt: -Infinity, arc: null, nbMs: undefined, nbSlot: undefined, wasReady: true, cue: '' }
+    const b: ButtonState = { el, cdEl: el.querySelector<HTMLElement>('.cd')!, slot, def: null, icon: null, readyAt: 0, hotUntil: 0, hotMs: 0, pointerId: null, downAt: 0, downWall: 0, readyAtDown: true, leftAtDown: 0, pushed: false, pressed: null, queued: false, firedAt: -Infinity, touchedAt: -Infinity, answer: null, queueBy: 0, deadAt: -Infinity, arc: null, nbMs: undefined, nbSlot: undefined, wasReady: true, cue: '', spendN: null }
     paint(b)
     return b
   })
@@ -470,6 +484,18 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
   const { hinted, markHinted } = hints
 
   /** A one-time caption over a button, kept on screen whichever edge the button sits against. `cold`: Still's own (the push cue's), not the heat's. */
+  /** The spend count's classes on the button, from its readiness: `spend3` ready with 3+, `spendcue` cooling with 3+ (and its one-time caption). Toggles only on change. */
+  const paintSpend = (b: ButtonState, ready: boolean) => {
+    const many = b.spendN !== null && b.spendN >= SPEND_HUD.pulseAt
+    const a = many && ready
+    const c = many && !ready
+    if (b.el.classList.contains('spend3') !== a) b.el.classList.toggle('spend3', a)
+    if (b.el.classList.contains('spendcue') !== c) b.el.classList.toggle('spendcue', c)
+    if (c && !hinted(SPEND_HINT)) {
+      markHinted(SPEND_HINT)
+      caption(b, WORDS.spendCaption, true)
+    }
+  }
   const caption = (b: ButtonState, text: string, cold = false) => {
     const cap = document.createElement('div')
     cap.className = cold ? 'heatCaption cold' : 'heatCaption'
@@ -774,6 +800,7 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
           setTimeout(() => b.el.classList.remove('hint'), 900)
         }
         b.wasReady = ready
+        if (b.spendN !== null) paintSpend(b, ready)
         // "tap push": the last 300 ms of a wait is free to touch (it queues), so it owes no push price, and is not counted as brink
         const near = state.tapPush && !ready && Math.max(b.readyAt, b.hotUntil) - now <= TAP.queueMs
         if (b.el.classList.contains('near') !== near) b.el.classList.toggle('near', near)
@@ -957,6 +984,8 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
       offerReplaces.textContent = o.swap ? `${o.swap.take}\n${o.swap.melts}` : current ? `replaces ${current.name}` : `fills the empty ${SLOT_LABEL[incoming.slot]} slot`
       offerPair.textContent = o.pair ?? ''
       offerPair.style.display = o.pair ? '' : 'none'
+      offerFit.textContent = o.fit ?? ''
+      offerFit.style.display = o.fit ? '' : 'none'
       offerEl.classList.add('show')
     },
 
@@ -1096,6 +1125,27 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
         markHinted(PAY_HINT)
         caption(b, state.tapPush ? PAY_CAPTION_TAP : PAY_CAPTION, true)
       }
+    },
+
+    spendCue(slot, n) {
+      const b = buttons.find((x) => x.slot === slot)!
+      const el = b.el.querySelector<HTMLElement>('.spend')!
+      const next = n === null || !b.def ? null : n
+      if (next === b.spendN) {
+        // the same number: the classes still follow the button's readiness now (update() does it every frame; a caller reading the DOM straight away gets it too)
+        if (next !== null) paintSpend(b, isReadyAt(b, state.clock))
+        return
+      }
+      b.spendN = next
+      if (next === null) {
+        el.textContent = ''
+        el.className = 'spend'
+        b.el.classList.remove('spend3', 'spendcue')
+        return
+      }
+      el.textContent = String(Math.min(next, SPEND_HUD.showMax))
+      el.className = next === 0 ? 'spend show dim' : 'spend show lit'
+      paintSpend(b, isReadyAt(b, state.clock))
     },
 
     fireSlot(slot, pushed) {

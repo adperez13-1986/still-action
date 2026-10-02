@@ -55,11 +55,13 @@ export async function openPage(url, query) {
     // the pin follows: an unset key is written '1'. WEIGHT=0 / TAP=0 is the way to the old game (the key pinned '0'); WEIGHT=1 / TAP=1 are now the same as unset.
     // Only an unset key is pinned, so a check that writes the key itself and reloads still wins (area III pins roads=0 the same way).
     // A query carrying `trialDefaults` (the game ignores it) skips the pin: that page boots as a fresh phone does
-    const pin = { weight: process.env.WEIGHT === '0' ? '0' : '1', tapPush: process.env.TAP === '0' ? '0' : '1' }
+    // "builds" (B5, the build layer) the same way: it is ON by default since B1 (the lead's call, 2 Oct), so an unset key is written '1'; BUILDS=0 is the way to a run with it off (the key pinned '0').
+    const pin = { weight: process.env.WEIGHT === '0' ? '0' : '1', tapPush: process.env.TAP === '0' ? '0' : '1', builds: process.env.BUILDS === '0' ? '0' : '1' }
     await context.addInitScript((pin) => {
       if (new URLSearchParams(location.search).has('trialDefaults')) return
       if (localStorage.getItem('still-action.weight') === null) localStorage.setItem('still-action.weight', pin.weight)
       if (localStorage.getItem('still-action.tapPush') === null) localStorage.setItem('still-action.tapPush', pin.tapPush)
+      if (localStorage.getItem('still-action.builds') === null) localStorage.setItem('still-action.builds', pin.builds)
     }, pin)
     // CORE=wake|ram runs any suite with that core worn (B4: BUILD.md §2.8's `?core=` dev boot added to every ?depth= query), report only: those suites differ by design. Unset: the bare game,
     // as every suite has run it. A query that already carries `core=` keeps its own, and a boot without ?depth= (a real run) gets the pick instead, which a suite answers itself.

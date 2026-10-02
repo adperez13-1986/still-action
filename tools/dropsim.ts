@@ -20,7 +20,7 @@
  *     A take over a part at II or III lands at TEMPER.swapRank and the old part is used up; over a part at I the old part lands on the floor.
  *   - The leanings' modes (--lean) stay, riders gone (cut 28 Sep, code removed 2 Oct): a part is worth 1 of his lean, 0 off it; formed = 3+ parts of his lean
  *     worn before the last boss. They need `--pedestals on` to mean what they did.
- *   - Not here: a `--core` chooser (B5's job, when a core exists).
+ *   - `--core wake|ram` (B5): the hunt, below.
  *
  * --build   burner | cover | control | duel | random (one of the four each run) | a list of part ids
  * --need    how many of the build must be worn for it to count as formed (default 3)
@@ -46,9 +46,20 @@
  * build part for an empty slot, a build part over one that isn't, anything for an empty slot; else he leaves all three.
  *
  * The pass line it was fixed to (B0): offers and takes a run within 25% of his runs 23-24 (`--vs`).
+ *
+ * --core wake|ram (B5, design/buildlayer/BUILD.md §2.9, 3-balancer.md): the same run with that core worn from the start and the hunt on: the game's own `rollForCore` at every elite, Plenty and
+ *   boss-blue drop (FILTER from src/cores.ts: share 0.5, keyWeight 1, never gold, kills or crates), the core's own parts read from the real defs' `fits`, its two keystones, and the upgrades
+ *   (a melt past III, from UPGRADE_FROM = depth 7, at most UPGRADE_MAX). Two choosers, runs each: committed (a spender 4 > the bridge 3 > a shaper 2 > a guard 1.5 > plain 1; takes a part worth
+ *   more than the one worn, plus --whim; a keystone into an empty socket always, else half) and random (an empty slot always, else half; a keystone half the time). The bridge is a spender
+ *   with a `k` under the core's K (Scrap Cleaver); "own" is a spender that is not the bridge. Formed by the Assembler: 2+ of the core's parts worn walking into the first boss, one a spender.
+ *   The report, per core:
+ *     formed d3, committed (>= 70% pass; and with an own spender), random, random / committed (<= 0.6 pass);
+ *     own keystone seen by d6, taken per seen; a part, keystone or upgrade taken after d6 (reported); keystones left on the floor (dropped and not taken: the log counts these from the drop
+ *     records, `fit: 'key'` with end 'left'); upgrades and when; the fit part's take / offer against a plain one's.
  */
 import { PARTS, byId, type AbilityDef } from '../src/abilities'
-import { dropChance, emptySlots, KILL_WEIGHT, LOOT, PEDESTALS_ON, rollPart, rollPicks, type DropSource, type PickKind } from '../src/drops'
+import { dropChance, emptySlots, KILL_WEIGHT, LOOT, PEDESTALS_ON, rollForCore, rollPart, rollPicks, type DropSource, type PickKind } from '../src/drops'
+import { CORES, FILTER, KEYSTONES, UPGRADE_FROM, UPGRADE_MAX, fitOf, type CoreId, type KeystoneDef, type KeystoneId } from '../src/cores'
 import { MASTERY_FORM, MASTERY_MAX } from '../src/mastery'
 import { markFound, startPart, STARTER_POOL, type PoolView } from '../src/pool'
 import { TEMPER } from '../src/temper'
@@ -321,6 +332,159 @@ function logged(path: string, last: number) {
     }
   })
 }
+
+// --- the hunt: --core wake|ram (B5) ---
+const CORE_ARG = arg('core', '')
+if (CORE_ARG) {
+  if (CORE_ARG !== 'wake' && CORE_ARG !== 'ram') throw new Error(`--core wants wake or ram, not ${CORE_ARG}`)
+  const core: CoreId = CORE_ARG
+  const K = CORES[core].K
+  /** A part's job for this core, from the real defs: spend (own), bridge (a spender whose own k is under the core's K), shape, guard; null when plain. */
+  type Role = 'spend' | 'bridge' | 'shape' | 'guard'
+  const roleOf = (d: AbilityDef | undefined): Role | null => {
+    const f = d ? fitOf(d, core) : null
+    return !f ? null : f.role === 'spend' ? (f.k !== undefined && f.k < K ? 'bridge' : 'spend') : f.role
+  }
+  const WORTH: Record<Role, number> = { spend: 4, bridge: 3, shape: 2, guard: 1.5 }
+  const ownKeys = (Object.values(KEYSTONES) as KeystoneDef[]).filter((k) => k.core === core).map((k) => k.id)
+  interface Out {
+    formed: boolean; formedOwn: boolean; keySeenBy6: boolean; keyOffers: number; keyTook: number; keyDropped: number; keyLeft: number; keyGivenUp: number; late: boolean; lateWhat: Set<string>
+    upAt: number[]; fitOff: number; fitTook: number; plainOff: number; plainTook: number; filtered: number; offers: number; fitsAtEnd: number; ownSpenderAt: number | null
+  }
+  const coreRun = (who: 'committed' | 'random'): Out => {
+    const found = POOL === 'full' ? PARTS.map((p) => p.id) : POOL === 'career' ? career : [...STARTER_POOL]
+    const save = { found, turned: [], hook: null } as unknown as Save
+    const worn: Partial<Record<SlotName, AbilityDef>> = {}
+    const ranks: Partial<Record<SlotName, number>> = {}
+    const first = byId(startPart(save))
+    worn[first.slot] = first
+    let socket: KeystoneId | null = null
+    let upgrades = 0
+    let depth = 1
+    let floor: AbilityDef[] = []
+    let floorKeys: KeystoneId[] = []
+    const o: Out = { formed: false, formedOwn: false, keySeenBy6: false, keyOffers: 0, keyTook: 0, keyDropped: 0, keyLeft: 0, keyGivenUp: 0, late: false, lateWhat: new Set(), upAt: [], fitOff: 0, fitTook: 0, plainOff: 0, plainTook: 0, filtered: 0, offers: 0, fitsAtEnd: 0, ownSpenderAt: null }
+    const val = (d: AbilityDef | undefined) => { const r = roleOf(d); return !d ? 0 : r ? WORTH[r] : 1 }
+    const taken = () => [...(Object.values(worn) as AbilityDef[]), ...floor]
+    const view = (): PoolView => ({ found: new Set(save.found), turned: new Set(), depth })
+    const lateTake = (what: string) => { if (depth > 6) { o.late = true; o.lateWhat.add(what) } }
+    const wear = (d: AbilityDef) => {
+      const cur = worn[d.slot]
+      if ((ranks[d.slot] ?? 1) >= TEMPER.swapRank) ranks[d.slot] = TEMPER.swapRank
+      else { delete ranks[d.slot]; if (cur) floor.push(cur) }
+      worn[d.slot] = d
+      markFound(save, d.id)
+      if (roleOf(d) === 'spend' && o.ownSpenderAt === null) o.ownSpenderAt = depth
+    }
+    /** A floor part melted into the worn one in its slot: a rank, or, at III, an upgrade (from UPGRADE_FROM, at most UPGRADE_MAX); before that the part stays on the floor. */
+    const melt = (d: AbilityDef): boolean => {
+      if (!worn[d.slot]) return false
+      const r = (ranks[d.slot] ?? 1) + 1
+      if (r > TEMPER.maxRank) {
+        if (upgrades >= UPGRADE_MAX || depth < UPGRADE_FROM) return false
+        upgrades++
+        o.upAt.push(depth)
+        lateTake('upgrade')
+      } else ranks[d.slot] = r
+      markFound(save, d.id)
+      return true
+    }
+    const offer = (d: AbilityDef | null, filtered = false) => {
+      if (!d) return
+      o.offers++
+      if (filtered) o.filtered++
+      const cur = worn[d.slot]
+      const r = roleOf(d)
+      if (r) o.fitOff++; else o.plainOff++
+      const take = !cur || (who === 'random' ? Math.random() < 0.5 : val(d) > val(cur) || (!r && Math.random() < WHIM) || (!!r && val(d) === val(cur) && Math.random() < WHIM))
+      if (take) { if (r) o.fitTook++; else o.plainTook++; wear(d); lateTake('part') } else if (!melt(d)) floor.push(d)
+    }
+    const offerKey = (k: KeystoneId) => {
+      o.keyDropped++
+      o.keyOffers++
+      o.filtered++
+      if (depth <= 6) o.keySeenBy6 = true
+      const take = who === 'random' ? Math.random() < 0.5 : socket === null || Math.random() < 0.5
+      if (take) {
+        if (socket) { floorKeys.push(socket); o.keyGivenUp++ }
+        socket = k
+        o.keyTook++
+        lateTake('keystone')
+      } else { floorKeys.push(k); o.keyLeft++ }
+    }
+    /** main.ts rollMoment: the game's own rollForCore, else rollPart. A keystone comes back as its id. */
+    const moment = (src: DropSource, from: Archetype, exclude: SlotName[] = []): { def: AbilityDef; filtered: boolean } | { key: KeystoneId } | null => {
+      const hit = rollForCore(core, src, taken(), { socketed: socket, onFloor: floorKeys }, view())
+      if (hit) return 'slot' in hit ? { def: hit, filtered: true } : { key: hit.id }
+      const def = rollPart(from, taken(), src, view(), exclude)
+      return def ? { def, filtered: false } : null
+    }
+    const give = (m: ReturnType<typeof moment>) => { if (m) { if ('key' in m) offerKey(m.key); else offer(m.def, m.filtered) } }
+    const depths = ROADS[ROAD === 'mix' ? 'II' : ROAD]
+    const firstBoss = depths.find((d) => d.boss)!.depth
+    for (const d of depths) {
+      depth = d.depth
+      floor = []
+      floorKeys = []
+      if (d.boss) {
+        if (depth === firstBoss) {
+          const fs = (Object.values(worn) as AbilityDef[]).filter((p) => roleOf(p))
+          o.formed = fs.length >= 2 && fs.some((p) => roleOf(p) === 'spend' || roleOf(p) === 'bridge')
+          o.formedOwn = fs.length >= 2 && fs.some((p) => roleOf(p) === 'spend')
+        }
+        const blue = moment('boss-blue', 'boss')
+        give(blue)
+        const blueDef = blue && 'def' in blue ? blue.def : null
+        offer(rollPart('boss', blueDef ? [...taken(), blueDef] : taken(), 'boss-gold', view(), blueDef ? [blueDef.slot] : []))
+        continue
+      }
+      const level = d.levels[Math.floor(Math.random() * d.levels.length)]!
+      const events: (() => void)[] = level.packs.filter((p) => !p.side || Math.random() < SIDE).map((p) => () => {
+        const pack = { weight: p.kinds.reduce((a, k) => a + KILL_WEIGHT[k], 0), side: p.side, dropped: false, members: [...p.kinds] }
+        for (const m of shuffle(p.kinds.map((kind, i) => ({ kind, elite: p.elite && i === 0 })))) {
+          pack.members.pop()
+          const chance = dropChance(pack, m.elite, false, KILL_WEIGHT[m.kind])
+          if (Math.random() >= (chance < 1 ? chance * KILLS : chance)) continue
+          pack.dropped = true
+          if (m.elite) give(moment('elite', m.kind)); else offer(rollPart(m.kind, taken(), 'kill', view()))
+        }
+      })
+      for (let i = 0; i < level.crates; i++) if (Math.random() < CRATES) events.splice(Math.floor(Math.random() * (events.length + 1)), 0, () => { if (Math.random() < LOOT.crateParts) offer(rollPart('chaser', taken(), 'crate', view())) })
+      if (level.plenty && Math.random() < PLENTY) events.splice(Math.floor(Math.random() * (events.length + 1)), 0, () => give(moment('plenty', 'chaser')))
+      for (const e of events) e()
+    }
+    o.fitsAtEnd = (Object.values(worn) as AbilityDef[]).filter((p) => roleOf(p)).length
+    return o
+  }
+  const pc = (n: number, of = RUNS) => `${((100 * n) / of).toFixed(0)}%`
+  const dec = (n: number, of = RUNS) => (n / of).toFixed(2)
+  const results = { committed: Array.from({ length: RUNS }, () => coreRun('committed')), random: Array.from({ length: RUNS }, () => coreRun('random')) }
+  const cnt = (rs: Out[], f: (r: Out) => boolean) => rs.filter(f).length
+  const sum = (rs: Out[], f: (r: Out) => number) => rs.reduce((a, r) => a + f(r), 0)
+  const c = results.committed
+  const r = results.random
+  const formedC = cnt(c, (x) => x.formed) / RUNS
+  const formedR = cnt(r, (x) => x.formed) / RUNS
+  const ratio = formedR / formedC
+  const upMed = (a: number[]) => (a.length ? a.sort((x, y) => x - y)[Math.floor(a.length / 2)] : '-')
+  const up1 = c.filter((x) => x.upAt.length).map((x) => x.upAt[0]!)
+  const up2 = c.filter((x) => x.upAt.length > 1).map((x) => x.upAt[1]!)
+  const pass = (ok: boolean) => (ok ? 'pass' : 'FAIL')
+  const partsOf = [...PARTS.filter((p) => fitOf(p, core))].map((p) => `${p.id}${roleOf(p) === 'bridge' ? ' (bridge)' : ''}`)
+  console.log(`dropsim --core ${core}: ${RUNS} runs each (committed, random), seed ${SEED}, pool ${POOL}, road ${ROAD}, crates ${CRATES}, plenty ${PLENTY}, side ${SIDE}, whim ${WHIM}; the hunt: FILTER share ${FILTER.share}, keyWeight ${FILTER.keyWeight} on ${FILTER.sources.join(', ')}; upgrades from d${UPGRADE_FROM}, at most ${UPGRADE_MAX}`)
+  console.log(`  ${core}'s parts (from the defs' fits): ${partsOf.join(', ')}; keystones ${ownKeys.join(', ')}; K ${K}\n`)
+  console.log(`formed by the Assembler (d${depthsOfFirstBoss()}: 2+ of ${core}'s parts worn, one a spender)`)
+  const p1 = (n: number) => `${((100 * n) / RUNS).toFixed(1)}%`
+  console.log(`  committed ${p1(cnt(c, (x) => x.formed))} (with an own spender, not only the bridge: ${pc(cnt(c, (x) => x.formedOwn))})   line >= 70%: ${pass(formedC >= 0.7)}`)
+  console.log(`  random    ${p1(cnt(r, (x) => x.formed))} (own spender ${pc(cnt(r, (x) => x.formedOwn))})   random / committed ${ratio.toFixed(2)}   line <= 0.6: ${pass(ratio <= 0.6)}`)
+  console.log(`own keystone, committed: seen by d6 ${pc(cnt(c, (x) => x.keySeenBy6))} of runs (reported); offers ${dec(sum(c, (x) => x.keyOffers))} a run, taken ${pc(sum(c, (x) => x.keyTook), sum(c, (x) => x.keyOffers))} of them; socketed at the end ${pc(cnt(c, (x) => x.keyTook > 0))} of runs`)
+  console.log(`keystones left on the floor, committed: ${dec(sum(c, (x) => x.keyLeft))} a run (dropped ${dec(sum(c, (x) => x.keyDropped))}, taken ${dec(sum(c, (x) => x.keyTook))}, given up for another ${dec(sum(c, (x) => x.keyGivenUp))}); ${pc(sum(c, (x) => x.keyLeft), sum(c, (x) => x.keyDropped))} of what dropped; random: ${dec(sum(r, (x) => x.keyLeft))} a run`)
+  console.log(`a part taken after d6, committed: ${pc(cnt(c, (x) => x.lateWhat.has('part')))} of runs (reported; any of part, keystone, upgrade: ${pc(cnt(c, (x) => x.late))}; keystone ${pc(cnt(c, (x) => x.lateWhat.has('keystone')))}, upgrade ${pc(cnt(c, (x) => x.lateWhat.has('upgrade')))})`)
+  console.log(`upgrades, committed: first by median d${upMed(up1)} (${pc(up1.length)} of runs), second by d${upMed(up2)} (${pc(up2.length)}); the 3-balancer's own: both at d7 in 99%`)
+  console.log(`the fit: ${core}'s parts taken / offered ${pc(sum(c, (x) => x.fitTook), sum(c, (x) => x.fitOff))} against plain ${pc(sum(c, (x) => x.plainTook), sum(c, (x) => x.plainOff))} (committed); offers a run ${dec(sum(c, (x) => x.offers))}, filtered ${dec(sum(c, (x) => x.filtered))} a run, the core's parts worn at the end ${dec(sum(c, (x) => x.fitsAtEnd))}`)
+  process.exit(0)
+}
+function depthsOfFirstBoss() { return ROADS.II.find((d) => d.boss)!.depth }
 
 // --- the leanings' report ---
 if (LEAN) {

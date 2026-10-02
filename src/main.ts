@@ -12,7 +12,7 @@ import { TEMPER, ROMAN, tempered } from './temper'
 import { presetId as weightPresetId, setPreset as setWeightPreset, weighed, baseCooldownS, WEIGHT_FEEL, WEIGHT_PRESETS, type PresetId } from './weight'
 import { curveAt } from './curve'
 import { MASTERY, MASTERY_FORM, MASTERY_MAX, FORM_NAME, masteryOffer, type MasteryId, type MasteryForm } from './mastery'
-import { CORES, CORE_IDS, KEYSTONES, UPGRADES, WORDS, variant, type CoreId, type KeystoneId, type UpgradeId } from './cores'
+import { CORES, CORE_IDS, KEYSTONES, SPEND_HUD, UPGRADES, UPGRADE_FROM, UPGRADE_MAX, WORDS, fitOf, markCap, variant, type CoreId, type KeystoneDef, type KeystoneId, type UpgradeId } from './cores'
 import { STATE_IDS, pairWith, paired, type StateId } from './states'
 import type { Enemy, EnemyEvent } from './enemy'
 import { isBoss, Assembler } from './boss'
@@ -39,7 +39,7 @@ import { Sightline } from './sightline'
 import { createCameraRig } from './camera'
 import { updateMusic, musicNow } from './music'
 import { updateAmbience, type AmbienceMood } from './ambience'
-import { Loot, LOOT, dropChance, rollPart, rollPicks, PEDESTALS, PEDESTALS_ON, type GroundPart, type PickKind, type PickSet } from './loot'
+import { Loot, LOOT, dropChance, rollPart, rollForCore, rollPicks, PEDESTALS, PEDESTALS_ON, type GroundKey, type GroundPart, type PickKind, type PickSet } from './loot'
 import { createPauseScreen } from './pause'
 import { createOverlay } from './ending'
 import { loadKit, setSurfaces, pieceData, surfaceNow, buildInstanced, PIECES, type Piece } from './kit'
@@ -400,6 +400,13 @@ const combat = new Combat(world.scene, OPEN, {
     partFx.event(ev)
     markFx.event(ev)
     if (ev.kind === 'mark' || ev.kind === 'markExpired' || ev.kind === 'spend' || ev.kind === 'skim') coreEvent(ev)
+    if (ev.kind === 'backhand') {
+      const st = run.stats[run.stats.length - 1]
+      if (st?.backhand) {
+        st.backhand.casts++
+        if (ev.whiff) st.backhand.whiffs++
+      }
+    }
     if (ev.kind === 'shove') {
       shoveEvent(ev)
       if (import.meta.env.DEV) shoveLog.push({ t: combat.time, i: combat.enemies.indexOf(ev.enemy), slam: ev.slam, other: ev.other ? combat.enemies.indexOf(ev.other) : null, why: ev.why, link: ev.link ?? 0, dmg: ev.dmg })
@@ -653,7 +660,7 @@ const combat = new Combat(world.scene, OPEN, {
       const taken = [...hud.loadout, ...loot.ground.map((g) => g.def)]
       const def = rollPart('chaser', taken, 'crate', pool())
       if (def) {
-        logDrop(loot.drop(def, at, still.pos), 'crate')
+        logDrop(floorPart(def, at, still.pos), 'crate')
         sfx.drop(def.tier, panOf(at))
       }
     } else if (roll < LOOT.crateParts + LOOT.crateScrap) {
@@ -1831,6 +1838,8 @@ interface DepthStats {
   marks: { made: number; byCore: number; byPart: number; spent: number; expired: number }
   spends: { hits: number; bonus: number; lag: [number, number, number, number] }
   spendsPerFight: number[]
+  /** Wake's Backhand (B5, the balancer's whiff share): casts, and the ones with nothing behind him. Zeros with no Backhand worn. */
+  backhand: { casts: number; whiffs: number }
   shoves?: { n: number; wall: number; body: number; still: number; tell: number; plain: number; chained: number; caught: number; beat: { n: number; wall: number; body: number; still: number; tell: number } }
   skims?: { n: number; burst: number; spray: number }
 }
@@ -1941,14 +1950,49 @@ function maybeDrop(at: THREE.Vector3, kind: Archetype, pack: Pack, wasElite: boo
   const chance = dropChance(pack, wasElite, summoned, weight)
   // temper on: fewer, louder drops; an elite's and a side room's owed drop are as ever
   if (Math.random() >= (temperOn && chance < 1 ? chance * TEMPER.killPayout : chance)) return
-  const taken = [...hud.loadout, ...loot.ground.map((g) => g.def)]
   // any slot, empty ones too (28 Sep, his ask: "I don't like it that the drops are only for those that I already have")
-  const def = rollPart(kind, taken, wasElite ? 'elite' : 'kill', pool())
-  if (!def) return
-  pack.dropped = true
-  // an elite's drop is owed: the thief in that pack's barrel runs for it
-  logDrop(loot.drop(def, at, still.pos, wasElite ? pack : undefined), wasElite ? 'elite' : 'kill')
-  sfx.drop(def.tier, panOf(at))
+  // an elite's drop is the hunt's (B5): with a core worn, half the time from the core's own pool; an elite's is owed: the thief in that pack's barrel runs for it
+  if (dropMoment(at, kind, wasElite ? 'elite' : 'kill', wasElite ? pack : undefined)) pack.dropped = true
+}
+
+/**
+ * A kill's, an elite's or Plenty's drop, on the floor and in the log: `rollMoment` (the hunt, for an elite or Plenty with a core worn), then the part (its fit ring from the core worn)
+ * or the keystone. False when there was nothing left to drop. `owed`: an elite's pack (a part is owed to the thief; a keystone never is).
+ */
+function dropMoment(at: THREE.Vector3, from: Archetype, source: 'kill' | 'elite' | 'plenty', owed?: object): boolean {
+  const got = rollMoment(from, [...hud.loadout, ...loot.ground.map((g) => g.def)], source)
+  if (!got) return false
+  if ('key' in got) {
+    dropKeyAt(got.key, at, source, true)
+    return true
+  }
+  logDrop(floorPart(got.def, at, still.pos, owed), source, got.filtered)
+  sfx.drop(got.def.tier, source === 'plenty' ? 0 : panOf(at))
+  return true
+}
+
+/** A part on the floor: its fit ring is decided here, from the core worn now (B5). */
+function floorPart(def: AbilityDef, at: THREE.Vector3, toward?: THREE.Vector3, owed?: object): GroundPart {
+  return loot.drop(def, at, toward, owed, fitOf(def, coreNow()) !== null)
+}
+
+/**
+ * The hunt (BUILD.md §2.9): a moment's drop (an elite's, Plenty's, a boss's blue; `source` 'kill' is never filtered) with a core worn takes `FILTER.share` of the time one of the core's
+ * own parts or keystones, else today's `rollPart`. A keystone comes back as `{ key }`. With no core nothing extra is drawn.
+ */
+function rollMoment(from: Archetype, taken: readonly AbilityDef[], source: DropSource, view: PoolView = pool(), keys = { socketed: run.keystone, onFloor: loot.keys.map((k) => k.key.id) }): { def: AbilityDef; filtered: boolean } | { key: KeystoneDef } | null {
+  const hit = rollForCore(coreNow(), source, taken, keys, view)
+  if (hit) return 'slot' in hit ? { def: hit, filtered: true } : { key: hit }
+  const def = rollPart(from, taken, source, view)
+  return def ? { def, filtered: false } : null
+}
+
+/** A keystone onto the floor, logged (it is a drop of its own kind: the record's `fit` is 'key', and `filtered` is the hunt's). */
+function dropKeyAt(key: KeystoneDef, at: THREE.Vector3, source: DropTag, filtered: boolean, sound = true): GroundKey {
+  const g = loot.dropKey(key, at, still.pos)
+  logKey(g, source, filtered)
+  if (sound) sfx.drop('gold', panOf(at))
+  return g
 }
 
 // --- the drop log, for the playtest file: what was offered, taken and left (design/replay) ---
@@ -1964,24 +2008,41 @@ type DropTag = 'kill' | 'crate' | 'elite' | 'boss' | 'swap' | 'thief' | 'dev' | 
  * (worn), left (on the floor when the level ended), stolen (the thief got away with it), wall
  * (a pedestal's, gone back when another of its set was taken), or null while it's still lying there.
  */
-interface DropRec { depth: number; id: string; source: DropTag; offered: boolean; end: 'taken' | 'left' | 'stolen' | 'wall' | 'melted' | null }
+interface DropRec {
+  depth: number; id: string; source: DropTag; offered: boolean; end: 'taken' | 'left' | 'stolen' | 'wall' | 'melted' | null
+  /**
+   * With a core worn when it landed (absent bare): 'fits' a part that fits it, 'plain' one that doesn't, 'key' a keystone (its `id` is the keystone's; `end: 'left'` or null is a
+   * keystone left on the floor). `filtered`: the hunt chose it (the filter's pool), not the ordinary roll.
+   */
+  fit?: 'fits' | 'plain' | 'key'
+  filtered?: true
+}
 const PICK_TAGS: ReadonlySet<DropTag> = new Set<DropTag>(['exit', 'plenty', 'gift'])
-const dropRecs = new WeakMap<GroundPart, DropRec>()
+const dropRecs = new WeakMap<GroundPart | GroundKey, DropRec>()
 /** A lifted part's record, by part id, until its thief is caught (the same drop comes back down). */
 const caged = new Map<string, DropRec>()
 
-function logDrop(g: GroundPart, source: DropTag) {
+function logDrop(g: GroundPart, source: DropTag, filtered = false) {
   const rec: DropRec = { depth: run.depth, id: g.def.id, source, offered: false, end: null }
+  if (coreActive()) rec.fit = fitOf(g.def, run.core) ? 'fits' : 'plain'
+  if (filtered) rec.filtered = true
   run.drops.push(rec)
   dropRecs.set(g, rec)
 }
-function endDrop(g: GroundPart, end: NonNullable<DropRec['end']>) {
+function logKey(g: GroundKey, source: DropTag, filtered = false) {
+  const rec: DropRec = { depth: run.depth, id: g.key.id, source, offered: false, end: null, fit: 'key' }
+  if (filtered) rec.filtered = true
+  run.drops.push(rec)
+  dropRecs.set(g, rec)
+}
+function endDrop(g: GroundPart | GroundKey, end: NonNullable<DropRec['end']>) {
   const rec = dropRecs.get(g)
   if (rec && !rec.end) rec.end = end
 }
 /** The floor is swept (a level's end, the room, a check): whatever still lies there was left. */
 function clearLoot() {
   for (const g of loot.ground) endDrop(g, 'left')
+  for (const g of loot.keys) endDrop(g, 'left')
   caged.clear()
   loot.clear()
 }
@@ -2112,12 +2173,7 @@ hud.onPrompt(() => {
     overlay.banner(`take one for strain +${PEDESTALS.plentyStrain}`)
   } else {
     // the bargain as it was before pedestals: one good part on the floor, paid for at once
-    const taken = [...hud.loadout, ...loot.ground.map((g) => g.def)]
-    const def = rollPart('chaser', taken, 'plenty', pool())
-    if (def) {
-      logDrop(loot.drop(def, at, still.pos), 'plenty')
-      sfx.drop(def.tier, 0)
-    }
+    dropMoment(at, 'chaser', 'plenty')
     overlay.banner(`bargained \u00b7 strain +${PEDESTALS.plentyStrain}`)
     // a bargain can cost everything
     addStrain(PEDESTALS.plentyStrain, screenOf(at))
@@ -2719,7 +2775,7 @@ function updateOffer() {
     // under a core, the card shows the part as worn (a reshape's name, line and numbers); with none, the part itself
     const shown = card ? variant(card.def, coreNow()) : null
     hud.offer(shown, !!card && !save.found.includes(card.def.id), shown ? describePart(shown) : undefined, card ? meltLabel(card) : null,
-      card ? { swap: swapWords(card.def), pair: pairWords(card.def) } : undefined)
+      card ? { swap: swapWords(card.def), pair: pairWords(card.def), fit: fitWords(card.def) } : undefined)
     loot.offer(next)
     if (next?.set) openPick(next)
   }
@@ -2729,6 +2785,68 @@ hud.onTake(() => {
   if (offered) takePart(offered)
 })
 
+// --- keystones on the floor: the socket card (BUILD.md §2.9, B5) ---
+
+/** The keystone whose card he left: it stays shut until he steps off it (the `offerHeld` rule), and then opens again if he steps back. */
+let keyHeld: GroundKey | null = null
+const keyCard = (k: KeystoneDef) => ({ name: WORDS.keystone[k.id][0], line: WORDS.keystone[k.id][1], tag: WORDS.forTag[k.for] })
+
+/** Walking within the pickup radius of a keystone not left on its card opens the socket and the world waits. Only with a core worn: a keystone is only ever dropped for it. */
+function updateKeys() {
+  const under = run.phase === 'crawl' && coreActive() ? loot.keyUnder(still.pos) : null
+  if (!under) {
+    // the hold stays while the keystone he gave up is still hopping out to land (it is not under him yet); it lifts once he is clear of it, or it is gone
+    if (!keyHeld || keyHeld.fly <= 0 || !loot.keys.includes(keyHeld)) keyHeld = null
+    return
+  }
+  if (under === keyHeld || !canPause() || under.key.core !== run.core) return
+  openSocket(under)
+}
+
+function openSocket(g: GroundKey) {
+  const core = run.core!
+  g.seen = true
+  const rec = dropRecs.get(g)
+  if (rec) rec.offered = true
+  sfx.uiClick()
+  openPause()
+  const cur = run.keystone ? KEYSTONES[run.keystone] : null
+  const whom = WORDS.core[core]
+  pause.socket(whom, cur && keyCard(cur), keyCard(g.key), {
+    title: WORDS.socketTitle(whom), socket: WORDS.socketLabel, empty: WORDS.socketEmpty, floor: WORDS.socketFloor,
+    lose: cur ? WORDS.youLose(WORDS.keystone[cur.id][0]) : null, take: WORDS.takeKey, leave: WORDS.leaveKey,
+  }, () => {
+    resume()
+    takeKey(g)
+  }, () => {
+    keyHeld = g
+    resume()
+  })
+}
+
+/** Socket it: the one given up lands at his feet (it can be taken back on this floor), and the marks he holds come down to what the new one holds. */
+function takeKey(g: GroundKey) {
+  const old = run.keystone ? KEYSTONES[run.keystone] : null
+  run.keystone = g.key.id
+  endDrop(g, 'taken')
+  loot.removeKey(g)
+  applyBuilds()
+  const cap = markCap(run.core!, run.keystone)
+  for (const [, st] of combat.statuses()) if (st.marks.n > cap) st.marks.n = cap
+  keyHeld = null
+  if (old) {
+    const lying = loot.dropKey(old, still.pos, undefined)
+    logKey(lying, 'swap')
+    keyHeld = lying
+  }
+  sfx.take()
+  rig.punch(0.03)
+  still.group.scale.setScalar(1.12)
+  vfx.flash(at3(still.pos, 1.0), COLD, 0.9)
+  overlay.banner(WORDS.keystone[g.key.id][0])
+  navigator.vibrate?.(18)
+}
+
 /** Temper: "melt into Cleaver II" when this floor part could rank up the one he wears there, else null. */
 function meltLabel(g: GroundPart): string | null {
   if (!temperOn || g.set) return null
@@ -2736,18 +2854,48 @@ function meltLabel(g: GroundPart): string | null {
   const rank = run.ranks[g.def.slot] ?? 1
   if (!cur) return null
   if (rank < TEMPER.maxRank) return `melt into ${byId(cur.id).name} ${ROMAN[rank + 1]}`
-  // with a core there is no mastery (no hand, no eye to teach); the core's upgrade takes this place in B5 (BUILD.md §2.8, §2.9)
-  if (coreActive()) return null
+  // with a core there is no mastery (no hand, no eye to teach): the core's upgrade takes its place (BUILD.md §2.9), from UPGRADE_FROM on, while one is left to learn
+  if (coreActive()) return upgradesLeft().length ? WORDS.meltUpgrade(WORDS.core[run.core!]) : null
   // at III: melting masters the auto its lean feeds (mastery.ts)
   const form = masteryForm(cur)
   if (run.mastery.size >= MASTERY_MAX || !masteryOffer(form, run.mastery).length) return null
   return form ? `melt: master the ${FORM_NAME[form]}` : 'melt: master strike or shot'
 }
 
+/** The core's upgrades he can still be offered at a melt past III: none before depth UPGRADE_FROM (after the second boss), none past UPGRADE_MAX learned (BUILD.md §2.9, 3-balancer.md). */
+function upgradesLeft(): UpgradeId[] {
+  if (!coreActive() || run.depth < UPGRADE_FROM || run.upgrades.length >= UPGRADE_MAX) return []
+  return (Object.keys(UPGRADES) as UpgradeId[]).filter((id) => UPGRADES[id].core === run.core && !run.upgrades.includes(id))
+}
+
+/** How a part fits the core worn, for its card (the pickup card and the compare): a spender's `spends rimed: +10 each`, a shaper's or guard's own line. Null: plain, or no core. */
+function fitWords(d: AbilityDef): string | null {
+  const c = coreNow()
+  const f = c ? fitOf(d, c) : null
+  if (!c || !f) return null
+  if (f.role === 'spend') return WORDS.fits(WORDS.core[c], WORDS.spends(WORDS.mark[c], f.k ?? CORES[c].K))
+  const line = (WORDS.fitLine as Record<string, string>)[d.id]
+  return line ? WORDS.fits(WORDS.core[c], line) : WORDS.fitsPlain(WORDS.core[c])
+}
+
 /** Which auto a part at III feeds: close the hand, marksman the eye, no lean either (null). A table since B1 (mastery.ts MASTERY_FORM): the tags are gone from the defs. */
 const masteryForm = (d: AbilityDef): MasteryForm | null => MASTERY_FORM[d.id] ?? null
 
 pause.setLearned(() => [...run.mastery].map((id) => MASTERY[id]))
+// the core under the loadout (B5): its name, the socket and the upgrades, and the open depth's marks. Nothing with no core worn
+pause.setCore(() => {
+  const c = coreNow()
+  if (!c) return null
+  const st = run.stats[run.stats.length - 1]
+  return {
+    name: WORDS.core[c],
+    parts: [
+      `${WORDS.socketLabel}: ${run.keystone ? WORDS.keystone[run.keystone][0] : WORDS.socketEmpty}`,
+      `${WORDS.upgradesLabel}: ${run.upgrades.length ? run.upgrades.map((id) => WORDS.upgrade[id][0]).join(', ') : WORDS.none}`,
+    ],
+    readout: WORDS.readout(st?.marks.made ?? 0, st?.marks.spent ?? 0),
+  }
+})
 
 /** Mastery: the floor part is melted, and he picks what the hand or the eye learns. The world waits. */
 function masterWith(g: GroundPart, cur: AbilityDef) {
@@ -2784,6 +2932,42 @@ function masterWith(g: GroundPart, cur: AbilityDef) {
   })))
 }
 
+/** The core's upgrade (mastery's twin): the floor part is melted, and he picks what the core learns. The world waits. Nothing happens before UPGRADE_FROM or with none left (the part stays on the floor). */
+function upgradeWith(g: GroundPart, cur: AbilityDef) {
+  const offer = upgradesLeft()
+  const core = run.core
+  if (!offer.length || !core || !canPause()) return
+  if (markFound(save, g.def.id)) store.write()
+  endDrop(g, 'melted')
+  loot.remove(g)
+  offered = null
+  offerHeld = true
+  hud.offer(null)
+  loot.offer(null)
+  sfx.take()
+  vfx.embers(at3(still.pos, 0.7), 30, 1.3, COLD)
+  openPause()
+  const whom = WORDS.core[core]
+  pause.choose(WORDS.upgradeTitle(whom), WORDS.upgradeIntro(byId(cur.id).name, whom), offer.map((id) => ({
+    name: WORDS.upgrade[id][0],
+    line: WORDS.upgrade[id][1],
+    onPick: () => {
+      run.upgrades.push(id)
+      applyBuilds()
+      const st = run.stats[run.stats.length - 1]
+      if (st) {
+        st.melts = (st.melts ?? 0) + 1
+        ;(st.upgraded ??= []).push(id)
+      }
+      resume()
+      sfx.uiClick()
+      vfx.flash(at3(still.pos, 1.0), COLD, 0.9)
+      overlay.banner(WORDS.upgrade[id][0])
+      navigator.vibrate?.([18, 30, 18, 30, 18])
+    },
+  })))
+}
+
 hud.onMelt(() => {
   if (offered) meltPart(offered)
 })
@@ -2794,8 +2978,9 @@ function meltPart(g: GroundPart) {
   const rank = (run.ranks[g.def.slot] ?? 1) + 1
   if (!cur || g.set) return
   if (rank > TEMPER.maxRank) {
-    // never mastery with a core (meltLabel offers no melt here): the core's upgrade is B5's
-    if (!coreActive()) masterWith(g, cur)
+    // never mastery with a core: the core's upgrade (meltLabel offers it from UPGRADE_FROM, while one is left)
+    if (coreActive()) upgradeWith(g, cur)
+    else masterWith(g, cur)
     return
   }
   // melted is found: it joins the pool like a part taken
@@ -2829,7 +3014,7 @@ hud.onCompare(() => {
   pause.compare(current, variant(g.def, coreNow()), hud.loadout, () => {
     resume()
     takePart(g)
-  }, resume, !save.found.includes(g.def.id), { take: swap?.take, melts: swap?.melts, pair: pairWords(g.def) ?? undefined })
+  }, resume, !save.found.includes(g.def.id), { take: swap?.take, melts: swap?.melts, pair: pairWords(g.def) ?? undefined, fit: fitWords(g.def) ?? undefined })
 })
 
 /** A swap: what the outgoing part had running ends first, and a live anchor hands on a full cooldown (R8). */
@@ -2886,7 +3071,7 @@ function takePart(g: GroundPart) {
   endDrop(g, 'taken')
   loot.remove(g)
   // no melt (a part at I, or temper off): the part he gave up lands at his feet as itself
-  if (old && !melts) logDrop(loot.drop(byId(old.id), still.pos), 'swap')
+  if (old && !melts) logDrop(floorPart(byId(old.id), still.pos), 'swap')
   still.wear(slot, g.def)
   offered = null
   offerHeld = true
@@ -2930,14 +3115,14 @@ hud.onPause(() => {
   if (!canPause()) return
   sfx.uiClick()
   openPause()
-  pause.loadout(hud.slots, resume)
+  pause.loadout(() => hud.slots, resume)
 })
 
 // the screen going off mid-fight shouldn't cost you the fight
 document.addEventListener('visibilitychange', () => {
   if (document.hidden && canPause()) {
     openPause()
-    pause.loadout(hud.slots, resume)
+    pause.loadout(() => hud.slots, resume)
   }
 })
 
@@ -3059,11 +3244,15 @@ function bossDown(at: THREE.Vector3) {
     run.bossLoot = raisePicks('gift', level.exit, level.entrance)
   } else {
     // the day's last: one blue and one gold, never for the same slot
+    // the blue is the hunt's (B5): a keystone of the core's some of the time (it lies beside the gold, and the gold takes any slot then)
     const taken = [...hud.loadout, ...loot.ground.map((g) => g.def)]
-    const blue = rollPart('boss', taken, 'boss-blue', pool())
+    const got = rollMoment('boss', taken, 'boss-blue')
+    const blue = got && 'def' in got ? got.def : null
     const gold = rollPart('boss', blue ? [...taken, blue] : taken, 'boss-gold', pool(), blue ? [blue.slot] : [])
-    for (const def of [blue, gold]) if (def) logDrop(loot.drop(def, at, still.pos), 'boss')
-    run.bossLoot = [blue, gold].filter((d): d is AbilityDef => !!d).map((d) => d.id)
+    if (got && 'key' in got) dropKeyAt(got.key, at, 'boss', true)
+    else if (got) logDrop(floorPart(got.def, at, still.pos), 'boss', got.filtered)
+    if (gold) logDrop(floorPart(gold, at, still.pos), 'boss')
+    run.bossLoot = [got && 'key' in got ? got.key.id : blue?.id, gold?.id].filter((id): id is string => !!id)
   }
   loot.dropScrap(new THREE.Vector3(at.x + 1.2, 0, at.z))
   loot.dropScrap(new THREE.Vector3(at.x - 1.2, 0, at.z))
@@ -3197,8 +3386,14 @@ function resumeRun(snap: RunSnapshot) {
       // what it left, lying where it fell, unless he's wearing it
       const on = new Set(worn.map((d) => d.id))
       for (const id of loot0) {
+        // a keystone it left (B5): back on the floor if it is this core's and not the one socketed
+        if (Object.prototype.hasOwnProperty.call(KEYSTONES, id)) {
+          const k = KEYSTONES[id as KeystoneId]
+          if (coreActive() && k.core === run.core && run.keystone !== k.id) dropKeyAt(k, level.exit.clone(), 'boss', false, false)
+          continue
+        }
         if (!known.has(id) || on.has(id) || save.turned.includes(id)) continue
-        logDrop(loot.drop(byId(id), level.exit.clone(), still.pos), 'boss')
+        logDrop(floorPart(byId(id), level.exit.clone(), still.pos), 'boss')
       }
       run.bossLoot = [...loot0]
     }
@@ -3399,7 +3594,7 @@ function enterLevel(depth: number, o: { seed?: number; bossFelled?: boolean; res
     paidBy: { head: 0, torso: 0, arms: 0, legs: 0, hand: 0, eye: 0 }, pushedIntoState: 0, shatter: { n: 0, dmg: 0 }, maxMul: 1,
     menders: { met: 0, cut: 0, killed: 0, healed: 0 },
     core: combat.core, temperFlat: coreActive(), keystone: combat.keystone, upgrades: [...combat.upgrades], movingS: 0, nearBins: [0, 0, 0, 0, 0], nearMovingBins: [0, 0, 0, 0, 0], wallS: 0, closeS: 0,
-    marks: { made: 0, byCore: 0, byPart: 0, spent: 0, expired: 0 }, spends: { hits: 0, bonus: 0, lag: [0, 0, 0, 0] }, spendsPerFight: [] })
+    marks: { made: 0, byCore: 0, byPart: 0, spent: 0, expired: 0 }, spends: { hits: 0, bonus: 0, lag: [0, 0, 0, 0] }, spendsPerFight: [], backhand: { casts: 0, whiffs: 0 } })
   // the card's line gets a tick where this depth began (a resumed depth already has its tick)
   if (!o.resume) run.tally.marks.push(run.tally.line.length)
   // parts remember how deep they went
@@ -3498,7 +3693,7 @@ function openMap() {
   if (!level) return
   const w = Math.min(window.innerWidth - 48, 760)
   const h = Math.min(window.innerHeight - 150, 420)
-  pause.map(fieldMap.draw(level, still.pos, w, h), () => pause.loadout(hud.slots, resume))
+  pause.map(fieldMap.draw(level, still.pos, w, h), () => pause.loadout(() => hud.slots, resume))
 }
 pause.setAction(() => 'map', openMap, () => !!level?.open)
 
@@ -4438,6 +4633,28 @@ function partFaces(dt: number) {
     const id = d?.pays?.find((s) => paired(d, s, worn, run.mastery)) ?? null
     hud.stateCue(sl.slot, id, !!d && !!id && run.phase === 'crawl' && combat.wouldPay(d, still.pos))
   }
+  spendCues()
+}
+
+/**
+ * The spend count on each spender's button (BUILD.md §2.9, B5): how many core marks a cast would spend now, by the cast's own target and hit test (`combat.spendCount`). At most every
+ * `SPEND_HUD.refreshS` of game time, for each worn spender only; the others, and every button with no core worn, show nothing.
+ */
+let spendAt = -Infinity
+function spendNow(d: AbilityDef): number | null {
+  return combat.spendCount(d, still.pos, { x: hud.moveX, z: hud.moveZ }, still.facing, !hud.isReady(d.slot) || combat.weight, run.strain)
+}
+function spendCues() {
+  if (!(run.phase === 'crawl' && coreActive())) {
+    if (spendAt !== -Infinity) {
+      for (const sl of hud.slots) hud.spendCue(sl.slot, null)
+      spendAt = -Infinity
+    }
+    return
+  }
+  if (combat.time >= spendAt && combat.time - spendAt < SPEND_HUD.refreshS) return
+  spendAt = combat.time
+  for (const sl of hud.slots) hud.spendCue(sl.slot, sl.def && fitOf(sl.def, run.core)?.role === 'spend' ? spendNow(sl.def) : null)
 }
 
 let accumulator = 0
@@ -4617,6 +4834,7 @@ function simulate(realDt: number) {
   partFx.update(dt)
   loot.update(dt, still.pos)
   updateOffer()
+  updateKeys()
   updateShrinePrompt()
   const scrap = loot.collectScrap(still.pos)
   if (scrap > 0) {
@@ -4966,7 +5184,7 @@ function thiefEvent(ev: ThiefEvent) {
       if (ev.def) {
         vfx.flash(at3(at, 0.85), COLD, 0.8)
         vfx.sparks(at3(at, 0.85), COLD, 12, 4)
-        const g = loot.drop(ev.def, at, still.pos)
+        const g = floorPart(ev.def, at, still.pos)
         // the same drop, back on the floor: its record goes on, not a new one
         const rec = caged.get(ev.def.id)
         if (rec) {
@@ -5614,6 +5832,49 @@ if (import.meta.env.DEV) {
       const e = combat.enemies[i]
       if (e) combat.addMarks(e, n, 'core')
     },
+    /**
+     * The button's number for a slot now (B5): `combat.spendCount` as main reads it for the button, and the cue painted at once (the span and the `spend3` / `spendcue` class), so a check
+     * reads the number and the DOM from one call. Null: not a spender, or no core. `def`: count that def (a check's own, with its own `fits`) instead of the slot's.
+     */
+    __spendCount: (slot: SlotName, def?: AbilityDef) => {
+      const d = def ?? hud.slots.find((x) => x.slot === slot)?.def
+      const n = d ? spendNow(d) : null
+      hud.spendCue(slot, n)
+      return n
+    },
+    /** A keystone on the floor at (x, z), as a drop of the hunt would land (it flies in from just beside it). Returns the floor's keystones. */
+    __dropKey: (id: KeystoneId, x: number, z: number) => {
+      const g = dropKeyAt(KEYSTONES[id], new THREE.Vector3(x + 0.6, 0, z), 'dev', false, false)
+      g.pos.set(x, 0, z)
+      return loot.keys.length
+    },
+    /** A moment's drop at (x, z) through the real path (an elite's or Plenty's: the hunt, the record, the fit ring): false when nothing was left to drop. */
+    __dropMoment: (source: 'kill' | 'elite' | 'plenty', x: number, z: number) => dropMoment(new THREE.Vector3(x, 0, z), 'chaser', source),
+    /** The parts the thief can see on the floor (its world's `ground`): a keystone never is one. */
+    __thiefGround: () => thiefWorld().ground().map((g) => g.def.id),
+    /** The words (cores.ts WORDS), so a check compares a card with what the game says. */
+    __words: WORDS,
+    /** The keystones on the floor now, and the socket: `{ keys: [{ id, x, z, seen }], socket, held }`. */
+    __keys: () => ({ keys: loot.keys.map((g) => ({ id: g.key.id, x: g.pos.x, z: g.pos.z, seen: g.seen, fly: g.fly })), socket: run.keystone, held: keyHeld ? keyHeld.key.id : null }),
+    /** n draws of a moment's drop (an elite's, Plenty's, a boss's blue) through the real hunt, at a depth: `{ ids, keys, filtered, got }`. `taken`: part ids on Still or the floor; `socketed` / `onFloor`: keystones. */
+    __rollMoment: (o: { source: DropSource; depth: number; n: number; from?: Archetype; taken?: string[]; socketed?: KeystoneId | null; onFloor?: KeystoneId[]; turned?: string[] }) => {
+      const view = { ...poolView(save, o.depth), turned: new Set(o.turned ?? save.turned) }
+      const taken = (o.taken ?? []).map((id) => byId(id))
+      const out = { ids: {} as Record<string, number>, keys: {} as Record<string, number>, filtered: 0, got: 0 }
+      for (let i = 0; i < o.n; i++) {
+        const got = rollMoment(o.from ?? (o.source.startsWith('boss') ? 'boss' : 'chaser'), taken, o.source, view, { socketed: o.socketed ?? run.keystone, onFloor: o.onFloor ?? loot.keys.map((k) => k.key.id) })
+        if (!got) continue
+        out.got++
+        if ('key' in got) {
+          out.keys[got.key.id] = (out.keys[got.key.id] ?? 0) + 1
+          out.filtered++
+        } else {
+          out.ids[got.def.id] = (out.ids[got.def.id] ?? 0) + 1
+          if (got.filtered) out.filtered++
+        }
+      }
+      return out
+    },
     /** A part as the weight trial weighs it, at a rank: weighed(tempered(byId(id), rank)), as plain JSON. */
     __weighed: (id: string, rank = 1) => JSON.parse(JSON.stringify(weighed(tempered(byId(id), rank)))),
     /** A part at a rank as temper makes it, as plain JSON (K-M3); `flat` given: the build layer's table or not, else tempered(d, r) with no flag at all. */
@@ -5900,7 +6161,7 @@ if (import.meta.env.DEV) {
     },
     /** A part on the floor exactly at (x, z), flying in from just beside it. `owed`: as an elite's drop (a thief wants it). */
     __dropAt: (id: string, x: number, z: number, owed = false) => {
-      logDrop(loot.drop(byId(id), new THREE.Vector3(x + 0.6, 0, z), undefined, owed ? {} : undefined), 'dev')
+      logDrop(floorPart(byId(id), new THREE.Vector3(x + 0.6, 0, z), undefined, owed ? {} : undefined), 'dev')
       loot.ground[loot.ground.length - 1]!.pos.set(x, 0, z)
     },
     /** The pickup card's take. */

@@ -3,7 +3,22 @@
 For the next session. Read this, then `DESIGN.md` (the settled decisions), then the design
 folder for whatever you're touching. Don't re-derive any of them.
 
-## Start here (2 Oct: B0-B4 LIVE, cores playable; B5 the hunt next)
+## Start here (2 Oct night: BUILD LAYER B0-B5 ALL LIVE; B6 = his runs; look round running)
+
+**B5 DONE + pushed: the build layer is complete.** The hunt: 0.5 of elite / Plenty / boss-blue drops from the core's parts
+(`rollForCore`), keystones as floor items with a modal socket card (take / leave, "you lose"), core upgrades at III from depth 7
+(2 max), a fit ring on fitting floor parts and a fit line on cards, the spend digit on each spender button (pulse at 3+), the pause
+core block + readout ("marked 41 · spent 29"), Backhand whiffs logged, pause cards redraw on a builds flip. dropsim `--core`: Wake
+committed formed d3 69.97% (line 70: a rounding miss, accepted; share stays 0.5), Ram 79%; random/committed 0.43 / 0.57; keystone
+seen by d6 ~90%; a part taken after d6 ~73% of runs; keystones left on the floor ~0.67 a run. K-M24..M29, K-S14..S17. `BUILDS=0`
+pins suites to the old game.
+**B6 = his runs (4+, 2+ each core). Ask his feel FIRST** (BUILD.md §5.3 / PITCHES): did Ram and Wake feel different in his hands; by
+the Assembler what was he looking for (pass: "something that spends"; fail: "something stronger"); did losing the hand and eye feel
+like a choice or a hole. Then the look list: the digit and pulse; the socket card stopping the fight (modal; floor parts are not);
+a slam feeling like his push or the game's; finding "beside, not behind" without words; Ram's ring reading "cracked"; the hit
+flash blob on slams; Backhand turning him; the fit ring (white, maybe bluer). Then `?perf=1` in a d5 big room, Wake vs bare. Then his
+log against §5.3's pass lines (Ram slams per beat >= 0.3: the bot gets 0.22-0.26). His three open calls: the core never breaks
+a windup or moves a body in its tell; the filter ignores "found"; the planted brace is gone with a core.
 
 **Queued after B5 (his ask, 2 Oct evening, only if usage remains):** a design round on the overall look, parts' animations first:
 "they are too basic right now.. maybe make their animations more dramatic as they get upgraded, but hopefully not just bigger".

@@ -2,6 +2,7 @@ import { PARTS, type AbilityDef, type DropGate, type Tier } from './abilities'
 import type { SlotName } from './still'
 import type { Archetype, Pack } from './combat'
 import { POOL_RULES, type PoolView } from './pool'
+import { FILTER, KEYSTONES, fitOf, type CoreId, type KeystoneDef, type KeystoneId } from './cores'
 
 /**
  * The drop rules with nothing of three.js or the page in them, so a script can run them
@@ -128,6 +129,30 @@ function pickPart(from: Archetype, pool: readonly AbilityDef[], source: DropSour
     return options[Math.floor(Math.random() * options.length)]!
   }
   return null
+}
+
+/**
+ * The hunt (design/buildlayer/BUILD.md §2.9, 3-balancer.md: share 0.5). With a core worn, at an elite, Plenty or boss-blue drop (`FILTER.sources`; never gold, kills or crates),
+ * `FILTER.share` of the time the drop comes from the core's own pool: every part with `fits[core]` and every keystone of that core, minus what is worn or lying
+ * (`taken`), the keystone socketed or lying (`keys`), and what is turned to the wall. A part still has to be one this source may give (its `drops` gate). A keystone weighs
+ * `FILTER.keyWeight` against 1 for each part. Found or not does not matter: a core's own parts are always in reach (R6). Null: no core, another source, the roll missed, or an empty
+ * pool: the caller rolls `rollPart` as today. With no core nothing is drawn, so a bare run's draws are as they were.
+ */
+export function rollForCore(
+  core: CoreId | null, source: DropSource, taken: readonly AbilityDef[], keys: { socketed: KeystoneId | null; onFloor: readonly KeystoneId[] }, pool: PoolView,
+): AbilityDef | KeystoneDef | null {
+  if (!core || !(FILTER.sources as readonly DropSource[]).includes(source)) return null
+  if (Math.random() >= FILTER.share) return null
+  const on = new Set(taken.map((p) => p.id))
+  const gates = GATES[source]
+  const parts = PARTS.filter((p) => fitOf(p, core) && !on.has(p.id) && !pool.turned.has(p.id) && gates.includes(p.drops))
+  const keystones = (Object.values(KEYSTONES) as KeystoneDef[]).filter((k) => k.core === core && k.id !== keys.socketed && !keys.onFloor.includes(k.id))
+  const total = parts.length + keystones.length * FILTER.keyWeight
+  if (total <= 0) return null
+  let x = Math.random() * total
+  for (const p of parts) if ((x -= 1) < 0) return p
+  for (const k of keystones) if ((x -= FILTER.keyWeight) < 0) return k
+  return keystones[keystones.length - 1] ?? parts[parts.length - 1] ?? null
 }
 
 const SLOTS: readonly SlotName[] = ['head', 'torso', 'arms', 'legs']
