@@ -92,11 +92,20 @@ for (const p of PARTS) {
     check(v.id === p.id && v.slot === p.slot && v.tier === p.tier && v.drops === p.drops && v.key === p.key && v.fits === p.fits, `${p.id} under ${c}: a reshape changed id, slot, tier, drops, key or fits`)
   }
 }
-// B2: Wake's three reshapes (Backhand, Skate, Frost Flare) and nothing else; Ram's (Piston's numbers-only variant) is B3's
-const RESHAPED: Record<string, string[]> = { wake: ['frayed-cleaver', 'frost-trail', 'signal-flare'], ram: [] }
+// B2: Wake's three reshapes (Backhand, Skate, Frost Flare) and nothing else; B3: Ram's one, Piston's numbers-only variant (cooldown 2600, name, line and icon unchanged)
+const RESHAPED: Record<string, string[]> = { wake: ['frayed-cleaver', 'frost-trail', 'signal-flare'], ram: ['piston'] }
 for (const c of CORE_IDS) {
   const got = PARTS.filter((p) => variant(p, c) !== p).map((p) => p.id).sort()
   check(JSON.stringify(got) === JSON.stringify(RESHAPED[c]), `reshaped under ${c}: ${got.join(', ') || 'none'}; want ${RESHAPED[c]!.join(', ') || 'none'}`)
+}
+
+{
+  const base = byId('piston')
+  const v = variant(base, 'ram')
+  check(v.cooldownMs === RESHAPES.pistonRam.cooldownMs && v.cooldownMs === 2600, `Piston under Ram: cooldown ${v.cooldownMs}, ship 2600`)
+  const same = (['name', 'line', 'icon', 'damage', 'range', 'cone', 'shove', 'shape', 'beat', 'pays'] as const).every((k) => JSON.stringify(v[k]) === JSON.stringify(base[k]))
+  check(same, 'Piston under Ram: a numbers-only variant (name, line, icon, damage, range, cone, shove, shape, beat and pays are the base part\'s)')
+  check(variant(base, 'wake') === base, 'Piston under Wake is the base part')
 }
 
 // --- the mastery table is what the lean tags said (leans.json, written from the defs before they were cut) ---
@@ -123,8 +132,8 @@ function methodBody(name: string): string {
   }
   return combat.slice(from, i + 1)
 }
-// tickCore dispatches to the cores' own ticks (Wake's skim, Ram's shove when B3 lands); every one of them is the core's code
-for (const name of ['tickCore', 'tickWake', 'immovable']) check(!/Math\.random/.test(methodBody(name)), `${name}'s source draws Math.random`)
+// tickCore dispatches to the cores' own ticks (Wake's skim, Ram's shove and its helpers); every one of them is the core's code
+for (const name of ['tickCore', 'tickWake', 'tickRam', 'beat', 'shove', 'slamBody', 'catchScan', 'throwEnd', 'inTell', 'immovable']) check(!/Math\.random/.test(methodBody(name)), `${name}'s source draws Math.random`)
 check(!/Math\.random/.test(read('../src/cores.ts')), "cores.ts's source draws Math.random")
 check(new RegExp(`export const HAND = \\{ range: ${CORES.ram.reach},`).test(combat), `RAM.reach ${CORES.ram.reach} is not HAND.range`)
 check(new RegExp(`const AUTO_INTERVAL = ${CORES.ram.beatS}\\b`).test(combat), `RAM.beatS ${CORES.ram.beatS} is not AUTO_INTERVAL`)

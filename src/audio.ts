@@ -1483,6 +1483,20 @@ export function spend(n: number, pan: number) {
   for (let i = 0; i < k; i++) tone(c, d, 'triangle', t + i * gap, 1318 * 2 ** (i / 12), 1318 * 2 ** (i / 12) * 0.96, 0.035, 0.13)
 }
 
+/**
+ * The build layer (BUILD.md §2.6): a slam. A dry knock, wood on stone: a short falling tone (1 kHz to 400 Hz) over a dull, band-limited tap. No Math.random. A phone speaker's band.
+ */
+export function slam(pan: number) {
+  heard('slam')
+  const c = live()
+  if (!c) return
+  const t = c.currentTime
+  const d = out(c, 'hits', pan)
+  tone(c, d, 'triangle', t, 1000, 420, 0.07, 0.2)
+  tone(c, d, 'sine', t + 0.012, 620, 400, 0.06, 0.12)
+  hiss(c, d, t, 0.05, 0.12, 'bandpass', 900, 600, 1.2)
+}
+
 /** The build layer: marks ran out unspent. A faint fizzle, about -18 dB against the hit's hiss. Helpful or nagging is his phone call (BUILD.md §9). */
 export function fizzle(pan: number) {
   heard('fizzle')

@@ -126,6 +126,8 @@ const quality = createQuality(world)
 const readout = import.meta.env.DEV ? createReadout(hudRoot, gradePanel, world, quality) : null
 /** Dev only: every onPart event, for headless checks to read back. */
 const partLog: PartEvent[] = []
+/** DEV: Ram's shoves since __shoveLog() was last called. */
+const shoveLog: { t: number; i: number; slam: string | null; other: number | null; why: string; link: number; dmg: number }[] = []
 /** Dev only: every enemy instant, stamped with Combat's game time. */
 const enemyLog: { t: number; ev: EnemyEvent }[] = []
 
@@ -393,6 +395,10 @@ const combat = new Combat(world.scene, OPEN, {
     partFx.event(ev)
     markFx.event(ev)
     if (ev.kind === 'mark' || ev.kind === 'markExpired' || ev.kind === 'spend' || ev.kind === 'skim') coreEvent(ev)
+    if (ev.kind === 'shove') {
+      shoveEvent(ev)
+      if (import.meta.env.DEV) shoveLog.push({ t: combat.time, i: combat.enemies.indexOf(ev.enemy), slam: ev.slam, other: ev.other ? combat.enemies.indexOf(ev.other) : null, why: ev.why, link: ev.link ?? 0, dmg: ev.dmg })
+    }
     if (ev.kind === 'move') {
       moveFx(ev.move.path[ev.move.path.length - 1] ?? still.pos, ev.beat)
       still.startMove({
@@ -1417,6 +1423,52 @@ function coreEvent(ev: Extract<PartEvent, { kind: 'mark' | 'markExpired' | 'spen
   }
 }
 
+/**
+ * Ram's shove (BUILD.md §2.6, §2.11): the log (what each shove hit: `shoves`, and `beat` for the core's own beat shoves alone, which the slam line reads), the nominal core damage, and the look
+ * and sound. A shove is the hand's clack and a few cold sparks; a slam adds a dry knock and cold sparks at the contact point (combat.ts drew the cold ring). Rubble's stone is cold dust at the wall.
+ */
+function shoveEvent(ev: Extract<PartEvent, { kind: 'shove' }>) {
+  const st = run.stats[run.stats.length - 1]
+  if (st) {
+    const k = (st.shoves ??= { n: 0, wall: 0, body: 0, still: 0, tell: 0, plain: 0, chained: 0, caught: 0, beat: { n: 0, wall: 0, body: 0, still: 0, tell: 0 } })
+    k.n++
+    if (ev.slam) k[ev.slam]++
+    else k.plain++
+    if (ev.why === 'chain') k.chained++
+    if (ev.why === 'catch') k.caught++
+    if (ev.why === 'beat') {
+      k.beat.n++
+      if (ev.slam) k.beat[ev.slam]++
+    }
+    if (st.autoDmg) st.autoDmg.core += ev.dmg
+  }
+  const pan = panOf(ev.enemy.pos)
+  const own = ev.why === 'beat' || ev.why === 'catch'
+  if (own) {
+    // the core's own shove: the hand's clack and the swing, a little cold off the near face
+    sfx.hand(pan)
+    still.attack({ beat: 'hand', pushed: false })
+    const toward = new THREE.Vector3(still.pos.x - ev.enemy.pos.x, 0, still.pos.z - ev.enemy.pos.z)
+    const d = Math.max(1e-3, toward.length())
+    const face = at3(new THREE.Vector3(ev.enemy.pos.x + (toward.x / d) * ev.enemy.radius, 0, ev.enemy.pos.z + (toward.z / d) * ev.enemy.radius), 0.9)
+    vfx.sparks(face, COLD, 4, 4, toward.clone().multiplyScalar(-1), 0.9)
+  }
+  if (ev.slam) {
+    sfx.slam(pan)
+    const at = at3(ev.at, 0.7)
+    vfx.sparks(at, COLD, 8, 5)
+    vfx.flash(at, COLD_DEEP, 0.3)
+    if (!combat.weight) hitstop = Math.max(hitstop, 0.03)
+    shake = Math.max(shake, 0.07)
+  }
+  if (ev.rubble) {
+    // Rubble: cold dust thrown at the wall, never ember-coloured
+    const at = at3(ev.at, 0.5)
+    vfx.frost(at, 5, 0.5)
+    vfx.sparks(at, COLD, 6, 3.5)
+  }
+}
+
 function shatterFx(ev: Extract<PartEvent, { kind: 'shatter' }>) {
   const from = at3(ev.from, 0.8)
   const to = at3(ev.to, 0.9)
@@ -1774,7 +1826,7 @@ interface DepthStats {
   marks: { made: number; byCore: number; byPart: number; spent: number; expired: number }
   spends: { hits: number; bonus: number; lag: [number, number, number, number] }
   spendsPerFight: number[]
-  shoves?: { n: number; wall: number; body: number; still: number; tell: number; plain: number; chained: number; caught: number }
+  shoves?: { n: number; wall: number; body: number; still: number; tell: number; plain: number; chained: number; caught: number; beat: { n: number; wall: number; body: number; still: number; tell: number } }
   skims?: { n: number; burst: number; spray: number }
 }
 /** One press on a filled button, for the playtest file: how long taps really last on the phone. */
@@ -1966,7 +2018,7 @@ function partDrops() {
 const statsOut = () => run.stats.map((st) => ({
   ...st, strainOut: st.strainOut ?? run.strain, playS: Math.round(st.playS ?? 0), plantedS: Math.round(st.plantedS ?? 0), fightS: Math.round((st.fightS ?? 0) * 10) / 10, ...depthDrops(st.depth),
   ...(st.menders ? { menders: { ...st.menders, healed: Math.round(st.menders.healed) } } : {}),
-  ...(st.nearBins ? { movingS: Math.round(st.movingS * 10) / 10, nearBins: st.nearBins.map((v) => Math.round(v * 10) / 10), nearMovingBins: st.nearMovingBins.map((v) => Math.round(v * 10) / 10) } : {}),
+  ...(st.nearBins ? { movingS: Math.round(st.movingS * 10) / 10, wallS: Math.round(st.wallS * 10) / 10, closeS: Math.round(st.closeS * 10) / 10, nearBins: st.nearBins.map((v) => Math.round(v * 10) / 10), nearMovingBins: st.nearMovingBins.map((v) => Math.round(v * 10) / 10) } : {}),
 }))
 
 /** What the save has found and turned, at this depth: every drop reads it. */
@@ -4394,6 +4446,10 @@ function simulate(realDt: number) {
             st.movingS += realDt
             st.nearMovingBins[b]! += realDt
           }
+          // Ram's posture: fight seconds within 2 u of a wall, and within 2 u of a wall or of the nearest awake body's edge
+          const wall = combat.terrain.blocked(still.pos.x, still.pos.z, 2)
+          if (wall) st.wallS += realDt
+          if (wall || gap < 2) st.closeS += realDt
         }
       }
     }
@@ -5491,6 +5547,8 @@ if (import.meta.env.DEV) {
     __coreMarks: () => [...combat.statuses()].flatMap(([e, st]) => (st.marks.n > 0
       ? [{ i: combat.enemies.indexOf(e), kind: e.kind, x: e.pos.x, z: e.pos.z, n: st.marks.n, t: st.marks.t }]
       : [])),
+    /** Ram's shove records since the last call (and empties them): `{ t, i, slam, other, why, link, dmg }`, `i` / `other` indices in __combat.enemies. */
+    __shoveLog: () => shoveLog.splice(0),
     /** `n` marks on body `i` of __combat.enemies, by the core. Does nothing with no core worn. */
     __setMarks: (i: number, n: number) => {
       const e = combat.enemies[i]

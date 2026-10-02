@@ -3,7 +3,7 @@
 For the next session. Read this, then `DESIGN.md` (the settled decisions), then the design
 folder for whatever you're touching. Don't re-derive any of them.
 
-## Start here (2 Oct: his calls made, B0-B2 done, B3 Ram next)
+## Start here (2 Oct: his calls made, B0-B3 done, B4 pick next)
 
 **His calls (2 Oct):** the second core is **Ram** (beside Wake); the pick is **at run start, from two cards**. Both my recs.
 Building now like stage C: the verifier writes `design/buildlayer/BUILD.md` (B0-B6, Ram in Breaker's place, run-start pick,
@@ -25,7 +25,13 @@ pushed** (skim beside not behind, full skim on immovable bodies every 0.5 s, Bur
 VARIANTS, src/markfx.ts rings: normal-blended cold ring with a dark rim, +3 draw calls, read on warm and dark floors; spend/fizzle
 sounds; log fields filled; K-M6..M12, K-M7b, K-M30). Still unreachable live (no pick yet). Watch at B6: Backhand turns him to the
 swing (at rest the next Backhand's "behind" flips); its push hint can point at a front windup it can't hit; spend drain is a blink;
-Backhand whiffs not logged (balancer wants it; add at B5). **B3 Ram RUNNING.** His ask for B4 (2 Oct): `?perf=1` shows the perf
+Backhand whiffs not logged (balancer wants it; add at B5). **B3 Ram DONE + pushed** (beat shove 8 / 1.5 u at the
+hand's reach, retreat rule kept, a tell never moved; wall + body slams via shared `throwEnd` (K-M19: equal to the old inline test);
+Domino, Catch (immovable only, spends), Wide, Rubble; Piston variant cd 2600; steel-blue notched ring; slam crack ring + sparks).
+Numbers: K-M17 free defence 0.833 (line 0.75; Ram takes ~1.49x the bare game's HP in that test); K-M23 bot slams per beat shove on
+packs 0.22 eager / 0.26 hesitant, under the 0.3 line (reported, not tuned; his log at B6 decides). Lead call: kept the engineer's
+`bodyAhead: true` (a neighbour the shove leaves behind is not a slam; literal BUILD.md gives 0.24 / 0.47). For his feel: the hit
+flash turns a slammed hulk into a pale blob (old flash); whether the ring reads "cracked". His ask for B4 (2 Oct): `?perf=1` shows the perf
 readout on the live build, so the phone frame-rate number no longer needs the LAN dev server (in BUILD.md's B4).
 For him (§9): 3 the core never breaks a windup or moves a body in its tell (is it still Ram?); 4 the filter ignores "found";
 5 the planted brace goes with the eye. If a session dies mid-step: review the uncommitted diff against BUILD.md first.

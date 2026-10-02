@@ -5,8 +5,8 @@ import type { AbilityDef } from './abilities'
  * tools/corecheck.ts runs it under node. A core replaces the hand and the eye; it marks bodies, and the parts that fit it spend the marks.
  * With no core worn nothing here is read: the game is today's (BUILD.md §1, K-M1).
  *
- * B1 landed the data, the switch and the machine. B2 (Wake) builds Wake's skim, its three reshapes (VARIANTS), Burst, Deep Frost, Spray and Slipstream, and the
- * rings (markfx.ts); Ram's shove and its keystones and upgrades come in B3, the pick in B4, the hunt and the buttons in B5. The numbers are the SHIP column of design/buildlayer/3-balancer.md §1 (the balancer's re-price of
+ * B1 landed the data, the switch and the machine. B2 (Wake) built Wake's skim, its three reshapes (VARIANTS), Burst, Deep Frost, Spray and Slipstream, and the
+ * rings (markfx.ts); B3 (Ram) built Ram's shove and slams, Domino, Catch, Wide Shove and Rubble, Piston's variant and Ram's ring look. The pick comes in B4, the hunt and the buttons in B5. The numbers are the SHIP column of design/buildlayer/3-balancer.md §1 (the balancer's re-price of
  * BUILD.md's, which the lead made binding on 2 Oct); where that file added a number or a rule, it is marked **new** below. A rule that is B2-B5's
  * is only recorded here.
  */
@@ -43,12 +43,19 @@ export const CORES = {
     K: 8, cap: 3, lifeS: 3,
     /**
      * The shove: the nearest awake body in `reach`, every `beatS`, `shove` u x its knockMul, away from Still. `damage` is the beat's hit: ship 8 (BUILD.md: 6),
-     * so K-M13's "it takes 6" is 8 (B3).
+     * so K-M13's "it takes 6" is 8.
      * `reach` is HAND.range and `beatS` is AUTO_INTERVAL (combat.ts), copied here so this file stays free of three.js; corecheck holds them equal.
      */
     reach: 2.9, beatS: 0.62, shove: 1.5, damage: 8,
     /** A body ending within this of another body's edge along the shove is a body slam. `shortEps` is Clamp Toss's (combat.ts grab). */
     bodyPad: 0.1, shortEps: 0.05,
+    /**
+     * **A departure from BUILD.md §2.6** (reported at B3): the body test only counts a body AHEAD of the shoved one (its centre beyond the shoved one's, along the shove). BUILD.md's
+     * literal test counts any body within `radius + radius + bodyPad` of the segment, which includes a neighbour touching the shoved body's side or behind it: a shove that leaves
+     * its neighbour behind would still "slam" it, and Rubble (a wall slam with a body 1.0 u from the impact, K-M18) could not be built, since that body is always inside the capsule.
+     * false: the literal test. K-M23's bot reports both: the slam line (0.3) is met on one and not on the other.
+     */
+    bodyAhead: true,
   },
 } as const satisfies Record<CoreId, { K: number; cap: number; lifeS: number } & Record<string, unknown>>
 
@@ -57,11 +64,11 @@ export interface KeystoneDef { id: KeystoneId; core: CoreId; for: 'packs' | 'bos
 export const KEYSTONES = {
   /**
    * Packs. A body shoved into another shoves that one `shove` u on; if it ends on a wall or a body it is slammed too. At most `links`.
-   * **new** (3-balancer.md; the rule is B3's): each body a chain slams takes the core's hit, `hit` (BUILD.md: none). +6% deep / -1% boss.
+   * **new** (3-balancer.md; built in B3): each body a Domino link slams (the body it shoves on if it slams, and the one it slams) takes the core's hit, `hit` (BUILD.md: none). +6% deep / -1% boss.
    */
   'ram-domino': { id: 'ram-domino', core: 'ram', for: 'packs', links: 2, shove: 1.0, hit: 8 },
   /**
-   * Bosses. **Changed** (3-balancer.md; the rule is B3's): the shove fires, at most once an `icdS`, the moment a body that CAN'T BE MOVED (the immovable test) starts a tell,
+   * Bosses. **Changed** (3-balancer.md; built in B3): the shove fires, at most once an `icdS`, the moment a body that CAN'T BE MOVED (the immovable test) starts a tell,
    * not any tell in reach (BUILD.md's was a pack keystone that beat Domino). The caught body is slammed ('still') and the core spends its marks at +K each.
    */
   'ram-catch': { id: 'ram-catch', core: 'ram', for: 'bosses', icdS: 1.0 },
@@ -94,8 +101,7 @@ export const UPGRADE_FROM = 7
 export const FILTER = { share: 0.5, keyWeight: 1, sources: ['elite', 'plenty', 'boss-blue'] as const }
 
 /**
- * The reshapes' ship numbers (3-balancer.md §1), RECORDED here for B2 (Wake) and B3 (Ram) to build `VARIANTS` from; B1 reshapes nothing (`VARIANTS` is empty, and
- * `variant(d, c) === d`). Fields not listed keep the base part's or BUILD.md §2.1's (range, radius, travel, shove, the `behind` and `rime` mods). `k` is the
+ * The reshapes' ship numbers (3-balancer.md §1), RECORDED here for B2 (Wake) and B3 (Ram) to build `VARIANTS` from (B1 reshaped nothing). Fields not listed keep the base part's or BUILD.md §2.1's (range, radius, travel, shove, the `behind` and `rime` mods). `k` is the
  * part's own per-mark damage, which lives on its `fits` (abilities.ts), not here.
  */
 export const RESHAPES = {
@@ -139,7 +145,7 @@ export const WORDS = {
 /**
  * The reshapes (§2.1), applied only while that core is worn, by part id: the fields a part changes. The id, slot, tier, drops, key and `fits`
  * stay the base part's (and so does `beat`, the pose and the sound it wears). A field set to `undefined` is taken off the part. Wake's three are built from
- * RESHAPES (the ship numbers); Ram's Piston variant is B3's. The `fits.k` of Backhand (10) lives on its base part (abilities.ts).
+ * RESHAPES (the ship numbers); Ram's Piston variant (B3) is numbers only. The `fits.k` of Backhand (10) lives on its base part (abilities.ts).
  */
 type Over = Partial<Omit<AbilityDef, 'id' | 'slot' | 'tier' | 'drops' | 'key' | 'fits'>>
 /** Frayed Cleaver's 90-degree icon, mirrored: the swing goes the other way. */
@@ -163,7 +169,8 @@ const VARIANTS: Record<CoreId, Record<string, Over>> = {
       damage: RESHAPES.frostFlare.damage, cooldownMs: RESHAPES.frostFlare.cooldownMs, range: 11, radius: 2.2, travelMs: 800,
     },
   },
-  ram: {},
+  /** Piston under Ram: a numbers-only variant (name, line and icon unchanged), cooldown 2600 (RESHAPES.pistonRam); its `fits.ram.k` is 12 (abilities.ts). 3-balancer.md §1. */
+  ram: { piston: { cooldownMs: RESHAPES.pistonRam.cooldownMs } },
 }
 
 const memo: Record<CoreId, WeakMap<AbilityDef, AbilityDef>> = { wake: new WeakMap(), ram: new WeakMap() }

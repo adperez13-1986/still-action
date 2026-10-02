@@ -1057,6 +1057,707 @@ check('K-M12', RUN, async ({ page }) => {
   assert(r.null.ad > 0 || r.null.hand > 0, `the bare control used its hand or eye (hand ${r.null.hand}, damage ${r.null.ad})`)
 })
 
+// ---------------------------------------------------------------------------------------------------------------------------------------------------------------
+// B3: Ram. K-M13 to K-M19, and K-M30 for Ram's ring (K-M12 already holds Ram's hand and eye gone). Numbers: 3-balancer.md (the shove takes 8; Domino's chain bodies take 8; Catch only on a
+// body that can't be moved, and spends). Every test body's walk is held (speedMul 0), so a position read is the shove's alone.
+// ---------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+/**
+ * In the page, after SETUP: Wake's helpers (`place`, `pin`, `pinFor`, `go`, `body`, `zero`) and Ram's. `arena(boxes)` is a clean floor with these wall boxes ({ minX, maxX, minZ, maxZ }),
+ * the autos on, the core as it was; `hulk(x, z, o)` a pressure hulk whose HP a strike doesn't end and whose walk is held (\`o.crown\`: a crowned one, which is not pressure and winds up;
+ * \`o.hp\`); \`log()\` Ram's shove records since the last call; \`sh()\` the depth's \`shoves\` as logged (zeros before the first); \`hpOf(e)\` HP taken so far; \`still(x, z)\` stands him there, a
+ * jump and not a step.
+ */
+const RAM = WAKE + `
+  const zr = () => { zero(); delete last().shoves; last().wallS = 0; last().closeS = 0 }
+  const arena = (boxes = []) => {
+    W.__arena({ boxes, auto: true })
+    delete C.hurtPlayer
+    C.time = 0
+    C.pressure = true
+    C.counters = false
+    C.breakRule = true
+    C.autoAttack = true
+    // the beat is ready, as on a fresh page (reset() leaves the timer, like the hand's)
+    C.autoTimer = 0
+    W.__stick(0, 0)
+    W.__fx()
+    W.__partLog.length = 0
+    W.__shoveLog()
+    zr()
+  }
+  const hulk = (x, z, o = {}) => { const e = W.__spawn('chaser', x, z, true, o.crown ? 'plated' : undefined); e.hp = o.hp ?? 1e6; e.speedMul = 0; return e }
+  const log = () => W.__shoveLog().map((r) => ({ i: r.i, slam: r.slam, other: r.other, why: r.why, link: r.link, dmg: r.dmg, t: r.t }))
+  const sh = () => ({ n: 0, wall: 0, body: 0, still: 0, tell: 0, plain: 0, chained: 0, caught: 0, beat: { n: 0, wall: 0, body: 0, still: 0, tell: 0 }, ...(last().shoves ?? {}) })
+  const hpOf = (e) => 1e6 - e.hp
+  const still = (x, z) => place(x, z)
+  const wallBox = (z, w = 12) => ({ minX: -w, maxX: w, minZ: z, maxZ: z + 1 })
+`
+
+check('K-M13', RUN, async ({ page }) => {
+  // the shove: a hulk in open floor takes the core's 8, slides 1.5 u, is not marked; walking away from it shoves nothing; nothing in reach and the beat waits
+  const r = await evalJson(page, `() => {
+    (${SETUP})({ autos: true })
+    ${RAM}
+    W.__core('ram')
+    const out = {}
+    // a hulk at 2.6 u (out of its own contact, 2.05 u: a hulk touching Still is in its cock, and a body in its tell is never moved: K-M16), one beat
+    arena()
+    let e = hulk(0, 2.6)
+    still(0, 0)
+    pin(0, 0)
+    out.first = { hit: hpOf(e), marks: marks(e).n, log: log(), dmgNominal: last().autoDmg.core, dmgReal: last().autoDmgReal.core, hand: last().hand, eye: last().eye }
+    pinFor(0, 0, 0.5 - 1 / 60)
+    out.moved = { z: e.pos.z, x: e.pos.x, marks: marks(e).n, hit: hpOf(e), sh: sh() }
+    // walking straight away from it, the hulk kept 2.6 u from him: no shove in 2 s. Standing, the same hulk is shoved every beat
+    for (const walk of [true, false]) {
+      arena()
+      e = hulk(0, 2.6)
+      still(0, 0)
+      if (walk) W.__stick(0, -1)
+      for (let i = 0; i < 120; i++) { C.hp = 100; W.__step(1 / 60); e.pos.set(0, 0, W.__still.pos.z + 2.6); e.knock.set(0, 0, 0) }
+      W.__stick(0, 0)
+      // the first tick after a jump has no velocity to read (a teleport is never a step), so the beat that is ready then is not at issue: count from the second tick
+      out[walk ? 'away' : 'stand'] = { shoves: log().filter((x) => x.t > 2.5 / 60).length, z: W.__still.pos.z }
+    }
+    // nothing in reach: the beat waits spent; a body stepping into reach is shoved on that very tick
+    arena()
+    e = hulk(0, 6)
+    still(0, 0)
+    pinFor(0, 0, 2)
+    const before = log().length
+    e.pos.set(0, 0, 2.6)
+    const t0 = C.time
+    pin(0, 0)
+    const l = log()
+    out.wait = { before, after: l.length, dt: l[0] ? l[0].t - t0 : null, why: l[0]?.why }
+    return out
+  }`)
+  assertEq('a hulk at 2.6 u, one beat (tick 1): it takes the core\'s 8 and nothing else', [r.first.hit, r.first.dmgNominal, r.first.dmgReal, r.first.hand, r.first.eye], [8, 8, 8, 0, 0])
+  assertEq('...no mark (a plain shove in open floor), one record, a beat, no slam', [r.first.marks, r.first.log.map((x) => [x.slam, x.why, x.link, x.dmg])], [0, [[null, 'beat', 0, 8]]])
+  assert(r.moved.z >= 3.3 && Math.abs(r.moved.x) < 1e-9, `...it is 3.3 u or more from him 0.5 s later (z ${r.moved.z.toFixed(3)}, from 2.6 + 1.5 u of slide)`)
+  assertEq('...still 8 taken, no mark, and shoves.plain 1 of n 1', [r.moved.hit, r.moved.marks, r.moved.sh.plain, r.moved.sh.n], [8, 0, 1, 1])
+  assertEq('walking straight away from a hulk that keeps 2.6 u behind him for 2 s: no shove at what he is backing away from', r.away.shoves, 0)
+  assert(r.away.z < -10, `...he did walk away (z ${r.away.z.toFixed(2)})`)
+  assert(r.stand.shoves >= 3, `standing, the same hulk is shoved every beat (${r.stand.shoves} in 2 s, 0.62 s apart)`)
+  assertEq('nothing in reach: no shove for 2 s; the hulk stepping into reach is shoved on that tick, by the beat', [r.wait.before, r.wait.after, r.wait.why], [0, 1, 'beat'])
+  assert(r.wait.dt !== null && r.wait.dt <= 1 / 60 + 1e-6, `...the first tick it is there (${r.wait.dt})`)
+})
+
+check('K-M14', RUN, async ({ page }) => {
+  // the slams: wall, body, Piston's knock, Kickstart's, and a Pressure Vent's knock, which is plain under Ram
+  const r = await evalJson(page, `() => {
+    const out = {}
+    {
+      // a hulk against a wall, Still on the far side: every beat is a wall slam, +1 a time, capped at 3
+      (${SETUP})({ autos: true })
+      ${RAM}
+      W.__core('ram')
+      // the second box stands beside him (1.3 u off), so the posture log (wallS: a wall within 2 u of Still) has something to read
+      arena([wallBox(6.0), { minX: 1.3, maxX: 2.3, minZ: 1.8, maxZ: 3.0 }])
+      const e = hulk(0, 5.0)
+      let maxN = 0
+      const t0 = C.time
+      for (let i = 0; i < Math.round(12.5 * 60); i++) { pin(0, 2.4); maxN = Math.max(maxN, marks(e).n) }
+      const l = log()
+      out.wall = { beats: l.length, wall: l.filter((x) => x.slam === 'wall').length, maxN, n: marks(e).n, z: e.pos.z, sh: sh(), marksMade: last().marks.made, added: ev('mark').map((x) => x.added).reduce((a, b) => a + b, 0), wallS: last().wallS, closeS: last().closeS, fightS: last().fightS }
+    }
+    {
+      // a hulk with another 1.0 u behind it on the line: a body slam, +1 each, and the second is not moved
+      (${SETUP})({ autos: true })
+      ${RAM}
+      W.__core('ram')
+      arena()
+      const a = hulk(0, 2.6), b = hulk(0, 3.6)
+      still(0, 0)
+      pin(0, 0)
+      const l = log()
+      // the shove gives the second body no velocity; what then moves it is the game's own rule that awake bodies keep their two radii apart (combat.ts, after the packs):
+      // the first slides into it and pushes it along, which is the world and not the shove (BUILD.md's "<= 0.05 u" did not know of it)
+      const bKnock = b.knock.length()
+      pinFor(0, 0, 0.5 - 1 / 60)
+      out.body = { log: l.map((x) => [x.i, x.slam, x.other, x.why]), a: marks(a).n, b: marks(b).n, bKnock, bMoved: Math.abs(b.pos.z - 3.6), bx: b.pos.x, aHit: hpOf(a), bHit: hpOf(b), az: a.pos.z, idx: [idx(a), idx(b)] }
+    }
+    {
+      // a body beside it is not a slam: the shove goes away from him, and a neighbour that stays beside the line is left alone
+      (${SETUP})({ autos: true })
+      ${RAM}
+      W.__core('ram')
+      arena()
+      const a = hulk(0, 2.6), b = hulk(1.05, 2.6)
+      still(0, 0)
+      pin(0, 0)
+      out.beside = { log: log().map((x) => [x.slam, x.other]), a: marks(a).n, b: marks(b).n }
+    }
+    {
+      // Piston under Ram: the variant (cooldown 2600), and its 4.0 u knock from 2 u off a wall slams, after it has spent the marks the last slam left
+      (${SETUP})({ parts: ['piston'], autos: false })
+      ${RAM}
+      W.__core('ram')
+      const d = W.__hud.loadout[0]
+      out.pistonDef = { name: d.name, cd: d.cooldownMs, damage: d.damage, shove: d.shove }
+      arena([wallBox(5.0)])
+      C.autoAttack = false
+      const e = hulk(0, 2.5)
+      still(0, 0)
+      const rows = []
+      for (let k = 0; k < 20; k++) {
+        e.pos.set(0, 0, 2.5)
+        e.knock.set(0, 0, 0)
+        W.__hud.ready('arms', 'cold')
+        W.__partLog.length = 0
+        W.__shoveLog()
+        const before = marks(e).n
+        const hp = e.hp
+        W.__fire('arms', false)
+        for (let i = 0; i < 30; i++) pin(0, 0)
+        rows.push({ before, slam: log().map((x) => [x.slam, x.why]), spends: spendsOf().map((x) => [x.n, x.bonus]), drop: hp - e.hp, after: marks(e).n })
+      }
+      out.piston = rows
+      // under Wake, and with builds off: the base part (cooldown 3000), and no slam test
+      for (const mode of ['wake', 'off']) {
+        (${SETUP})({ parts: ['piston'] })
+        W.__core(mode === 'wake' ? 'wake' : 'ram')
+        if (mode === 'off') W.__builds(false)
+        const d2 = W.__hud.loadout[0]
+        out['piston' + mode] = { name: d2.name, cd: d2.cooldownMs }
+        W.__builds(true)
+      }
+    }
+    {
+      // Kickstart through a hulk 1.2 u from a wall: the run-over knock puts it against the wall
+      (${SETUP})({ parts: ['kickstart'] })
+      ${RAM}
+      W.__core('ram')
+      arena([wallBox(4.2)])
+      C.autoAttack = false
+      const e = hulk(0, 3.0)
+      // in its recovery (not a tell): a hulk Still runs up to is touching him, so it would be cocking its fist, and a body in its tell is never moved (K-M16)
+      e.phase = 'recover'
+      e.timer = 5000
+      still(0, 0)
+      W.__stick(0, 1)
+      W.__partLog.length = 0
+      W.__shoveLog()
+      W.__fire('legs', false)
+      for (let i = 0; i < 45; i++) { C.hp = 100; W.__step(1 / 60) }
+      W.__stick(0, 0)
+      out.kick = { log: log().map((x) => [x.slam, x.why]), marks: marks(e).n, hit: hpOf(e) }
+    }
+    {
+      // a Pressure Vent's knock next to a wall is plain under Ram: pushed into the wall, no slam, no mark
+      (${SETUP})({ parts: ['pressure-vent'] })
+      ${RAM}
+      W.__core('ram')
+      arena([wallBox(2.9)])
+      C.autoAttack = false
+      const e = hulk(0, 2.0)
+      still(0, 0)
+      W.__partLog.length = 0
+      W.__shoveLog()
+      W.__fire('torso', false)
+      for (let i = 0; i < 30; i++) pin(0, 0)
+      out.vent = { shoves: log().length, marks: marks(e).n, hit: hpOf(e), z: e.pos.z }
+    }
+    return out
+  }`)
+  const w = r.wall
+  assert(w.beats >= 19 && w.wall >= 16, `a hulk 1.0 u off a wall, Still on the far side: ${w.beats} beats in 12.5 s, ${w.wall} wall slams (at least 16 of 20)`)
+  assertEq('...every slam adds 1, up to the cap of 3 (it never holds more), and it is still against the wall', [w.maxN, w.n, w.z > 5.3 && w.z < 5.5], [3, 3, true])
+  assertEq('...the log adds up: wall + body + still + tell + plain is n, and the marks made are the added ones', [w.sh.wall + w.sh.body + w.sh.still + w.sh.tell + w.sh.plain === w.sh.n, w.marksMade === w.added], [true, true])
+  assert(w.wallS > 10 && w.closeS >= w.wallS && w.fightS >= w.closeS - 0.1, `...the posture log reads it: wallS ${w.wallS} s and closeS ${w.closeS} s of ${w.fightS} fight seconds (a wall 1.3 u from Still)`)
+  assertEq('a hulk with another 1.0 u behind it: one body slam, both marked once (a on the first)', [r.body.log, r.body.a, r.body.b], [[[r.body.idx[0], 'body', r.body.idx[1], 'beat']], 1, 1])
+  assert(r.body.bKnock === 0 && r.body.bHit === 0 && r.body.aHit === 8 && Math.abs(r.body.bx) < 0.05, `...the second one is given no knock by the shove (${r.body.bKnock}) and takes no damage (${r.body.bHit}); the first takes the beat's 8 (${r.body.aHit})`)
+  console.log(`INFO K-M14 the body slam: the second body ends ${r.body.bMoved.toFixed(2)} u on, pushed by the first (awake bodies keep their radii apart), not by the shove; the first ends at z ${r.body.az.toFixed(2)}`)
+  assertEq('...so a body beside the line is not a slam, and the shove away from him is plain', [r.beside.log, r.beside.a, r.beside.b], [[[null, null]], 0, 0])
+  assertEq('Piston under Ram: the variant, cooldown 2600 (the base part\'s 3000 under Wake and with builds off), name, damage and shove kept', [r.pistonDef.name, r.pistonDef.cd, r.pistonwake.cd, r.pistonoff.cd, r.pistonDef.shove, r.pistonwake.name], ['Piston', 2600, 3000, 3000, 4, 'Piston'])
+  const slams = r.piston.filter((x) => x.slam.length === 1 && x.slam[0][0] === 'wall' && x.slam[0][1] === 'part').length
+  assert(slams >= 16, `Piston from 2.5 u off a wall (a 4.0 u knock): ${slams} of 20 casts slam, at least 16`)
+  assertEq('...each cast spends first: the 1 mark the last slam left, +12 (its own k) over the plain hit, then slams again', [r.piston.slice(1).every((x) => x.before >= 1 && x.spends.length === 1 && x.spends[0][0] === x.before && x.spends[0][1] === 12 * x.before), r.piston[0].spends], [true, []])
+  assertEq('...and the knock leaves it marked again', r.piston.slice(0, 19).filter((x) => x.slam.length === 1).every((x) => x.after >= 1), true)
+  assertEq('Kickstart through a hulk (in its recovery) 1.2 u from a wall: one wall slam, by the part, +1 mark', [r.kick.log, r.kick.marks], [[['wall', 'part']], 1])
+  assertEq("a Pressure Vent's knock beside a wall is plain under Ram: no shove record, no mark", [r.vent.shoves, r.vent.marks], [0, 0])
+})
+
+check('K-M15', RUN, async ({ page }) => {
+  // a boss can't be moved: every shove on it is a 'still' slam, and its marks are spent at the full +K
+  const r = await evalJson(page, `() => {
+    const out = {}
+    {
+      // K-M5 leaves the page a "real" run (dev false) at depth 3: put it back as a dev boot at depth 1 first
+      window.__run.dev = true
+      window.__enter(1, 1);
+      (${SETUP})({ autos: true })
+      ${RAM}
+      W.__core('ram')
+      arena()
+      // seeded: the Assembler's attacks draw Math.random, and a blow that throws Still back is a beat the hand's retreat rule skips
+      const mulberry32 = (a) => () => { a |= 0; a = (a + 0x6d2b79f5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296 }
+      const original = Math.random
+      Math.random = mulberry32(1)
+      const b = W.__spawn('boss', 0, 3.2, true)
+      b.speedMul = 0
+      const p0 = { x: b.pos.x, z: b.pos.z }
+      still(0, 0)
+      // what the shove would move it by is a knock (a velocity that bleeds off): none is ever given. (Its own attacks can move it: after K-M5 left the page at depth 3 it came to move 17 u by itself in 9 s.)
+      let maxN = 0, dist = 0, knock = 0
+      for (let i = 0; i < Math.round(9 * 60); i++) { pin(0, 0); maxN = Math.max(maxN, marks(b).n); knock = Math.max(knock, b.knock.length()); dist = Math.max(dist, Math.hypot(b.pos.x - p0.x, b.pos.z - p0.z)) }
+      Math.random = original
+      const l = log()
+      out.beats = { n: l.length, still: l.filter((x) => x.slam === 'still' && x.why === 'beat').length, knock, moved: dist, maxN, n3: marks(b).n, sh: sh(), kind: b.kind }
+    }
+    {
+      // the marks spend at the full K: Flare (no k of its own: the core's 8) on a boss holding 3, and on one holding 0
+      const pair = (n) => {
+        (${SETUP})({ parts: ['flare'] })
+        ${RAM}
+        W.__core('ram')
+        arena()
+        C.autoAttack = false
+        const b = W.__spawn('boss', 0, 4.5, true)
+        b.speedMul = 0
+        if (n) W.__setMarks(idx(b), n)
+        const hp = b.hp
+        W.__partLog.length = 0
+        W.__fire('head', false)
+        for (let i = 0; i < 90; i++) pin(0, 0)
+        return { drop: hp - b.hp, spends: spendsOf(), left: marks(b).n }
+      }
+      out.s0 = pair(0)
+      out.s3 = pair(3)
+    }
+    return out
+  }`)
+  assertEq(`the Assembler in reach, 9 s (10 beats or more): every shove a still slam, the boss is given no knock, marks 3 at the cap (${JSON.stringify(r.beats)})`, [r.beats.n >= 10, r.beats.still === r.beats.n, r.beats.knock === 0, r.beats.maxN, r.beats.n3], [true, true, true, 3, 3])
+  assertEq('...logged as still slams (and nothing else)', [r.beats.sh.still, r.beats.sh.wall + r.beats.sh.body + r.beats.sh.tell + r.beats.sh.plain, r.beats.sh.beat.still], [r.beats.n, 0, r.beats.n])
+  assertEq('the marks spend on it at the full +8 each: Flare on a boss with 3 does 24 more than with none, and leaves n 0', [r.s3.drop - r.s0.drop, r.s3.spends.map((x) => [x.n, x.bonus]), r.s3.left], [24, [[3, 24]], 0])
+})
+
+check('K-M16', RUN, async ({ page }) => {
+  // a body in its tell is never moved and its tell is never touched; the blow lands as it would; a wall behind it slams it where it stands
+  const r = await evalJson(page, `() => {
+    const out = {}
+    const run = (core, o) => {
+      (${SETUP})({ autos: true })
+      ${RAM}
+      C.eye = false
+      W.__core(core)
+      arena(o.wall ? [wallBox(o.wall)] : [])
+      C.pressure = !o.crown
+      const e = hulk(0, o.z, { crown: o.crown })
+      C.autoAttack = core === 'ram'
+      still(0, 0)
+      const rows = []
+      const lost = []
+      let hpNow = 100
+      C.hp = 100
+      let intr = 0
+      for (let i = 0; i < 50; i++) {
+        W.__still.pos.set(0, 0, 0)
+        const was = C.hp
+        W.__step(1 / 60)
+        if (C.hp < was) lost.push([i, +(was - C.hp).toFixed(3)])
+        C.hp = 100
+        if (i < 14 || i % 10 === 0) rows.push({ i, z: e.pos.z, tell: e.tellIn ? e.tellIn() : null, phase: e.phase, hp: e.hp })
+      }
+      return { rows, lost, marks: marks(e).n, log: log().map((x) => [x.slam, x.why]), interrupts: ev('interrupt').length, hit: hpOf(e) }
+    }
+    out.hulkRam = run('ram', { z: 2.0 })
+    out.hulkBare = run(null, { z: 2.0 })
+    out.crownRam = run('ram', { z: 1.8, crown: true })
+    out.crownBare = run(null, { z: 1.8, crown: true })
+    out.hulkWall = run('ram', { z: 2.0, wall: 3.0 })
+    out.crownWall = run('ram', { z: 1.8, crown: true, wall: 2.8 })
+    return out
+  }`)
+  const h = r.hulkRam
+  assertEq('a pressure hulk in its cock at 2.0 u: one beat shoves it and it is not moved (tick 1)', [h.log[0], Math.abs(h.rows[0].z - 2.0) < 0.05], [[null, 'beat'], true])
+  assert(h.rows[0].tell !== null && h.rows[1].tell !== null && h.rows[1].tell < h.rows[0].tell, `...its tell is on, and still counts down (${h.rows[0].tell} then ${h.rows[1].tell} ms)`)
+  assert(h.rows.slice(0, 11).every((q) => Math.abs(q.z - 2.0) < 0.05), `...it stays where it stood through its cock and its blow (z ${h.rows.slice(0, 11).map((q) => q.z.toFixed(2)).join(' ')})`)
+  assertEq('...its blow lands on the same tick as in the no-core control, for the same HP', [h.lost.length > 0, h.lost[0]], [true, r.hulkBare.lost[0]])
+  assertEq('...and the first 0.83 s of blows is the same, tick for tick', h.lost, r.hulkBare.lost)
+  assertEq('...a beat on a tell that hits nothing: no mark, no interrupt', [h.marks, h.interrupts], [0, 0])
+  const c = r.crownRam
+  assert(c.rows.some((q) => q.phase === 'windup'), `a crowned hulk (not pressure) winds up in reach (${[...new Set(c.rows.map((q) => q.phase))]})`)
+  assertEq('...not interrupted (no interrupt event), not moved while it winds up, and the blow lands as in the control', [c.interrupts, c.rows.filter((q) => q.phase === 'windup').every((q) => Math.abs(q.z - 1.8) < 0.05), c.lost.slice(0, 1)], [0, true, r.crownBare.lost.slice(0, 1)])
+  for (const [what, x, z] of [['a pressure hulk in its cock', r.hulkWall, 2.0], ['a crowned windup', r.crownWall, 1.8]]) {
+    assertEq(`${what} with a wall behind it: slammed where it stands ('tell'), not moved, +1 mark`, [x.log[0], Math.abs(x.rows[0].z - z) < 0.05, x.marks >= 1], [['tell', 'beat'], true, true])
+  }
+})
+
+check('K-M17', RUN, async ({ page }) => {
+  // the free-defence line: three pressure hulks (hp 1e6) at 2.5 u round a standing Still, seeds 1-5, 20 s each, HP put back each tick. Ram's HP lost against a core that never touches them
+  // (Wake, standing: it does nothing) must be >= 0.75x; printed against today's hand and eye too
+  const r = await evalJson(page, `() => {
+    ${RAM}
+    const mulberry32 = (a) => () => { a |= 0; a = (a + 0x6d2b79f5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296 }
+    const fight = (core, seed) => {
+      (${SETUP})({ autos: true })
+      W.__core(core)
+      W.__arena({ auto: true })
+      const original = Math.random
+      Math.random = mulberry32(seed)
+      try {
+        delete C.hurtPlayer
+        C.time = 0; C.pressure = true; C.counters = false; C.breakRule = false; C.autoAttack = true
+        // each fight starts from the same state: the beat ready, nothing settled (the page's earlier fights leave both)
+        C.autoTimer = 0; C.stillT = 0
+        W.__stick(0, 0); W.__fx(); W.__shoveLog()
+        const a0 = Math.random() * Math.PI * 2
+        // hulks that a strike does not end (hp 1e6, the arena's wall helper), so what is measured is the shove's defence and not Ram killing them (a Wake that stands kills nothing); they walk
+        for (let k = 0; k < 3; k++) W.__spawn('chaser', Math.sin(a0 + (k * 2 * Math.PI) / 3) * 2.5, Math.cos(a0 + (k * 2 * Math.PI) / 3) * 2.5, true).hp = 1e6
+        let lost = 0
+        for (let i = 0; i < 20 * 60; i++) {
+          C.hp = 100
+          W.__still.pos.set(0, 0, 0)
+          W.__step(1 / 60)
+          lost += 100 - C.hp
+        }
+        return { lost, shoves: log().length }
+      } finally { Math.random = original }
+    }
+    const out = { ram: [], wake: [], bare: [] }
+    for (const seed of [1, 2, 3, 4, 5]) {
+      out.ram.push(fight('ram', seed))
+      out.wake.push(fight('wake', seed))
+      out.bare.push(fight(null, seed))
+    }
+    return out
+  }`)
+  const sum = (a) => a.reduce((x, y) => x + y.lost, 0)
+  const ram = sum(r.ram), wake = sum(r.wake), bare = sum(r.bare)
+  const per = (a) => a.map((x) => x.lost.toFixed(0)).join(' ')
+  console.log(`INFO K-M17 HP lost, 3 pressure hulks at 2.5 u round a standing Still, 20 s, seeds 1-5: Ram ${per(r.ram)} (mean ${(ram / 5).toFixed(1)}); Wake standing ${per(r.wake)} (mean ${(wake / 5).toFixed(1)}); today's hand and eye ${per(r.bare)} (mean ${(bare / 5).toFixed(1)}); Ram shoves ${r.ram.map((x) => x.shoves).join(' ')}`)
+  console.log(`INFO K-M17 ratio Ram / Wake-standing = ${(ram / wake).toFixed(3)} (pass line 0.75); Ram / today's hand and eye = ${(ram / bare).toFixed(3)}; per seed ${r.ram.map((x, i) => (x.lost / r.wake[i].lost).toFixed(2)).join(' ')}`)
+  assert(r.wake.every((x) => x.lost > 0) && r.ram.every((x) => x.shoves > 10), `the control took damage in every seed and Ram shoved in every one (Wake ${per(r.wake)}; Ram shoves ${r.ram.map((x) => x.shoves)})`)
+  assert(ram / wake >= 0.75, `Ram's HP lost is ${(ram / wake).toFixed(3)} x a core that never touches them, under the 0.75 line: the shove is free defence (dials: RAM.shove 1.5 -> 1.2, then a body within its own strike reach is not moved)`)
+})
+
+check('K-M18', RUN, async ({ page }) => {
+  // Ram's keystones and upgrades
+  const r = await evalJson(page, `() => {
+    ${RAM}
+    const out = {}
+    const boot = (parts, keystone, upgrade, boxes) => {
+      (${SETUP})({ autos: true, parts })
+      W.__core('ram')
+      if (keystone) W.__keystone(keystone)
+      if (upgrade) W.__upgrade(upgrade)
+      arena(boxes ?? [])
+    }
+    const hits = (es) => es.map((e) => hpOf(e))
+    // Domino: A is shoved into B, and B is 0.8 u from a wall (its centre; 0.25 u of slide before it stops): both body-slammed, B shoved 1.0 on into the wall and slammed again
+    for (const key of ['ram-domino', null]) {
+      boot(null, key, null, [wallBox(4.4)])
+      const a = hulk(0, 2.6), b = hulk(0, 3.6)
+      still(0, 0)
+      pin(0, 0)
+      const l = log()
+      out[key ? 'domino' : 'plain'] = { log: l.map((x) => [x.slam, x.why, x.link, x.dmg]), idx: [idx(a), idx(b)], other: l.map((x) => x.other), marks: [marks(a).n, marks(b).n], hit: hits([a, b]) }
+    }
+    // the chain never passes 2 links: five in a line, 1.0 u apart, nothing behind them
+    boot(null, 'ram-domino', null)
+    {
+      const es = [2.6, 3.6, 4.6, 5.6, 6.6].map((z) => hulk(0, z))
+      still(0, 0)
+      pin(0, 0)
+      const l = log()
+      out.chain = { log: l.map((x) => [x.slam, x.why, x.link]), marks: es.map((e) => marks(e).n), hit: hits(es), sh: sh() }
+    }
+    // Catch: (a) a crowned hulk (movable) starting a windup in reach is not caught; (b) a body that can't be moved (knockMul 0.05) is, once a second; the next beat is 0.62 s on
+    const tellOf = (e) => { e.phase = 'windup'; e.timer = 520 }
+    const calm = (e) => { e.phase = 'approach'; e.timer = 0 }
+    boot(null, 'ram-catch', null)
+    {
+      const e = hulk(0, 6.0, { crown: true })
+      still(0, 0)
+      pinFor(0, 0, 0.2)
+      e.pos.set(0, 0, 2.4)
+      pin(0, 0)
+      const had = log().length
+      // the beat shoves it (a beat, not a catch) the tick it is in reach: that is the baseline; now a fresh windup while the beat is cooling
+      calm(e)
+      pin(0, 0)
+      const t0 = C.time
+      tellOf(e)
+      pin(0, 0)
+      out.crowned = { caught: sh().caught, why: log().map((x) => x.why), had }
+    }
+    boot(null, 'ram-catch', null)
+    {
+      const e = hulk(0, 2.6)
+      e.knockMul = 0.05
+      still(0, 0)
+      pin(0, 0)
+      // the beat took the first tick; the ones below are catches
+      log()
+      const rows = []
+      calm(e)
+      pinFor(0, 0, 0.1)
+      log()
+      const mark = (what) => rows.push([what, +(C.time).toFixed(3)])
+      let t = C.time
+      W.__setMarks(idx(e), 2)
+      const hp = e.hp
+      tellOf(e); pin(0, 0)
+      const l1 = log()
+      out.catch1 = { log: l1.map((x) => [x.slam, x.why]), t: l1[0]?.t - t, marks: marks(e).n, spends: spendsOf(), drop: hp - e.hp, lastSpend: ev('spend').at(-1) ? { n: ev('spend').at(-1).n, bonus: ev('spend').at(-1).bonus, payer: ev('spend').at(-1).payer } : null }
+      const tc = l1[0]?.t ?? 0
+      // the beat starts over 0.62 s after the catch (and not before)
+      calm(e)
+      let nextBeat = null
+      for (let i = 0; i < 70 && nextBeat === null; i++) { pin(0, 0); const l = log(); if (l.length) nextBeat = { t: l[0].t - tc, why: l[0].why } }
+      out.afterCatch = nextBeat
+      // a second windup 0.5 s after the first: one catch only; a third 1.1 s after the first: a catch
+      W.__partLog.length = 0
+      log()
+      const base = C.time
+      const caught = []
+      for (let k = 0; k < 90; k++) {
+        const el = C.time - tc
+        if (Math.abs(el - 0.5) < 0.009) tellOf(e)
+        else if (Math.abs(el - 0.52) < 0.009) calm(e)
+        else if (Math.abs(el - 1.1) < 0.009) tellOf(e)
+        else if (Math.abs(el - 1.12) < 0.009) calm(e)
+        pin(0, 0)
+        for (const x of log()) if (x.why === 'catch') caught.push(+(x.t - tc).toFixed(3))
+      }
+      out.icd = caught
+    }
+    // a boss's windup: a real Assembler winding up in reach gets one still slam, off the beat, and its marks are spent
+    boot(null, 'ram-catch', null)
+    {
+      // seeded: the Assembler's attacks draw Math.random
+      const m32 = (a) => () => { a |= 0; a = (a + 0x6d2b79f5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296 }
+      const original = Math.random
+      Math.random = m32(1)
+      const b = W.__spawn('boss', 0, 3.2, true)
+      b.speedMul = 0
+      still(0, 0)
+      const rows = []
+      for (let i = 0; i < 12 * 60; i++) {
+        pin(0, 0)
+        for (const x of log()) rows.push({ why: x.why, slam: x.slam, t: x.t })
+      }
+      Math.random = original
+      const caughts = rows.filter((x) => x.why === 'catch')
+      const sp = ev('spend').filter((x) => x.payer === 'core')
+      out.boss = { caught: caughts.length, slams: caughts.map((x) => x.slam), spends: sp.map((x) => [x.n, x.bonus]), tellsSeen: ev('windup').length, caughtSh: sh().caught, beats: rows.filter((x) => x.why === 'beat').length }
+    }
+    // Wide: two hulks in reach are both shoved each beat; one without it
+    for (const up of ['ram-wide', null]) {
+      boot(null, null, up)
+      const a = hulk(-1.2, 2.8), b = hulk(1.2, 2.8)
+      still(0, 0)
+      pin(0, 0)
+      const l = log()
+      pinFor(0, 0, 0.4)
+      out[up ? 'wide' : 'single'] = { n: l.length, who: l.map((x) => x.i).sort(), hit: hits([a, b]), away: [Math.hypot(a.pos.x + 1.2, a.pos.z - 2.8), Math.hypot(b.pos.x - 1.2, b.pos.z - 2.8)] }
+    }
+    // Rubble: a wall slam marks and hits (4) a hulk 1.0 u from the impact; one 1.5 u away is untouched
+    for (const up of ['ram-rubble', null]) {
+      boot(null, null, up, [wallBox(4.4)])
+      const a = hulk(0, 3.7), n1 = hulk(1.0, 3.7), n2 = hulk(-1.5, 3.7)
+      still(0, 1.0)
+      pin(0, 1.0)
+      out[up ? 'rubble' : 'noRubble'] = { log: log().map((x) => [x.slam, x.why, x.dmg]), a: [marks(a).n, hpOf(a)], n1: [marks(n1).n, hpOf(n1)], n2: [marks(n2).n, hpOf(n2)], events: ev('shove').map((x) => x.rubble ?? 0) }
+    }
+    return out
+  }`)
+  const d = r.domino
+  assertEq('Domino: A shoved into B, B 0.8 u from a wall: A\'s beat body-slams B, B is shoved 1.0 into the wall and wall-slammed (a link), as two records', [d.log.map((x) => [x[0], x[1], x[2]]), d.other[0] === d.idx[1]], [[['body', 'beat', 0], ['wall', 'chain', 1]], true])
+  assertEq('...A holds 1, B holds 2 (the body slam, the wall slam)', d.marks, [1, 2])
+  assertEq('...A takes the beat\'s 8; B takes the chain\'s 8 (what a chain slams takes the core\'s hit) and nothing else', d.hit, [8, 8])
+  assertEq('without Domino: the body slam is the one record, A holds 1, B holds 1, B is not hit', [r.plain.log.map((x) => [x[0], x[1]]), r.plain.marks, r.plain.hit], [[['body', 'beat']], [1, 1], [8, 0]])
+  const c = r.chain
+  assertEq('five in a line, 1.0 u apart: the beat and at most 2 links (3 records), the fourth is slammed by the second link and the fifth is not touched', [c.log.length, Math.max(...c.log.map((x) => x[2])), c.log.map((x) => x[1]), c.marks[4], c.hit[4]], [3, 2, ['beat', 'chain', 'chain'], 0, 0])
+  assertEq('...marks 1 2 2 1 0 (each slam gives each of its two bodies one), chained 2', [c.marks, c.sh.chained], [[1, 2, 2, 1, 0], 2])
+  assertEq('...damage: A 8 (the beat), B 8 and C 16 (link 1 hits B and C, link 2 hits C and D), D 8', c.hit.slice(0, 4), [8, 8, 16, 8])
+  assertEq('Catch on a crowned hulk (movable) starting a windup in reach: nothing is caught', [r.crowned.caught, r.crowned.why.includes('catch')], [0, false])
+  const k = r.catch1
+  assertEq('Catch on a body that can\'t be moved starting a tell: a catch, off the beat, a still slam, on that tick', [k.log, k.t <= 1 / 60 + 1e-6], [[['still', 'catch']], true])
+  assertEq('...its marks (2 set, +1 for the slam) are spent by the core at 8 each, whole, and gone', [k.marks, k.spends, k.lastSpend], [0, [{ n: 3, bonus: 24, payer: 'core', killed: false }], { n: 3, bonus: 24, payer: 'core' }])
+  assertEq('...the catch\'s own shove hits for 8 and the spend adds the whole 24 (32 in all)', k.drop, 32)
+  assert(r.afterCatch && r.afterCatch.why === 'beat' && Math.abs(r.afterCatch.t - 0.62) <= 1 / 60 + 1e-6, `the next beat is 0.62 s after the catch (${r.afterCatch && r.afterCatch.t.toFixed(3)} s, ${r.afterCatch && r.afterCatch.why})`)
+  assertEq('two windups 0.5 s apart give one catch; a third 1.1 s after the first is a catch again', r.icd.map((t) => Math.round(t * 10)), [11])
+  assert(r.boss.caught >= 1 && r.boss.slams.every((s) => s === 'still') && r.boss.caught === r.boss.caughtSh, `the Assembler winding up in reach: ${r.boss.caught} catches in 12 s (a boss windup gives a still slam), logged caught ${r.boss.caughtSh}`)
+  assert(r.boss.spends.length >= r.boss.caught && r.boss.spends.every((s) => s[1] === s[0] * 8 && s[0] >= 1), `...and each spends the marks at 8 each (${JSON.stringify(r.boss.spends)})`)
+  assertEq('Wide: two hulks in reach are both shoved by the one beat, and both slide; without it one is', [r.wide.n, r.wide.hit, r.wide.away.every((x) => x > 1), r.single.n, r.single.hit.filter((x) => x > 0).length], [2, [8, 8], true, 1, 1])
+  assertEq('Rubble: a wall slam hits (4) and marks a hulk 1.0 u from the impact; the one 1.5 u away is untouched', [r.rubble.log, r.rubble.n1, r.rubble.n2, r.rubble.events], [[['wall', 'beat', 12]], [1, 4], [0, 0], [1]])
+  assertEq('...the slammed one has its own mark and the 8; without Rubble neither neighbour is touched', [r.rubble.a, r.noRubble.n1, r.noRubble.n2, r.noRubble.events], [[1, 8], [0, 0], [0, 0], [0]])
+})
+
+check('K-M19', RUN, async ({ page }) => {
+  // throwEnd is Clamp Toss's wall test: 30 random setups, seeded here, against the inline code it replaced
+  const r = await evalJson(page, `() => {
+    ${RAM}
+    const mulberry32 = (a) => () => { a |= 0; a = (a + 0x6d2b79f5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296 }
+    const rnd = mulberry32(19)
+    W.__core('ram')
+    const boxes = [{ minX: -6, maxX: -3, minZ: 2, maxZ: 5 }, { minX: 2, maxX: 9, minZ: -4, maxZ: -3 }, { minX: -2, maxX: 1, minZ: 7, maxZ: 8 }]
+    arena(boxes)
+    const e = hulk(0, 0)
+    const rows = []
+    let shorts = 0
+    for (let k = 0; k < 30; k++) {
+      e.pos.set((rnd() - 0.5) * 20, 0, (rnd() - 0.5) * 20)
+      const a = rnd() * Math.PI * 2
+      const dx = Math.sin(a), dz = Math.cos(a)
+      const dist = rnd() * 4
+      const got = C.throwEnd(e, dx, dz, dist)
+      const end = C.terrain.clampMove(e.pos.x, e.pos.z, e.pos.x + dx * dist, e.pos.z + dz * dist, e.radius)
+      const short = Math.hypot(end.x - e.pos.x, end.z - e.pos.z) < dist - 0.05
+      if (short) shorts++
+      rows.push({ k, same: got.end.x === end.x && got.end.z === end.z && got.short === short, got: [got.end.x, got.end.z, got.short], want: [end.x, end.z, short] })
+    }
+    return { rows, shorts, moved: e.pos.x }
+  }`)
+  assertEq('30 random setups: throwEnd\'s end and short equal the grab branch\'s old inline result', r.rows.filter((x) => !x.same), [])
+  assert(r.shorts >= 5 && r.shorts <= 25, `...and the setups reach both sides of the wall test (${r.shorts} of 30 came up short)`)
+})
+
+// K-M23 (Ram's half, here early for the slam line; the pick, the Wake bot and the rest are B4's). Headless d1-d3 in real generated levels, seeds 1-3, the Ram core worn, the starting
+// loadout, weight and tap push as booted. A fight is one pack (d1 and d2: the first 3 packs each, woken with Still in their room) or the Assembler (d3, Still 9 u from it), played to the
+// clear or a cap (40 s a pack, 150 s the Assembler), HP put back each tick. The bot is the brief's: it steps toward the nearest awake body until it is `1.45 + radius` from it (2.0 u from a
+// hulk) and stops there, and it casts either as soon as a part is ready ('eager') or 3.7 s after ('hesitant', never-melt's hesitation). Math.random is seeded. PASS: the eager bot fells the
+// Assembler in 2 of 3 seeds. REPORTED, not a pass line here: HP lost, marks spent / made, shoves, and slams per core shove (3-balancer.md: the line is 0.3 on the core's BEAT shoves; Piston's
+// and Kickstart's knocks are counted apart). Nothing is tuned to make it pass.
+const RAM_BOT = `(arg) => {
+  const W = window
+  const C = W.__combat
+  const mulberry32 = (a) => () => { a |= 0; a = (a + 0x6d2b79f5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296 }
+  const SLOTS = ['head', 'torso', 'arms', 'legs']
+  W.__hold(true)
+  W.__core(arg.core)
+  for (const slot of SLOTS) C.clearSlot(slot)
+  W.__hud.resetLoadout([])
+  for (const slot of SLOTS) W.__still.wear(slot, null)
+  for (const id of ['focusing-lens', 'pressure-vent', 'scrap-cleaver', 'kickstart']) W.__equip(id)
+  const original = Math.random
+  Math.random = mulberry32(arg.seed * 131 + arg.pack + arg.depth * 7)
+  try {
+    W.__enter(arg.depth, arg.seed)
+    C.autoAttack = true
+    C.autoTimer = 0
+    W.__stick(0, 0)
+    const lvl = W.__level()
+    let pack, at
+    if (arg.boss) {
+      pack = C.packs.find((p) => p.members.some((m) => m.kind === 'boss'))
+      if (!pack) return null
+      const b = pack.members[0]
+      at = null
+      for (let k = 0; k < 16 && !at; k++) {
+        const a = (k / 16) * Math.PI * 2
+        const x = b.pos.x + Math.sin(a) * 9, z = b.pos.z + Math.cos(a) * 9
+        if (!C.terrain.blocked(x, z, 0.6) && C.terrain.lineClear(x, z, b.pos.x, b.pos.z, 0.3)) at = { x, z }
+      }
+      if (!at) return { noSpot: true }
+    } else {
+      const spec = lvl.packs[arg.pack]
+      pack = C.packs[arg.pack]
+      if (!spec || !pack) return null
+      at = spec.room?.center ?? pack.members[0].pos
+    }
+    W.__still.pos.set(at.x, 0, at.z)
+    C.hasPrev = false
+    C.wake(pack)
+    const st = W.__run.stats[W.__run.stats.length - 1]
+    const base = JSON.parse(JSON.stringify({ marks: st.marks, spends: st.spends, shoves: st.shoves ?? null, hand: st.hand ?? 0 }))
+    const readySince = {}
+    const body = pack.members.map((e) => e.kind)
+    const hp0 = pack.members.map((e) => e.hp)
+    W.__fx()
+    let lost = 0, ticks = 0, cleared = false
+    const cap = (arg.boss ? 150 : 40) * 60
+    for (let i = 0; i < cap; i++) {
+      for (const slot of SLOTS) {
+        if (!W.__hud.isReady(slot)) { readySince[slot] = null; continue }
+        readySince[slot] ??= C.time
+        if (arg.bot === 'eager' || C.time - readySince[slot] >= 3.7 - 1e-9) { W.__fire(slot); readySince[slot] = null }
+      }
+      // the bot: toward the nearest awake body, stopping 1.45 + its radius off (2.0 u from a hulk)
+      let near = null, nd = Infinity
+      const p = W.__still.pos
+      for (const e of C.enemies) {
+        if (e.dead) continue
+        const d = Math.hypot(e.pos.x - p.x, e.pos.z - p.z)
+        if (d < nd) { nd = d; near = e }
+      }
+      if (near && nd > 1.45 + near.radius) W.__stick((near.pos.x - p.x) / nd, (near.pos.z - p.z) / nd)
+      else W.__stick(0, 0)
+      C.hp = 100
+      W.__step(1 / 60)
+      lost += 100 - C.hp
+      ticks++
+      if (pack.members.every((e) => e.dead)) { cleared = true; break }
+    }
+    W.__stick(0, 0)
+    const now = W.__run.stats[W.__run.stats.length - 1]
+    const sub = (a, b) => (typeof a === 'number' ? a - (b ?? 0) : Object.fromEntries(Object.keys(a).map((k) => [k, sub(a[k], b ? b[k] : 0)])))
+    const sh = now.shoves ? sub(now.shoves, base.shoves) : null
+    return {
+      body, hp: hp0, cleared, lost, s: ticks / 60, boss: !!arg.boss,
+      marks: sub(now.marks, base.marks), spends: { hits: now.spends.hits - base.spends.hits, bonus: now.spends.bonus - base.spends.bonus }, shoves: sh, skims: now.skims ?? null,
+      hand: (now.hand ?? 0) - base.hand,
+    }
+  } finally {
+    Math.random = original
+  }
+}`
+
+// its own page (an unused `bots` query key): it leaves real generated levels and a boss behind, and K-M30 counts the scene's children
+check('K-M23', RUN + '&bots=1', async ({ page }) => {
+  const mean = (xs) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : NaN)
+  const sum = (xs) => xs.reduce((a, b) => a + b, 0)
+  const rows = []
+  for (const bot of ['eager', 'hesitant']) {
+    for (const depth of [1, 2, 3]) {
+      for (const seed of [1, 2, 3]) {
+        if (depth === 3) {
+          const r = await evalJson(page, RAM_BOT, { core: 'ram', bot, depth, seed, pack: 0, boss: true })
+          if (r) rows.push({ bot, depth, seed, ...r })
+        } else {
+          for (let pack = 0; pack < 3; pack++) {
+            const r = await evalJson(page, RAM_BOT, { core: 'ram', bot, depth, seed, pack, boss: false })
+            if (r) rows.push({ bot, depth, seed, pack, ...r })
+          }
+        }
+      }
+    }
+  }
+  const z = { n: 0, wall: 0, body: 0, still: 0, tell: 0, plain: 0, chained: 0, caught: 0, beat: { n: 0, wall: 0, body: 0, still: 0, tell: 0 } }
+  const tot = (rs) => {
+    const t = JSON.parse(JSON.stringify(z))
+    for (const r of rs) if (r.shoves) {
+      for (const k of ['n', 'wall', 'body', 'still', 'tell', 'plain', 'chained', 'caught']) t[k] += r.shoves[k] ?? 0
+      for (const k of ['n', 'wall', 'body', 'still', 'tell']) t.beat[k] += r.shoves.beat?.[k] ?? 0
+    }
+    return t
+  }
+  const f = (x, d = 2) => (Number.isFinite(x) ? x.toFixed(d) : '-')
+  for (const bot of ['eager', 'hesitant']) {
+    const mine = rows.filter((r) => r.bot === bot)
+    for (const [label, rs] of [['d1', mine.filter((r) => r.depth === 1)], ['d2', mine.filter((r) => r.depth === 2)], ['d3 (the Assembler)', mine.filter((r) => r.depth === 3)]]) {
+      const t = tot(rs)
+      const slams = t.wall + t.body + t.still + t.tell
+      const bslams = t.beat.wall + t.beat.body + t.beat.still + t.beat.tell
+      const made = sum(rs.map((r) => r.marks.made)), spent = sum(rs.map((r) => r.marks.spent))
+      console.log(`INFO K-M23 Ram ${bot} ${label}: ${rs.length} fights, cleared ${rs.filter((r) => r.cleared).length}, ${f(mean(rs.map((r) => r.s)), 1)} s each, HP lost ${f(mean(rs.map((r) => r.lost)), 0)} each (${f(sum(rs.map((r) => r.lost)), 0)} in all), marks made ${made} spent ${spent} (${f(made ? spent / made : NaN)}), spends ${sum(rs.map((r) => r.spends.hits))} for ${sum(rs.map((r) => r.spends.bonus))}; shoves ${t.n} (beat ${t.beat.n}): wall ${t.wall} body ${t.body} still ${t.still} tell ${t.tell} plain ${t.plain}, slams per shove ${f(t.n ? slams / t.n : NaN)}, per beat shove ${f(t.beat.n ? bslams / t.beat.n : NaN)}, per beat shove without still ${f(t.beat.n ? (bslams - t.beat.still) / t.beat.n : NaN)}`)
+    }
+    // the slam line, on the pack fights (d1 and d2) and on the beat shoves alone (3-balancer.md)
+    const t = tot(mine.filter((r) => r.depth < 3))
+    const bg = t.beat.wall + t.beat.body + t.beat.tell + t.beat.still
+    console.log(`INFO K-M23 Ram ${bot}, pack fights d1-d2: ${f(t.beat.n ? bg / t.beat.n : NaN)} slams per core beat shove over ${t.beat.n} beats (the line is >= 0.3: ${t.beat.n && bg / t.beat.n >= 0.3 ? 'met' : 'NOT met'}); wall ${t.beat.wall} body ${t.beat.body} tell ${t.beat.tell} of them, ${t.n - t.beat.n} shoves were Piston's or Kickstart's`)
+  }
+  const boss = rows.filter((r) => r.bot === 'eager' && r.depth === 3)
+  const felled = boss.filter((r) => r.cleared).length
+  console.log(`INFO K-M23 Ram eager, the Assembler: felled ${felled} of ${boss.length} (${boss.map((r) => `seed ${r.seed}: ${r.cleared ? f(r.s, 1) + ' s' : 'not in 150 s'}, HP lost ${f(r.lost, 0)}`).join('; ')})`)
+  const hb = rows.filter((r) => r.bot === 'hesitant' && r.depth === 3)
+  console.log(`INFO K-M23 Ram hesitant, the Assembler: felled ${hb.filter((r) => r.cleared).length} of ${hb.length} (${hb.map((r) => `seed ${r.seed}: ${r.cleared ? f(r.s, 1) + ' s' : 'not in 150 s'}`).join('; ')})`)
+  assert(boss.length === 3 && felled >= 2, `the eager Ram bot fells the Assembler in 2 of 3 seeds (${felled} of ${boss.length})`)
+})
+
 check('K-M30', RUN, async ({ page }) => {
   // the frame budget: draw calls whatever the marked bodies, nothing created after the build, drawMarks cheap
   const r = await evalJson(page, `() => {
@@ -1066,9 +1767,10 @@ check('K-M30', RUN, async ({ page }) => {
     const children = () => W.__world.scene.children.length
     // what the marks own: their meshes' geometries and the one material, by identity (the walls' own tells come and go in the scene and are not the marks')
     const info = () => W.__markFx.group.children.map((c) => c.geometry.uuid + c.material.uuid).join()
-    const run = (key) => {
-      (${SETUP})({ autos: true })
-      W.__core('wake')
+    // Ram's run has the autos off: its slams draw floor rings of their own (combat.ring), which would come and go in the scene count; this check is about the marks'
+    const run = (key, core = 'wake') => {
+      (${SETUP})({ autos: core === 'wake' })
+      W.__core(core)
       W.__keystone(key)
       const ws = []
       for (let k = 0; k < 40; k++) ws.push(body((k % 8 - 3.5) * 1.8, -8 + Math.floor(k / 8) * 1.8 - 6 + 10))
@@ -1099,9 +1801,10 @@ check('K-M30', RUN, async ({ page }) => {
     }
     out.plain = run(null)
     out.deep = run('wake-deep')
+    out.ram = run(null, 'ram')
     return out
   }`)
-  for (const [what, x, max] of [['3 segments', r.plain, 3], ['Deep (5 segments)', r.deep, 5]]) {
+  for (const [what, x, max] of [['3 segments', r.plain, 3], ['Deep (5 segments)', r.deep, 5], ['Ram (cracked, 3 segments)', r.ram, 3]]) {
     assertEq(`${what}: 40 marked bodies drawn`, [x.drawn, x.marked], [40, 40])
     assert(x.c40 - x.c0 <= max && x.c40 - x.c0 >= 0, `${what}: draw calls ${x.c0} with no marks, ${x.c40} with 40 marked bodies: +${x.c40 - x.c0} (at most ${max})`)
     assertEq(`${what}: the scene's child count is equal before and after 10 s of churn, and the marks' own meshes, geometries and material are the very ones made at the start`, [x.kids1, x.inf1], [x.kids0, x.inf0])

@@ -526,6 +526,9 @@ export class Combat {
   upgrades: ReadonlySet<UpgradeId> = new Set()
   /** Wake (BUILD.md §2.5): when each body was last skimmed, game time (once per body per `perBodyS`). A new map each level (reset). */
   private lastSkim = new WeakMap<Enemy, number>()
+  /** Ram's Catch (§2.7): whether each body that can't be moved was in a tell last tick (a tell STARTS on false -> true), and when Catch last fired (game time). Reset each level. */
+  private telling = new WeakMap<Enemy, boolean>()
+  private lastCatch = -Infinity
   /** Wake's Slipstream upgrade (§2.7): seconds of walk speed banked by skims, 0..maxS; drains in game time. Main reads it for Still's walk speed. */
   slipS = 0
   /** The depth curve for packs added now (curve.ts): main sets it per level; keyed on depth alone. */
@@ -1105,6 +1108,8 @@ export class Combat {
     this.clearSlot('legs')
     this.status.clear()
     this.lastSkim = new WeakMap()
+    this.telling = new WeakMap()
+    this.lastCatch = -Infinity
     this.slipS = 0
     this.held.clear()
     this.zones.length = 0
@@ -1921,11 +1926,194 @@ export class Combat {
   }
 
   /**
-   * The core's tick, in the auto block's place (BUILD.md §2.5-2.6): Wake's skim (B2), Ram's shove (B3, not yet). It draws no
+   * The core's tick, in the auto block's place (BUILD.md §2.5-2.6): Wake's skim (B2), Ram's shove (B3). It draws no
    * Math.random: ties break by distance, then by array order (INV-T3's rule), so a cored fight seeded in a check is the same from step to step.
    */
   private tickCore(dt: number, player: THREE.Vector3) {
     if (this.core === 'wake') this.tickWake(dt, player)
+    else if (this.core === 'ram') this.tickRam(player)
+  }
+
+  /**
+   * Clamp Toss's wall test (BUILD.md §2.6), shared with Ram's shove: where `e` ends if it is moved `dist` along the unit (dx, dz), stopped by the first wall (the body's own
+   * radius), and whether it came up `short` of that (a wall was met). Pure: it moves nothing.
+   */
+  private throwEnd(e: Enemy, dx: number, dz: number, dist: number): { end: { x: number; z: number }; short: boolean } {
+    const end = this.terrain.clampMove(e.pos.x, e.pos.z, e.pos.x + dx * dist, e.pos.z + dz * dist, e.radius)
+    return { end, short: Math.hypot(end.x - e.pos.x, end.z - e.pos.z) < dist - CORES.ram.shortEps }
+  }
+
+  /**
+   * Ram (§2.6, numbers 3-balancer.md §1), each tick: the keystone Catch looks first; then, on its own beat, the nearest awake body in reach is shoved (the hand's rule: no shove at
+   * what he is backing away from, and a beat that finds nothing waits spent, so the first body into reach is shoved at once). The core never breaks a windup.
+   */
+  private tickRam(p: THREE.Vector3) {
+    const R = CORES.ram
+    if (this.keystone === 'ram-catch') this.catchScan(p)
+    if (this.autoTimer > 0) return
+    const t = this.handTarget(p, R.reach)
+    if (!t || this.retreating(p, t)) return
+    this.autoTimer = R.beatS
+    this.beat(t, p, 'beat')
+    // Wide: the next nearest in reach is shoved too
+    if (this.upgrades.has('ram-wide')) {
+      let next: Enemy | null = null
+      let nd = Infinity
+      for (const e of this.enemies) {
+        if (e === t || e.dead || !targetable(e) || this.held.has(e) || !this.awakeNow(e) || !this.inReach(p, e, R.reach) || this.shaded(p, e)) continue
+        const d = Math.hypot(e.pos.x - p.x, e.pos.z - p.z)
+        if (d < nd) {
+          nd = d
+          next = e
+        }
+      }
+      if (next) this.beat(next, p, 'beat')
+    }
+  }
+
+  /** The core's own shove at `e`: the hand's cold sweep to its body, then the shove (a beat, or Catch's off-beat one). */
+  private beat(e: Enemy, p: THREE.Vector3, why: 'beat' | 'catch') {
+    this.sweep(p, Math.atan2(e.pos.x - p.x, e.pos.z - p.z), Math.hypot(e.pos.x - p.x, e.pos.z - p.z), 0x8fb8e8, 0.4)
+    this.shove(e, p.x, p.z, why)
+  }
+
+  /** A body mid-tell, for Ram's rule that a tell is never moved: a windup or strike, or a pressure body's own tell (a cock, a glow, a rear). */
+  private inTell(e: Enemy): boolean {
+    return e.phase === 'windup' || e.phase === 'strike' || (e.tellIn?.() ?? null) !== null
+  }
+
+  /**
+   * The body `e` would hit moved from where it stands to `end` along the unit (dx, dz): the first other awake body (not held, not dead) whose centre lies within
+   * `e.radius + o.radius + bodyPad` of that segment, nearest along it, and, with `bodyAhead` (a departure from BUILD.md, see cores.ts), AHEAD of `e` (a body beside it or behind it, which
+   * the shove leaves, is not struck). Null: none.
+   */
+  private slamBody(e: Enemy, end: { x: number; z: number }, dx: number, dz: number): Enemy | null {
+    let best: Enemy | null = null
+    let bestAlong = Infinity
+    for (const o of this.enemies) {
+      if (o === e || o.dead || this.held.has(o) || !this.awakeNow(o)) continue
+      const along = (o.pos.x - e.pos.x) * dx + (o.pos.z - e.pos.z) * dz
+      if ((CORES.ram.bodyAhead && along <= 0) || along >= bestAlong) continue
+      if (distToSegment(o.pos.x, o.pos.z, e.pos.x, e.pos.z, end.x, end.z) > e.radius + o.radius + CORES.ram.bodyPad) continue
+      best = o
+      bestAlong = along
+    }
+    return best
+  }
+
+  /**
+   * Ram's shove, the one function for the beat, Catch, Domino's links and Piston's / Kickstart's knocks (§2.6). `from` is where it comes from (Still, or the pusher); `raw` the
+   * slide before `knockMul` (RAM.shove, or the part's own); `along`: a unit direction in place of away-from-`from` (Piston's jab). In order:
+   *   a body that can't be moved is slammed ('still'), not moved; a body in its tell is not moved and its tell is not touched, only tested where it stands ('tell');
+   *   otherwise the slam test (throwEnd, Clamp Toss's): another body ahead of it on the line is a body slam (both), else a wall met is a wall slam, else a plain shove.
+   * A slam is +1 mark on the body, and on the one it hit. A beat's or Catch's shove then hits for the core's damage (a Piston or Kickstart knock deals its part's through
+   * `hitPart`, which spent first); a Domino link that slams hits both for the keystone's. `link`: how many Domino links deep. Returns what it hit.
+   */
+  private shove(e: Enemy, fx: number, fz: number, why: 'beat' | 'part' | 'catch' | 'chain', raw: number = CORES.ram.shove, along?: { x: number; z: number }, link = 0): 'wall' | 'body' | 'still' | 'tell' | null {
+    const R = CORES.ram
+    let dx = along ? along.x : e.pos.x - fx
+    let dz = along ? along.z : e.pos.z - fz
+    const m = Math.hypot(dx, dz)
+    if (m < 1e-6) {
+      dx = 0
+      dz = 1
+    } else {
+      dx /= m
+      dz /= m
+    }
+    const heavy = this.immovable(e)
+    const tell = !heavy && this.inTell(e)
+    let slam: 'wall' | 'body' | 'still' | 'tell' | null = null
+    let other: Enemy | null = null
+    let endX = e.pos.x
+    let endZ = e.pos.z
+    let wall = false
+    if (heavy) slam = 'still'
+    else {
+      const t = this.throwEnd(e, dx, dz, raw * e.knockMul)
+      endX = t.end.x
+      endZ = t.end.z
+      other = this.slamBody(e, t.end, dx, dz)
+      if (other) slam = tell ? 'tell' : 'body'
+      else if (t.short) {
+        slam = tell ? 'tell' : 'wall'
+        wall = true
+      }
+      // not moved in its tell (it lands where it was aimed); otherwise exactly the slide the test used
+      if (!tell) e.knock.addScaledVector(shoveVelocity(dx, dz, raw), e.knockMul)
+    }
+    // the contact point: the body's near face when it can't be moved, the gap between two bodies, a wall's face
+    const at = new THREE.Vector3(e.pos.x, 0, e.pos.z)
+    if (heavy) at.set(e.pos.x - dx * e.radius, 0, e.pos.z - dz * e.radius)
+    else if (other) at.set((e.pos.x + other.pos.x) / 2, 0, (e.pos.z + other.pos.z) / 2)
+    else if (wall) at.set(endX + dx * e.radius, 0, endZ + dz * e.radius)
+    if (slam) {
+      this.addMarks(e, 1, 'core')
+      if (other) this.addMarks(other, 1, 'core')
+    }
+    let dmg = 0
+    if (why === 'beat' || why === 'catch') {
+      this.autoHit(e, R.damage, 'core')
+      dmg += R.damage
+    } else if (why === 'chain' && slam) {
+      const H = KEYSTONES['ram-domino'].hit
+      this.autoHit(e, H, 'core')
+      dmg += H
+      if (other) {
+        this.autoHit(other, H, 'core')
+        dmg += H
+      }
+    }
+    // Rubble: a wall slam throws stone at every other awake body near the impact
+    let rubble = 0
+    if (slam === 'wall' && this.upgrades.has('ram-rubble')) {
+      const U = UPGRADES['ram-rubble']
+      for (const o of this.enemies) {
+        if (o === e || o.dead || !targetable(o) || this.held.has(o) || !this.awakeNow(o)) continue
+        if (Math.hypot(o.pos.x - endX, o.pos.z - endZ) > U.radius) continue
+        this.autoHit(o, U.damage, 'core')
+        this.addMarks(o, U.marks, 'core')
+        dmg += U.damage
+        rubble++
+      }
+    }
+    if (slam) this.ring(at, 0.3, 1.6, 0.3, 0x8fb8e8, true)
+    this.events.onPart({ kind: 'shove', enemy: e, slam, ...(other ? { other } : {}), why, at, dmg, ...(rubble ? { rubble } : {}), ...(link ? { link } : {}) })
+    // Domino: a body shoved into another shoves that one on, and what it slams is hit; at most `links` links, and never into a body that can't be moved
+    if (slam === 'body' && other && !other.dead && this.keystone === 'ram-domino' && link < KEYSTONES['ram-domino'].links && !this.immovable(other)) {
+      this.shove(other, e.pos.x, e.pos.z, 'chain', KEYSTONES['ram-domino'].shove, { x: dx, z: dz }, link + 1)
+    }
+    return slam
+  }
+
+  /**
+   * Catch (§2.7, 3-balancer.md): the shove also fires, at most once an `icdS`, the moment a body that CAN'T BE MOVED starts a tell inside reach. The body is slammed ('still') and the
+   * core spends its marks at +K each, whole (the body can't be moved, so the autos' boss half does not apply: Wake's skim rule). The beat starts over. `telling` remembers last tick's
+   * tells, so a body already winding up when it comes into reach is not a new one.
+   */
+  private catchScan(p: THREE.Vector3) {
+    const R = CORES.ram
+    for (const e of this.enemies) {
+      if (e.dead || !this.immovable(e)) continue
+      const now = e.phase === 'windup' || (e.tellIn?.() ?? null) !== null
+      const was = this.telling.get(e) ?? false
+      this.telling.set(e, now)
+      if (!now || was || this.time - this.lastCatch < KEYSTONES['ram-catch'].icdS) continue
+      if (!targetable(e) || this.held.has(e) || !this.awakeNow(e) || !this.inReach(p, e, R.reach) || this.shaded(p, e)) continue
+      this.lastCatch = this.time
+      this.autoTimer = R.beatS
+      this.beat(e, p, 'catch')
+      const m = this.status.get(e)?.marks
+      if (m && m.n > 0 && !e.dead) {
+        const n = m.n
+        const bonus = n * R.K
+        const lagS = this.time - m.since
+        this.autoHit(e, bonus, 'core', true)
+        m.n = 0
+        m.t = 0
+        this.events.onPart({ kind: 'spend', enemy: e, n, bonus, payer: 'core', killed: e.dead, lagS })
+      }
+    }
   }
 
   /** A body that can't be moved: a boss, an anchored body, or one too heavy to lift (knockMul < 0.1, the Assembler's "too heavy to lift"). §2.6. */
@@ -2222,9 +2410,8 @@ export class Combat {
           dz /= dm
         }
         const dist = (def.shove ?? 0) * e.knockMul
-        const end = this.terrain.clampMove(e.pos.x, e.pos.z, e.pos.x + dx * dist, e.pos.z + dz * dist, e.radius)
+        const { end, short } = this.throwEnd(e, dx, dz, dist)
         const to = new THREE.Vector3(end.x, 0, end.z)
-        const short = Math.hypot(end.x - e.pos.x, end.z - e.pos.z) < dist - 0.05
         const T = (def.travelMs ?? 350) / 1000
         this.held.set(e, { from: e.pos.clone(), to, t: 0, T, short, def, pushed: ctx.full, real })
         this.events.onPart({ kind: 'throw', enemy: e, to: to.clone(), ms: T * 1000, short })
@@ -2363,8 +2550,11 @@ export class Combat {
             // weight: the Cleaver's shove is radial from Still (as the Vent's and the hand's); off, the def has none and this is dead
             this.shoveFrom(e, o.x, o.z, def.shove)
           } else if (def.shove) {
-            // Piston: straight along the jab, not away from Still, so it drives one enemy back in a line
-            e.knock.addScaledVector(shoveVelocity(fx, fz, def.shove), e.knockMul)
+            // Piston: straight along the jab, not away from Still, so it drives one enemy back in a line.
+            // With Ram worn the knock runs the slam test (§2.6): the punched body flies into the next one. It has spent first (hitPart above)
+            if (this.core === 'ram' && fitOf(def, 'ram')?.slams) {
+              if (!e.dead) this.shove(e, o.x, o.z, 'part', def.shove, { x: fx, z: fz })
+            } else e.knock.addScaledVector(shoveVelocity(fx, fz, def.shove), e.knockMul)
           }
         }
         for (const b of this.breakables) {
@@ -2637,6 +2827,9 @@ export class Combat {
               const nz = sideways.x
               const side = Math.sign((e.pos.x - sx) * nx + (e.pos.z - sz) * nz) || 1
               e.knock.addScaledVector(shoveVelocity(nx * side, nz * side, knock), e.knockMul)
+            } else if (this.core === 'ram' && fitOf(payer, 'ram')?.slams) {
+              // Kickstart under Ram (§2.6): the run-over knock runs the slam test, so it puts a far one against a wall. It has spent first (hitPart above)
+              if (!e.dead) this.shove(e, sx, sz, 'part', knock)
             } else {
               this.shoveFrom(e, sx, sz, knock)
             }
@@ -2657,7 +2850,7 @@ export class Combat {
   }
 
   /** The hand's body: the nearest awake target, if it's in arm's reach with a clear line. Else null (the shot). */
-  private handTarget(o: THREE.Vector3): Enemy | null {
+  private handTarget(o: THREE.Vector3, range = HAND.range): Enemy | null {
     let best: Enemy | null = null
     let bestD = Infinity
     for (const e of this.enemies) {
@@ -2668,7 +2861,7 @@ export class Combat {
         best = e
       }
     }
-    return best && this.inReach(o, best, HAND.range) && !this.shaded(o, best) ? best : null
+    return best && this.inReach(o, best, range) && !this.shaded(o, best) ? best : null
   }
 
   /** How far the nearest awake body's edge is from Still's centre (Infinity with none): the ring reads it. */

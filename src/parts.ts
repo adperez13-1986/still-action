@@ -202,8 +202,12 @@ export type PartEvent =
   | { kind: 'spend'; enemy: Enemy; n: number; bonus: number; payer: 'core' | SlotName; killed: boolean; lagS: number }
   /** Wake's skim (B2): a body passed beside. `burst`: the skim filled it to the cap and Burst spent the marks (its `spend` event comes first); `spray`: the body Spray marked too. */
   | { kind: 'skim'; enemy: Enemy; burst?: true; spray?: Enemy }
-  /** Ram's shove (B3): `slam` says what the body hit, or null for a plain shove; `other` is the body it hit; `why` the source. */
-  | { kind: 'shove'; enemy: Enemy; slam: 'wall' | 'body' | 'still' | 'tell' | null; other?: Enemy; why: 'beat' | 'part' | 'catch' | 'chain' }
+  /**
+   * Ram's shove (B3): `slam` says what the body hit, or null for a plain shove; `other` is the body it hit; `why` the source. `at`: the contact point (a wall's face,
+   * the gap between two bodies, a body's near face when it can't be moved); `dmg`: the nominal core damage the shove dealt (the beat's, a chain link's, Rubble's);
+   * `rubble`: bodies Rubble threw stone at; `link`: how deep in a Domino chain (0 for the shove itself).
+   */
+  | { kind: 'shove'; enemy: Enemy; slam: 'wall' | 'body' | 'still' | 'tell' | null; other?: Enemy; why: 'beat' | 'part' | 'catch' | 'chain'; at: THREE.Vector3; dmg: number; rubble?: number; link?: number }
   /** A paid kill's excess, passed on to the nearest body as a plain hit. */
   | { kind: 'shatter'; from: THREE.Vector3; to: THREE.Vector3; enemy: Enemy; damage: number }
   | { kind: 'slow'; enemy: Enemy; state: 'on' | 'off' }

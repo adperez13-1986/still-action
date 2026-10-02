@@ -9,15 +9,15 @@ import type { PartEvent } from './parts'
  *
  * The frame budget: **one InstancedMesh per ring segment** (3, and 5 for Deep), each `RING.maxBodies` instances, one shared material. A body with 2 marks
  * takes instance j of segments 0 and 1. So the draw calls this adds are the segment count (3, or 5) whatever the number of marked bodies, and nothing is
- * created after the constructor: the 3-segment and the 5-segment sets are both built once and shown or hidden. A frame's cost is one pass over `combat.statuses()`
+ * created after the constructor: Wake's 3-segment and 5-segment sets and Ram's 3-segment set are built once and shown or hidden. A frame's cost is one pass over `combat.statuses()`
  * and a write of 16 floats a mark into preallocated arrays; no allocation unless more than `maxBodies` bodies are marked (then the farthest go undrawn;
  * their marks still count).
  *
  * The look, a departure from the brief (which had one additive material and `instanceColor` for the fade): the ring is **laid over the floor, not added to it**
  * (handring.ts learned that an added cold vanishes on the ruin's lit stone, and washes to flat peach on a warm floor), and each segment carries its own dark
  * rim in the same geometry (vertex colours), so a bright core reads on a dark floor and a dark rim on a bright one, at no extra draw call. The fade is a
- * per-instance alpha attribute (`aAlpha`), since normal blending cannot fade through a colour. Wake's ring is plain; Ram's cracked look is B3's (nothing is
- * drawn under Ram yet).
+ * per-instance alpha attribute (`aAlpha`), since normal blending cannot fade through a colour. Wake's ring is plain and frost-bright. Ram's is cracked (B3, §2.10): a steel-blue band (inner 0.76, COLD_DEEP's family) with two V-notches cut into each arc's
+ * inner edge, so the segments read as split stone and not as Wake's frost; it has 3 segments only (Deep Frost is Wake's), so its set adds 3 meshes, and only the worn core's set is ever shown.
  */
 
 /** The look. Radii are fractions of the ring's outer radius (1). */
@@ -26,6 +26,11 @@ const LOOK = {
   rim: [0.68, 1.0] as const, rimA: 0.62, rimColor: [0.02, 0.04, 0.09] as const,
   /** The cold core band: [inner, outer], and its opacity. */
   core: [0.74, 0.94] as const, coreA: 0.96, coreColor: [0.42, 0.72, 1.0] as const,
+  /**
+   * Ram's cracked band (§2.10): inner 0.76 (BUILD.md: 0.8; at 0.8 it read thinner than Wake's frost), steel blue (COLD_DEEP's family, lightened so it holds on a dark floor); two V-notches in each arc's inner edge, at `at` (fractions
+   * along the arc), `halfDeg` wide at the edge and `depth` (a radius fraction) deep: as deep as the band, so a notch splits it (a crack), and the apex is held 0.01 short of the outer edge.
+   */
+  crack: { inner: 0.76, outer: 0.95, color: [0.6, 0.78, 0.98] as const, at: [0.33, 0.7] as const, halfDeg: 8, depth: 0.2 },
   /** Triangles along a full circle. */
   steps: 36,
   /** The floor lift above the decals' DECAL_Y. */
@@ -36,6 +41,8 @@ const LOOK = {
 /** Drains running at once (a spend's last RING.drainS): more than a handful never overlap. */
 const DRAINS = 24
 const MAX_SEG = 5
+/** The ring sets, by name (a fixed list: a frame loops over it without allocating). */
+const SET_NAMES = ['wake3', 'wake5', 'ram3'] as const
 
 const FLOOR_Y = DECAL_Y + LOOK.lift
 
@@ -54,8 +61,26 @@ function band(pos: number[], col: number[], r0: number, r1: number, a0: number, 
   }
 }
 
-/** Segment `i` of `cap`: a dark rim band and the cold band on it, an arc of 360 / cap less the gap. Unit outer radius. */
-function segmentGeometry(i: number, cap: number): THREE.BufferGeometry {
+/** A band whose inner radius varies with the angle (`inner(t)`, t from 0 to 1 along the arc), for the cracked look: radii inner(t)..r1 from angle a0 to a1, `steps` quads. */
+function jagged(pos: number[], col: number[], inner: (t: number) => number, r1: number, a0: number, a1: number, steps: number, rgb: readonly number[], alpha: number) {
+  for (let i = 0; i < steps; i++) {
+    const u0 = i / steps
+    const u1 = (i + 1) / steps
+    const t0 = a0 + (a1 - a0) * u0
+    const t1 = a0 + (a1 - a0) * u1
+    const r00 = inner(u0)
+    const r01 = inner(u1)
+    const c: [number, number][] = [[Math.cos(t0) * r00, Math.sin(t0) * r00], [Math.cos(t1) * r01, Math.sin(t1) * r01], [Math.cos(t0) * r1, Math.sin(t0) * r1], [Math.cos(t1) * r1, Math.sin(t1) * r1]]
+    for (const k of [0, 1, 2, 1, 3, 2]) {
+      const [x, z] = c[k]!
+      pos.push(x, 0, z)
+      col.push(rgb[0]!, rgb[1]!, rgb[2]!, alpha)
+    }
+  }
+}
+
+/** Segment `i` of `cap`: a dark rim band and the cold band on it, an arc of 360 / cap less the gap. Unit outer radius. `look`: Wake's plain frost band, or Ram's cracked one. */
+function segmentGeometry(i: number, cap: number, look: 'wake' | 'ram'): THREE.BufferGeometry {
   const span = (Math.PI * 2) / cap
   const gap = (RING.gapDeg * Math.PI) / 180
   // clockwise on screen: the angle runs the other way over the floor
@@ -64,8 +89,22 @@ function segmentGeometry(i: number, cap: number): THREE.BufferGeometry {
   const pos: number[] = []
   const col: number[] = []
   const steps = Math.max(4, Math.round((LOOK.steps * (span - gap)) / (Math.PI * 2)))
-  band(pos, col, LOOK.rim[0], LOOK.rim[1], a0, a1, steps, LOOK.rimColor, LOOK.rimA)
-  band(pos, col, LOOK.core[0], LOOK.core[1], a0, a1, steps, LOOK.coreColor, LOOK.coreA)
+  if (look === 'wake') {
+    band(pos, col, LOOK.rim[0], LOOK.rim[1], a0, a1, steps, LOOK.rimColor, LOOK.rimA)
+    band(pos, col, LOOK.core[0], LOOK.core[1], a0, a1, steps, LOOK.coreColor, LOOK.coreA)
+  } else {
+    const K = LOOK.crack
+    band(pos, col, LOOK.rim[0], LOOK.rim[1], a0, a1, steps, LOOK.rimColor, LOOK.rimA)
+    // fine steps, so a notch is a V and not a block: the angle of one step is a fraction of the notch's half-width
+    const fine = Math.max(24, Math.round(((span - gap) * 180) / Math.PI / 1.5))
+    const half = (K.halfDeg * Math.PI) / 180 / (span - gap)
+    const inner = (t: number) => {
+      let r = K.inner
+      for (const at of K.at) r = Math.max(r, K.inner + K.depth * Math.max(0, 1 - Math.abs(t - at) / half))
+      return Math.min(r, K.outer - 0.01)
+    }
+    jagged(pos, col, inner, K.outer, a0, a1, fine, K.color, LOOK.coreA)
+  }
   const g = new THREE.BufferGeometry()
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3))
   g.setAttribute('color', new THREE.Float32BufferAttribute(col, 4))
@@ -76,8 +115,8 @@ function segmentGeometry(i: number, cap: number): THREE.BufferGeometry {
 export class MarkFx {
   readonly group = new THREE.Group()
   private readonly mat: THREE.MeshBasicMaterial
-  /** Segment meshes by ring size: [3 segments, 5 segments]. Built once. */
-  private readonly sets: Record<3 | 5, THREE.InstancedMesh[]> = { 3: [], 5: [] }
+  /** Segment meshes by ring: Wake's 3 and 5 (Deep Frost), Ram's 3 (cracked). Built once. */
+  private readonly sets: Record<'wake3' | 'wake5' | 'ram3', THREE.InstancedMesh[]> = { wake3: [], wake5: [], ram3: [] }
   // one frame's gathered rings: where, how big, how many segments, how opaque, how shrunk
   private readonly gx = new Float32Array(RING.maxBodies + DRAINS)
   private readonly gz = new Float32Array(RING.maxBodies + DRAINS)
@@ -111,18 +150,18 @@ export class MarkFx {
         .replace('#include <common>', '#include <common>\nvarying float vAlpha;')
         .replace('#include <color_fragment>', '#include <color_fragment>\ndiffuseColor.a *= vAlpha;')
     }
-    for (const cap of [3, 5] as const) {
+    for (const [name, look, cap] of [['wake3', 'wake', 3], ['wake5', 'wake', 5], ['ram3', 'ram', 3]] as const) {
       for (let i = 0; i < cap; i++) {
-        const m = new THREE.InstancedMesh(segmentGeometry(i, cap), this.mat, RING.maxBodies + DRAINS)
+        const m = new THREE.InstancedMesh(segmentGeometry(i, cap, look), this.mat, RING.maxBodies + DRAINS)
         m.instanceMatrix.setUsage(THREE.DynamicDrawUsage)
         m.frustumCulled = false
         m.visible = false
         m.count = 0
         // over the floor and its decals, under every tell (tellOrder starts near 1000) and under the hand's ring's neighbours
         m.renderOrder = 2
-        m.name = `marks-${cap}-${i}`
+        m.name = `marks-${cap}-${i}${look === 'ram' ? '-ram' : ''}`
         this.group.add(m)
-        this.sets[cap].push(m)
+        this.sets[name].push(m)
       }
     }
     scene.add(this.group)
@@ -143,17 +182,18 @@ export class MarkFx {
   /** A new level, or a run's end: nothing draining. */
   clear() {
     this.dn.fill(0)
-    for (const set of [this.sets[3], this.sets[5]]) for (const m of set) { m.count = 0; m.visible = false }
+    for (const name of SET_NAMES) for (const m of this.sets[name]) { m.count = 0; m.visible = false }
   }
 
   /**
    * One rendered frame's rings (`dt` real seconds, for the drains). `from`: Still's place, for who is left undrawn past `maxBodies`.
-   * With no core worn, or Ram's (its look is B3's), nothing is drawn.
+   * With no core worn, nothing is drawn.
    */
   draw(combat: Combat, dt: number, fromX: number, fromZ: number) {
     const core = combat.core
-    const cap = core === 'wake' ? (markCap(core, combat.keystone) >= 5 ? 5 : 3) : 0
-    if (!cap) {
+    const cap = core ? (markCap(core, combat.keystone) >= 5 ? 5 : 3) : 0
+    const which = core === 'wake' ? (cap === 5 ? 'wake5' : 'wake3') : core === 'ram' ? 'ram3' : null
+    if (!cap || !which) {
       this.hideAll()
       this.drawn = this.skipped = 0
       return
@@ -199,9 +239,8 @@ export class MarkFx {
       this.gd[g] = 1 - f
       g++
     }
-    const meshes = this.sets[cap]
-    const other = this.sets[cap === 3 ? 5 : 3]
-    for (const m of other) m.visible = false
+    const meshes = this.sets[which]
+    for (const name of SET_NAMES) if (name !== which) for (const m of this.sets[name]) m.visible = false
     for (let s = 0; s < meshes.length; s++) {
       const mesh = meshes[s]!
       const mat = mesh.instanceMatrix.array as Float32Array
@@ -246,12 +285,12 @@ export class MarkFx {
   }
 
   private hideAll() {
-    for (const set of [this.sets[3], this.sets[5]]) for (const m of set) if (m.visible) { m.visible = false; m.count = 0 }
+    for (const name of SET_NAMES) for (const m of this.sets[name]) if (m.visible) { m.visible = false; m.count = 0 }
   }
 
   dispose() {
     this.group.removeFromParent()
-    for (const set of [this.sets[3], this.sets[5]]) for (const m of set) { m.geometry.dispose(); m.dispose() }
+    for (const name of SET_NAMES) for (const m of this.sets[name]) { m.geometry.dispose(); m.dispose() }
     this.mat.dispose()
   }
 }
