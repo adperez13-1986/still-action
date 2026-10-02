@@ -20,11 +20,13 @@ flash blob on slams; Backhand turning him; the fit ring (white, maybe bluer). Th
 log against §5.3's pass lines (Ram slams per beat >= 0.3: the bot gets 0.22-0.26). His three open calls: the core never breaks
 a windup or moves a body in its tell; the filter ignores "found"; the planted brace is gone with a core.
 
-**Queued after B5 (his ask, 2 Oct evening, only if usage remains):** a design round on the overall look, parts' animations first:
-"they are too basic right now.. maybe make their animations more dramatic as they get upgraded, but hopefully not just bigger".
-Run it like the other rounds but lean (his weekly limit is low): `design/look/BRIEF.md` (his words, what exists: partfx.ts, vfx.ts,
-markfx.ts, temper ranks I-III, weight's freeze; the constraint "not just bigger"; phone perf budget), balancer + translator +
-verifier + my lean in one round, then `design/look/PITCHES.md` for him. Design only, nothing built until he picks.
+**Look round DONE (his ask, 2 Oct evening): `design/look/PITCHES.md`** (1-* per voice). Rank adds a kind, never size: I the act
+(a cold swept line, not the enemy-telegraph sector Still borrows today), II the bite (steel shards + a cut at the feet), III the scar
++ the stance (part cocked on his body while ready). Size grows at most like damage (x1.15 / x1.3); no wind-up (input lag); rank I
+improves first; the spend stays the loudest beat; cold ladder (no molten). Overall: hit-flash rim fix, contact shadows, a borrowed
+cold light (measure), paid for by instancing the dash trail (~130 draw calls today). Found: visuals share combat's Math.random
+(L0 splits it). Build L0-L3, first slice L1 = the Cleaver family, then stop for his feel. **His calls (4 in PITCHES); my rec: play
+the cores (B6) first.** Nothing built.
 
 **If a session died here (his weekly limit may run out, 2 Oct evening):** he said "continue until all the development tasks are done,
 then commit and push". Resume: if B4's diff is uncommitted, review it against BUILD.md B4 (+ `?perf=1`), rerun tsc / vite build /
