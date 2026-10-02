@@ -115,6 +115,8 @@ taken after d6 in half your runs; damage taken d1-3 within 25% of TRIAL-1's 130.
 
 ## Yours to decide
 
+**Decided 2 Oct:** Ram as the second core; the pick at the run's start. Building B0-B6.
+
 1. **The second core: Ram** (my rec), Breaker, or Sight?
 2. **The pick: at the run's start** (my rec) or after depth 1?
 3. Anything here you'd cut or that misses what you meant by "hollow"?

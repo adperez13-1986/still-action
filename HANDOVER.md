@@ -3,6 +3,16 @@
 For the next session. Read this, then `DESIGN.md` (the settled decisions), then the design
 folder for whatever you're touching. Don't re-derive any of them.
 
+## Start here (2 Oct: HIS CALLS MADE, B0 running)
+
+**His calls (2 Oct):** the second core is **Ram** (beside Wake); the pick is **at run start, from two cards**. Both my recs.
+Building now like stage C: the verifier writes `design/buildlayer/BUILD.md` (B0-B6, Ram in Breaker's place, run-start pick,
+the lead's settlements in PITCHES); a Sonnet 5.5 engineer per step, I review every diff. **B0 (measure first)** started from
+2-verifier.md section 5: suites pin the live defaults (weight + tap push on), K-90F re-captured alone, dropsim to 9 depths +
+live drop rules (`PEDESTALS_ON` into drops.ts), a temper-table assertion, rider code cut. Pass: every suite passes on live
+defaults; dropsim offers/takes a run within 25% of his runs 23-24 (`~/Downloads/still-playtest-2026-10-01 (1).json`).
+If a session dies mid-step: review the uncommitted diff against this before keeping it.
+
 ## Start here (1 Oct, night: BUILD LAYER round DONE, awaiting his two calls)
 
 His pick: dig into the build layer. His answers: everything open; builds change **what parts do together + how you fight**; no
