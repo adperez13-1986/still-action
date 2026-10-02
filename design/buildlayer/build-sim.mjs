@@ -1,4 +1,6 @@
-// Build-layer sim (balancer, rounds 1-2). node design/buildlayer/build-sim.mjs [fight|pool|all|r2] [runs]
+// Build-layer sim (balancer, rounds 1-3). node design/buildlayer/build-sim.mjs [fight|pool|all|r2|r3|r3m|r3f] [runs]
+// Round 3 (3-balancer.md, part D at the bottom): r3 = BUILD.md's cores, parts, keystones and upgrades; r3m = each fitting part alone in its slot;
+// r3f = the never-melt floor. BUILD.md's numbers by default; TUNE3=prop = what 3-balancer.md ships. RAMPACK=1 CORES=ram: Ram's pack build.
 // No deps, seeded. Two parts:
 //   A. FIGHT: what a chain is worth against a generic part, on packs (early, deep), a heavy pack and a boss.
 //      Engine in the shape of design/lean/lean-sim.mjs (cooldowns, hesitation, beats, overkill not counted),
@@ -506,6 +508,330 @@ function partC() {
   }
 }
 
+// ------------------------------------------------------------------ D. ROUND 3: BUILD.md's trial, priced
+// node design/buildlayer/build-sim.mjs r3 [n]   (3-balancer.md). The real parts of BUILD.md §5.1 at their weighed rank-I numbers
+// (weight preset B: head/arms x1.2, torso/legs x1.8, Cleaver 180 deg), Wake and Ram as BUILD.md §2.5-2.6 has them, flat K per
+// mark, the 4 keystones and 4 upgrades of §2.7, flat temper while a core is worn. Same clock, hesitation and bodies as A.
+// Geometry stands in as rates (env dials): Q / QB = Wake's skim rate per body after its 1 s lockout (packs / boss);
+// S = Ram's slams a shove on packs (a boss always slams); BODY = share of slams that are body slams; UP = share of beats
+// with a body in reach. No damage taken. Every name is a PLACEHOLDER.
+const E3 = (k, d) => Number(process.env[k] ?? d)
+const D3 = {
+  K: { wake: E3('KW', 6), ram: E3('KR', 8) }, cap: 3, life: 3,
+  Q: E3('Q3', 0.6), QB: E3('QB', 0.4), lock: E3('LOCK', 1), lockB: E3('LOCKB', 1), skim: E3('SKIM', 4), skimBossMul: E3('WAM', 0.5), slowQ: E3('SLOWQ', 1.5),
+  S: E3('S', 0.4), BODY: E3('BODY', 0.5), UP: E3('UP', 0.7), UPB: E3('UPB', 0.75), shove: E3('SHOVE', 6),
+  pullS: E3('PULLS', 0.3), pullS_T: 2.5, sPiston: E3('SPISTON', 1.5), sKick: 0.8,
+  link: E3('LINK', 0.5), rubP: E3('RUBP', 0.3), wideP: E3('WIDEP', 0.6), sprayP: E3('SPRAYP', 0.5), slipQ: E3('SLIPQ', 1.1),
+  tell: E3('TELL', 0.35), tellB: E3('TELLB', 0.27), bhWhiff: E3('BHWHIFF', 0.15), skateSkim: 0.3,
+}
+// Weighed rank-I numbers (abilities.ts x weight preset B). hits: back | one | arc (p2, p3 by nearness; marks-first for 'behind') | all (p) | blast (p).
+const P3 = {
+  lens: { slot: 'head', dmg: 31, cd: 4.2, hits: 'back' },
+  flare: { slot: 'head', dmg: 22, cd: 4.2, hits: 'blast', p: 0.4, spend: ['ram'] },
+  fflare: { slot: 'head', dmg: E3('FFD', 12), cd: E3('FFCD', 5.0), hits: 'blast', p: 0.45, rime: 2, core: 'wake' },          // Frost Flare (signal-flare under Wake)
+  pvent: { slot: 'torso', dmg: 27, cd: 6.5, hits: 'all', p: 0.95 },
+  ward: { slot: 'torso', dmg: 0, cd: 7, hits: 'none' },
+  backdraft: { slot: 'torso', dmg: 22, cd: 6.5, hits: 'all', p: 0.95, pull: true },
+  brace: { slot: 'torso', dmg: 14, cd: 9, hits: 'all', p: 0.5 },
+  cleaver: { slot: 'arms', dmg: 22, cd: 2.6, hits: 'arc', p2: 0.9, p3: 0.45, spend: ['wake', 'ram'] },
+  piston: { slot: 'arms', dmg: 24, cd: 3.0, hits: 'one', spend: ['ram'], knock: 'piston' },
+  backhand: { slot: 'arms', dmg: E3('BHD', 19), cd: E3('BHCD', 2.6), hits: 'arc', p2: E3('BHP2', 0.6), p3: E3('BHP3', 0.25), behind: true, spend: ['wake'], core: 'wake' }, // frayed-cleaver under Wake
+  kick: { slot: 'legs', dmg: 22, cd: 8.0, hits: 'all', p: 0.7, knock: 'kick' },
+  skate: { slot: 'legs', dmg: E3('SKD', 18), cd: E3('SKCD', 7.0), hits: 'all', p: 0.6, spend: ['wake'], skims: true, core: 'wake' }, // frost-trail under Wake
+  spring: { slot: 'legs', dmg: 0, cd: 4.0, hits: 'none' },
+}
+const pv = (id, o = {}) => ({ id, ...P3[id], ...o })
+// Ram's Piston as a variant (PISD, PISCD); BRK = K share the bridge (Scrap Cleaver) spends at; SCD = cooldown x for a core's OWN spenders under it.
+const RAMVAR = { piston: { dmg: E3('PISD', 24), cd: E3('PISCD', 3.0) } }
+const BRK = E3('BRK', 1), SCD = E3('SCD', 1)
+// KMAP="cleaver:3,piston:12": a spender's own flat K per mark (a Fit's k), in place of the core's K x BRK.
+const KMAP = Object.fromEntries((process.env.KMAP ?? '').split(',').filter(Boolean).map((x) => { const [k, v] = x.split(':'); return [k, Number(v)] }))
+const WH = ['lens', 'pvent', 'cleaver', 'kick']
+// TUNE3=prop: the numbers 3-balancer.md ships (env dials still override where named). A Fit's own k (flat per mark) where it differs from the core's K.
+const SHIP = process.env.TUNE3 === 'prop'
+if (SHIP) {
+  Object.assign(P3.cleaver, { k: { wake: E3('KCLW', 3), ram: E3('KCLR', 4) } })                       // the bridge spends at half: +3 / +4 each
+  Object.assign(P3.backhand, { dmg: E3('BHD', 22), cd: E3('BHCD', 2.4), p2: E3('BHP2', 0.8), p3: E3('BHP3', 0.4), k: { wake: E3('KBH', 10) } }) // base 18, cone 150, cd 2400, +10 each
+  Object.assign(P3.skate, { dmg: E3('SKD', 22), cd: E3('SKCD', 5.5) })                                // base 12, cd 5500
+  Object.assign(P3.fflare, { dmg: E3('FFD', 17), rime: E3('FFR', 2) })                                 // base 14
+  RAMVAR.piston = { dmg: E3('PISD', 24), cd: E3('PISCD', 2.6) }; Object.assign(P3.piston, { k: { ram: E3('KPIS', 12) } }) // Piston under Ram: cd 2600, +12 each
+  // the cores: Wake's skim 6, full and every 0.5 s on a body that can't be moved; Ram's shove 8. QB 1 is the central guess for a boss (see 3-balancer).
+  Object.assign(D3, { skim: E3('SKIM', 6), skimBossMul: E3('WAM', 1), lockB: E3('LOCKB', 0.5), QB: E3('QB', 1), shove: E3('SHOVE', 8) })
+}
+// What 3-balancer.md ships for the keystones and upgrades (the extras' "SHIP" rows).
+const SHIPKEY = {
+  'wake-burst': { key: 'wake-burst', share: 1 }, 'wake-deep': { key: 'wake-deep' },
+  'ram-domino': { key: 'ram-domino', dhit: 8 }, 'ram-catch': { key: 'ram-catch', catch: 'bossOnly', share: 1 },
+}
+function fight3(core, parts, opt) {
+  const boss = opt.kind === 'boss', am = boss ? 0.5 : 1, ks = opt.key ?? null, up = new Set(opt.up ?? [])
+  const hps = boss ? [1170] : opt.kind === 'early' ? [42, 42, 42, 28] : opt.kind === 'heavy' ? [120, 64, 64, 64] : [64, 64, 64, 64, 43]
+  const bodies = hps.map((hp, i) => ({ hp, back: !boss && i === hps.length - 1, m: 0, mt: 0, ls: -9, slow: 0, dead: false }))
+  const cored = core !== 'old', K = cored ? D3.K[core] : 0
+  const cap = ks === 'wake-deep' ? (opt.dcap ?? 5) : ks === 'ram-deep' && boss ? 5 : D3.cap, life = ks === 'wake-deep' ? (opt.dlife ?? 4) : D3.life
+  const T = TEMPER[cored ? 'flat' : 'today']
+  const ps = parts.map((p0) => {
+    let p = core === 'ram' && RAMVAR[p0.id] ? { ...p0, ...RAMVAR[p0.id] } : p0
+    if (cored && p.spend?.includes(core) && p.spend.length === 1) p = { ...p, cd: p.cd * SCD }
+    const r = p.rank ?? opt.rank ?? 0; return { ...p, dmg: p.dmg * T.dmg[r], cd: p.cd * T.cd[r], t: rng() * p.cd * T.cd[r], wait: -1, held: 0 }
+  })
+  const st = { t: 0, auto: 0, part: 0, bonus: 0, made: 0, spent: 0, expired: 0, shoves: 0, slams: 0, skims: 0, bursts: 0, catches: 0 }
+  let t = 0, pulled = -9, beat = rng() * BEAT, catchCd = 0
+  const alive = () => bodies.filter((b) => !b.dead)
+  const spends = (p) => cored && p.spend?.includes(core)
+  const mark = (b, n = 1) => { if (!cored || b.dead) return; const add = Math.max(0, Math.min(n, cap - b.m)); st.made += add; b.m += add; b.mt = life }
+  const hurt = (b, d, src, bonus = 0) => {
+    if (b.dead) return
+    const total = d + bonus, dealt = Math.min(b.hp, total)
+    st[src] += dealt; if (bonus) st.bonus += Math.max(0, dealt - Math.min(b.hp, d))
+    const over = total - b.hp; b.hp -= total
+    if (b.hp <= 0) {
+      b.dead = true
+      const spill = Math.min(bonus, over) // shatter: what the marks added beyond the HP left
+      if (spill > 0) { const n = alive()[0]; if (n) { const x = Math.min(n.hp, spill); n.hp -= spill; st.part += x; st.bonus += x; if (n.hp <= 0) n.dead = true } }
+    }
+  }
+  const spendAt = (b, share, src) => { if (b.m <= 0) return; const n = b.m; st.spent += n; b.m = 0; hurt(b, 0, src, Math.round(share * n * K)) }
+  // Ram: one shove's slam test. boss/anchored: always ('still'). Pulled bodies (Backdraft) slam more and mostly into each other.
+  const slamTest = (b, sMul = 1) => {
+    if (b.dead) return
+    if (boss) { st.slams++; mark(b, ks === 'ram-deep' ? 2 : 1); return }
+    const pull = t - pulled < D3.pullS_T, s = Math.min(0.95, D3.S * sMul + (pull ? D3.pullS : 0)), bodyShare = pull ? 0.8 : D3.BODY
+    if (rng() >= s) return
+    st.slams++
+    const others = alive().filter((x) => x !== b)
+    if (others.length && rng() < bodyShare) {
+      let o = others[Math.floor(rng() * others.length)]; mark(b); mark(o)
+      if (ks === 'ram-domino') for (let link = 0; link < 2 && o && rng() < D3.link; link++) {
+        mark(o); if (opt.dhit) hurt(o, opt.dhit * am, 'auto'); const rest = alive().filter((x) => x !== o && x !== b)
+        if (rest.length && rng() < D3.BODY) { const p = rest[Math.floor(rng() * rest.length)]; mark(p); if (opt.dhit) hurt(p, opt.dhit * am, 'auto'); o = p } else break
+      }
+    } else {
+      mark(b)
+      if (up.has('ram-rubble')) for (const o of others) if (rng() < D3.rubP) { hurt(o, E3('RUBD', 4) * am, 'auto'); mark(o) }
+    }
+  }
+  const shove = (b) => { st.shoves++; slamTest(b); hurt(b, D3.shove * am, 'auto') }
+  const skim = (b) => {
+    if (b.dead || t - b.ls < (boss ? D3.lockB : D3.lock)) return
+    b.ls = t; st.skims++
+    const was = b.m
+    hurt(b, D3.skim * (boss ? D3.skimBossMul : 1), 'auto'); if (b.dead) return
+    mark(b, ks === 'wake-deep' && boss && opt.big ? opt.big : 1)
+    const bv = opt.burst ?? 'spec'
+    if (ks === 'wake-burst') {
+      if (bv === 'spec' && b.m >= cap) { st.bursts++; spendAt(b, (opt.share ?? 0.6) * am, 'auto') }      // fill to cap: spend all at share (an autoHit, x0.5 on a boss)
+      else if (bv === 'specfull' && b.m >= cap) { st.bursts++; spendAt(b, opt.share ?? 0.6, 'part') } // the same, full on a boss
+      else if (bv === 'overflow' && was >= cap) { st.bursts++; spendAt(b, opt.share ?? 1, 'part') }   // a skim on a full body: spend all
+      else if (bv === 'keep' && was >= cap) { st.bursts++; hurt(b, 0, 'part', Math.round((opt.share ?? 0.6) * cap * K)) } // a skim on a full body: bonus, marks kept
+      else if (bv === 'two' && b.m >= 2) { st.bursts++; spendAt(b, opt.share ?? 1, 'part') }        // the second ring spends
+      else if (bv === 'twoAuto' && b.m >= 2) { st.bursts++; spendAt(b, (opt.share ?? 1) * am, 'auto') } // the same as a core hit (x0.5 on a boss)
+    }
+    if (up.has('wake-spray') && rng() < D3.sprayP) { const o = alive().filter((x) => x !== b); if (o.length) mark(o[Math.floor(rng() * o.length)]) }
+  }
+  const strike = (p, b) => {
+    if (!b || b.dead) return
+    let bonus = 0
+    if (spends(p) && b.m > 0) { bonus = Math.round(b.m * (KMAP[p.id] ?? p.k?.[core] ?? K * (p.spend.length > 1 ? BRK : 1))); st.spent += b.m; b.m = 0 }
+    hurt(b, p.dmg, 'part', bonus)
+    if (core === 'ram' && p.knock === 'piston') { st.shoves++; slamTest(b, D3.sPiston) }
+    if (core === 'ram' && p.knock === 'kick') { st.shoves++; slamTest(b, D3.sKick) }
+    if (core === 'wake' && p.rime) { mark(b, p.rime); b.slow = t + 2 }
+  }
+  while (alive().length && t < (boss ? 300 : 60)) {
+    t += DT
+    for (const b of bodies) if (b.m > 0 && (b.mt -= DT) <= 0) { st.expired += b.m; b.m = 0 }
+    for (const p of ps) {
+      p.t -= DT
+      if (p.t <= 0 && p.wait < 0) p.wait = exp(opt.hes ?? HESIT)
+      if (p.wait < 0) continue
+      p.wait -= DT; if (p.wait > 0) continue
+      if (spends(p) && !alive().some((b) => b.m > 0) && p.held < 1) { p.held += DT; p.wait = 0; continue }
+      p.wait = -1; p.held = 0; p.t = p.cd
+      const a = alive(); if (!a.length) break
+      const byMarks = [...a].sort((x, y) => y.m - x.m)
+      const lead = spends(p) ? byMarks[0] : (p.hits === 'back' ? a.find((x) => x.back) ?? a[0] : a[0])
+      if (p.hits === 'none') continue
+      if (p.pull && core === 'ram') pulled = t
+      if (p.hits === 'back' || p.hits === 'one') strike(p, lead)
+      else if (p.hits === 'arc') {
+        if (p.behind && rng() < D3.bhWhiff) continue
+        const rest = (p.behind ? byMarks : a).filter((x) => x !== lead), pull = core === 'ram' && t - pulled < D3.pullS_T
+        strike(p, lead); if (rest[0] && rng() < p.p2) strike(p, rest[0]); if (rest[1] && rng() < (pull ? 0.8 : p.p3)) strike(p, rest[1])
+      } else if (p.hits === 'blast') {
+        const pull = core === 'ram' && t - pulled < D3.pullS_T
+        strike(p, lead); for (const b of a) if (b !== lead && rng() < (pull ? 0.7 : p.p)) strike(p, b)
+      } else for (const b of a) if (rng() < p.p) strike(p, b)
+      if (p.skims && core === 'wake') for (const b of alive()) if (rng() < D3.skateSkim) skim(b)
+    }
+    const a = alive(); if (!a.length) break
+    if (core === 'wake') {
+      const q0 = (boss ? D3.QB : D3.Q) * (up.has('wake-slip') ? D3.slipQ : 1)
+      for (const b of a) if (rng() < q0 * (b.slow > t ? D3.slowQ : 1) * DT) skim(b)
+      continue
+    }
+    if (core === 'ram' && ks === 'ram-catch') {
+      catchCd -= DT
+      const rate = boss ? D3.tellB : D3.tell * 1.5
+      if (catchCd <= 0 && (boss || opt.catch !== 'bossOnly') && rng() < rate * DT) {
+        catchCd = 1; st.catches++; const b = a[0]; st.shoves++; slamTest(b, 1)
+        if (opt.catch === 'spend' || ((opt.catch === 'spendBoss' || opt.catch === 'bossOnly') && boss)) spendAt(b, opt.share ?? 1, 'part')
+        hurt(b, D3.shove * am, 'auto'); beat = BEAT
+      }
+    }
+    if ((beat -= DT) <= 0) {
+      beat = BEAT
+      if (core === 'old') {
+        const r = rng()
+        if (r < 0.7) hurt(a[0], 10 * am, 'auto')
+        else if (r < 0.95) { const c = [...a.filter((b) => b.back), ...a.filter((b) => !b.back)]; hurt(c[0], 8 * am, 'auto'); if (c[1] && rng() < 0.3) hurt(c[1], 8 * am, 'auto') }
+        continue
+      }
+      if (rng() > (boss ? D3.UPB : D3.UP)) continue
+      shove(a[0])
+      if (up.has('ram-wide') && a[1] && rng() < D3.wideP) shove(a[1])
+    }
+  }
+  st.t = t
+  return st
+}
+function measure3(core, parts, opt, n) {
+  n = n ?? (opt.kind === 'boss' ? 300 : 2000)
+  const acc = {}
+  for (let i = 0; i < n; i++) { const s = fight3(core, parts, opt); for (const k in s) acc[k] = (acc[k] ?? 0) + s[k] }
+  for (const k in acc) acc[k] /= n
+  return acc
+}
+const KINDS3 = ['early', 'deep', 'heavy', 'boss']
+const sg3 = (g) => `${g >= 0 ? '+' : ''}${Math.round(g * 100)}%`
+function partD() {
+  const N = Number(process.argv[3] ?? 2000), NB = Math.max(150, Math.round(N / 7))
+  const M = (core, parts, o = {}) => Object.fromEntries(KINDS3.map((k) => [k, measure3(core, parts, { ...o, kind: k }, k === 'boss' ? NB : N)]))
+  const whites = WH.map((id) => pv(id))
+  const today = M('old', whites), todayIII = M('old', whites.map((p) => ({ ...p, rank: 2 })))
+  const cell = (m, base) => KINDS3.map((k) => `${k} ${sg3(base[k].t / m[k].t - 1)}`.padEnd(12)).join('')
+  const info = (m) => `deep: made ${m.deep.made.toFixed(1)} spent ${m.deep.spent.toFixed(1)} expired ${m.deep.expired.toFixed(1)}, bonus ${pct(m.deep.bonus / (m.deep.part + m.deep.auto))}` +
+    (m.deep.shoves ? `, slams/shove ${(m.deep.slams / m.deep.shoves).toFixed(2)}` : '') + (m.deep.bursts ? `, bursts ${m.deep.bursts.toFixed(1)}` : '') + `; boss: made ${(m.boss.made / m.boss.t).toFixed(2)}/s spent ${(m.boss.spent / m.boss.t).toFixed(2)}/s`
+  console.log(`D. ROUND 3 (BUILD.md). Median player, hesitation ${HESIT} s. K wake ${D3.K.wake} ram ${D3.K.ram}; Q ${D3.Q} QB ${D3.QB}; S ${D3.S} BODY ${D3.BODY} UP ${D3.UP}.`)
+  console.log(`  today's hand + eye, four whites: ${KINDS3.map((k) => `${k} ${today[k].t.toFixed(1)} s`).join(', ')}; all four III (today's temper): ${cell(todayIII, today)}\n`)
+  const sel = (process.env.CORES ?? 'wake,ram').split(',')
+  const B = {
+    wake: {
+      'whites (Cleaver spends)': [whites, {}],
+      'whites, Piston for Cleaver (no spender)': [[pv('lens'), pv('pvent'), pv('piston'), pv('kick')], {}],
+      'c1: Backhand': [[pv('lens'), pv('pvent'), pv('backhand'), pv('kick')], {}],
+      'c1: Skate (Cleaver kept)': [[pv('lens'), pv('pvent'), pv('cleaver'), pv('skate')], {}],
+      'c2: Backhand + Skate': [[pv('lens'), pv('pvent'), pv('backhand'), pv('skate')], {}],
+      'c3: Backhand + Skate + Frost Flare': [[pv('fflare'), pv('pvent'), pv('backhand'), pv('skate')], {}],
+      'c3, Cleaver for Backhand': [[pv('fflare'), pv('pvent'), pv('cleaver'), pv('skate')], {}],
+      'c2 + Ward (torso)': [[pv('lens'), pv('ward'), pv('backhand'), pv('skate')], {}],
+    },
+    ram: {
+      'whites (Cleaver spends, Kickstart slams)': [whites, {}],
+      'whites, Lens/Vent/Hook-like plain arms (no spender)': [[pv('lens'), pv('pvent'), { ...pv('piston'), spend: [] }, { ...pv('kick'), knock: null }], {}],
+      'c1: Piston': [[pv('lens'), pv('pvent'), pv('piston'), pv('kick')], {}],
+      'c2: Piston + Flare': [[pv('flare'), pv('pvent'), pv('piston'), pv('kick')], {}],
+      'c3: Piston + Flare + Backdraft (+ Kickstart)': [[pv('flare'), pv('backdraft'), pv('piston'), pv('kick')], {}],
+      'c3, Cleaver for Piston': [[pv('flare'), pv('backdraft'), pv('cleaver'), pv('kick')], {}],
+      'c2 + Brace (torso)': [[pv('flare'), pv('brace'), pv('piston'), pv('kick')], {}],
+    },
+  }
+  const C3 = { wake: B.wake['c3: Backhand + Skate + Frost Flare'][0], ram: B.ram['c3: Piston + Flare + Backdraft (+ Kickstart)'][0] }
+  const extra = {
+    wake: [
+      ['c3 + Burst (BUILD: fill to cap, 0.6, a core hit)', { key: 'wake-burst' }],
+      ['c3 + Burst: fill to cap, 1.0, a core hit (x0.5 boss)', { key: 'wake-burst', share: 1 }],
+      ['c3 + Burst "two" (2nd ring: spend all, 1.0, a core hit)', { key: 'wake-burst', burst: 'twoAuto', share: 1 }],
+      ['c3 + Deep (BUILD: cap 5, life 4)', { key: 'wake-deep' }],
+      ['c3 + Deep, a boss skim marks 2 (cap 5, life 4)', { key: 'wake-deep', big: 2 }],
+      ['c3 + Spray', { up: ['wake-spray'] }],
+      ['c3 + Slip (skims x1.1)', { up: ['wake-slip'] }],
+      ['SHIP c3 + Burst', SHIPKEY['wake-burst']], ['SHIP c3 + Deep', SHIPKEY['wake-deep']],
+      ['c3 + Burst 1.0 + Spray + Slip', { key: 'wake-burst', share: 1, up: ['wake-spray', 'wake-slip'] }],
+      ['c3 + Deep + Spray + Slip', { key: 'wake-deep', up: ['wake-spray', 'wake-slip'] }],
+    ],
+    ram: [
+      ['c3 + Domino (BUILD)', { key: 'ram-domino' }],
+      ['c3 + Domino, a chained slam deals the core hit (8)', { key: 'ram-domino', dhit: 8 }],
+      ['c3 + Catch (BUILD: an extra shove on a tell)', { key: 'ram-catch' }],
+      ['c3 + Catch, spends the caught body (1.0)', { key: 'ram-catch', catch: 'spend', share: 1 }],
+      ['c3 + Catch on what can\'t be moved only, spends (1.0)', { key: 'ram-catch', catch: 'bossOnly', share: 1 }],
+      ['c3 + Wide', { up: ['ram-wide'] }],
+      ['c3 + Rubble', { up: ['ram-rubble'] }],
+      ['SHIP c3 + Domino', SHIPKEY['ram-domino']], ['SHIP c3 + Catch', SHIPKEY['ram-catch']],
+      ['c3 + Domino 8 + Wide + Rubble', { key: 'ram-domino', dhit: 8, up: ['ram-wide', 'ram-rubble'] }],
+      ['c3 + Catch boss + Wide + Rubble', { key: 'ram-catch', catch: 'bossOnly', share: 1, up: ['ram-wide', 'ram-rubble'] }],
+    ],
+  }
+  // Ram's pack c3 (Scrap Cleaver in arms) carries the pack keystone and the upgrades too
+  if (process.env.RAMPACK) C3.ram = B.ram['c3, Cleaver for Piston'][0]
+  const out = {}
+  for (const core of sel) {
+    const own = M(core, whites)
+    console.log(`  ${core}: whites ${KINDS3.map((k) => `${k} ${own[k].t.toFixed(1)} s`).join(', ')}  (vs today's whites: ${cell(own, today)})`)
+    out[core] = { whites: own }
+    const row = (name, parts, o, base = own) => { const m = M(core, parts, o); out[core][name] = m; console.log(`    ${name.padEnd(58)} ${cell(m, base)} | vs today ${cell(m, today)} | ${info(m)}`); return m }
+    for (const [name, [parts, o]] of Object.entries(B[core])) row(name, parts, o)
+    row('all four III, flat', whites.map((p) => ({ ...p, rank: 2 })), {})
+    row('c3 at II, flat', C3[core].map((p) => ({ ...p, rank: 1 })), {})
+    row('c3 at III, flat', C3[core].map((p) => ({ ...p, rank: 2 })), {})
+    for (const [name, o] of extra[core]) row(name, C3[core], o)
+    // the whole build: c3, the pack keystone and both upgrades, at I and at III (the investor who builds)
+    const full = core === 'wake' ? { ...SHIPKEY['wake-burst'], up: ['wake-spray', 'wake-slip'] } : { ...SHIPKEY['ram-domino'], up: ['ram-wide', 'ram-rubble'] }
+    row('FULL (c3 + pack keystone + 2 upgrades) at I', C3[core], full)
+    row('FULL at III, flat', C3[core].map((p) => ({ ...p, rank: 2 })), full)
+    console.log('')
+  }
+  return out
+}
+
+// node build-sim.mjs r3m [n]: each fitting part's worth alone, in its slot over the white (deep / boss vs that core's whites).
+function partDm() {
+  const N = Number(process.argv[3] ?? 1500), NB = Math.max(150, Math.round(N / 6))
+  const M = (core, parts, o = {}) => Object.fromEntries(['deep', 'boss', 'early'].map((k) => [k, measure3(core, parts, { ...o, kind: k }, k === 'boss' ? NB : N)]))
+  const whites = WH.map((id) => pv(id)), slotOf = { head: 0, torso: 1, arms: 2, legs: 3 }
+  const today = M('old', whites)
+  const FIT = { wake: ['backhand', 'skate', 'fflare', 'spring', 'ward', 'piston', 'lens'], ram: ['piston', 'flare', 'backdraft', 'brace', 'lens'] }
+  for (const core of (process.env.CORES ?? 'wake,ram').split(',')) {
+    const own = M(core, whites)
+    console.log(`  ${core} whites: deep ${own.deep.t.toFixed(2)} s boss ${own.boss.t.toFixed(1)} s (vs today: deep ${sg3(today.deep.t / own.deep.t - 1)}, boss ${sg3(today.boss.t / own.boss.t - 1)}, early ${sg3(today.early.t / own.early.t - 1)})`)
+    for (const id of FIT[core]) {
+      const parts = whites.slice(); parts[slotOf[P3[id].slot]] = pv(id)
+      const m = M(core, parts)
+      console.log(`    ${id.padEnd(10)} for the ${WH[slotOf[P3[id].slot]].padEnd(8)} early ${sg3(own.early.t / m.early.t - 1).padEnd(5)} deep ${sg3(own.deep.t / m.deep.t - 1).padEnd(5)} boss ${sg3(own.boss.t / m.boss.t - 1).padEnd(5)}  spent deep ${m.deep.spent.toFixed(1)} of ${m.deep.made.toFixed(1)}`)
+    }
+  }
+}
+// node build-sim.mjs r3f [n]: the never-melt floor (DESIGN.md: ~1 in 5). lean-sim's finish model (CURVE9 Broke: lognormal, HP lost ~ kill time^0.8),
+// its never-melt HP-lost row, scaled so today's never-melt finishes 20% (lean 3-balancer pick B, live). Hesitation 3.7 s, rank I throughout.
+// A cored never-melt run wears whites at d1-2, c1 at the d3 boss, c2 at d4-6, c3 at d7-9 (a committed picker, BUILD's hunt), or whites throughout.
+// BRACE: HP lost x this with a core (the planted brace is gone; unknown, 1.0 and 1.1 shown).
+function partDf() {
+  const N = Number(process.argv[3] ?? 1500), NB = Math.max(150, Math.round(N / 6)), HES = 3.7
+  const erf = (x) => { const t = 1 / (1 + 0.3275911 * Math.abs(x)); const y = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-x * x); return x >= 0 ? y : -y }
+  const SIG = Math.sqrt(Math.log(1.25)), pAlive = (m, c) => { const mu = Math.log(m) - SIG * SIG / 2; return 0.5 * (1 + erf((Math.log(c) - mu) / (SIG * Math.SQRT2))) }
+  const LOST = [55, 20, 88, 70, 63, 62, 73, 77, 70], SCRAP = [30, 30, 0, 15, 15, 0, 10, 10, 0], KIND = ['early', 'early', 'boss', 'deep', 'deep', 'boss', 'deep', 'deep', 'boss']
+  const fin = (lam, r) => LOST.reduce((a, l, i) => a * pAlive(lam * l * r[i] ** 0.8, 100 + SCRAP[i]), 1)
+  let lo = 0.3, hi = 3; for (let i = 0; i < 60; i++) { const mid = (lo + hi) / 2; if (fin(mid, LOST.map(() => 1)) > 0.2) lo = mid; else hi = mid } const lam = lo
+  const T = (core, parts, k) => measure3(core, parts, { kind: k, hes: HES }, k === 'boss' ? NB : N).t
+  const whites = WH.map((id) => pv(id)), today = Object.fromEntries(['early', 'deep', 'boss'].map((k) => [k, T('old', whites, k)]))
+  const builds = {
+    wake: { c1: ['lens', 'pvent', 'backhand', 'kick'], c2: ['lens', 'pvent', 'backhand', 'skate'], c3: ['fflare', 'pvent', 'backhand', 'skate'] },
+    ram: { c1: ['flare', 'pvent', 'cleaver', 'kick'], c2: ['flare', 'backdraft', 'cleaver', 'kick'], c3: ['flare', 'backdraft', 'piston', 'kick'] },
+  }
+  console.log(`r3f: never-melt finish (today 20% by construction, lambda ${lam.toFixed(3)}), hesitation ${HES} s`)
+  for (const core of ['wake', 'ram']) {
+    const B = builds[core], at = (ids, k) => T(core, ids.map((id) => pv(id)), k) / today[k]
+    const W = Object.fromEntries(['early', 'deep', 'boss'].map((k) => [k, at(WH, k)]))
+    const rw = KIND.map((k) => W[k])
+    const rb = KIND.map((k, i) => i < 2 ? W[k] : at(i === 2 ? B.c1 : i < 6 ? B.c2 : B.c3, k))
+    for (const [name, r] of [['whites throughout', rw], ['committed (c1 at d3, c2 d4-6, c3 d7-9)', rb]])
+      console.log(`  ${core.padEnd(5)} ${name.padEnd(40)} kill time vs today ${r.map((x) => x.toFixed(2)).join(' ')}   finish ${pct(fin(lam, r))} (no-brace x1.1: ${pct(fin(lam * 1.1, r))})`)
+  }
+}
+if (MODE === 'r3f') partDf()
+if (MODE === 'r3m') partDm()
+if (MODE === 'r3') partD()
 if (MODE === 'r2') partC()
 if (MODE === 'fight' || MODE === 'all') partA()
 if (MODE === 'pool' || MODE === 'all') partB()

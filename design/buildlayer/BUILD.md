@@ -1048,6 +1048,10 @@ Sound, haptics and the felt weight of a shove can't be judged headless. They go 
 - **2: yes**, an old run resumes bare and stays bare.
 - **6: yes**, suites stay bare; decide after B6.
 - **7:** the balancer re-prices in `3-balancer.md` while B1 is built; B2/B3 take his numbers into `cores.ts`.
+- **7 done: `3-balancer.md` is binding for numbers** (its §1 ship column over §2.1 here; `Fit.k` per-part damage per mark from B1).
+  Its line changes are accepted: Ram's slam line is **>= 0.3 slams per core shove** (not 0.4); B5's random line is **random <=
+  0.6 x committed** (not <= 25%, unreachable for Ram); "keystone taken <= 75% when seen" is replaced by keystones left on the floor in
+  his log; upgrades gated from depth 7; Catch only on an immovable body, spending its marks; Domino's chain bodies take the core's K.
 - 3, 4, 5, 8, 9 go to him (5 accepted unless he objects).
 
 1. **When "builds" goes on by default.** My plan: B1-B4 ship with it off (the row visible, on with a tap), and B5 flips it, so his game
