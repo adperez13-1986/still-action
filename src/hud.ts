@@ -1,5 +1,5 @@
 import type { ChooserSpec } from './workshop'
-import { LEAN_GLYPH, riderLine, type AbilityDef, type IconState } from './abilities'
+import { LEAN_GLYPH, type AbilityDef, type IconState } from './abilities'
 import type { CastResult } from './combat'
 import { SLOT_NAMES, type SlotName } from './still'
 import { STATE_GLYPH, type StateId } from './states'
@@ -228,8 +228,8 @@ export interface Hud {
   /** ms of heat left (0 when cool). */
   heatLeft: (slot: SlotName) => number
   /**
-   * A rider (design/leanings/PITCHES.md): the slot's cooldown ends now and the button flashes
-   * ember (a hand break) or cold (an eye break). INV: never clears heat, never refunds a push's strain.
+   * The slot's cooldown ends now and the button flashes ember or cold (a ready that is not a press: the parry-catch trial's catch readies Parry Clamp).
+   * INV: never clears heat, never refunds a push's strain.
    */
   ready: (slot: SlotName, tone: 'ember' | 'cold') => void
   /**
@@ -926,9 +926,9 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
       const nameEl = chooserEl.querySelector<HTMLElement>('.name')!
       nameEl.textContent = d?.name ?? ''
       nameEl.style.color = d?.tier ? TIER_CSS[d.tier] : ''
-      // the wall shows a found part's lean beside its name, and its rider under its line
+      // the wall shows a found part's lean beside its name
       if (d?.lean) nameEl.insertAdjacentHTML('beforeend', ` <span class="plean ${d.lean}" aria-label="${d.lean}">${svg(LEAN_GLYPH[d.lean])}</span>`)
-      chooserEl.querySelector('.line')!.textContent = d?.rider ? `${d.line} ${d.rider}` : d?.line ?? ''
+      chooserEl.querySelector('.line')!.textContent = d?.line ?? ''
       chooserEl.querySelector('.note')!.textContent = [d?.history, d?.note].filter(Boolean).join(' \u00b7 ')
       const act = chooserEl.querySelector<HTMLElement>('.act')!
       act.textContent = c.action ?? ''
@@ -955,8 +955,8 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
       offerHist.textContent = past?.history ?? ''
       offerHist.style.display = past?.history ? '' : 'none'
       offerName.style.color = TIER_CSS[incoming.tier]
-      // the rider's words ride along; the lean's glyph stays off the fight's screen
-      offerLine.textContent = incoming.rider ? `${incoming.line} ${riderLine(incoming.rider)}` : incoming.line
+      // the lean's glyph stays off the fight's screen
+      offerLine.textContent = incoming.line
       offerReplaces.textContent = o.swap ? `${o.swap.take}\n${o.swap.melts}` : current ? `replaces ${current.name}` : `fills the empty ${SLOT_LABEL[incoming.slot]} slot`
       offerPair.textContent = o.pair ?? ''
       offerPair.style.display = o.pair ? '' : 'none'

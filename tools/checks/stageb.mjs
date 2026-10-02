@@ -808,10 +808,12 @@ check('K-T15', LINE, async ({ page }) => {
       W.__train(lane.id)
       let stillLost = 0
       for (let i = 0; i < 240; i++) { const before = C.hp; W.__step(1 / 60); stillLost += before - C.hp; C.hp = 100 }
-      return { bodyLost: hp0 - h.hp, stillLost, mul, hp0 }
+      return { bodyLost: hp0 - h.hp, stillLost, mul, hp0, pack: C.packHpMul }
     } finally { C.eye = true; end() }`)
   bad(got)
-  assert(Math.abs(got.bodyLost - 20 * got.mul) <= 1e-6, `the hulk lost ${got.bodyLost}, not 20 x curve.hp (${20 * got.mul})`)
+  // by design since 2 Oct (B0 suites run weight-on): a train scales with the weight's pack HP too (main.ts lineHost.bodyMul = curve.hp x packHpMul; 1 with weight off),
+  // so at depth 4 the hulk loses 20 x curve.hp x 1.65
+  assert(Math.abs(got.bodyLost - 20 * got.mul * got.pack) <= 1e-6, `the hulk lost ${got.bodyLost}, not 20 x curve.hp x packHpMul (${20 * got.mul * got.pack})`)
   assert(Math.abs(got.stillLost - 20) <= 1e-6, `Still lost ${got.stillLost}, not a flat 20`)
   // the lesson lane's train does 0 to both
   const lesson = await inPage(page, `
@@ -1006,6 +1008,9 @@ check('K-E2', LINE4, async ({ page }) => {
 })
 
 check('K-E3', LINE4, async ({ page }) => {
+  // by design since 2 Oct (B0 suites run weight-on): with weight on every ready cast carries the push's effects, so an UNPUSHED cast reels the Signalman into 'recover'
+  // as a pushed one does (break rule on only: with the rule off it is 'approach' either way); with weight off (WEIGHT=0) an unpushed cast leaves it in 'approach'
+  const weightOn = await page.evaluate(() => window.__weight())
   const one = (label, breakRule, pushed) => inPage(page, `
     ${SIG_KIT}
     const end = begin(1, 'parry-clamp')
@@ -1035,7 +1040,7 @@ check('K-E3', LINE4, async ({ page }) => {
     const got = await one(label, rule, pushed)
     bad(got)
     assert(got.interrupts === 1 && got.hurt > 0, `${label}: ${got.interrupts} interrupt event(s), hurt ${got.hurt}`)
-    assert(got.phase === (pushed ? 'recover' : 'approach'), `${label}: the Signalman is in ${got.phase} after the cast`)
+    assert(got.phase === (pushed || (weightOn && rule) ? 'recover' : 'approach'), `${label}: the Signalman is in ${got.phase} after the cast`)
     assert(got.calls === 0 && got.trains === 0, `${label}: it called anyway (${got.calls} call event(s), ${got.trains} train(s))`)
     assert(got.again >= 3.0 - 1 / 60 - 1e-9, `${label}: its next windup came ${got.again < 0 ? 'never' : got.again.toFixed(3) + ' s'} after the cast, under 3.0`)
     if (pushed) assert(Math.abs(got.reelHit - 15) < 1e-9, `${label}: a hit of 10 on the reeling Signalman took ${got.reelHit}, not 15`)

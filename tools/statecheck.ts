@@ -6,12 +6,13 @@
  * Every state's multiplier within the cap; stateMul's rules (the larger of two, the own slot pays
  * nothing, a mastery's pays any slot, the cap); `pays` only on parts that deal damage; no part
  * sets and pays one state; every paid state has a setter in another slot or a mastery; masteries
- * never pay; what a part sets agrees with its mod, and its card says it.
+ * never pay; what a part sets agrees with its mod, and its card says it; temper's damage and cooldown
+ * tables (src/temper.ts) are the numbers the game shipped with, and tempered() reads them (B0, 2 Oct: nothing else guarded them).
  * Exits 1 on any failure.
  */
 import { PARTS, byId, type AbilityDef } from '../src/abilities'
 import { MASTERY, type MasteryId } from '../src/mastery'
-import { tempered } from '../src/temper'
+import { TEMPER, tempered } from '../src/temper'
 import { MUL_CAP, STATE, STATE_IDS, STATE_WORD, stateMul, type StateBy, type StateId } from '../src/states'
 
 const fails: string[] = []
@@ -86,6 +87,20 @@ for (const id of Object.keys(MASTERY) as MasteryId[]) {
   if (m.sets) {
     check(STATE_IDS.includes(m.sets), `${id}: ${m.sets} is not a state`)
     check(m.line.includes(`${STATE_WORD[m.sets].verb} what it hits`), `${id}: its card doesn't say it ${STATE_WORD[m.sets].verb}`)
+  }
+}
+
+// temper's tables, I II III. Today's: damage x1 / 1.3 / 1.6, cooldown x1 / 0.85 / 0.72 (a part's damage a second at III is x2.22). A change to them is a design
+// change (the flat temper trial, design/buildlayer: 1 / 1.15 / 1.3 and 1 / 0.92 / 0.85, behind its switch): update these numbers with it, on purpose.
+check(JSON.stringify(TEMPER.damage) === '[1,1.3,1.6]', `temper damage table ${JSON.stringify(TEMPER.damage)}, shipped [1,1.3,1.6]`)
+check(JSON.stringify(TEMPER.cooldown) === '[1,0.85,0.72]', `temper cooldown table ${JSON.stringify(TEMPER.cooldown)}, shipped [1,0.85,0.72]`)
+// and every card and mod reads them: a plain damage part at II and III, and its cooldown
+{
+  const cl = byId('scrap-cleaver')
+  for (const [rank, dmg, cd] of [[2, 1.3, 0.85], [3, 1.6, 0.72]] as const) {
+    const t = tempered(cl, rank)
+    check(t.damage === Math.round(cl.damage * dmg), `Scrap Cleaver at ${rank}: damage ${t.damage}, want ${Math.round(cl.damage * dmg)}`)
+    check(t.cooldownMs === Math.round(cl.cooldownMs * cd), `Scrap Cleaver at ${rank}: cooldown ${t.cooldownMs} ms, want ${Math.round(cl.cooldownMs * cd)}`)
   }
 }
 

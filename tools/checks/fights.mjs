@@ -12,6 +12,10 @@
  * 1/60 s ticks with Still's HP put back to 100 before each tick (so no ending triggers; the HP he lost is read after it).
  * `compare` PASSes when every scenario outside `--may-differ` is equal; a listed one prints INFO either way. A stage that
  * changes a fight on purpose names its scenarios, reviews the diff, then re-captures.
+ *
+ * 2 Oct (build layer B0): re-captured with weight ON (the suites' live default, lib.mjs); tap push changes nothing here (`__fire` is not a touch). The diff against the
+ * weight-off file is weight's known numbers only: depth-1 pack HP x1.4 (a hulk 30 -> 42, a sentinel 20 -> 28), and what follows from fights that run longer (Still loses more
+ * HP in F1-F6, F8, F9; counter, lunge and skid events now fit in the window; F2, F3, F5 count more pierce hits). `WEIGHT=0` no longer compares equal.
  */
 import { readFileSync, writeFileSync } from 'node:fs'
 import { REPO, evalJson, firstDiff, openPage, startVite } from './lib.mjs'

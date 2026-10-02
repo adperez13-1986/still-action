@@ -344,7 +344,7 @@ export interface CombatEvents {
   /** The eye's planted shot struck `e` for EYE.damage (each body on its line); `broke`: it broke a windup. */
   onLance: (e: Enemy, broke: boolean) => void
   /**
-   * A trigger the enemy caused, for the riders: the hand or the eye broke a windup ('break'), or
+   * A trigger the enemy caused: the hand or the eye broke a windup ('break'), or
    * struck a boss first in one of its openings ('opening', nothing interrupted). Never a part's break.
    */
   onTrigger: (by: AutoForm, e: Enemy, how: 'break' | 'opening') => void

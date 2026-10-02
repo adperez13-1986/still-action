@@ -16660,7 +16660,7 @@
     },
     "boss": {
      "kind": "assembler",
-     "hp": 900
+     "hp": 1170
     },
     "exits": {
      "cold": {
@@ -16834,7 +16834,7 @@
     },
     "boss": {
      "kind": "arbiter",
-     "hp": 1170
+     "hp": 1521
     },
     "exits": {
      "cold": null,
@@ -17002,7 +17002,7 @@
     },
     "boss": {
      "kind": "assembler",
-     "hp": 900
+     "hp": 1170
     },
     "exits": {
      "cold": {
@@ -17176,7 +17176,7 @@
     },
     "boss": {
      "kind": "arbiter",
-     "hp": 1170
+     "hp": 1521
     },
     "exits": {
      "cold": null,

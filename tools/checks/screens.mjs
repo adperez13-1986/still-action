@@ -68,7 +68,7 @@ const REACH = `(sel) => {
 /** In the page: the longest line in each slot, worn, with a long past (what a fourth-run gold loadout reads like). */
 const WORST = `() => {
   const pick = (slot) => window.__parts.filter((p) => p.slot === slot)
-    .sort((a, b) => (b.line.length + (b.rider ? 60 : 0)) - (a.line.length + (a.rider ? 60 : 0)))[0]
+    .sort((a, b) => b.line.length - a.line.length)[0]
   window.__pause.setDescribe((d) => ({ name: d.name + ' III, that saw the Arbiter', history: 'carried 17 runs, saw depth 9' }))
   window.__pause.setLearned(() => ['Cold Strike', 'Splitting Shot', 'Marking Shot', 'Cold Shot', 'Wide Strike', 'Heavy Strike']
     .map((n) => ({ name: n, line: 'Every planted shot that kills splits into two at the nearest bodies.' })))

@@ -38,7 +38,7 @@ import { Sightline } from './sightline'
 import { createCameraRig } from './camera'
 import { updateMusic, musicNow } from './music'
 import { updateAmbience, type AmbienceMood } from './ambience'
-import { Loot, LOOT, dropChance, rollPart, rollPicks, leanOf, PEDESTALS, type GroundPart, type PickKind, type PickSet } from './loot'
+import { Loot, LOOT, dropChance, rollPart, rollPicks, leanOf, PEDESTALS, PEDESTALS_ON, type GroundPart, type PickKind, type PickSet } from './loot'
 import { createPauseScreen } from './pause'
 import { createOverlay } from './ending'
 import { loadKit, setSurfaces, pieceData, surfaceNow, buildInstanced, PIECES, type Piece } from './kit'
@@ -596,7 +596,6 @@ const combat = new Combat(world.scene, OPEN, {
       const st = run.stats[run.stats.length - 1]
       if (st) st.openings = (st.openings ?? 0) + 1
     }
-    ride(by)
   },
   onHand: (e, broke) => {
     // melee, not a bolt: the clamp's clacks, a short knock, a few sparks off the near side, half the shot's hitstop
@@ -1395,28 +1394,6 @@ function logState(ev: Extract<PartEvent, { kind: 'state' }>) {
   }
 }
 
-/** When each rider may fire next (game ms), by part id. */
-const riderNext = new Map<string, number>()
-/**
- * The riders (design/leanings/PITCHES.md): a hand or eye trigger readies the button of each worn
- * part riding it (Patient Lens fully charged too), once per its cap, and the button flashes ember
- * (hand) or cold (eye). A button with nothing to give (ready, and a full lens) spends no cap.
- * Heat and a push's strain stay: the rider only ends the cooldown.
- */
-function ride(by: AutoForm) {
-  for (const def of hud.loadout) {
-    const r = def.rider
-    if (!r || r.on !== by || clock < (riderNext.get(def.id) ?? -Infinity)) continue
-    const full = r.act === 'charge' && def.mod?.kind === 'charge' ? def.mod.fullS : 0
-    if (hud.readyIn(def.slot) <= 0 && combat.parts.patientSince >= full) continue
-    riderNext.set(def.id, clock + r.icdMs)
-    if (full) combat.parts.patientSince = Math.max(combat.parts.patientSince, full)
-    hud.ready(def.slot, by === 'hand' ? 'ember' : 'cold')
-    const st = run.stats[run.stats.length - 1]
-    if (st) st.riders = { ...st.riders, [def.id]: (st.riders?.[def.id] ?? 0) + 1 }
-  }
-}
-
 /** N9: an enemy's live tell shatters into cold shards along its own outline (ember when the hand broke it). */
 function tellBreak(e: Enemy, color = COLD) {
   // a mite's piece of the ring shatters through its brood (biterLost), not round its own body
@@ -1622,11 +1599,10 @@ interface DepthStats {
   /**
    * The leanings (design/leanings/PITCHES.md): windups the eye broke; boss openings whose first hand
    * or eye hit fired a trigger; seconds planted (game time, crawl); the autos' damage by form
-   * (nominal: HAND.damage a strike, EYE.damage a body the planted shot hits); rider fires by part id.
+   * (nominal: HAND.damage a strike, EYE.damage a body the planted shot hits). Old logs also carry `riders` (fires by part id; cut 2 Oct).
    */
   eyeBreaks?: number; openings?: number; plantedS?: number
   autoDmg?: { hand: number; eye: number }
-  riders?: Record<string, number>
   /**
    * The follow-through trial (design/autos/BUILD-1.md), logged with the switch on or off. `followThrough`: on at this depth.
    * `autoDmgReal`: what the autos actually dealt (after a boss's half, with the hand-cleave and the eye's splits), where
@@ -1882,13 +1858,6 @@ const pool = (): PoolView => poolView(save, run.depth)
 // --- shrines: one bargain each ---
 
 const SHRINE_RADIUS = 1.7
-
-/**
- * Pedestals are off (28 Sep, his call: "remove the pedestals"; he was "not feeling the benefit").
- * Exits raise nothing, Plenty drops one part for its strain, the Assembler leaves a blue and a gold
- * on the floor, as before pedestals. The code stays behind this for a way back.
- */
-const PEDESTALS_ON = false
 
 const SHRINE_TEXT = {
   rest: { title: 'Shrine of Rest', line: 'strain \u22126. Something nearby will hear it.', action: 'rest' },
@@ -3145,7 +3114,7 @@ function enterLevel(depth: number, o: { seed?: number; bossFelled?: boolean; res
   prev.copy(still.pos)
   run.depth = depth
   closeStats()
-  run.stats.push({ depth, fights: 0, pushes: 0, breaks: 0, deadTaps: 0, quiets: 0, strainIn: run.strain, strainOut: null, hand: 0, shots: 0, eye: 0, eyeCasts: 0, handBreaks: 0, braced: 0, playS: 0, eyeBreaks: 0, openings: 0, plantedS: 0, autoDmg: { hand: 0, eye: 0 }, riders: {}, pressure: combat.pressure, hpLost: 0,
+  run.stats.push({ depth, fights: 0, pushes: 0, breaks: 0, deadTaps: 0, quiets: 0, strainIn: run.strain, strainOut: null, hand: 0, shots: 0, eye: 0, eyeCasts: 0, handBreaks: 0, braced: 0, playS: 0, eyeBreaks: 0, openings: 0, plantedS: 0, autoDmg: { hand: 0, eye: 0 }, pressure: combat.pressure, hpLost: 0,
     followThrough: combat.followThrough, weight: combat.weight, breaksBy: { ready: 0, pushed: 0 }, freezeMs: 0, freezePartMs: 0, freezeAutoMs: 0, tapPush: hud.tapPush, tapPushes: 0, queued: 0, queueDropped: 0, guarded: 0, autoDmgReal: { hand: 0, eye: 0 }, kills: { part: 0, auto: 0, other: 0 }, fightS: 0, bankBeats: 0, emptyBeats: 0, temper: temperOn, melts: 0,
     counters: combat.counters, lunges: { started: 0, hit: 0, broken: 0 }, catches: { hulk: 0, sentinel: 0, mite: 0 }, parryCatch: combat.parryCatch, parryReadies: 0, ducks: { started: 0, peeked: 0, backed: 0 },
     states: Object.fromEntries(STATE_IDS.map((id) => [id, { set: 0, paid: 0, expired: 0 }])) as DepthStats['states'],

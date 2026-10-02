@@ -432,8 +432,6 @@ html, body {
 .pcard.tier-blue .pname { color: var(--tier-blue); }
 .pcard.tier-gold .pname { color: var(--tier-gold); }
 .pcard .pline { margin: 5px 0 10px; font-size: 13px; line-height: 1.35; color: #9fb2c6; flex: 1; }
-/* a rider: the payoff the enemy's windup pays, under the part's own line */
-.pcard .prider { display: block; margin-top: 5px; font-weight: 600; color: #cbd7e6; }
 /* the lean: the stance's floor mark, small and muted beside the name (card, compare, wall; never the HUD) */
 .plean { display: inline-block; vertical-align: -2px; margin-left: 4px; color: #7f93a8; }
 .plean svg { width: 15px; height: 15px; display: block; }

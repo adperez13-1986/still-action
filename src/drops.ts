@@ -158,8 +158,16 @@ export const PEDESTALS = {
 }
 
 /**
+ * Pedestals are off (28 Sep, his call: "remove the pedestals"; he was "not feeling the benefit").
+ * Exits raise nothing, Plenty drops one part for its strain, a boss leaves a blue and a gold on the
+ * floor (never for the same slot), as before pedestals. The code stays behind this for a way back.
+ * Here, not in main.ts, so the drop simulator (tools/dropsim.ts) reads the value the game does.
+ */
+export const PEDESTALS_ON = false
+
+/**
  * The leaning match (design/leanings/PITCHES.md), built and left off: pedestals are the economy
- * change on trial, the eye break and the riders the combat one. It turns on after he has played
+ * change on trial, the eye break the combat one (the riders were cut 28 Sep). It turns on after he has played
  * 3 plain-pedestal runs.
  */
 export const LEAN_MATCH = false

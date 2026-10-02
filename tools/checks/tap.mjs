@@ -1,6 +1,7 @@
 /**
- * The "tap push" trial's checks (design/lean/TAP-PUSH.md §4; the words "tap push" are a PLACEHOLDER). K-P1 is off-is-today: the regression
- * suites run as child processes and must print what the clean tree printed before P0 (RECORD below), and the hold path is driven by real
+ * The "tap push" trial's checks (design/lean/TAP-PUSH.md §4; the words "tap push" are a PLACEHOLDER). K-P1: the regression suites run as child
+ * processes on the live defaults (tap push and weight both on, which the harness pins since 2 Oct, build layer B0) and must print what RECORD says
+ * (the ids the clean tree printed before P0, 1 Oct, with the checks' by-design changes since), and the hold path (the switch off) is driven by real
  * presses. Every press here is a real mouse press through the HUD (page.mouse on the real button), with the HUD clock held (`__clockHold`) so
  * it moves only by `__step`; the answer is read in an evaluate between `mouse.down` and `mouse.up`, with no step between.
  * `node tools/checks/tap.mjs [K-P3 ...]`.
@@ -120,10 +121,10 @@ const settle = (page, slot) =>
 
 const cooldownOf = (page, slot) => evalJson(page, `(slot) => window.__hud.slots.find((s) => s.slot === slot).def.cooldownMs`, slot)
 
-// ---- K-P1: off is today's game ----------------------------------------------------------------------------------------------------------
+// ---- K-P1: the live game, and the hold path with the switch off ----------------------------------------------------------------------------------------------------------
 
 /**
- * What the clean tree printed before P0 (1 Oct 2026, tree at 5a40653): per suite, its argv, every id it prints and the ids that FAIL there.
+ * What the suites print on the live defaults (2 Oct 2026, B0; the ids are the clean tree's of 1 Oct, 5a40653): per suite, its argv, every id it prints and the ids that FAIL there.
  * K-W3d is the known Parry finding: it fails today and must keep failing the same way. dist/ then was 1,314,275 bytes of JS (1,314.28 kB, gzip 389.85 kB).
  */
 const LEAN_IDS = ['K-L2', 'K-L10', 'K-L6', 'K-L7', 'K-L8', 'K-L9', 'K-L4', 'K-L5', 'K-L3', 'K-L11', 'K-L13', 'K-L12', 'K-L12w']
@@ -159,7 +160,7 @@ const RECORD = {
   'lean.mjs': { args: LEAN_IDS, pass: LEAN_IDS, fail: [] },
 }
 
-/** Run one suite as a child process, the switches' env stripped (a TAP=1 or WEIGHT=1 run of this file must not turn the children on): its PASS / FAIL lines, in order. */
+/** Run one suite as a child process, the switches' env stripped (a TAP=0 or WEIGHT=0 run of this file must not turn the children off: RECORD is the live game): its PASS / FAIL lines, in order. */
 function suiteLines(file, args) {
   return new Promise((resolve, reject) => {
     const env = { ...process.env }
@@ -206,16 +207,17 @@ check('K-P1', RUN + '&trialDefaults', async ({ page }) => {
   assertEq("the open depth's log: tapPush", got.logged, true)
 })
 
-// K-P1 (a): the first check of this page: the switch never touched but for the harness's pin (lib.mjs), so off
+// K-P1 (a): the first check of this page: the switch never touched but for the harness's pin (lib.mjs): '1', so on (TAP=0 in the env pins '0')
 check('K-P1', RUN, async ({ page }) => {
+  const off = process.env.TAP === '0'
   const got = await evalJson(page, () => ({
     stored: localStorage.getItem('still-action.tapPush'),
     on: window.__tapPush(),
     logged: window.__runStats().at(-1).tapPush,
   }))
-  assertEq("the harness's pin", got.stored, '0')
-  assertEq('__tapPush() is false', got.on, false)
-  assertEq("the open depth's log: tapPush", got.logged, false)
+  assertEq("the harness's pin", got.stored, off ? '0' : '1')
+  assertEq(`__tapPush() is ${!off}`, got.on, !off)
+  assertEq("the open depth's log: tapPush", got.logged, !off)
 })
 
 // K-P1 (b): the switch off, the hold path by real presses: today's gesture, line for line
@@ -292,6 +294,12 @@ const FLIP = `() => {
 
 check('K-P2', RUN, async ({ page }) => {
   try {
+    // the page boots with tap push on (the live default, the harness's pin); this check walks the switch from OFF, as it always did, so the real click
+    // turns it on: switch it off first by the same real click on the row, at the depth the page booted on, unless the env already did (TAP=0)
+    await evalJson(page, `() => {
+      window.__run.dev = false
+      if (localStorage.getItem('still-action.tapPush') !== '0') (${FLIP})()
+    }`)
     await switchChecks(page)
   } finally {
     // a failing check leaves the switch off for the ones after it

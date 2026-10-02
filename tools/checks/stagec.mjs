@@ -2189,7 +2189,10 @@ const playFight = (extra) => `
 // K-N9: the INV sweep. 120 s of the bot's fight on ENG6 and both ENG9 orders, two seeds each. The brief's "HP at the start is def.hp" is 900 x the depth
 // curve's bossHp: 1170 (6-depth, at 6), 1080 (9-depth, III at 6), 1170 (9-depth, II at 9).
 const N9_BASE = { train: 20, steam: 14, shell: 12, wagon: 12 }
+// These are with weight OFF. The suites boot with it on (2 Oct, B0): a boss's HP is then x the preset's bossHp (B: 1.3, one Math.round; main.ts enterLevel),
+// so 1521 / 1404 / 1521. Weight's known number, by design; WEIGHT=0 is the old game.
 const N9_HP = { 'III@6/6': 1170, 'III@6/9': 1080, 'II@9/9': 1170 }
+const WEIGHT_BOSS_HP = 1.3
 const N9_SPECS = [[ENG6, [['III', 6, '6']]], [ENG9, [['III', 6, '9'], ['II', 9, '9']]]]
 for (const [query, orders] of N9_SPECS) {
   check('K-N9', query, async ({ page }) => {
@@ -2198,7 +2201,8 @@ for (const [query, orders] of N9_SPECS) {
         const got = await inPage(page, FIGHT + playFight(), { order, depth, seed, seconds: 120, forceP2At: 60 })
         const key = `${order}@${depth}/${runLen}`
         const why = (m) => { throw new Error(`${key} seed ${seed}: ${m}`) }
-        const wantHp = N9_HP[`${order}@${depth}/${runLen}`]
+        const weightOn = await page.evaluate(() => window.__weight())
+        const wantHp = weightOn ? Math.round(N9_HP[`${order}@${depth}/${runLen}`] * WEIGHT_BOSS_HP) : N9_HP[`${order}@${depth}/${runLen}`]
         if (got.start.hp !== wantHp || got.start.maxHp !== wantHp || got.start.defHp !== wantHp) why(`HP at the start is ${got.start.hp} / ${got.start.maxHp} (def.hp ${got.start.defHp}), not ${wantHp}`)
         if (got.foreign) why(`${got.foreign} hazard(s) on the floor were not the Engine's`)
         if (got.ticks < 60 * 100 && !got.dead) why(`the sweep ran only ${got.ticks} ticks`)

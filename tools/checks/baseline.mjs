@@ -6,7 +6,11 @@
  *
  * It runs against the 6-depth page, pinned with roads=0&line=0&engine=0 (the live game is 9 depths since 30 Sep),
  * so it records what the game was: 6 depths,
- * today's curve, day and generator output on both routes. `capture` was run on the untouched src/
+ * today's curve, day and generator output on both routes.
+ *
+ * 2 Oct (build layer B0): the suites boot with weight and tap push ON (lib.mjs), as the live game does, and this file was re-captured so. The ONLY change from
+ * the weight-off capture is the four boss HPs in `entered` (routes II and III, depths 3 and 6: 900 -> 1170 and 1170 -> 1521, weight's x1.3 `bossHp`); generator
+ * output, curve, day and the census hash are byte-identical. `WEIGHT=0 node tools/checks/baseline.mjs compare` fails on exactly those four lines. `capture` was run on the untouched src/
  * before any stage R change; every later step must still `compare` PASS. The file is deterministic, so a
  * second capture is byte-identical to the first.
  *
@@ -113,11 +117,15 @@ async function withPage(fn) {
   }
 }
 
-/** Info only, never a fail: does the census equal tools/levels.json's depths (25 Sep; drift there predates stage R)? */
+/**
+ * Info only, never a fail: does this page's census equal tools/levels.json's depths? Since 2 Oct levels.json is the 9-depth game's (B0, road II), and this page
+ * is the 6-depth one, so only the depths this page has are compared (1-6).
+ */
 function levelsInfo(censusDepths) {
   const file = JSON.parse(readFileSync(LEVELS, 'utf8'))
-  const d = firstDiff(censusDepths, file.depths)
-  console.log(d ? `INFO levels.json: census differs from tools/levels.json depths (first difference ${d})` : 'INFO levels.json: census equals tools/levels.json depths')
+  const same = Object.fromEntries(Object.keys(censusDepths).map((k) => [k, file.depths[k]]))
+  const d = firstDiff(censusDepths, same)
+  console.log(d ? `INFO levels.json: census differs from tools/levels.json depths 1-${Object.keys(censusDepths).length} (first difference ${d})` : `INFO levels.json: census equals tools/levels.json depths 1-${Object.keys(censusDepths).length}`)
 }
 
 /** A deep copy of `rec` without the `paths` (dotted, from the root). */

@@ -1,6 +1,7 @@
 /**
- * The "weight" trial's checks (design/lean/WEIGHT.md §4; the word "weight" is a PLACEHOLDER). K-L1 is off-is-today: the regression suites
- * run as child processes and must print what W0 recorded. Each other check is one evaluate on the arena with the frame loop held, except
+ * The "weight" trial's checks (design/lean/WEIGHT.md §4; the word "weight" is a PLACEHOLDER). K-L1 is the live game: weight is on by default (1 Oct) and
+ * since 2 Oct (build layer B0) the suites' harness boots it on, so the regression suites run as child processes on the live defaults and must print what
+ * RECORD says (it was "off is today" until B0). Each other check is one evaluate on the arena with the frame loop held, except
  * K-L2's real click on the pause screen's switch. `node tools/checks/lean.mjs [K-L2 ...]`.
  * Not to be confused with tools/leancheck.ts, which belongs to the leanings round.
  */
@@ -80,7 +81,11 @@ const FLIP = `() => {
   W.__pause.hide()
 }`
 
-/** What W0 recorded, per suite (1 Oct 2026, before any src change): its argv, every id it prints, and the ids that FAIL there. */
+/**
+ * What each suite prints on the live defaults (weight and tap push both on, 2 Oct 2026, build layer B0): its argv, every id it prints, and the ids that FAIL there.
+ * (Until B0 this was W0's record with weight off, 1 Oct, before any src change. The ids are the same; K-90 / K-90F were re-captured with weight on, and K-A7, K-N9,
+ * K-T15 and K-E3 now expect weight's and tap push's numbers: see each check.)
+ */
 const RECORD = {
   'fights.mjs': { args: ['compare'], pass: ['K-90F'], fail: [] },
   'autos.mjs': { args: [], pass: ['K-A2', 'K-A3', 'K-A4', 'K-A5', 'K-A6', 'K-A7', 'K-A8', 'K-A9', 'K-A10'], fail: [] },
@@ -100,10 +105,13 @@ const RECORD = {
   },
 }
 
-/** Run one suite as a child process: its PASS / FAIL lines, in order. */
+/** Run one suite as a child process, the switches' env stripped (a WEIGHT=0 or TAP=0 run of this file must not turn the children off: RECORD is the live game): its PASS / FAIL lines, in order. */
 function suiteLines(file, args) {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [HERE + file, ...args], { cwd: HERE + '../../' })
+    const env = { ...process.env }
+    delete env.TAP
+    delete env.WEIGHT
+    const child = spawn(process.execPath, [HERE + file, ...args], { cwd: HERE + '../../', env })
     let out = ''
     child.stdout.on('data', (d) => (out += d))
     child.stderr.on('data', (d) => (out += d))
@@ -117,7 +125,7 @@ function suiteLines(file, args) {
   })
 }
 
-// K-L1 off is today's game: the whole regression set prints what W0 recorded (the page part is below)
+// K-L1 is the live game: the whole regression set, on the live defaults, prints what RECORD says (the page parts are below)
 task('K-L1', async () => {
   for (const [file, rec] of Object.entries(RECORD)) {
     const lines = await suiteLines(file, rec.args)
@@ -125,7 +133,7 @@ task('K-L1', async () => {
     const want = [...rec.pass.map((id) => `PASS:${id}`), ...rec.fail.map((id) => `FAIL:${id}`)]
     const extra = got.filter((g) => !want.includes(g))
     const missing = want.filter((w) => !got.includes(w))
-    assert(extra.length === 0 && missing.length === 0, `${file} ${rec.args.join(' ')}: differs from W0's record: now ${extra.join(', ') || 'nothing new'}; no longer ${missing.join(', ') || 'nothing lost'}`)
+    assert(extra.length === 0 && missing.length === 0, `${file} ${rec.args.join(' ')}: differs from the record: now ${extra.join(', ') || 'nothing new'}; no longer ${missing.join(', ') || 'nothing lost'}`)
     assertEq(`${file}: lines printed`, got.length, want.length)
   }
 })
@@ -144,8 +152,9 @@ check('K-L1', RUN + '&trialDefaults', async ({ page }) => {
   assert(got.packHpMul > 1, `the weight's pack HP from the first level: packHpMul ${got.packHpMul}`)
 })
 
-// the first check of this page: the switch never touched but for the harness's pin (lib.mjs), so off
+// the first check of this page: the switch never touched but for the harness's pin (lib.mjs): '1', so on (WEIGHT=0 in the env pins '0': the old game)
 check('K-L1', RUN, async ({ page }) => {
+  const off = process.env.WEIGHT === '0'
   const got = await evalJson(page, () => ({
     stored: localStorage.getItem('still-action.weight'),
     on: window.__weight(),
@@ -153,10 +162,11 @@ check('K-L1', RUN, async ({ page }) => {
     packHpMul: window.__combat.packHpMul,
     heavyHpMul: window.__combat.heavyHpMul,
   }))
-  assertEq("the harness's pin", got.stored, '0')
-  assertEq('__weight() is false', got.on, false)
-  assertEq("the open depth's log: weight", got.logged, false)
-  assertEq('the HP multipliers are 1', [got.packHpMul, got.heavyHpMul], [1, 1])
+  assertEq("the harness's pin", got.stored, off ? '0' : '1')
+  assertEq(`__weight() is ${!off}`, got.on, !off)
+  assertEq("the open depth's log: weight", got.logged, !off)
+  if (off) assertEq('the HP multipliers are 1', [got.packHpMul, got.heavyHpMul], [1, 1])
+  else assert(got.packHpMul > 1 && got.heavyHpMul >= 1, `the weight's pack HP on the first level: packHpMul ${got.packHpMul}, heavyHpMul ${got.heavyHpMul}`)
 })
 
 // K-L2 the switch: a real click on the pause screen's row, at once on the next press, HP from the next level
@@ -171,6 +181,14 @@ check('K-L2', RUN, async ({ page }) => {
   }
 })
 async function switchChecks(page) {
+  // the page boots with weight on (the live default, the harness's pin); this check walks the switch from OFF, as it always did, so the real click
+  // below turns it on. Switch it off first by the same real click on the row (at depth 1, before the depth this check reads is entered), unless the env already did (WEIGHT=0)
+  await evalJson(page, `() => {
+    const W = window
+    W.__run.dev = false
+    if (localStorage.getItem('still-action.weight') !== '0') (${FLIP})()
+  }`)
+  assertEq('the stored switch is off before the walk', await page.evaluate(() => localStorage.getItem('still-action.weight')), '0')
   await evalJson(page, `() => {
     const W = window
     W.__run.dev = false

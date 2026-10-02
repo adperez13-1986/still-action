@@ -93,14 +93,6 @@ export type IconState = 'fray-180' | 'fray-360' | 'snap'
  */
 export type Lean = 'close' | 'marksman'
 
-/**
- * A payoff on the part's own button, fired by what the enemy does: a hand break (the hand's
- * strike breaks a windup) or an eye break (a planted shot does), or the first hand or eye hit in
- * a boss's opening. `ready` readies the button fully; `charge` also fills Patient Lens. At most one
- * fire per `icdMs`. Never from a break a part caused, never HP, never another part.
- */
-export interface Rider { on: 'hand' | 'eye'; act: 'ready' | 'charge'; icdMs: number }
-
 export interface AbilityDef {
   id: string
   slot: SlotName
@@ -160,7 +152,6 @@ export interface AbilityDef {
   pips?: { n: number; hollow?: boolean }
   /** Close, marksman, or none (Borrowed Time). */
   lean?: Lean
-  rider?: Rider
   /** Enemy states this part sets (states.ts); its mod does the setting, this says so to the checks and the card. */
   sets?: StateId[]
   /** Enemy states this part pays: a hit on a body carrying one, set outside its slot, lands twice and uses it up. */
@@ -170,7 +161,7 @@ export interface AbilityDef {
 const KEYS: Record<SlotName, string> = { head: 'H', torso: 'T', arms: 'A', legs: 'L' }
 
 // Riders (a part readied by a hand or eye break, 4 s cap) were cut on 28 Sep: breaks are rare under
-// the pressure prototype and a free ready sold what the push buys. The `rider` field and its runtime stay.
+// the pressure prototype and a free ready sold what the push buys. Their field and runtime were removed on 2 Oct (build layer B0).
 
 function part(p: Omit<AbilityDef, 'key' | 'drops'> & { drops?: DropGate }): AbilityDef {
   return { drops: 'any', ...p, key: KEYS[p.slot] }
@@ -184,8 +175,8 @@ const I = {
 
 /**
  * The whole pool: 30 parts, 12 shapes. Numbers are the balancer's, words and icons
- * the translator's (design/parts). Leans and riders: design/leanings/PITCHES.md
- * (close 13, marksman 16, none 1; four riders).
+ * the translator's (design/parts). Leans: design/leanings/PITCHES.md
+ * (close 13, marksman 16, none 1).
  */
 export const PARTS: AbilityDef[] = [
   // ---------------- HEAD: reaches far ----------------
@@ -397,11 +388,6 @@ export const byId = (id: string): AbilityDef => PARTS.find((p) => p.id === id)!
 export const LEAN_GLYPH: Record<Lean, string> = {
   close: '<path d="M4.5 16.5a8.5 8.5 0 0 1 15 0"/>',
   marksman: '<path d="M2.5 12h12" stroke-dasharray="2.6 2.4"/><circle cx="19" cy="12" r="2.4" fill="currentColor" stroke="none"/>',
-}
-
-/** A rider's line on the card, after the part's own: "Hand break:" / "Eye break:", then what it does. */
-export function riderLine(r: Rider): string {
-  return `${r.on === 'hand' ? 'Close strike' : 'Planted shot'} break: ${r.act === 'charge' ? 'ready, and fully charged.' : 'ready again.'}`
 }
 
 /** The kit `?depth=` hands out, and the pool the random first part comes from. */

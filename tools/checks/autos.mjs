@@ -286,19 +286,23 @@ check('K-A7', RUN, async ({ page }) => {
     await page.mouse.up()
   }
   await tap()
-  await page.waitForTimeout(150)
+  // 350 ms, not 150: with tap push on (the live default since 1 Oct) a touch within 250 ms of the button's last touch is guarded, not a push
+  await page.waitForTimeout(350)
   await tap()
   await page.waitForTimeout(100)
   const taps = await evalJson(page, () => {
     window.__hold(true)
-    return { taps: window.__taps().filter((t) => t.slot === 'arms'), bank: window.__combat.bank }
+    return { taps: window.__taps().filter((t) => t.slot === 'arms'), bank: window.__combat.bank, tapPush: window.__tapPush() }
   })
   assertEq('two presses logged', taps.taps.length, 2)
   assertEq('the press on a ready button: leftMs', taps.taps[0].leftMs, 0)
   assertEq('the press on a ready button: result', taps.taps[0].result, 'cast')
   assert(taps.taps[1].leftMs > 0 && taps.taps[1].leftMs <= 2600, `the tap on the cooling button should log what was left (0..2600), got ${taps.taps[1].leftMs}`)
-  assertEq('the tap on the cooling button: result', taps.taps[1].result, 'dead')
-  assertEq('a real ready press banked 3 and the dead tap added nothing', taps.bank, 3)
+  // by design since 2 Oct (B0): the suites boot with tap push on, where a touch on a cooling button with > 300 ms left pushes on the touch-down;
+  // TAP=0 is the hold game, where the same touch is 'dead'. Everything else this check asserts is the same either way
+  assertEq('the tap on the cooling button: result', taps.taps[1].result, taps.tapPush ? 'push' : 'dead')
+  // a pushed cast fired, so it banks like a ready one (BANK.perPress 3; "ready or pushed", combat.ts): 6 with tap push on, 3 when the touch was dead
+  assertEq('a real ready press banked 3 and the dead tap added nothing (a push banks its own 3)', taps.bank, taps.tapPush ? 6 : 3)
 })
 
 check('K-A8', RUN, async ({ page }) => {

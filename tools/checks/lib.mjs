@@ -51,18 +51,16 @@ export async function openPage(url, query) {
   })
   try {
     const context = await browser.newContext()
-    // WEIGHT=1: the "weight" trial's switch on from the first frame, so a whole suite can be run with the trial on (a report; the suites' own thresholds
-    // are today's). Unset, nothing changes: K-L1 holds the suites to what they print with it off
-    if (process.env.WEIGHT === '1') await context.addInitScript(() => localStorage.setItem('still-action.weight', '1'))
-    // TAP=1: the "tap push" trial's switch on from the first frame (design/lean/TAP-PUSH.md), the same way; report only. Both can be set
-    if (process.env.TAP === '1') await context.addInitScript(() => localStorage.setItem('still-action.tapPush', '1'))
-    // both trials are on by default since 1 Oct (his call): the suites keep their pinned record with them off unless WEIGHT=1 / TAP=1,
-    // the way area III pins roads=0. Only an unset key is pinned, so a check that writes the key itself and reloads still wins.
+    // The suites boot the game the owner plays: "weight" and "tap push" are both ON by default since 1 Oct (his call), and since 2 Oct (build layer B0)
+    // the pin follows: an unset key is written '1'. WEIGHT=0 / TAP=0 is the way to the old game (the key pinned '0'); WEIGHT=1 / TAP=1 are now the same as unset.
+    // Only an unset key is pinned, so a check that writes the key itself and reloads still wins (area III pins roads=0 the same way).
     // A query carrying `trialDefaults` (the game ignores it) skips the pin: that page boots as a fresh phone does
-    await context.addInitScript(() => {
+    const pin = { weight: process.env.WEIGHT === '0' ? '0' : '1', tapPush: process.env.TAP === '0' ? '0' : '1' }
+    await context.addInitScript((pin) => {
       if (new URLSearchParams(location.search).has('trialDefaults')) return
-      for (const k of ['still-action.weight', 'still-action.tapPush']) if (localStorage.getItem(k) === null) localStorage.setItem(k, '0')
-    })
+      if (localStorage.getItem('still-action.weight') === null) localStorage.setItem('still-action.weight', pin.weight)
+      if (localStorage.getItem('still-action.tapPush') === null) localStorage.setItem('still-action.tapPush', pin.tapPush)
+    }, pin)
     const page = await context.newPage()
     /** @type {string[]} */
     const errors = []
