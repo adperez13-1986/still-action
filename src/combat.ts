@@ -526,6 +526,23 @@ export class Combat {
   upgrades: ReadonlySet<UpgradeId> = new Set()
   /** Wake (BUILD.md §2.5): when each body was last skimmed, game time (once per body per `perBodyS`). A new map each level (reset). */
   private lastSkim = new WeakMap<Enemy, number>()
+  /**
+   * Wake's trail (B6b, WAKE2.md): a ring buffer of the points he walked (`CORES.wake.trail`), oldest at `trailHead`. wakefx draws the ribbon from these, so what he sees is what frosts.
+   * `trailDx/Dz`: the way he was going at that point (the ribbon's width runs across it).
+   */
+  readonly trailX = new Float64Array(CORES.wake.trail.max)
+  readonly trailZ = new Float64Array(CORES.wake.trail.max)
+  readonly trailDx = new Float64Array(CORES.wake.trail.max)
+  readonly trailDz = new Float64Array(CORES.wake.trail.max)
+  readonly trailT = new Float64Array(CORES.wake.trail.max)
+  trailHead = 0
+  trailN = 0
+  /** Travel since the last point, and where he was last tick (the trail's own, so a jump is seen as one). */
+  private trailRun = 0
+  private trailLastX = 0
+  private trailLastZ = 0
+  private trailHas = false
+  private lastTrail = new WeakMap<Enemy, number>()
   /** Ram's Catch (§2.7): whether each body that can't be moved was in a tell last tick (a tell STARTS on false -> true), and when Catch last fired (game time). Reset each level. */
   private telling = new WeakMap<Enemy, boolean>()
   private lastCatch = -Infinity
@@ -1108,6 +1125,8 @@ export class Combat {
     this.clearSlot('legs')
     this.status.clear()
     this.lastSkim = new WeakMap()
+    this.lastTrail = new WeakMap()
+    this.clearTrail()
     this.telling = new WeakMap()
     this.lastCatch = -Infinity
     this.slipS = 0
@@ -1138,7 +1157,7 @@ export class Combat {
   private statusFor(e: Enemy): EnemyStatus {
     let st = this.status.get(e)
     if (!st) {
-      st = { chilled: { t: 0, by: 'hand' }, marked: { t: 0, by: 'hand' }, marks: { n: 0, t: 0, since: 0 }, slowT: 0, slowMul: 1 }
+      st = { chilled: { t: 0, by: 'hand' }, marked: { t: 0, by: 'hand' }, marks: { n: 0, t: 0, since: 0 }, bite: 0, slowT: 0, slowMul: 1 }
       this.status.set(e, st)
     }
     return st
@@ -1931,7 +1950,103 @@ export class Combat {
    */
   private tickCore(dt: number, player: THREE.Vector3) {
     if (this.core === 'wake') this.tickWake(dt, player)
-    else if (this.core === 'ram') this.tickRam(player)
+    else {
+      if (this.trailN > 0) this.clearTrail()
+      if (this.core === 'ram') this.tickRam(player)
+    }
+  }
+
+  /** No trail: a new level, a jump, or Wake not worn. */
+  clearTrail() {
+    this.trailHead = 0
+    this.trailN = 0
+    this.trailRun = 0
+    this.trailHas = false
+  }
+
+  /**
+   * Wake's trail (B6b): expire the old points, add one every `stepU` of travel at or above `minSpeed` (a jump of 2 u or more in a tick, a dash or a placement, cuts it), then frost: an awake body
+   * whose EDGE is within `halfWidth` of a live segment gets one mark by the core, at most once a `perBodyS`. No damage, no Burst, no Spray. No allocation.
+   */
+  private tickTrail(dt: number, p: THREE.Vector3, sp: number) {
+    const T = CORES.wake.trail
+    const n = T.max
+    while (this.trailN > 0 && this.time - this.trailT[this.trailHead]! >= T.lifeS) {
+      this.trailHead = (this.trailHead + 1) % n
+      this.trailN--
+    }
+    if (this.trailHas) {
+      const step = Math.hypot(p.x - this.trailLastX, p.z - this.trailLastZ)
+      if (step >= 2) this.clearTrail()
+      else if (sp >= CORES.wake.minSpeed && dt > 0) {
+        this.trailRun += step
+        if (this.trailN === 0 || this.trailRun >= T.stepU) {
+          this.trailRun = 0
+          const at = (this.trailHead + this.trailN) % n
+          if (this.trailN === n) this.trailHead = (this.trailHead + 1) % n
+          else this.trailN++
+          this.trailX[at] = p.x
+          this.trailZ[at] = p.z
+          this.trailDx[at] = this.playerVel.x / sp
+          this.trailDz[at] = this.playerVel.z / sp
+          this.trailT[at] = this.time
+        }
+      }
+    }
+    this.trailLastX = p.x
+    this.trailLastZ = p.z
+    this.trailHas = true
+    if (this.trailN < 2) return
+    for (const e of this.enemies) {
+      if (e.dead || !targetable(e) || this.held.has(e) || !this.awakeNow(e)) continue
+      if (this.time - (this.lastTrail.get(e) ?? -Infinity) < T.perBodyS) continue
+      // the nearest point of the trail to it, over the live segments
+      let best = Infinity
+      let bx = 0
+      let bz = 0
+      for (let i = 0; i < this.trailN - 1; i++) {
+        const a = (this.trailHead + i) % n
+        const b = (a + 1) % n
+        const sx = this.trailX[b]! - this.trailX[a]!
+        const sz = this.trailZ[b]! - this.trailZ[a]!
+        const l2 = sx * sx + sz * sz
+        const u = l2 > 1e-9 ? Math.max(0, Math.min(1, ((e.pos.x - this.trailX[a]!) * sx + (e.pos.z - this.trailZ[a]!) * sz) / l2)) : 0
+        const qx = this.trailX[a]! + sx * u
+        const qz = this.trailZ[a]! + sz * u
+        const d = Math.hypot(e.pos.x - qx, e.pos.z - qz)
+        if (d < best) {
+          best = d
+          bx = qx
+          bz = qz
+        }
+      }
+      if (best - e.radius > T.halfWidth) continue
+      this.lastTrail.set(e, this.time)
+      this.addMarks(e, 1, 'core')
+      this.events.onPart({ kind: 'trailFrost', enemy: e, x: bx, z: bz })
+    }
+  }
+
+  /**
+   * Wake's frostbite (B6b): a frosted body takes `bite.damage` every `bite.everyS` of combat time through the auto path, flat. The accumulator lives on the body's status and is 0 with no marks,
+   * so it stops the tick the marks are spent or run out. Never spends, never marks.
+   */
+  private tickBite(dt: number) {
+    const B = CORES.wake.bite
+    for (const e of this.enemies) {
+      const st = this.status.get(e)
+      if (!st) continue
+      if (st.marks.n <= 0 || e.dead || !targetable(e) || !this.awakeNow(e)) {
+        st.bite = 0
+        continue
+      }
+      st.bite += dt
+      while (st.bite >= B.everyS && !e.dead) {
+        st.bite -= B.everyS
+        const dealt = this.autoHit(e, B.damage, 'core')
+        this.events.onPart({ kind: 'bite', enemy: e, dmg: dealt })
+      }
+    }
   }
 
   /**
@@ -2132,6 +2247,8 @@ export class Combat {
     if (this.slipS > 0) this.slipS = Math.max(0, this.slipS - dt)
     const v = this.playerVel
     const sp = Math.hypot(v.x, v.z)
+    this.tickBite(dt)
+    this.tickTrail(dt, p, sp)
     if (sp < W.minSpeed) return
     for (const e of this.enemies) {
       if (e.dead || !targetable(e) || this.held.has(e) || !this.awakeNow(e)) continue
@@ -2194,11 +2311,12 @@ export class Combat {
   }
 
   /** An auto's hit on `e`: a boss takes its half (unless `full`), the damage is logged by form, and a killing blow is the auto's. */
-  private autoHit(e: Enemy, damage: number, form: AutoForm, full = false) {
+  private autoHit(e: Enemy, damage: number, form: AutoForm, full = false): number {
     // `full`: the core's hit on a body it can't move is whole, not the boss's half (3-balancer.md: Wake's skim on an immovable body)
     const dealt = full ? damage : autoOn(e, damage)
     this.events.onAutoDmg(form, dealt)
     if (e.hit(dealt)) this.felledBy.set(e, 'auto')
+    return dealt
   }
 
   /** Whether an awake body stands within `r` of `p`: the log's fight seconds. */

@@ -77,6 +77,8 @@ export interface EnemyStatus {
    * `since`: combat time the stack's first mark landed (for the log's lag). INV: n === 0 <=> t === 0.
    */
   marks: { n: number; t: number; since: number }
+  /** Wake's frostbite (B6b): combat seconds since the last bite on this body while it holds marks; 0 with none. */
+  bite: number
   slowT: number      // seconds left, 0 = not slowed
   /** The factor applied to speedMul while slowT > 0. Divided back out on expiry: never set speedMul to 1. */
   slowMul: number
@@ -202,6 +204,10 @@ export type PartEvent =
   | { kind: 'spend'; enemy: Enemy; n: number; bonus: number; payer: 'core' | SlotName; killed: boolean; lagS: number }
   /** Wake's skim (B2): a body passed beside. `burst`: the skim filled it to the cap and Burst spent the marks (its `spend` event comes first); `spray`: the body Spray marked too. */
   | { kind: 'skim'; enemy: Enemy; burst?: true; spray?: Enemy }
+  /** Wake's frostbite (B6b): a frosted body took `dmg` (what it really took, a boss's half included). */
+  | { kind: 'bite'; enemy: Enemy; dmg: number }
+  /** Wake's trail frosted a body (B6b): (x, z) is the nearest point of the trail to it, where the ribbon flashes. */
+  | { kind: 'trailFrost'; enemy: Enemy; x: number; z: number }
   /** Backhand's cast (B5): a swing behind him; `whiff`: there was nothing behind (the balancer's whiff share). Only with Wake worn. */
   | { kind: 'backhand'; whiff: boolean }
   /**

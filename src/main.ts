@@ -405,7 +405,7 @@ const combat = new Combat(world.scene, OPEN, {
     }
     partFx.event(ev)
     markFx.event(ev)
-    if (ev.kind === 'mark' || ev.kind === 'markExpired' || ev.kind === 'spend' || ev.kind === 'skim') coreEvent(ev)
+    if (ev.kind === 'mark' || ev.kind === 'markExpired' || ev.kind === 'spend' || ev.kind === 'skim' || ev.kind === 'bite' || ev.kind === 'trailFrost') coreEvent(ev)
     if (ev.kind === 'backhand') {
       const st = run.stats[run.stats.length - 1]
       if (st?.backhand) {
@@ -1414,7 +1414,7 @@ function spendFx(ev: Extract<PartEvent, { kind: 'spend' }>) {
  * The build layer's events (BUILD.md §2.9, §2.11): the log (marks made, spent, expired; spends and how soon after the first mark; Wake's skims) and the look
  * and sound. A spend drains the body's rings (markfx.ts reads the same event); marks that run out unspent fizzle, faintly.
  */
-function coreEvent(ev: Extract<PartEvent, { kind: 'mark' | 'markExpired' | 'spend' | 'skim' }>) {
+function coreEvent(ev: Extract<PartEvent, { kind: 'mark' | 'markExpired' | 'spend' | 'skim' | 'bite' | 'trailFrost' }>) {
   const st = run.stats[run.stats.length - 1]
   if (ev.kind === 'mark') {
     if (st?.marks) {
@@ -1448,9 +1448,23 @@ function coreEvent(ev: Extract<PartEvent, { kind: 'mark' | 'markExpired' | 'spen
     spendFx(ev)
     return
   }
+  if (ev.kind === 'bite') {
+    // frostbite (WAKE2.md): the log, and a tiny cold mote, no sound: the spend stays the loudest thing the core does
+    if (st) {
+      (st.skims ??= { n: 0, burst: 0, spray: 0, bite: 0 }).bite += ev.dmg
+      if (st.autoDmg) st.autoDmg.core += ev.dmg
+    }
+    vfx.frost(at3(ev.enemy.pos, 0.6 * ev.enemy.size), 1, ev.enemy.radius * 0.5)
+    return
+  }
+  if (ev.kind === 'trailFrost') {
+    // the trail frosted a body: the ribbon under it brightens
+    wakeFx.trailFrost(ev.x, ev.z)
+    return
+  }
   // a skim: Wake passed beside a body
   if (st) {
-    const k = (st.skims ??= { n: 0, burst: 0, spray: 0 })
+    const k = (st.skims ??= { n: 0, burst: 0, spray: 0, bite: 0 })
     k.n++
     if (ev.burst) k.burst++
     if (ev.spray) k.spray++
@@ -1897,7 +1911,7 @@ interface DepthStats {
   /** Wake's Backhand (B5, the balancer's whiff share): casts, and the ones with nothing behind him. Zeros with no Backhand worn. */
   backhand: { casts: number; whiffs: number }
   shoves?: { n: number; wall: number; body: number; still: number; tell: number; plain: number; chained: number; caught: number; beat: { n: number; wall: number; body: number; still: number; tell: number } }
-  skims?: { n: number; burst: number; spray: number }
+  skims?: { n: number; burst: number; spray: number; bite: number }
 }
 /** One press on a filled button, for the playtest file: how long taps really last on the phone. */
 interface TapLog { depth: number; slot: SlotName; ms: number; ready: boolean; result: Press['result']; leftMs: number; at: number; nbMs?: number; nbSlot?: SlotName; tp?: true }
@@ -5452,7 +5466,7 @@ function frame(nowMs: number) {
   flushParryReady()
   hud.update(clock)
   coreShow.update(paused ? 0 : elapsed)
-  wakeFx.update(!home && run.phase === 'crawl' && !!level && coreNow() === 'wake', paused ? 0 : elapsed, x, z)
+  wakeFx.update(!home && run.phase === 'crawl' && !!level && coreNow() === 'wake', paused ? 0 : elapsed, x, z, combat)
   shoveFx.update(!home && run.phase === 'crawl' && !!level && coreNow() === 'ram', paused ? 0 : elapsed, x, z)
   firstFightHint(fighting)
   if (!paused) {
@@ -5936,6 +5950,8 @@ if (import.meta.env.DEV) {
     __thiefGround: () => thiefWorld().ground().map((g) => g.def.id),
     /** The words (cores.ts WORDS), so a check compares a card with what the game says. */
     __words: WORDS,
+    /** The core numbers, live: a check can set a number (the skim suites mute Wake's bite and trail marks to test the skim alone). */
+    __cores: CORES,
     /** The keystones on the floor now, and the socket: `{ keys: [{ id, x, z, seen }], socket, held }`. */
     __keys: () => ({ keys: loot.keys.map((g) => ({ id: g.key.id, x: g.pos.x, z: g.pos.z, seen: g.seen, fly: g.fly })), socket: run.keystone, held: keyHeld ? keyHeld.key.id : null }),
     /** n draws of a moment's drop (an elite's, Plenty's, a boss's blue) through the real hunt, at a depth: `{ ids, keys, filtered, got }`. `taken`: part ids on Still or the floor; `socketed` / `onFloor`: keystones. */

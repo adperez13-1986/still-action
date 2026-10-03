@@ -37,6 +37,16 @@ export const CORES = {
      * once per `perBodyS` (BUILD.md: x BOSS_AUTO_MUL, once per 1 s). Wake boss whites -25% -> -8% against today. Built in B2 (combat.ts tickWake).
      */
     bossSkim: { mul: 1, perBodyS: 0.5 },
+    /**
+     * **B6b** (design/buildlayer/WAKE2.md, his call: "very low damage while frosted"): a body holding marks takes `damage` every `everyS` of combat time, through the core's auto path
+     * (x BOSS_AUTO_MUL on a boss), flat (not scaled by the count). It never spends and never marks. combat.ts tickWake.
+     */
+    bite: { damage: 1, everyS: 0.5 },
+    /**
+     * **B6b**: Still's trail is combat state (a point every `stepU` of travel at or above `minSpeed`, each living `lifeS`), and wakefx's ribbon draws these points. An awake body whose EDGE is within
+     * `halfWidth` of a live segment gets one mark (by the core, no damage, no Burst or Spray: only a skim has those), at most once a `perBodyS`.
+     */
+    trail: { lifeS: 1.0, stepU: 0.15, halfWidth: 0.25, perBodyS: 1.0, max: 72 },
   },
   ram: {
     /** 8, not the sim's untested 6-10: the scratch run in §7 R2 (boss c1 +32%, deep c3 +15% at 0.4 slams a shove). */

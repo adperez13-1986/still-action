@@ -571,6 +571,11 @@ check('K-M5', RUN + '&trialDefaults', async ({ page }) => {
  * degrees off his heading and `d` from his centre, one tick of walking along `v`, and what that tick left on it; `spendsIdx()` the spends with the body's index.
  */
 const WAKE = HELPERS + `
+  // B6b: Wake's frostbite and its trail's marks are muted here, so these suites keep testing the skim alone (WAKE2.md changed Wake's combat on purpose); K-M31 / K-M32 unmute them
+  const WK = W.__cores.wake
+  W.__wake2 ??= { everyS: WK.bite.everyS, halfWidth: WK.trail.halfWidth }
+  const isolate = (on = true) => { WK.bite.everyS = on ? 1e9 : W.__wake2.everyS; WK.trail.halfWidth = on ? -1 : W.__wake2.halfWidth }
+  isolate(true)
   const zero = () => { const s = last(); s.marks = { made: 0, byCore: 0, byPart: 0, spent: 0, expired: 0 }; s.spends = { hits: 0, bonus: 0, lag: [0, 0, 0, 0] }; delete s.skims; s.autoDmg = { hand: 0, eye: 0, core: 0 }; s.autoDmgReal = { hand: 0, eye: 0, core: 0 }; s.hand = 0; s.eye = 0; s.eyeCasts = 0; s.plantedS = 0; W.__partLog.length = 0 }
   const place = (x, z) => { W.__still.pos.set(x, 0, z); C.hasPrev = false }
   const pin = (x, z) => { C.hp = 100; W.__still.pos.set(x, 0, z); W.__step(1 / 60) }
@@ -2631,6 +2636,117 @@ check('K-M30', RUN, async ({ page }) => {
     assert(x.median <= 0.25, `${what}: drawMarks with 40 bodies, median ${x.median.toFixed(4)} ms over 1000 calls (best batch ${x.best.toFixed(4)}, worst ${x.worst.toFixed(4)}); at most 0.25`)
     console.log(`INFO K-M30 ${what}: calls ${x.c0} -> ${x.c40} (+${x.c40 - x.c0}), scene children ${x.kids0} -> ${x.kids1}, drawMarks 40 bodies median ${x.median.toFixed(4)} ms (best ${x.best.toFixed(4)}, worst ${x.worst.toFixed(4)})`)
   }
+})
+
+// ---------------------------------------------------------------------------------------------------------------------------------------------------------------
+// B6b (design/buildlayer/WAKE2.md): frostbite and the trail's frost. The skim suites above mute both (WAKE's isolate); these two unmute them.
+// ---------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+check('K-M31', RUN, async ({ page }) => {
+  // frostbite: a frosted body takes 1 every 0.5 s of combat time through the auto path (a boss's half), flat in the count, never spends or marks, and stops when the marks go
+  const r = await evalJson(page, `() => {
+    (${SETUP})({ autos: true })
+    ${WAKE}
+    isolate(false)
+    W.__core('wake')
+    zero()
+    const out = {}
+    const b = body(0, 6)
+    place(0, 0)
+    W.__setMarks(idx(b), 1)
+    const hp = (e) => 1e6 - e.hp
+    const t0 = C.time
+    const log = []
+    for (let i = 0; i < 60 * 2.9; i++) { C.hp = 100; W.__step(1 / 60); if (hp(b) > (log.at(-1)?.hp ?? 0)) log.push({ t: +(C.time - t0).toFixed(3), hp: hp(b) }) }
+    out.one = { log, made: last().marks.made, spent: last().marks.spent, bite: last().skims?.bite ?? 0, nominal: last().autoDmg.core, real: last().autoDmgReal.core, n: marks(b).n }
+    // after the marks ran out (3 s): no more
+    const before = hp(b)
+    for (let i = 0; i < 60 * 2; i++) { C.hp = 100; W.__step(1 / 60) }
+    out.after = { n: marks(b).n, more: hp(b) - before, made: last().marks.made }
+    // flat in the count: 3 marks bite the same 1
+    const c = body(6, 6)
+    place(0, 0)
+    W.__setMarks(idx(c), 3)
+    const c0 = hp(c)
+    for (let i = 0; i < 60 * 1.01; i++) { C.hp = 100; W.__step(1 / 60) }
+    out.three = hp(c) - c0
+    // stops the tick the marks are spent: a cast of the cleaver on 3 marks, then no bite
+    W.__emptyLevel()
+    const d = body(0, 1.5)
+    place(0, 0)
+    W.__setMarks(idx(d), 3)
+    for (let i = 0; i < 20; i++) { C.hp = 100; W.__step(1 / 60) }
+    const bit = hp(d)
+    W.__fire('arms', false)
+    for (let i = 0; i < 40; i++) { C.hp = 100; W.__step(1 / 60) }
+    const afterSpend = hp(d)
+    for (let i = 0; i < 90; i++) { C.hp = 100; W.__step(1 / 60) }
+    out.spent = { n: marks(d).n, drop: afterSpend - bit, laterBite: hp(d) - afterSpend, spends: spendsOf().length }
+    // a boss takes the autos' half
+    W.__emptyLevel()
+    const boss = W.__spawn('boss', 8, 8, true)
+    boss.speedMul = 0
+    place(0, 0)
+    W.__setMarks(idx(boss), 1)
+    const h0 = boss.hp
+    for (let i = 0; i < 60 * 1.01; i++) { C.hp = 100; W.__step(1 / 60) }
+    out.boss = h0 - boss.hp
+    return out
+  }`)
+  assertEq('a frosted wall: bitten 1 every 0.5 s from half a second after the mark (5 bites by 2.9 s, the marks last 3 s)', r.one.log.map((x) => [Math.round(x.t * 2) / 2, x.hp]), [[0.5, 1], [1, 2], [1.5, 3], [2, 4], [2.5, 5]])
+  assertEq('...the bite never marks or spends: 1 mark made, 0 spent; logged as skims.bite 5 and in the nominal and real core damage', [r.one.made, r.one.spent, r.one.bite, r.one.nominal, r.one.real], [1, 0, 5, 5, 5])
+  assertEq('...after the marks ran out: none, and no further bite', [r.after.n, r.after.more, r.after.made], [0, 0, 1])
+  assertEq('3 marks bite the same 1 a half second (2 in the first second, not 6)', r.three, 2)
+  assertEq('a cast that spends the marks ends the bite: 3 marks gone, the later bites 0', [r.spent.n, r.spent.laterBite, r.spent.spends], [0, 0, 1])
+  assertEq("a boss takes the autos' half of the bite (0.5 x 2 in a second)", r.boss, 1)
+})
+
+check('K-M32', RUN, async ({ page }) => {
+  // the trail frosts: a body whose edge is within 0.25 u of a live segment gets a mark by the core, no damage, once a second; cleared by a jump, and when Wake is off
+  const r = await evalJson(page, `() => {
+    (${SETUP})({ autos: true })
+    ${WAKE}
+    isolate(false)
+    // the bite would hurt: this suite reads the mark alone
+    W.__cores.wake.bite.everyS = 1e9
+    W.__core('wake')
+    zero()
+    const out = {}
+    // a trail 5 u long up the z axis, then he stops; a wall dropped beside it with its edge 0.15 u off the line, one with its edge 0.35 u off
+    go(0, 1, 1)
+    out.trailN = C.trailN
+    const inside = body(0.55 + 0.15, 2)
+    const outside = body(-(0.55 + 0.35), 3)
+    W.__partLog.length = 0
+    W.__step(1 / 60)
+    out.inside = marks(inside).n
+    out.outside = marks(outside).n
+    out.ev = ev('trailFrost').length
+    out.skimEv = ev('skim').length
+    out.by = ev('mark').map((x) => x.by)
+    out.hurt = [1e6 - inside.hp, 1e6 - outside.hp]
+    // the trail has no Burst or Spray: it is a mark, nothing else; a second mark needs a second
+    for (let i = 0; i < 10; i++) { C.hp = 100; W.__step(1 / 60) }
+    out.again = ev('trailFrost').length
+    // a jump cuts it
+    place(0, 20)
+    W.__step(1 / 60)
+    out.cut = C.trailN
+    // Ram wears no trail
+    go(0, 1, 0.5)
+    const had = C.trailN
+    W.__core('ram')
+    C.autoAttack = true
+    for (let i = 0; i < 3; i++) { C.hp = 100; W.__step(1 / 60) }
+    out.ram = [had > 0, C.trailN]
+    return out
+  }`)
+  assert(r.trailN >= 20, `1 s of walking leaves a trail (${r.trailN} points, a point every 0.15 u)`)
+  assertEq('a body with its edge 0.15 u off the trail is frosted (1 mark, by the core, an event), one 0.35 u off is not', [r.inside, r.outside, r.ev, r.by], [1, 0, 1, ['core']])
+  assertEq('...no damage from the trail itself, and no skim (he stood still)', [r.hurt, r.skimEv], [[0, 0], 0])
+  assertEq('...once a second per body: no second trail mark within 0.17 s', r.again, 1)
+  assertEq('a jump (a dash or a placement) cuts the trail', r.cut, 0)
+  assertEq('with Ram worn the trail is cleared and stays so', r.ram, [true, 0])
 })
 
 
