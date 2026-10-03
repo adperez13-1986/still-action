@@ -3,7 +3,17 @@
 For the next session. Read this, then `DESIGN.md` (the settled decisions), then the design
 folder for whatever you're touching. Don't re-derive any of them.
 
-## Start here (3 Oct: B6 verdict "I see no effect"; B6a + B6b LIVE; his runs next)
+## Start here (3 Oct, later: his verdict on B6a/B6b; two new cores, N1 Graze running)
+
+**His verdict on B6a + B6b (3 Oct):** "I like it, the cues are helpful, the numbers are also good. It's more difficult as well.. I am
+not satisfied yet with the 2 cores, we need to tune them further, but the main idea works." Then: design the other cores yourself,
+Sonnet implements. **Design: `design/buildlayer/CORES2.md`** (lead's, no agents): **Graze** (an attack that just misses him marks the
+attacker; a cold band under a winding-up enemy shows where to stand; lenses-free close build: Parry Clamp, Anvil, Overrun) and
+**Tether** (a wire to one body 3-9 u away; bodies the wire sweeps ACROSS get marked, lying along it doesn't count, so running away
+earns nothing; the lenses are its spenders). Four-card pick while testing. **N1 Graze + the pick: Sonnet engineer running.** N2 Tether
+next. Tuning all four after his runs (his ask; Wake and Ram not done).
+
+## Earlier start-here (3 Oct: B6 verdict "I see no effect"; B6a + B6b LIVE)
 
 **His first core runs (3 Oct):** "I honestly have no idea what Wake and Ram are doing.. there are texts, but I see no effect, no
 clue how I am getting benefits from them.. I see some counters but whether they affect anything, I don't know." Code agrees: a
