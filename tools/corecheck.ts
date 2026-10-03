@@ -10,7 +10,7 @@
  */
 import { readFileSync } from 'node:fs'
 import { PARTS, byId } from '../src/abilities'
-import { CORE_IDS, CORES, FILTER, KEYSTONES, RESHAPES, UPGRADES, UPGRADE_FROM, UPGRADE_MAX, fitOf, markCap, markLife, variant, type CoreId, type FitRole } from '../src/cores'
+import { CORE_IDS, CORE_LIVE, CORES, FILTER, KEYSTONES, RESHAPES, UPGRADES, UPGRADE_FROM, UPGRADE_MAX, fitOf, markCap, markLife, variant, type CoreId, type FitRole } from '../src/cores'
 import { MASTERY_FORM } from '../src/mastery'
 import { rollForCore } from '../src/drops'
 import { STARTER_POOL } from '../src/pool'
@@ -25,7 +25,7 @@ const read = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf
 
 // --- §5.1: who fits which core ---
 // `k`: a spender's own flat damage per mark (3-balancer.md §1, ship); absent, the core's K
-const TABLE: Record<CoreId, Record<string, { role: FitRole; slams?: true; k?: number }>> = {
+const TABLE: Partial<Record<CoreId, Record<string, { role: FitRole; slams?: true; k?: number }>>> = {
   ram: {
     piston: { role: 'spend', slams: true, k: 12 }, 'scrap-cleaver': { role: 'spend', k: 4 }, flare: { role: 'spend' },
     'backdraft-vent': { role: 'shape' }, kickstart: { role: 'shape', slams: true }, brace: { role: 'guard' },
@@ -34,17 +34,27 @@ const TABLE: Record<CoreId, Record<string, { role: FitRole; slams?: true; k?: nu
     'frayed-cleaver': { role: 'spend', k: 10 }, 'scrap-cleaver': { role: 'spend', k: 3 }, 'frost-trail': { role: 'spend' },
     'signal-flare': { role: 'shape' }, 'spring-heels': { role: 'shape' }, ward: { role: 'guard' },
   },
+  // N1 (CORES2.md §1): four spenders, two shapers, two guards; no head part (Tether's lenses are the head's)
+  graze: {
+    'parry-clamp': { role: 'spend', k: 10 }, anvil: { role: 'spend', k: 12 }, overrun: { role: 'spend', k: 8 }, 'scrap-cleaver': { role: 'spend', k: 4 },
+    skitter: { role: 'shape' }, lure: { role: 'shape' }, 'mirror-ward': { role: 'guard' }, 'borrowed-time': { role: 'guard' },
+  },
 }
 for (const p of PARTS) {
-  for (const k of Object.keys(p.fits ?? {})) check((CORE_IDS as readonly string[]).includes(k), `${p.id}: fits key ${k} is not a core`)
+  for (const k of Object.keys(p.fits ?? {})) check((CORE_LIVE as readonly string[]).includes(k), `${p.id}: fits key ${k} is not a live core`)
   check(!('lean' in p), `${p.id}: still has a lean key`)
 }
-for (const c of CORE_IDS) {
+// the pick shows a card for every core, in order; only the live ones can be worn (Tether's is N2's)
+check(JSON.stringify(CORE_IDS) === JSON.stringify(['wake', 'ram', 'graze', 'tether']) && JSON.stringify(CORE_LIVE) === JSON.stringify(['wake', 'ram', 'graze']), 'the pick: wake, ram, graze, tether; live: wake, ram, graze')
+check(CORE_IDS.every((c) => c in CORES) && CORE_LIVE.every((c) => (CORE_IDS as readonly string[]).includes(c)), 'every core has numbers; every live core has a card')
+check(PARTS.every((p) => !fitOf(p, 'tether')), 'Tether fits no part yet (N2)')
+for (const c of CORE_LIVE) {
   const own = PARTS.filter((p) => fitOf(p, c))
-  check(own.length === 6, `${c}: ${own.length} fitting parts, want 6`)
-  check(new Set(own.map((p) => p.slot)).size === 4, `${c}: its parts cover ${new Set(own.map((p) => p.slot)).size} slots, want 4`)
-  for (const p of own) check(JSON.stringify(fitOf(p, c)) === JSON.stringify(TABLE[c][p.id]), `${c}: ${p.id} fits as ${JSON.stringify(fitOf(p, c))}, table says ${JSON.stringify(TABLE[c][p.id])}`)
-  for (const id of Object.keys(TABLE[c])) check(!!fitOf(byId(id), c), `${c}: ${id} should fit`)
+  // Wake and Ram have six parts, one in every slot; Graze has eight in three slots (no head part: the lenses are Tether's)
+  check(own.length === (c === 'graze' ? 8 : 6), `${c}: ${own.length} fitting parts, want ${c === 'graze' ? 8 : 6}`)
+  check(new Set(own.map((p) => p.slot)).size === (c === 'graze' ? 3 : 4), `${c}: its parts cover ${new Set(own.map((p) => p.slot)).size} slots, want ${c === 'graze' ? 3 : 4}`)
+  for (const p of own) check(JSON.stringify(fitOf(p, c)) === JSON.stringify(TABLE[c]![p.id]), `${c}: ${p.id} fits as ${JSON.stringify(fitOf(p, c))}, table says ${JSON.stringify(TABLE[c]![p.id])}`)
+  for (const id of Object.keys(TABLE[c]!)) check(!!fitOf(byId(id), c), `${c}: ${id} should fit`)
   const spenders = own.filter((p) => fitOf(p, c)!.role === 'spend')
   check(new Set(spenders.map((p) => p.slot)).size >= 2, `${c}: spenders in ${new Set(spenders.map((p) => p.slot)).size} slot(s), want 2+`)
   check(own.every((p) => !fitOf(p, c)!.slams || c === 'ram'), `${c}: only Ram's parts slam`)
@@ -59,13 +69,14 @@ for (const c of CORE_IDS) {
 for (const [id, k] of Object.entries(KEYSTONES)) check(k.id === id, `keystone ${id}: id ${k.id}`)
 for (const [id, u] of Object.entries(UPGRADES)) check(u.id === id, `upgrade ${id}: id ${u.id}`)
 check(markCap('wake', 'wake-deep') === 5 && markLife('wake', 'wake-deep') === 4, 'wake-deep: cap 5, life 4 s')
+check(markCap('graze', 'graze-read') === 3 && markLife('graze', 'graze-feint') === 3, 'graze: its keystones hold no more and last no longer')
 check(markCap('wake', 'wake-burst') === 3 && markCap('ram', 'wake-deep') === 3, 'only Wake with Deep holds more')
 // the bridge: one part fits both cores (Scrap Cleaver), at most 3
-const bridges = PARTS.filter((p) => CORE_IDS.every((c) => fitOf(p, c)))
+const bridges = PARTS.filter((p) => CORE_LIVE.every((c) => fitOf(p, c)))
 check(bridges.length >= 1 && bridges.length <= 3 && bridges.some((p) => p.id === 'scrap-cleaver'), `bridges: ${bridges.map((p) => p.id).join(', ') || 'none'}, want Scrap Cleaver and at most 3`)
-// plain parts. BUILD.md §5.2 says "15 of the 30 stay plain", but §5.1's own table fits 11 distinct parts (6 + 6, Scrap Cleaver in both): 19 stay plain. The table is the rule.
-const plain = PARTS.filter((p) => !CORE_IDS.some((c) => fitOf(p, c)))
-check(PARTS.length === 30 && plain.length === 19, `${plain.length} plain parts of ${PARTS.length}, §5.1's table makes 19 of 30`)
+// plain parts. BUILD.md §5.2 says "15 of the 30 stay plain", but §5.1's own table fits 11 distinct parts (6 + 6, Scrap Cleaver in both): 19 stay plain. The table is the rule. Graze (N1) fits 7 more: 12 stay plain.
+const plain = PARTS.filter((p) => !CORE_LIVE.some((c) => fitOf(p, c)))
+check(PARTS.length === 30 && plain.length === 12, `${plain.length} plain parts of ${PARTS.length}, the tables make 12 of 30`)
 // Ram's six: five are starter parts, so a young save meets them (Wake's three reshapes are found-pool parts, which is why the filter ignores `found`)
 check(PARTS.filter((p) => fitOf(p, 'ram') && STARTER_POOL.includes(p.id)).length === 5, 'Ram: five of its six in the starter pool')
 check(['frayed-cleaver', 'frost-trail', 'signal-flare'].every((id) => !STARTER_POOL.includes(id)), 'Wake: its three reshapes are found-pool parts')
@@ -77,10 +88,16 @@ check(CORES.wake.bossSkim.mul === 1 && CORES.wake.bossSkim.perBodyS === 0.5, 'bo
 check(CORES.wake.bite.damage === 1 && CORES.wake.bite.everyS === 0.5, `bite: ${CORES.wake.bite.damage} every ${CORES.wake.bite.everyS} s, B6b ship 1 and 0.5`)
 check(CORES.wake.trail.lifeS === 1.0 && CORES.wake.trail.stepU === 0.15 && CORES.wake.trail.halfWidth === 0.25 && CORES.wake.trail.perBodyS === 1.0, 'trail: life 1.0 s, a point every 0.15 u, half-width 0.25 u, once a 1.0 s per body (B6b ship)')
 check(CORES.wake.trail.max >= Math.ceil(CORES.wake.trail.lifeS * 5 / CORES.wake.trail.stepU) + 1, `trail: ${CORES.wake.trail.max} points hold a second of a 5 u/s dash`)
+// Graze (N1, CORES2.md §1): first-guess numbers, pinned so a stray edit shows
+check(CORES.graze.K === 8 && CORES.graze.margin === 1.0 && CORES.graze.damage === 10 && CORES.graze.marks === 2 && CORES.graze.shotMargin === 0.7 && CORES.graze.shotMarks === 1, 'graze: K 8, margin 1.0, damage 10, marks 2, shotMargin 0.7, shotMarks 1')
+check(CORES.graze.cap === 3 && CORES.graze.lifeS === 3 && CORES.graze.bandR === 8 && CORES.graze.bandMax === 6, 'graze: cap 3, life 3 s, band within 8 u, at most 6')
+check(KEYSTONES['graze-feint'].radius === 2.0 && KEYSTONES['graze-feint'].marks === 1 && KEYSTONES['graze-read'].marks === 3 && KEYSTONES['graze-read'].margin === 1.6, 'Feint: 1 mark within 2.0 u; Read: 3 marks, margin 1.6')
+check(UPGRADES['graze-riposte'].cooldownS === 0.4 && UPGRADES['graze-wide'].margin === 1.5, 'Riposte: 0.4 s; Wide Berth: margin 1.5')
+check(CORES.tether.K === 6 && CORES.tether.damage === 6 && CORES.tether.minR === 3 && CORES.tether.maxR === 9, "Tether's recorded numbers (N2's): K 6, damage 6, hook 3 to 9 u")
 check(KEYSTONES['wake-burst'].share === 1.0 && KEYSTONES['ram-domino'].hit === 8 && KEYSTONES['ram-catch'].icdS === 1.0, 'Burst share 1.0, Domino hit 8, Catch icdS 1.0')
 check(FILTER.share === 0.5 && FILTER.keyWeight === 1 && UPGRADE_FROM === 7, `FILTER.share ${FILTER.share}, keyWeight ${FILTER.keyWeight}, UPGRADE_FROM ${UPGRADE_FROM}, ship 0.5, 1 and 7`)
 // B5: the hunt's gates and the upgrade cap (rollForCore draws nothing with no core, nor for a source the filter does not take)
-check(UPGRADE_MAX === 2 && CORE_IDS.every((c) => Object.values(UPGRADES).filter((u) => u.core === c).length === UPGRADE_MAX), `UPGRADE_MAX ${UPGRADE_MAX}: each core has exactly that many upgrades`)
+check(UPGRADE_MAX === 2 && CORE_LIVE.every((c) => Object.values(UPGRADES).filter((u) => u.core === c).length === UPGRADE_MAX), `UPGRADE_MAX ${UPGRADE_MAX}: each core has exactly that many upgrades`)
 {
   const view = { found: new Set<string>(), turned: new Set<string>(), depth: 5 }
   const real = Math.random
@@ -112,7 +129,7 @@ for (const p of PARTS) {
   }
 }
 // B2: Wake's three reshapes (Backhand, Skate, Frost Flare) and nothing else; B3: Ram's one, Piston's numbers-only variant (cooldown 2600, name, line and icon unchanged)
-const RESHAPED: Record<string, string[]> = { wake: ['frayed-cleaver', 'frost-trail', 'signal-flare'], ram: ['piston'] }
+const RESHAPED: Record<string, string[]> = { wake: ['frayed-cleaver', 'frost-trail', 'signal-flare'], ram: ['piston'], graze: [], tether: [] }
 for (const c of CORE_IDS) {
   const got = PARTS.filter((p) => variant(p, c) !== p).map((p) => p.id).sort()
   check(JSON.stringify(got) === JSON.stringify(RESHAPED[c]), `reshaped under ${c}: ${got.join(', ') || 'none'}; want ${RESHAPED[c]!.join(', ') || 'none'}`)
@@ -152,8 +169,15 @@ function methodBody(name: string): string {
   return combat.slice(from, i + 1)
 }
 // tickCore dispatches to the cores' own ticks (Wake's skim, Ram's shove and its helpers); every one of them is the core's code
-for (const name of ['tickCore', 'tickWake', 'tickRam', 'beat', 'shove', 'slamBody', 'catchScan', 'throwEnd', 'inTell', 'immovable']) check(!/Math\.random/.test(methodBody(name)), `${name}'s source draws Math.random`)
+for (const name of ['tickCore', 'tickWake', 'tickRam', 'beat', 'shove', 'slamBody', 'catchScan', 'throwEnd', 'inTell', 'immovable', 'grazeSwing', 'graze', 'grazeShot']) check(!/Math\.random/.test(methodBody(name)), `${name}'s source draws Math.random`)
 check(!/Math\.random/.test(read('../src/cores.ts')), "cores.ts's source draws Math.random")
+// Graze's look draws none of its own (N1: "no Math.random in new code"): grazefx.ts, and the single method that shows a graze in main.ts
+check(!/Math\.random/.test(read('../src/grazefx.ts')), "grazefx.ts's source draws Math.random")
+{
+  const main = read('../src/main.ts')
+  const at = main.indexOf('function grazeEvent(')
+  check(at > 0 && !/Math\.random/.test(main.slice(at, main.indexOf('\n}\n', at))), "main.ts grazeEvent's source draws Math.random")
+}
 check(new RegExp(`export const HAND = \\{ range: ${CORES.ram.reach},`).test(combat), `RAM.reach ${CORES.ram.reach} is not HAND.range`)
 check(new RegExp(`const AUTO_INTERVAL = ${CORES.ram.beatS}\\b`).test(combat), `RAM.beatS ${CORES.ram.beatS} is not AUTO_INTERVAL`)
 

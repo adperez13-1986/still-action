@@ -12,7 +12,7 @@ import { TEMPER, ROMAN, tempered } from './temper'
 import { presetId as weightPresetId, setPreset as setWeightPreset, weighed, baseCooldownS, WEIGHT_FEEL, WEIGHT_PRESETS, type PresetId } from './weight'
 import { curveAt } from './curve'
 import { MASTERY, MASTERY_FORM, MASTERY_MAX, FORM_NAME, masteryOffer, type MasteryId, type MasteryForm } from './mastery'
-import { CORES, CORE_IDS, KEYSTONES, SPEND_HUD, UPGRADES, UPGRADE_FROM, UPGRADE_MAX, WORDS, fitOf, markCap, variant, type CoreId, type KeystoneDef, type KeystoneId, type UpgradeId } from './cores'
+import { CORES, CORE_IDS, CORE_LIVE, KEYSTONES, SPEND_HUD, UPGRADES, UPGRADE_FROM, UPGRADE_MAX, WORDS, fitOf, markCap, variant, type CoreId, type KeystoneDef, type KeystoneId, type UpgradeId } from './cores'
 import { STATE_IDS, pairWith, paired, type StateId } from './states'
 import type { Enemy, EnemyEvent } from './enemy'
 import { isBoss, Assembler } from './boss'
@@ -51,6 +51,7 @@ import { PartFx } from './partfx'
 import { MarkFx } from './markfx'
 import { WakeFx } from './wakefx'
 import { ShoveFx } from './ramfx'
+import { GrazeFx } from './grazefx'
 import { CoreShow } from './coreshow'
 import type { PartEvent } from './parts'
 import type { NotebookPage } from './pause'
@@ -87,10 +88,10 @@ const START_DEPTH = Math.min(RUN_DEPTHS, Math.max(1, Number(DEPTH_PARAM) || 1))
 /** DEV only: a URL param as given, or null (production builds never read them). */
 const devParam = (k: string): string | null => (import.meta.env.DEV ? params.get(k) : null)
 /**
- * `?core=wake|ram` (DEV, with `?depth=`): the run starts wearing that core (design/buildlayer/BUILD.md §2.4); it needs no switch. Without it a dev boot is bare,
+ * `?core=wake|ram|graze` (DEV, with `?depth=`): the run starts wearing that core (design/buildlayer/BUILD.md §2.4); it needs no switch. Without it a dev boot is bare,
  * so every suite stays bare. A `?depth=` boot never shows the pick.
  */
-const CORE_PARAM: CoreId | null = DEPTH_PARAM !== null && (devParam('core') === 'wake' || devParam('core') === 'ram') ? (devParam('core') as CoreId) : null
+const CORE_PARAM: CoreId | null = DEPTH_PARAM !== null && (CORE_LIVE as readonly (string | null)[]).includes(devParam('core')) ? (devParam('core') as CoreId) : null
 /** `?route=II|III` (DEV): the run starts on that road and never sees the crossroads; with ?depth=4-6 it starts there. */
 const ROUTE_PARAM: RouteId | null = devParam('route') === 'III' ? 'III' : devParam('route') === 'II' ? 'II' : null
 /** `?crossroads=1` (DEV): the crossroads after the Assembler, whatever the switch and the save say. */
@@ -405,6 +406,8 @@ const combat = new Combat(world.scene, OPEN, {
     }
     partFx.event(ev)
     markFx.event(ev)
+    grazeFx.event(ev)
+    if (ev.kind === 'graze') grazeEvent(ev)
     if (ev.kind === 'mark' || ev.kind === 'markExpired' || ev.kind === 'spend' || ev.kind === 'skim' || ev.kind === 'bite' || ev.kind === 'trailFrost') coreEvent(ev)
     if (ev.kind === 'backhand') {
       const st = run.stats[run.stats.length - 1]
@@ -1307,11 +1310,14 @@ const markFx = new MarkFx(world.scene)
 const wakeFx = new WakeFx(world.scene)
 /** Ram's reach ring and what a slam leaves on the floor (ramfx.ts): two draw calls, only with Ram worn. */
 const shoveFx = new ShoveFx(world.scene)
+/** Graze's band under a winding-up swing (grazefx.ts): one draw call, only with Graze worn. */
+const grazeFx = new GrazeFx(world.scene)
 /** A new level or a run's end: no rings, no field, no streak, no number. */
 function clearCoreFx() {
   markFx.clear()
   wakeFx.clear()
   shoveFx.clear()
+  grazeFx.clear()
   coreShow.clear()
 }
 /** His walk pace as still.ts has it (Slipstream multiplies it for a moment and only ever through this). */
@@ -1548,6 +1554,39 @@ function shoveEvent(ev: Extract<PartEvent, { kind: 'shove' }>) {
     const at = at3(ev.at, 0.5)
     vfx.frost(at, 5, 0.5)
     vfx.sparks(at, COLD, 6, 3.5)
+  }
+}
+
+/**
+ * Graze (CORES2.md §1): the log (`grazes`: by how, and the ones on a boss), the nominal core damage, and the look and sound: a cold whiff streak across Still on the attacker's side (a shot's: along its own path, past him),
+ * a small flash and a "tsss". The band's own flash and break is grazefx.ts, from the same event. Riposte takes `cooldownS` off every spender's cooldown. A hand-spread, no random.
+ */
+function grazeEvent(ev: Extract<PartEvent, { kind: 'graze' }>) {
+  const st = run.stats[run.stats.length - 1]
+  if (st) {
+    const k = (st.grazes ??= { n: 0, melee: 0, shot: 0, lane: 0, boss: 0 })
+    k.n++
+    k[ev.how]++
+    if (isBoss(ev.enemy)) k.boss++
+    if (st.autoDmg) st.autoDmg.core += ev.dmg
+  }
+  sfx.graze(panOf(ev.at))
+  const d = ev.dir
+  const shot = ev.how === 'shot'
+  // a melee's chord lies across his front on the attacker's side (a lane's rush went by him, the same); a shot's runs along where it went
+  const bx = shot ? ev.at.x : ev.at.x - d.x * 0.8
+  const bz = shot ? ev.at.z : ev.at.z - d.z * 0.8
+  const ax = shot ? d.x : -d.z
+  const az = shot ? d.z : d.x
+  for (let i = -2; i <= 2; i++) {
+    const mid = 1 - Math.abs(i) / 3
+    vfx.trail(new THREE.Vector3(bx + ax * i * 0.4, 0.6, bz + az * i * 0.4), COLD, 0.14 + 0.1 * mid, 0.2 + 0.1 * mid)
+  }
+  vfx.flash(new THREE.Vector3(bx, 0.6, bz), COLD, 0.5)
+  vfx.frost(new THREE.Vector3(bx, 0.6, bz), 1, 0.12)
+  if (combat.upgrades.has('graze-riposte')) {
+    const ms = UPGRADES['graze-riposte'].cooldownS * 1000
+    for (const sl of hud.slots) if (sl.def && fitOf(sl.def, 'graze')?.role === 'spend') hud.trim(sl.slot, ms)
   }
 }
 
@@ -1912,6 +1951,8 @@ interface DepthStats {
   backhand: { casts: number; whiffs: number }
   shoves?: { n: number; wall: number; body: number; still: number; tell: number; plain: number; chained: number; caught: number; beat: { n: number; wall: number; body: number; still: number; tell: number } }
   skims?: { n: number; burst: number; spray: number; bite: number }
+  /** Graze's (N1): grazes by how (a strike, a rush's lane, a shot), and the ones on a boss. */
+  grazes?: { n: number; melee: number; shot: number; lane: number; boss: number }
 }
 /** One press on a filled button, for the playtest file: how long taps really last on the phone. */
 interface TapLog { depth: number; slot: SlotName; ms: number; ready: boolean; result: Press['result']; leftMs: number; at: number; nbMs?: number; nbSlot?: SlotName; tp?: true }
@@ -3347,7 +3388,7 @@ function saw(id: string) {
 }
 
 /**
- * The core's pick (BUILD.md §2.8): the run's start, two cards, Wake then Ram, no reroll and nothing random. It shows once depth 1 is entered and before he can move: the world waits
+ * The core's pick (BUILD.md §2.8): the run's start, a card for every core (Wake, Ram, Graze, and Tether's, which reads "soon" and cannot be taken until N2), no reroll and nothing random. It shows once depth 1 is entered and before he can move: the world waits
  * (openPause stops the windups; Combat's clock does not run while `paused`). `at` is how it came: 'start' at the run's beginning, 'resume' when a reload found depth 1 with no core.
  * The pick: the core is worn (`applyBuilds` re-wears the one part he has, flat and reshaped), the open depth's stats are corrected to say so (depth 1's entry was pushed before the pick
  * and nothing has been fought), and the snapshot is written with it.
@@ -3357,9 +3398,9 @@ function offerCore(at: 'start' | 'resume') {
   const t0 = performance.now()
   const offered: CoreId[] = [...CORE_IDS]
   openPause()
-  pause.pickCore(WORDS.pickTitle, WORDS.pickIntro, offered.map((id) => ({ id, name: WORDS.core[id], thumb: WORDS.thumb[id], leaves: WORDS.leaves[id], spends: WORDS.spendsLine })), (picked) => {
+  pause.pickCore(WORDS.pickTitle, WORDS.pickIntro, offered.map((id) => ({ id, name: WORDS.core[id], thumb: WORDS.thumb[id], leaves: WORDS.leaves[id], spends: WORDS.spendsLine, ...(CORE_LIVE.includes(id) ? {} : { soon: WORDS.soon }) })), (picked) => {
     const id = offered.find((c) => c === picked)
-    if (!id || run.core) return
+    if (!id || run.core || !CORE_LIVE.includes(id)) return
     run.core = id
     run.corePick = { at, offered, took: id, s: Math.round((performance.now() - t0) / 100) / 10 }
     applyBuilds()
@@ -3431,7 +3472,7 @@ function resumeRun(snap: RunSnapshot) {
   // mastery and temper's ranks come back as they were earned
   run.mastery = new Set((snap.mastery ?? []).filter((id): id is MasteryId => id in MASTERY))
   // the build layer (BUILD.md §2.8): a core this build knows comes back, with the keystone and upgrades that belong to it; anything else resumes bare, and stays bare
-  run.core = typeof snap.core === 'string' && Object.prototype.hasOwnProperty.call(CORES, snap.core) ? (snap.core as CoreId) : null
+  run.core = typeof snap.core === 'string' && (CORE_LIVE as readonly string[]).includes(snap.core) ? (snap.core as CoreId) : null
   run.keystone = run.core && typeof snap.keystone === 'string' && Object.prototype.hasOwnProperty.call(KEYSTONES, snap.keystone) && KEYSTONES[snap.keystone as KeystoneId].core === run.core ? (snap.keystone as KeystoneId) : null
   run.upgrades = run.core && Array.isArray(snap.upgrades)
     ? snap.upgrades.filter((id, i, all): id is UpgradeId => typeof id === 'string' && Object.prototype.hasOwnProperty.call(UPGRADES, id) && UPGRADES[id as UpgradeId].core === run.core && all.indexOf(id) === i)
@@ -5468,6 +5509,7 @@ function frame(nowMs: number) {
   coreShow.update(paused ? 0 : elapsed)
   wakeFx.update(!home && run.phase === 'crawl' && !!level && coreNow() === 'wake', paused ? 0 : elapsed, x, z, combat)
   shoveFx.update(!home && run.phase === 'crawl' && !!level && coreNow() === 'ram', paused ? 0 : elapsed, x, z)
+  grazeFx.update(!home && run.phase === 'crawl' && !!level && coreNow() === 'graze', paused ? 0 : elapsed, combat)
   firstFightHint(fighting)
   if (!paused) {
     vfx.update(elapsed * breakScale(), world.camera, world.renderer.domElement.height)
@@ -5534,6 +5576,7 @@ if (import.meta.env.DEV) {
     __markFx: markFx,
     __wakeFx: wakeFx,
     __shoveFx: shoveFx,
+    __grazeFx: grazeFx,
     __coreShow: coreShow,
     __run: run, __parts: PARTS, __partLog: partLog, __pause: pause,
     /** Advance exactly `s` seconds of game time, and the HUD clock (and the button faces) with it. No rAF, no hitstop. */

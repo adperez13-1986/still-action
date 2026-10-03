@@ -208,6 +208,11 @@ export type PartEvent =
   | { kind: 'bite'; enemy: Enemy; dmg: number }
   /** Wake's trail frosted a body (B6b): (x, z) is the nearest point of the trail to it, where the ribbon flashes. */
   | { kind: 'trailFrost'; enemy: Enemy; x: number; z: number }
+  /**
+   * Graze (N1): an enemy's swing, shot or rush just missed him. `how`: a melee strike ('melee'), a rush's lane ('lane'), a shot ('shot', no damage). `dmg`: the core hit the attacker took (nominal, 0 for a shot);
+   * `marks`: marks it was given; `others`: bodies Feint marked besides. `at`: where he stood (a shot: where it passed him); `dir`: the way the miss went (the attacker's heading toward him; a shot's own).
+   */
+  | { kind: 'graze'; enemy: Enemy; how: 'melee' | 'lane' | 'shot'; dmg: number; marks: number; others: number; at: THREE.Vector3; dir: THREE.Vector3 }
   /** Backhand's cast (B5): a swing behind him; `whiff`: there was nothing behind (the balancer's whiff share). Only with Wake worn. */
   | { kind: 'backhand'; whiff: boolean }
   /**

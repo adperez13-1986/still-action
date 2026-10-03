@@ -19,6 +19,9 @@ import type { Enemy } from './enemy'
  * rim in the same geometry (vertex colours), so a bright core reads on a dark floor and a dark rim on a bright one, at no extra draw call. The fade is a
  * per-instance alpha attribute (`aAlpha`), since normal blending cannot fade through a colour. Wake's ring is plain and frost-bright. Ram's is cracked (B3, §2.10): a steel-blue band (inner 0.76, COLD_DEEP's family) with two V-notches cut into each arc's
  * inner edge, so the segments read as split stone and not as Wake's frost; it has 3 segments only (Deep Frost is Wake's), so its set adds 3 meshes, and only the worn core's set is ever shown.
+ *
+ * Graze's ring (N1, CORES2.md §1) is a thin DOUBLE ring: two cold bands an arc wide, a dark gap between them. Its set is ONE InstancedMesh, not three: every segment is the same arc turned by a multiple of 120 degrees,
+ * so the instance matrix carries the turn and a ring is up to 3 instances of the one mesh. A body's marks then cost Graze one draw call (the others, three).
  */
 
 /** The look. Radii are fractions of the ring's outer radius (1). */
@@ -32,6 +35,8 @@ const LOOK = {
    * along the arc), `halfDeg` wide at the edge and `depth` (a radius fraction) deep: as deep as the band, so a notch splits it (a crack), and the apex is held 0.01 short of the outer edge.
    */
   crack: { inner: 0.76, outer: 0.95, color: [0.6, 0.78, 0.98] as const, at: [0.33, 0.7] as const, halfDeg: 8, depth: 0.2 },
+  /** Graze's double ring (§1): two thin bands, [inner, outer] each, a dark gap between them under one rim. */
+  double: { bands: [[0.82, 0.94], [0.6, 0.72]] as const, rim: [0.56, 0.98] as const },
   /** Triangles along a full circle. */
   steps: 36,
   /** The floor lift above the decals' DECAL_Y. */
@@ -43,7 +48,7 @@ const LOOK = {
 const DRAINS = 24
 const MAX_SEG = 5
 /** The ring sets, by name (a fixed list: a frame loops over it without allocating). */
-const SET_NAMES = ['wake3', 'wake5', 'ram3'] as const
+const SET_NAMES = ['wake3', 'wake5', 'ram3', 'graze3'] as const
 
 const FLOOR_Y = DECAL_Y + LOOK.lift
 
@@ -81,7 +86,7 @@ function jagged(pos: number[], col: number[], inner: (t: number) => number, r1: 
 }
 
 /** Segment `i` of `cap`: a dark rim band and the cold band on it, an arc of 360 / cap less the gap. Unit outer radius. `look`: Wake's plain frost band, or Ram's cracked one. */
-function segmentGeometry(i: number, cap: number, look: 'wake' | 'ram'): THREE.BufferGeometry {
+function segmentGeometry(i: number, cap: number, look: 'wake' | 'ram' | 'graze', instances = RING.maxBodies + DRAINS): THREE.BufferGeometry {
   const span = (Math.PI * 2) / cap
   const gap = (RING.gapDeg * Math.PI) / 180
   // clockwise on screen: the angle runs the other way over the floor
@@ -93,6 +98,9 @@ function segmentGeometry(i: number, cap: number, look: 'wake' | 'ram'): THREE.Bu
   if (look === 'wake') {
     band(pos, col, LOOK.rim[0], LOOK.rim[1], a0, a1, steps, LOOK.rimColor, LOOK.rimA)
     band(pos, col, LOOK.core[0], LOOK.core[1], a0, a1, steps, LOOK.coreColor, LOOK.coreA)
+  } else if (look === 'graze') {
+    band(pos, col, LOOK.double.rim[0], LOOK.double.rim[1], a0, a1, steps, LOOK.rimColor, LOOK.rimA)
+    for (const [r0, r1] of LOOK.double.bands) band(pos, col, r0, r1, a0, a1, steps, LOOK.coreColor, LOOK.coreA)
   } else {
     const K = LOOK.crack
     band(pos, col, LOOK.rim[0], LOOK.rim[1], a0, a1, steps, LOOK.rimColor, LOOK.rimA)
@@ -109,15 +117,15 @@ function segmentGeometry(i: number, cap: number, look: 'wake' | 'ram'): THREE.Bu
   const g = new THREE.BufferGeometry()
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3))
   g.setAttribute('color', new THREE.Float32BufferAttribute(col, 4))
-  g.setAttribute('aAlpha', new THREE.InstancedBufferAttribute(new Float32Array(RING.maxBodies + DRAINS), 1))
+  g.setAttribute('aAlpha', new THREE.InstancedBufferAttribute(new Float32Array(instances), 1))
   return g
 }
 
 export class MarkFx {
   readonly group = new THREE.Group()
   private readonly mat: THREE.MeshBasicMaterial
-  /** Segment meshes by ring: Wake's 3 and 5 (Deep Frost), Ram's 3 (cracked). Built once. */
-  private readonly sets: Record<'wake3' | 'wake5' | 'ram3', THREE.InstancedMesh[]> = { wake3: [], wake5: [], ram3: [] }
+  /** Segment meshes by ring: Wake's 3 and 5 (Deep Frost), Ram's 3 (cracked), Graze's one (its segments are instances, turned). Built once. */
+  private readonly sets: Record<(typeof SET_NAMES)[number], THREE.InstancedMesh[]> = { wake3: [], wake5: [], ram3: [], graze3: [] }
   // one frame's gathered rings: where, how big, how many segments, how opaque, how shrunk
   private readonly gx = new Float32Array(RING.maxBodies + DRAINS)
   private readonly gz = new Float32Array(RING.maxBodies + DRAINS)
@@ -169,6 +177,16 @@ export class MarkFx {
         this.sets[name].push(m)
       }
     }
+    // Graze's: one arc, instanced three times a body at 120-degree turns (draw())
+    const gz = new THREE.InstancedMesh(segmentGeometry(0, 3, 'graze', (RING.maxBodies + DRAINS) * 3), this.mat, (RING.maxBodies + DRAINS) * 3)
+    gz.instanceMatrix.setUsage(THREE.DynamicDrawUsage)
+    gz.frustumCulled = false
+    gz.visible = false
+    gz.count = 0
+    gz.renderOrder = 2
+    gz.name = 'marks-3-graze'
+    this.group.add(gz)
+    this.sets.graze3.push(gz)
     scene.add(this.group)
   }
 
@@ -224,7 +242,7 @@ export class MarkFx {
   draw(combat: Combat, dt: number, fromX: number, fromZ: number) {
     const core = combat.core
     const cap = core ? (markCap(core, combat.keystone) >= 5 ? 5 : 3) : 0
-    const which = core === 'wake' ? (cap === 5 ? 'wake5' : 'wake3') : core === 'ram' ? 'ram3' : null
+    const which = core === 'wake' ? (cap === 5 ? 'wake5' : 'wake3') : core === 'ram' ? 'ram3' : core === 'graze' ? 'graze3' : null
     if (!cap || !which) {
       this.hideAll()
       this.drawn = this.skipped = 0
@@ -275,6 +293,10 @@ export class MarkFx {
     }
     const meshes = this.sets[which]
     for (const name of SET_NAMES) if (name !== which) for (const m of this.sets[name]) m.visible = false
+    if (which === 'graze3') {
+      this.drawTurned(meshes[0]!, g, cap)
+      return
+    }
     for (let s = 0; s < meshes.length; s++) {
       const mesh = meshes[s]!
       const mat = mesh.instanceMatrix.array as Float32Array
@@ -297,6 +319,34 @@ export class MarkFx {
         mesh.instanceMatrix.needsUpdate = true
         ;(mesh.geometry.getAttribute('aAlpha') as THREE.InstancedBufferAttribute).needsUpdate = true
       }
+    }
+  }
+
+  /** Graze's ring: segment s of a body is the one arc turned by -s x (360 / cap) degrees (clockwise on screen, like the others), an instance each. */
+  private drawTurned(mesh: THREE.InstancedMesh, g: number, cap: number) {
+    const mat = mesh.instanceMatrix.array as Float32Array
+    const alpha = (mesh.geometry.getAttribute('aAlpha') as THREE.InstancedBufferAttribute).array as Float32Array
+    const span = (Math.PI * 2) / cap
+    let j = 0
+    for (let b = 0; b < g; b++) {
+      const sc = this.gr[b]! * this.gd[b]!
+      for (let s = 0; s < this.gn[b]!; s++) {
+        const c = Math.cos(-s * span) * sc
+        const n = Math.sin(-s * span) * sc
+        const o = j * 16
+        mat[o] = c; mat[o + 1] = 0; mat[o + 2] = n; mat[o + 3] = 0
+        mat[o + 4] = 0; mat[o + 5] = sc; mat[o + 6] = 0; mat[o + 7] = 0
+        mat[o + 8] = -n; mat[o + 9] = 0; mat[o + 10] = c; mat[o + 11] = 0
+        mat[o + 12] = this.gx[b]!; mat[o + 13] = FLOOR_Y; mat[o + 14] = this.gz[b]!; mat[o + 15] = 1
+        alpha[j] = this.ga[b]!
+        j++
+      }
+    }
+    mesh.count = j
+    mesh.visible = j > 0
+    if (j > 0) {
+      mesh.instanceMatrix.needsUpdate = true
+      ;(mesh.geometry.getAttribute('aAlpha') as THREE.InstancedBufferAttribute).needsUpdate = true
     }
   }
 

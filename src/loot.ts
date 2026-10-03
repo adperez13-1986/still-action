@@ -95,7 +95,7 @@ export interface GroundKey {
   spinner: THREE.Mesh
 }
 /** The keystone's cold: Wake's frost-bright, Ram's steel (markfx.ts' two looks). */
-const KEY_COLOR = { wake: 0x9fd8ff, ram: 0x7fa7d8 } as const
+const KEY_COLOR = { wake: 0x9fd8ff, ram: 0x7fa7d8, graze: 0x8fe8e0, tether: 0xbfe4f2 } as const
 
 const FLY = 0.42
 /** How long the offered part's glass takes to light. */

@@ -15,6 +15,9 @@ import type { Side } from './track'
  */
 export type EnemyPhase = 'approach' | 'windup' | 'strike' | 'recover'
 
+/** A melee swing's landing, for Graze (`Enemy.swing`): the reach it hits at, and for a sector (the Assembler's sweep) its heading (atan2(dx, dz)) and half-angle. */
+export interface Swing { reach: number; aim?: number; half?: number }
+
 /** What an enemy does to the world on the tick it strikes. Combat resolves it. */
 export type EnemyAction =
   /**
@@ -100,6 +103,11 @@ export interface EnemyCtx {
   /** Counter-moves: fewer than half of e's pack's sentinels (at least one may) are hiding, so e may duck. */
   duckFree(e: Enemy): boolean
   emit(ev: EnemyEvent): void
+  /**
+   * Graze (CORES2.md): how far past a charger's lane (its hit half-width) a rush's front may pass Still and still be a graze, while that core is worn; 0 otherwise. A charger only reads it.
+   * With 0 it emits nothing extra, so no other core and no bare run sees a difference.
+   */
+  laneMargin?: number
   /** The Line's brood rule (design/area3/SPEC.md §5.8): (x, z) is within halfW + broodPad of a lit lane's floor span. */
   nearLit?(x: number, z: number): boolean
   /** B3 (R5): (x, z) is inside a lit lane's strip, grown by LINE.halfW + r + LINE.stepOff.pad. A body about to commit to a move does not start one there. */
@@ -139,6 +147,8 @@ export type EnemyEvent =
   | { kind: 'skid'; e: Enemy }
   /** The rush's front passed within 2.0 of Still without hitting him. `at` is where he stood. */
   | { kind: 'nearMiss'; e: Enemy; at: THREE.Vector3 }
+  /** Graze (ctx.laneMargin > 0 only): the rush's front passed Still without hitting him, `lateral` u off its axis. Combat reads it; it is never forwarded. */
+  | { kind: 'lanePass'; e: Enemy; at: THREE.Vector3; lateral: number }
   /** A brood's surge starts: its ring is laid at `at` (L), with this many biters. */
   | { kind: 'surge'; brood: Brood; at: THREE.Vector3; ms: number; biters: number }
   /** A biter left the surge: killed, Parried, or flung (grabbed, or shoved out of reach). `arc` is its piece of the ring. */
@@ -253,6 +263,11 @@ export interface Enemy {
   interrupt: (reel?: boolean) => boolean
   /** ms until the windup running now lands (its strike, shot, launch or rush); null when none is. */
   landsIn: () => number | null
+  /**
+   * Graze (CORES2.md): while a melee swing is in its tell (a heavy's windup, a pressure fist's cock, the Assembler's sweep or magnet), where it will land: `reach` is the centre-to-centre distance at which
+   * the body's own strike test passes (a sweep adds its `aim` and `half`, radians), else null. Read before the update that resolves the swing; changes nothing. Absent on a body with no such tell.
+   */
+  swing?: () => Swing | null
   /**
    * B1 (LINE-RULES R3). A pressure body's own tell, the one thing nothing else may break: ms until its attack lands
    * (the hulk's cock, the sentinel's lens glow, the mite's rear), else null. Absent on bodies without one.
@@ -623,6 +638,13 @@ export class Chaser implements Enemy {
   /** The fist's cock (a pressure hulk's own tell), never a counter's crouch: that is a windup, and `interrupt` breaks it. */
   tellIn() {
     return this.pressure && this.cock >= 0 && !this.crouch ? Math.max(0, PRESSURE_HULK.cockMs - this.cock) : null
+  }
+
+  /** Graze: the close strike's ring (a heavy's windup) or the fist's swipe (a pressure hulk's cock). A counter's crouch and lunge are a line, not a ring: no swing (v1). */
+  swing(): Swing | null {
+    if (this.crouch || this.lunge) return null
+    if (this.phase === 'windup') return { reach: CHASER.strikeRadius }
+    return this.pressure && this.phase === 'approach' && this.cock >= 0 ? { reach: PRESSURE_HULK.reach + this.radius } : null
   }
 
   catchTell(now: number, graceMs: number, reel: boolean) {

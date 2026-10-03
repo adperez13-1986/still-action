@@ -5,14 +5,19 @@ import type { AbilityDef } from './abilities'
  * tools/corecheck.ts runs it under node. A core replaces the hand and the eye; it marks bodies, and the parts that fit it spend the marks.
  * With no core worn nothing here is read: the game is today's (BUILD.md §1, K-M1).
  *
+ * N1 (design/buildlayer/CORES2.md) added Graze, and Tether's numbers and words so the four-card pick can show it (its code is N2's). Every number there is a first guess by analogy with Wake and Ram, PLACEHOLDER until his runs.
+ *
  * B1 landed the data, the switch and the machine. B2 (Wake) built Wake's skim, its three reshapes (VARIANTS), Burst, Deep Frost, Spray and Slipstream, and the
  * rings (markfx.ts); B3 (Ram) built Ram's shove and slams, Domino, Catch, Wide Shove and Rubble, Piston's variant and Ram's ring look. The pick comes in B4, the hunt and the buttons in B5. The numbers are the SHIP column of design/buildlayer/3-balancer.md §1 (the balancer's re-price of
  * BUILD.md's, which the lead made binding on 2 Oct); where that file added a number or a rule, it is marked **new** below. A rule that is B2-B5's
  * is only recorded here.
  */
 
-export type CoreId = 'wake' | 'ram'
-export const CORE_IDS: readonly CoreId[] = ['wake', 'ram']
+export type CoreId = 'wake' | 'ram' | 'graze' | 'tether'
+/** The pick's cards, in order (design/buildlayer/CORES2.md §3: all four show while he tests them). */
+export const CORE_IDS: readonly CoreId[] = ['wake', 'ram', 'graze', 'tether']
+/** The cores that can be worn today: a card for any other reads "soon" and cannot be taken (Tether is N2). A saved or dev-booted core outside this is bare. */
+export const CORE_LIVE: readonly CoreId[] = ['wake', 'ram', 'graze']
 
 /** A part's job for one core. spend: cashes marks on every body it hits. shape: moves bodies or holds them. guard: protects. */
 export type FitRole = 'spend' | 'shape' | 'guard'
@@ -67,9 +72,28 @@ export const CORES = {
      */
     bodyAhead: true,
   },
+  graze: {
+    /** Flat damage a spend adds per mark, for a part with no `Fit.k` of its own (every Graze spender has one; Scrap Cleaver, the bridge, is 4). */
+    K: 8, cap: 3, lifeS: 3,
+    /**
+     * A graze (CORES2.md §1): an enemy's melee strike resolves and does not reach Still, but he stood within `margin` of its reach (centre to centre, the strike's own test: the hulk's 2.4, the fist's 1.9 + its radius,
+     * the Assembler's sweep 5.2 + 0.4). The attacker takes `damage` (a core hit, whole on a body that can't be moved, like Wake's bossSkim) and `marks` marks, once a strike.
+     * A charger's lane counts too when the rush's front passes him, no hit, within `margin` of the lane's hit half-width. An Assembler's sweep also needs him within the arc, grown by `margin` at his distance.
+     */
+    margin: 1.0, damage: 10, marks: 2,
+    /** A shot that passes within `shotMargin` of Still's edge (its radius and his) without hitting him grazes its owner once: `shotMarks` marks, no damage. A reflected shot (Mirror Ward) grazes its owner too. */
+    shotMargin: 0.7, shotMarks: 1,
+    /** The band: awake bodies winding up a swing within `bandR` of Still show where its edge is (graze.ts); at most `bandMax` at once. */
+    bandR: 8, bandMax: 6,
+  },
+  /** N2's numbers (CORES2.md §2), here so the pick's card and the types exist. Nothing reads these but the card yet. */
+  tether: {
+    K: 6, cap: 3, lifeS: 3,
+    minR: 3, maxR: 9, breakR: 10, rehookS: 0.5, losGraceS: 0.3, reach: 0.4, damage: 6, perBodyS: 0.5, anchorDamage: 4, anchorEveryS: 1.5,
+  },
 } as const satisfies Record<CoreId, { K: number; cap: number; lifeS: number } & Record<string, unknown>>
 
-export type KeystoneId = 'ram-domino' | 'ram-catch' | 'wake-burst' | 'wake-deep'
+export type KeystoneId = 'ram-domino' | 'ram-catch' | 'wake-burst' | 'wake-deep' | 'graze-feint' | 'graze-read'
 export interface KeystoneDef { id: KeystoneId; core: CoreId; for: 'packs' | 'bosses' }
 export const KEYSTONES = {
   /**
@@ -86,9 +110,13 @@ export const KEYSTONES = {
   'wake-burst': { id: 'wake-burst', core: 'wake', for: 'packs', share: 1.0 },
   /** Bosses. Marks hold more and last longer: cap 5, life 4 s (the ring fills in fifths). */
   'wake-deep': { id: 'wake-deep', core: 'wake', for: 'bosses', cap: 5, lifeS: 4 },
+  /** Packs. A graze also gives `marks` mark to every other awake body within `radius` of Still. */
+  'graze-feint': { id: 'graze-feint', core: 'graze', for: 'packs', radius: 2.0, marks: 1 },
+  /** Bosses. A graze on a body that can't be moved gives `marks` marks, and its margin is `margin`. */
+  'graze-read': { id: 'graze-read', core: 'graze', for: 'bosses', marks: 3, margin: 1.6 },
 } as const satisfies Record<KeystoneId, KeystoneDef & Record<string, unknown>>
 
-export type UpgradeId = 'ram-wide' | 'ram-rubble' | 'wake-spray' | 'wake-slip'
+export type UpgradeId = 'ram-wide' | 'ram-rubble' | 'wake-spray' | 'wake-slip' | 'graze-riposte' | 'graze-wide'
 /** From melting past III, at most 2 a run (one of each). Each must change what he sees on the floor, not only a number. */
 export const UPGRADES = {
   /** The shove takes the nearest `bodies` in reach each beat, not one: two bodies move. */
@@ -99,6 +127,10 @@ export const UPGRADES = {
   'wake-spray': { id: 'wake-spray', core: 'wake', reach: 1.5, marks: 1 },
   /** Each skim adds `perSkimS` of walk speed x `mul`, up to `maxS` banked. A cold streak at his heels while it runs. */
   'wake-slip': { id: 'wake-slip', core: 'wake', perSkimS: 0.25, maxS: 1, mul: 1.15 },
+  /** Each graze takes `cooldownS` off every spender's cooldown; the spender buttons flash cold. (main.ts, on the graze event: the cooldowns live in the HUD.) */
+  'graze-riposte': { id: 'graze-riposte', core: 'graze', cooldownS: 0.4 },
+  /** The margin is `margin` (1.0 before); the band under a winding-up body widens with it. */
+  'graze-wide': { id: 'graze-wide', core: 'graze', margin: 1.5 },
 } as const satisfies Record<UpgradeId, { id: UpgradeId; core: CoreId } & Record<string, unknown>>
 
 /**
@@ -141,26 +173,33 @@ export const SPEND_HUD = { refreshS: 0.1, showMax: 9, pulseAt: 3 }
 /** PLACEHOLDER, every one: Adrian's words. Every player-facing use of Wake's mark word ("frosted", his pick of 3 Oct, was "rimed") is in here and nowhere else; the code's own `rime` (the mod kind, the ring comments) is not text he reads. */
 export const WORDS = {
   switch: 'builds',
-  core: { wake: 'Wake', ram: 'Ram' },
+  core: { wake: 'Wake', ram: 'Ram', graze: 'Graze', tether: 'Tether' },
   /** The pick card: the left thumb, then what it leaves on bodies (the translator's lines). */
-  thumb: { wake: 'Pass beside them.', ram: 'Put them against something.' },
-  leaves: { wake: 'What you pass beside is frosted.', ram: 'What hits a wall or a body is slammed.' },
-  mark: { wake: 'frosted', ram: 'slammed' },
+  thumb: { wake: 'Pass beside them.', ram: 'Put them against something.', graze: 'Stand at the edge of their swing.', tether: 'Circle them at a distance.' },
+  leaves: { wake: 'What you pass beside is frosted.', ram: 'What hits a wall or a body is slammed.', graze: 'What just misses you is grazed.', tether: 'What the wire sweeps across is snagged.' },
+  mark: { wake: 'frosted', ram: 'slammed', graze: 'grazed', tether: 'snagged' },
+  /** The pick card of a core that is not live yet (CORE_LIVE): said in place of the button's use, and the card cannot be taken. */
+  soon: 'soon',
   /** The pick card's third line: what the blue buttons do (SHOW.md item 7). */
   spendsLine: 'Blue buttons spend them.',
   /** The first fight's one-line hint, once per save per core (SHOW.md item 6); its hint ids are `core-wake` and `core-ram`. */
   firstFight: {
     wake: 'Pass beside them to frost them. Blue buttons break the frost for extra damage.',
     ram: 'Your shove marks what hits a wall or a body. Blue buttons break the marks for extra damage.',
+    graze: 'Let them swing and just miss. Blue buttons break the marks for extra damage.',
+    tether: 'Circle so the wire sweeps across them. Blue buttons break the marks for extra damage.',
   },
   pickTitle: 'Choose a core', pickIntro: 'One way to fight, for the whole run.',
   keystone: { 'ram-domino': ['Domino', 'A slammed body slams what it hits.'], 'ram-catch': ['Catch', 'The shove fires the moment something in reach winds up.'],
-    'wake-burst': ['Burst', 'The third ring breaks the body open on its own.'], 'wake-deep': ['Deep Frost', 'Rings hold five and last longer.'] } as Record<KeystoneId, readonly [string, string]>,
+    'wake-burst': ['Burst', 'The third ring breaks the body open on its own.'], 'wake-deep': ['Deep Frost', 'Rings hold five and last longer.'],
+    'graze-feint': ['Feint', 'A graze marks the others near you.'], 'graze-read': ['Read', 'The big ones graze wider, and give three.'] } as Record<KeystoneId, readonly [string, string]>,
   upgrade: { 'ram-wide': ['Wide Shove', 'Shoves the two nearest.'], 'ram-rubble': ['Rubble', 'A wall slam throws stone at whoever is near.'],
-    'wake-spray': ['Spray', 'Frost carries to the one behind.'], 'wake-slip': ['Slipstream', 'Every pass speeds you up a little.'] } as Record<UpgradeId, readonly [string, string]>,
+    'wake-spray': ['Spray', 'Frost carries to the one behind.'], 'wake-slip': ['Slipstream', 'Every pass speeds you up a little.'],
+    'graze-riposte': ['Riposte', 'A graze cools your blue buttons.'], 'graze-wide': ['Wide Berth', 'The edge of a swing reaches further.'] } as Record<UpgradeId, readonly [string, string]>,
   /** Shapers' and guards' fit lines; a spender's is built: `spends ${mark}: +${k} each`, with `k = fit.k ?? CORES[core].K` (B5). */
   fitLine: { 'backdraft-vent': 'pulls them together, so a shove slams two', kickstart: 'runs them into walls', brace: 'holds your ground',
-    'signal-flare': 'frosts what will not come to you', 'spring-heels': 'over a wall, they string out after you', ward: 'covers the pass' },
+    'signal-flare': 'frosts what will not come to you', 'spring-heels': 'over a wall, they string out after you', ward: 'covers the pass',
+    skitter: 'hop to the edge of their swing', lure: 'they swing at it, and you', 'mirror-ward': 'a reflected shot grazes its owner', 'borrowed-time': 'undo a graze gone wrong' },
   /** The reshaped parts' names and lines, as worn under Wake (VARIANTS below); Ram's Piston is a numbers-only variant and keeps its own (B3). */
   reshape: { backhand: ['Backhand', 'A swing behind you, at what you just passed.'], skate: ['Skate', 'A slow glide through them.'], frostFlare: ['Frost Flare', 'Frosts what it lands on, and slows it.'] },
   readout: (made: number, spent: number, bonus: number) => `marked ${made} · spent ${spent} · +${bonus} damage`,
@@ -193,6 +232,7 @@ type Over = Partial<Omit<AbilityDef, 'id' | 'slot' | 'tier' | 'drops' | 'key' | 
 /** Frayed Cleaver's 90-degree icon, mirrored: the swing goes the other way. */
 const MIRROR_ICON = (inner: string) => `<g transform="translate(24 0) scale(-1 1)">${inner}</g>`
 const VARIANTS: Record<CoreId, Record<string, Over>> = {
+  graze: {}, tether: {},
   wake: {
     /** An arc at what is behind him (`behind`), no fray. cone / damage / cooldown: RESHAPES.backhand. Range 3.1 kept. */
     'frayed-cleaver': {
@@ -215,7 +255,7 @@ const VARIANTS: Record<CoreId, Record<string, Over>> = {
   ram: { piston: { cooldownMs: RESHAPES.pistonRam.cooldownMs } },
 }
 
-const memo: Record<CoreId, WeakMap<AbilityDef, AbilityDef>> = { wake: new WeakMap(), ram: new WeakMap() }
+const memo: Record<CoreId, WeakMap<AbilityDef, AbilityDef>> = { wake: new WeakMap(), ram: new WeakMap(), graze: new WeakMap(), tether: new WeakMap() }
 
 /** `def` as worn under `core`: the reshaped part (VARIANTS) or `def` itself. Pure, memoized per (core, def object), idempotent. */
 export function variant(def: AbilityDef, core: CoreId | null): AbilityDef {

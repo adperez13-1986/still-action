@@ -239,6 +239,10 @@ export interface Hud {
    */
   ready: (slot: SlotName, tone: 'ember' | 'cold') => void
   /**
+   * Graze's Riposte (N1): take `ms` off a cooling slot's cooldown (never below ready), and flash the button cold if it was cooling. Heat is untouched; a ready or empty slot does nothing.
+   */
+  trim: (slot: SlotName, ms: number) => void
+  /**
    * N8: `n` strain points fly as ember pips from a screen point to the meter (at
    * most 4 drawn; the last carries the rest). The meter shows strain minus what's
    * still in the air, so the fill steps as each lands. The logic value is already
@@ -1087,6 +1091,15 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
       void b.el.offsetWidth
       b.el.classList.add(`ride-${tone}`)
       setTimeout(() => b.el.classList.remove(`ride-${tone}`), 500)
+    },
+    trim(slot, ms) {
+      const b = buttons.find((x) => x.slot === slot)!
+      if (!b.def || b.readyAt <= state.clock) return
+      b.readyAt = Math.max(state.clock, b.readyAt - ms)
+      b.el.classList.remove('ride-cold')
+      void b.el.offsetWidth
+      b.el.classList.add('ride-cold')
+      setTimeout(() => b.el.classList.remove('ride-cold'), 500)
     },
     charge(slot, c) {
       buttons.find((x) => x.slot === slot)!.el.style.setProperty('--charge', c.toFixed(3))

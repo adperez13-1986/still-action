@@ -1512,6 +1512,20 @@ export function slam(pan: number) {
   hiss(c, d, t, 0.05, 0.12, 'bandpass', 900, 600, 1.2)
 }
 
+/**
+ * The build layer (CORES2.md §1): a graze, the swing that just missed. A short rising "tsss" (a high band-passed hiss sweeping up, 3 to 6 kHz) with a thin tone riding it, so it is a whiff of air and not the spend's
+ * ring or the slam's knock. No Math.random. A phone speaker's band.
+ */
+export function graze(pan: number) {
+  heard('graze')
+  const c = live()
+  if (!c) return
+  const t = c.currentTime
+  const d = out(c, 'hits', pan)
+  hiss(c, d, t, 0.13, 0.16, 'bandpass', 3000, 6200, 1.4)
+  tone(c, d, 'sine', t, 1900, 2900, 0.1, 0.05)
+}
+
 /** The build layer: marks ran out unspent. A faint fizzle, about -18 dB against the hit's hiss. Helpful or nagging is his phone call (BUILD.md §9). */
 export function fizzle(pan: number) {
   heard('fizzle')

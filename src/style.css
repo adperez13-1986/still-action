@@ -650,12 +650,33 @@ html, body {
   -webkit-mask: radial-gradient(circle closest-side, transparent 0 42%, #000 46% 94%, transparent 98%);
   mask: radial-gradient(circle closest-side, transparent 0 42%, #000 46% 94%, transparent 98%);
 }
+/* Graze's glyph: a thin double ring, in three arcs (CORES2.md §1); Tether's, a ring with one gap, like a hook (N2's card, "soon" until then) */
+.core[data-core="graze"] .coreglyph {
+  --c: #8fd0ff;
+  -webkit-mask: radial-gradient(circle closest-side, transparent 0 44%, #000 47% 58%, transparent 61% 70%, #000 73% 90%, transparent 94%);
+  mask: radial-gradient(circle closest-side, transparent 0 44%, #000 47% 58%, transparent 61% 70%, #000 73% 90%, transparent 94%);
+}
+.core[data-core="tether"] .coreglyph {
+  --c: #bfe4f2;
+  background: conic-gradient(from 20deg, var(--c) 0 310deg, transparent 310deg 360deg);
+}
+/* the pick's row: every core's card; one row where they fit, two by two on a portrait phone. A card that is not live yet is dimmed and cannot be pressed. */
+#pause .row.picks { flex-wrap: wrap; justify-content: center; }
+#pause .row.picks .pcard.master.core { width: 218px; }
+#pause .pcard.master.core.soon { opacity: .5; cursor: default; border-style: dashed; }
+#pause .pcard.master.core.soon:active { transform: none; }
+#pause .pcard.master.core.soon .spends { color: #6f8196; font-style: italic; }
+@media (max-width: 600px) {
+  #pause .row.picks { gap: 8px; }
+  #pause .row.picks .pcard.master.core { width: calc(50% - 4px); max-width: 240px; padding: 10px 11px; }
+}
 @media (max-height: 520px) {
   #pause .pcard.master.core { width: 240px; padding: 8px 12px; }
   #pause .pcard.master.core .thumb { margin-top: 4px; font-size: 13px; }
   #pause .pcard.master.core .leaves { margin-top: 3px; font-size: 12px; }
   #pause .pcard.master.core .spends { margin-top: 3px; font-size: 12px; }
   .coreglyph { width: 26px; height: 26px; }
+  #pause .row.picks .pcard.master.core { width: 205px; }
 }
 /* B5: the core under the loadout (its name, its socket and upgrades, the open depth's marks), cold and quiet; and the socket card's "you lose" line */
 #pause .coreblock:empty { display: none; }

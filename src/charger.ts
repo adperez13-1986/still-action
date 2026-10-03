@@ -646,6 +646,8 @@ export class Charger implements Enemy {
     const ahead = (p.x - free.x) * fx + (p.z - free.z) * fz
     const lateral = Math.abs((p.x - free.x) * fz - (p.z - free.z) * fx)
     if (!this.hitDone && this.passSign > 0 && ahead <= 0 && lateral <= CHARGER.nearMiss) ctx.emit({ kind: 'nearMiss', e: this, at: p.clone() })
+    // Graze (ctx.laneMargin is 0 with any other core or none, and nothing is said): the same pass, counted out to the lane's edge plus the margin
+    if (ctx.laneMargin && !this.hitDone && this.passSign > 0 && ahead <= 0 && lateral <= this.hitHalf + ctx.laneMargin) ctx.emit({ kind: 'lanePass', e: this, at: p.clone(), lateral })
     this.passSign = Math.sign(ahead)
 
     if (blocked) {
