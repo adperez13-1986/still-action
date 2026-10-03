@@ -412,6 +412,12 @@ html, body {
   #offer .choices { flex: 1 1 100%; flex-direction: row; justify-content: flex-end; align-items: center; }
   #offer .take { width: 44px; height: 44px; font-size: 13px; }
 }
+/* a take into two slots: the slot words as pills in a row inside the card, under the words */
+#offer.two { flex-wrap: wrap; align-content: flex-end; }
+#offer.two .info { flex: 1 1 100%; min-height: 0; max-height: calc(100dvh - env(safe-area-inset-top, 0px) - 322px); }
+#offer.two .choices { flex: 1 1 100%; flex-direction: row; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 6px; }
+#offer.two .take { width: auto; height: auto; min-width: 58px; border-radius: 9px; padding: 9px 12px; font-size: 13px; }
+#offer.two .melt { max-width: 100%; }
 /* a tempered part's rank on its button: small cold strokes under the icon */
 .btn .lbl { position: relative; }
 .btn .rank {

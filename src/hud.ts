@@ -986,8 +986,10 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
         return
       }
       const two = slots.length > 1
-      takeBtn.textContent = two ? SLOT_LABEL[slots[0]!][0]! : 'take'
-      takeAlt.textContent = two ? SLOT_LABEL[slots[1]!][0]! : 'take'
+      // two slots: the buttons say the slot in full and sit in a row inside the card (a round letter stacked over compare/melt left the card)
+      offerEl.classList.toggle('two', two)
+      takeBtn.textContent = two ? SLOT_LABEL[slots[0]!].toLowerCase() : 'take'
+      takeAlt.textContent = two ? SLOT_LABEL[slots[1]!].toLowerCase() : 'take'
       takeAlt.style.display = two ? '' : 'none'
       const current = buttons.find((b) => b.slot === slots[0])!.def
       offerSlot.textContent = slots.map((sl) => SLOT_LABEL[sl]).join(' / ')

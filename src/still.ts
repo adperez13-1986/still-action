@@ -127,6 +127,11 @@ interface Move {
  */
 const CORE_DIM = { dim: 0.85, easeS: 0.15 }
 
+/** A part worn off its own slot: a small cold octahedron on the slot's own piece (x, y, z in the piece's frame: the crown, the chest, the right forearm, the thigh). */
+const MOUNT_GEO = new THREE.OctahedronGeometry(0.045)
+const MOUNT_MAT = new THREE.MeshBasicMaterial({ color: EYE_ON })
+const MOUNT_AT: Record<SlotName, [number, number, number]> = { head: [0, 0.38, 0.1], torso: [0, 0.3, 0.37], arms: [0.33, 1.2, 0.22], legs: [0.1, 0.6, 0.24] }
+
 export class Still {
   readonly group = new THREE.Group()
   readonly parts = {} as Record<SlotName, THREE.Object3D>
@@ -212,10 +217,16 @@ export class Still {
       old.traverse((o) => this.rest.delete(o))
       this.debris = this.debris.filter((d) => d.part !== old)
     }
-    const m = buildModel(slot, def?.id ?? null, 'body')
-    // worn off its own slot (an archetype's slot law): the slot's frame stays the rig, since the pose handles live on it, and the part is laid over it
-    const f = !def || homeSlot(def) === slot ? m : buildModel(slot, null, 'body')
-    if (f !== m) f.root.add(m.root)
+    // worn off its own slot (an archetype's slot law): the slot draws its own default piece, never the foreign model, with a small cold mark that something is mounted there
+    const off = !!def && homeSlot(def) !== slot
+    const m = buildModel(slot, off ? (STARTING.find((p) => p.slot === slot)?.id ?? null) : (def?.id ?? null), 'body')
+    if (off) {
+      const g = new THREE.Mesh(MOUNT_GEO, MOUNT_MAT)
+      g.name = 'mounted'
+      g.position.set(...MOUNT_AT[slot])
+      m.root.add(g)
+    }
+    const f = m
     this.models[slot] = m
     this.setPart(slot, f.root)
     if (f.lens) this.lens = f.lens

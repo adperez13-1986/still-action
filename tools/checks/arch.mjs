@@ -60,7 +60,7 @@ check('K-AR4', RUN, async ({ page }) => {
       replaces: el.querySelector('.replaces').textContent, target: document.querySelectorAll('#hud .target').length,
     }
   })
-  assertEq('the take card offers both slots, head and arms, naming what each replaces', [offer.shown, offer.slot, offer.buttons, offer.target], [true, 'Head / Arms', ['H', 'A'], 2])
+  assertEq('the take card offers both slots, head and arms, naming what each replaces', [offer.shown, offer.slot, offer.buttons, offer.target], [true, 'Head / Arms', ['head', 'arms'], 2])
   assert(offer.replaces.includes('Head: replaces Focusing Lens') && offer.replaces.includes('Arms: replaces Flare'), `the card names both swaps: ${offer.replaces}`)
   const took = await evalJson(page, () => {
     const W = window
