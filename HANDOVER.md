@@ -3,7 +3,7 @@
 For the next session. Read this, then `DESIGN.md` (the settled decisions), then the design
 folder for whatever you're touching. Don't re-derive any of them.
 
-## Start here (3 Oct, later: his verdict on B6a/B6b; ALL FOUR CORES LIVE; his runs + tuning next)
+## Start here (3 Oct, later: his verdict on B6a/B6b; Wake, Ram, Thorns, Tether LIVE; his worry: core lock-in)
 
 **His verdict on B6a + B6b (3 Oct):** "I like it, the cues are helpful, the numbers are also good. It's more difficult as well.. I am
 not satisfied yet with the 2 cores, we need to tune them further, but the main idea works." Then: design the other cores yourself,
@@ -17,7 +17,16 @@ shots, ~0.6 core dmg/s), packs spent/made 0.37; dropsim graze formed d3 62.9% (l
 **N2 Tether DONE + pushed.** Wire + J glyph + barbed ring (+3 draw calls); K-M34 pins the flip rule. Bot: Assembler 3/3 eager,
 packs ~1.5 core dmg/s, hooks 28 / breaks 19, only 2 crossings in 39 s (packs die fast; the anchor tick carries it), flee bot 0.
 dropsim formed-by-Assembler line (70%): Ram passes, Wake 70.0, Graze 62.9, Tether 67 (fail, untuned).
-**Next: his runs with all four, then the tuning round he asked for (Wake + Ram not satisfied yet; Graze + Tether first guesses).**
+**N3 DONE + pushed: Thorns replaced Graze** (his call: "Graze feels like something that can work if there is a dodge mechanic, not
+something for stepping away"; the basic enemy has no red windup zone). `design/buildlayer/THORNS.md`. Bot: Thorns costs HP (Assembler
+~190 lost vs ~113 bare; packs 7 vs 4 a fight); K-M34 (Tether, boss alone) is flaky, HEAD too. Alternatives offered and parked: Orbit,
+Turret (if Tether fails him), a Dodge core (needs a 5th button).
+**His worry (3 Oct): "you are locked into your core, and you will not pick parts that doesn't sync with your core. And the gameplay
+will always be the same, no variation within the core."** Lead's answer, awaiting his yes: the core makes marks, each PART decides what
+to do with them, the same under every core: four mark verbs, Cash (today's +K) / Spread (copy marks to neighbours) / Detonate (spend
+every mark in an area) / Feed (add a mark, extend life); fit shrinks to a +50% bonus, so no part is dead and one core plays differently
+run to run. Later: keystones as forks (3-4 per core bending the core's rule, e.g. Wake Drift / Shear). Do this BEFORE tuning.
+**Then: his runs with all four, then the tuning round he asked for (Wake + Ram not satisfied yet; Graze + Tether first guesses).**
 Ask feel first per core: could he see it, did it feel like its own way to fight, too weak/strong. Watch: Graze's swing coverage gaps
 (boss lanes, Arbiter, Engine, mites), Tether's wire breaking often, crossings rare in short pack fights. Tuning all four after his runs (his ask; Wake and Ram not done).
 
