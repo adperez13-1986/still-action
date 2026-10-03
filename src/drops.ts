@@ -1,6 +1,7 @@
 import { PARTS, type AbilityDef, type DropGate, type Tier } from './abilities'
 import type { SlotName } from './still'
 import type { Archetype, Pack } from './combat'
+import { slotsFor, type ArchetypeId } from './archetypes'
 import { POOL_RULES, type PoolView } from './pool'
 import { FILTER, KEYSTONES, fitOf, type CoreId, type KeystoneDef, type KeystoneId } from './cores'
 
@@ -88,6 +89,13 @@ export function dropChance(
 }
 
 /**
+ * The archetype's slot law (archetypes.ts): a part with no slot it may be worn in is left out of every draw, so the draw goes on among the rest. Main sets it with the run's
+ * archetype; null is today's pool, and the draws are then exactly as before. No weighting by family yet (A3).
+ */
+let lawFor: ArchetypeId | null = null
+export const setDropArchetype = (a: ArchetypeId | null) => { lawFor = a }
+
+/**
  * Null when nothing is left to find at any tier. `taken` is everything on Still
  * or on the floor; `exclude` keeps it off some slots (a boss's second drop off the first
  * one's, a floor drop off the empty ones). `fresh` false: only found parts.
@@ -103,7 +111,7 @@ export function rollPart(
 ): AbilityDef | null {
   const on = new Set(taken.map((p) => p.id))
   const gates = GATES[source]
-  const base = PARTS.filter((p) => !on.has(p.id) && !pool.turned.has(p.id) && gates.includes(p.drops) && !exclude.includes(p.slot))
+  const base = PARTS.filter((p) => !on.has(p.id) && !pool.turned.has(p.id) && gates.includes(p.drops) && !exclude.includes(p.slot) && (!lawFor || slotsFor(lawFor, p.id).length > 0))
   const wantUnfound = fresh && pool.depth >= POOL_RULES.minDepth && Math.random() < POOL_RULES.unfound[source]
   if (wantUnfound) {
     const tiers = POOL_RULES.unfoundTiers[source]

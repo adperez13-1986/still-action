@@ -6,7 +6,7 @@ import { createHud, tapAnswer, type Press } from './hud'
 import { createGradePanel, apply as applyGrade } from './grade'
 import { createPacer, createQuality, createReadout, FRAME_S, BEHIND_CARD_S, IDLE_ROOM_S } from './perf'
 import { Combat, eliteLine, PARRY, HAND, HAND_REACH, EYE, type Archetype, type BreakForm, type CastResult, type EliteMod, type Pack } from './combat'
-import { STARTING, PARTS, byId, type AbilityDef, type AbilityShape, type BeatKey } from './abilities'
+import { STARTING, PARTS, byId, homeSlot, onSlot, type AbilityDef, type AbilityShape, type BeatKey } from './abilities'
 import { SLOT_NAMES, type SlotName } from './still'
 import { TEMPER, ROMAN, tempered } from './temper'
 import { presetId as weightPresetId, setPreset as setWeightPreset, weighed, baseCooldownS, WEIGHT_FEEL, WEIGHT_PRESETS, type PresetId } from './weight'
@@ -39,6 +39,8 @@ import { Sightline } from './sightline'
 import { createCameraRig } from './camera'
 import { updateMusic, musicNow } from './music'
 import { updateAmbience, type AmbienceMood } from './ambience'
+import { ARCH_IDS, ARCH_LIVE, AUTO, FAMILY, KIT, LAW, TRAIT, WORDS as ARCH_WORDS, fitsSlot, slotsFor, type ArchetypeId } from './archetypes'
+import { setDropArchetype } from './drops'
 import { Loot, LOOT, dropChance, rollPart, rollForCore, rollPicks, PEDESTALS, PEDESTALS_ON, type GroundKey, type GroundPart, type PickKind, type PickSet } from './loot'
 import { createPauseScreen } from './pause'
 import { createOverlay } from './ending'
@@ -93,6 +95,10 @@ const devParam = (k: string): string | null => (import.meta.env.DEV ? params.get
  * so every suite stays bare. A `?depth=` boot never shows the pick.
  */
 const CORE_PARAM: CoreId | null = DEPTH_PARAM !== null && (CORE_LIVE as readonly (string | null)[]).includes(devParam('core')) ? (devParam('core') as CoreId) : null
+/** `?arch=brawler|marksman` (DEV, with `?depth=`): the run starts as that archetype, kit worn; a `?depth=` boot never shows the pick. */
+const ARCH_PARAM: ArchetypeId | null = DEPTH_PARAM !== null && (ARCH_LIVE as readonly (string | null)[]).includes(devParam('arch')) ? (devParam('arch') as ArchetypeId) : null
+/** `?pick=core` (DEV): the run's start offers the core pick instead of the archetype pick (the build layer's checks drive it; A4 brings cores back as sub-styles). */
+const PICK_CORE = devParam('pick') === 'core'
 /** `?route=II|III` (DEV): the run starts on that road and never sees the crossroads; with ?depth=4-6 it starts there. */
 const ROUTE_PARAM: RouteId | null = devParam('route') === 'III' ? 'III' : devParam('route') === 'II' ? 'II' : null
 /** `?crossroads=1` (DEV): the crossroads after the Assembler, whatever the switch and the save say. */
@@ -2055,6 +2061,9 @@ const run = {
    * begun with "builds" off, or an old snapshot). Nothing reads them but `coreActive()`. `corePick`: what the pick said (B4); once a run, in the playtest body.
    */
   core: null as CoreId | null,
+  /** Who he is this run (archetypes.ts), picked at the start in the core pick's place. Null: today's game (an old save, builds off, a dev boot). With one, `core` stays null. */
+  archetype: null as ArchetypeId | null,
+  archPick: null as { at: 'start' | 'resume'; took: ArchetypeId } | null,
   keystone: null as KeystoneId | null,
   upgrades: [] as UpgradeId[],
   corePick: null as { at: 'start' | 'resume'; offered: CoreId[]; took: CoreId; s: number } | null,
@@ -2409,7 +2418,7 @@ function exitApproach(l: Level) {
 function openPick(g: GroundPart) {
   if (!canPause() || !g.set) return
   const set = g.set
-  const current = hud.loadout.find((p) => p.slot === g.def.slot) ?? null
+  const current = hud.loadout.find((p) => p.slot === slotsOf(g.def)[0]) ?? null
   // the loss, named where the choice is made
   const rest = loot.ground.filter((o) => o.set === set).length - 1
   const last = set.took + 1 >= PICK_TAKES[set.kind]
@@ -2840,7 +2849,17 @@ pause.setSwitch(WORDS.switch, () => buildsOn, (on) => {
 const coreActive = () => buildsOn && run.core !== null
 const coreNow = (): CoreId | null => (coreActive() ? run.core : null)
 /** The one way main builds a worn part: its reshape under the core worn, then temper, flat while a core is on. With no core: `tempered(base, rank)`. */
-const asWorn = (base: AbilityDef, rank: number): AbilityDef => tempered(variant(base, coreNow()), rank, coreActive())
+const asWorn = (base: AbilityDef, rank: number, slot: SlotName = base.slot): AbilityDef => {
+  const d = tempered(variant(base, coreNow()), rank, coreActive())
+  // Footwork (archetypes.ts TRAIT): a Move-family part cools down faster, wherever it is worn
+  const f = run.archetype === 'marksman' && FAMILY[base.id] === 'move' ? { ...d, cooldownMs: Math.round(d.cooldownMs * TRAIT.marksman.footwork.moveCd) } : d
+  return onSlot(f, slot)
+}
+/** The slots a floor part may be taken into: its own with no archetype; with one, the slot law's, its own first. */
+const slotsOf = (d: AbilityDef): SlotName[] => {
+  const s = run.archetype ? slotsFor(run.archetype, d.id, d.slot) : []
+  return s.length ? s : [d.slot]
+}
 const NO_UPGRADES: ReadonlySet<UpgradeId> = new Set()
 const NO_MASTERY: ReadonlySet<MasteryId> = new Set()
 /** The gate's state, written to Combat. Cheap and idempotent: at every level entry, a flip, a pick, a resume. */
@@ -2859,7 +2878,7 @@ function applyBuilds() {
   const was = combat.core
   syncCore()
   if (was === combat.core) return
-  for (const sl of hud.slots) if (sl.def) hud.equip(asWorn(byId(sl.def.id), sl.def.rank ?? 1))
+  for (const sl of hud.slots) if (sl.def) hud.equip(asWorn(byId(sl.def.id), sl.def.rank ?? 1, sl.slot))
 }
 
 /** The switch's state applied to Combat: at each level, when it's flipped mid-depth, and by the DEV hook. (The freeze merge state resets here.) */
@@ -2936,14 +2955,14 @@ function updateOffer() {
     // under a core, the card shows the part as worn (a reshape's name, line and numbers); with none, the part itself
     const shown = card ? variant(card.def, coreNow()) : null
     hud.offer(shown, !!card && !save.found.includes(card.def.id), shown ? describePart(shown) : undefined, card ? meltLabel(card) : null,
-      card ? { swap: swapWords(card.def), pair: pairWords(card.def), fit: fitWords(card.def) } : undefined)
+      card ? { swap: swapWords(card.def), pair: pairWords(card.def), fit: fitWords(card.def), slots: run.archetype ? slotsOf(card.def) : undefined } : undefined)
     loot.offer(next)
     if (next?.set) openPick(next)
   }
 }
 
-hud.onTake(() => {
-  if (offered) takePart(offered)
+hud.onTake((slot) => {
+  if (offered) takePart(offered, slot)
 })
 
 // --- keystones on the floor: the socket card (BUILD.md §2.9, B5) ---
@@ -3011,8 +3030,9 @@ function takeKey(g: GroundKey) {
 /** Temper: "melt into Cleaver II" when this floor part could rank up the one he wears there, else null. */
 function meltLabel(g: GroundPart): string | null {
   if (!temperOn || g.set) return null
-  const cur = hud.loadout.find((p) => p.slot === g.def.slot)
-  const rank = run.ranks[g.def.slot] ?? 1
+  const into = slotsOf(g.def)[0]
+  const cur = hud.loadout.find((p) => p.slot === into)
+  const rank = run.ranks[into!] ?? 1
   if (!cur) return null
   if (rank < TEMPER.maxRank) return `melt into ${byId(cur.id).name} ${ROMAN[rank + 1]}`
   // with a core there is no mastery (no hand, no eye to teach): the core's upgrade takes its place (BUILD.md §2.9), from UPGRADE_FROM on, while one is left to learn
@@ -3141,8 +3161,9 @@ hud.onMelt(() => {
 
 /** Temper: the floor part is gone into the one he wears in its slot, which ranks up; its cooldown keeps its place. */
 function meltPart(g: GroundPart) {
-  const cur = hud.loadout.find((p) => p.slot === g.def.slot)
-  const rank = (run.ranks[g.def.slot] ?? 1) + 1
+  const into = slotsOf(g.def)[0]!
+  const cur = hud.loadout.find((p) => p.slot === into)
+  const rank = (run.ranks[into] ?? 1) + 1
   if (!cur || g.set) return
   if (rank > TEMPER.maxRank) {
     // never mastery with a core: the core's upgrade (meltLabel offers it from UPGRADE_FROM, while one is left)
@@ -3152,10 +3173,10 @@ function meltPart(g: GroundPart) {
   }
   // melted is found: it joins the pool like a part taken
   if (markFound(save, g.def.id)) store.write()
-  run.ranks[g.def.slot] = rank
+  run.ranks[into] = rank
   endDrop(g, 'melted')
   loot.remove(g)
-  hud.equip(asWorn(byId(cur.id), rank))
+  hud.equip(asWorn(byId(cur.id), rank, cur.slot))
   const st = run.stats[run.stats.length - 1]
   if (st) st.melts = (st.melts ?? 0) + 1
   offered = null
@@ -3175,10 +3196,11 @@ hud.onCompare(() => {
   const g = offered
   if (!g || !canPause()) return
   sfx.uiClick()
-  const current = hud.loadout.find((p) => p.slot === g.def.slot) ?? null
+  const into = slotsOf(g.def)[0]!
+  const current = hud.loadout.find((p) => p.slot === into) ?? null
   openPause()
   const swap = swapWords(g.def)
-  pause.compare(current, variant(g.def, coreNow()), hud.loadout, () => {
+  pause.compare(current, onSlot(variant(g.def, coreNow()), into), hud.loadout, () => {
     resume()
     takePart(g)
   }, resume, !save.found.includes(g.def.id), { take: swap?.take, melts: swap?.melts, pair: pairWords(g.def) ?? undefined, fit: fitWords(g.def) ?? undefined })
@@ -3186,8 +3208,8 @@ hud.onCompare(() => {
 
 /** A swap: what the outgoing part had running ends first, and a live anchor hands on a full cooldown (R8). */
 function swapIn(def: AbilityDef): AbilityDef | null {
-  const anchorLive = def.slot === 'legs' && !!combat.parts.anchor
-  combat.clearSlot(def.slot)
+  const anchorLive = combat.parts.anchor?.def.slot === def.slot
+  combat.clearSlot(def.slot, def)
   return hud.equip(def, anchorLive ? 1 : undefined)
 }
 
@@ -3197,9 +3219,9 @@ function swapIn(def: AbilityDef): AbilityDef | null {
  * part still at I (his call, 29 Sep: a swap never melts for him, so a never-melt run stays one; the
  * old part drops at his feet and melting it in is his choice).
  */
-function swapsIn(d: AbilityDef): AbilityDef | null {
-  if (!temperOn || (run.ranks[d.slot] ?? 1) < TEMPER.swapRank) return null
-  return hud.loadout.find((p) => p.slot === d.slot) ?? null
+function swapsIn(d: AbilityDef, slot: SlotName = slotsOf(d)[0]!): AbilityDef | null {
+  if (!temperOn || (run.ranks[slot] ?? 1) < TEMPER.swapRank) return null
+  return hud.loadout.find((p) => p.slot === slot) ?? null
 }
 
 /** What the card and the compare say a take does: "take · Piston II", "Scrap Cleaver III melts in". Null: no swap. */
@@ -3213,19 +3235,21 @@ function pairWords(d: AbilityDef): string | null {
   const worn = hud.loadout
   const w = pairWith(d, worn, run.mastery)
   if (w) return `pairs with ${w}`
-  const cur = worn.find((p) => p.slot === d.slot)
+  const cur = worn.find((p) => p.slot === slotsOf(d)[0])
   const was = cur ? pairWith(cur, worn, run.mastery) : null
   return was ? `ends its pair with ${was}` : null
 }
 
-function takePart(g: GroundPart) {
+function takePart(g: GroundPart, into: SlotName | null = null) {
   // found the moment it's taken, and saved in the same call: closing the tab can't lose it
   if (markFound(save, g.def.id)) store.write()
   carry(g.def.id)
   saw(g.def.id)
-  const slot = g.def.slot
-  const melts = swapsIn(g.def)
-  const old = swapIn(asWorn(g.def, melts ? TEMPER.swapRank : 1))
+  // the slot law: its own slot when allowed, else the first allowed; the card's second button names the other
+  const slot = into && slotsOf(g.def).includes(into) ? into : slotsOf(g.def)[0]!
+  const melts = swapsIn(g.def, slot)
+  const worn = asWorn(g.def, melts ? TEMPER.swapRank : 1, slot)
+  const old = swapIn(worn)
   if (melts) {
     // the part he gave up melts into this one: it lands at II, and nothing falls out
     run.ranks[slot] = TEMPER.swapRank
@@ -3239,7 +3263,7 @@ function takePart(g: GroundPart) {
   loot.remove(g)
   // no melt (a part at I, or temper off): the part he gave up lands at his feet as itself
   if (old && !melts) logDrop(floorPart(byId(old.id), still.pos), 'swap')
-  still.wear(slot, g.def)
+  still.wear(slot, worn)
   offered = null
   offerHeld = true
   hud.offer(null)
@@ -3437,6 +3461,61 @@ function saw(id: string) {
   run.tally.deepest[id] = Math.max(run.tally.deepest[id] ?? 0, run.depth)
 }
 
+/** The autos are forced only while an archetype has set them, so a dev hook's flip survives runs that never had one. */
+let autosForced = false
+
+/**
+ * An archetype's rules in force (archetypes.ts): the one auto it keeps (the others off), Hardened on Combat, the drop pool's law. Null is today's game: both autos, nothing else.
+ * Footwork's two halves live elsewhere (the walk pace in the frame step, Move cooldowns in `asWorn`).
+ */
+function applyArchetype(id: ArchetypeId | null) {
+  run.archetype = id
+  setDropArchetype(id)
+  combat.hardened = id === 'brawler' ? TRAIT.brawler.hardened : 0
+  if (id || autosForced) {
+    combat.closeHand = !id || AUTO[id] === 'hand'
+    combat.eye = !id || AUTO[id] === 'eye'
+    run.hand = combat.closeHand
+    run.eye = combat.eye
+  }
+  autosForced = !!id
+}
+
+/** The archetype's kit is what he wears, in place of today's one-part start: every button, ready, at rank I. */
+function wearKit(id: ArchetypeId) {
+  const kit = KIT[id as keyof typeof KIT]
+  const worn = SLOT_NAMES.map((slot) => asWorn(byId(kit[slot]), 1, slot))
+  for (const d of worn) carry(d.id)
+  run.ranks = {}
+  combat.clearSlot(null)
+  hud.resetLoadout(worn)
+  SLOT_NAMES.forEach((slot, i) => still.wear(slot, worn[i]!))
+}
+
+/**
+ * The archetype pick, in the core pick's place (design/archetypes/ARCHETYPES.md): the run's start, a card each, Summoner shown and "soon", nothing random. It shows once depth 1 is entered and
+ * before he can move: the world waits. With an archetype `run.core` stays null (cores come back as sub-styles in A4); the core pick below stays in the code, unreachable from here.
+ * `at` is how it came: 'start', or 'resume' when a reload found depth 1 with none.
+ */
+function offerArchetype(at: 'start' | 'resume') {
+  if (!canPause()) return
+  openPause()
+  pause.pickArch(ARCH_WORDS.pickTitle, ARCH_WORDS.pickIntro, ARCH_IDS.map((id) => ({
+    id, name: ARCH_WORDS.arch[id].name, line: ARCH_WORDS.arch[id].line, trait: ARCH_WORDS.arch[id].trait, ...(ARCH_LIVE.includes(id) ? {} : { soon: ARCH_WORDS.soon }),
+  })), (picked) => {
+    const id = ARCH_LIVE.find((a) => a === picked)
+    if (!id || run.archetype) return
+    applyArchetype(id)
+    syncCore()
+    wearKit(id)
+    run.archPick = { at, took: id }
+    resume()
+    sfx.uiClick()
+    writeSnapshot()
+    overlay.banner(ARCH_WORDS.arch[id].name)
+  })
+}
+
 /**
  * The core's pick (BUILD.md §2.8): the run's start, a card for every core (Wake, Ram, Thorns and Tether, all live since N3), no reroll and nothing random. It shows once depth 1 is entered and before he can move: the world waits
  * (openPause stops the windups; Combat's clock does not run while `paused`). `at` is how it came: 'start' at the run's beginning, 'resume' when a reload found depth 1 with no core.
@@ -3484,6 +3563,7 @@ function writeSnapshot() {
     ...(Object.keys(run.ranks).length ? { ranks: { ...run.ranks } } : {}),
     ...(run.mastery.size ? { mastery: [...run.mastery] } : {}),
     ...(run.core ? { core: run.core } : {}),
+    ...(run.archetype ? { archetype: run.archetype } : {}),
     ...(run.core && run.keystone ? { keystone: run.keystone } : {}),
     ...(run.core && run.upgrades.length ? { upgrades: [...run.upgrades] } : {}),
   }
@@ -3501,10 +3581,12 @@ function resumeRun(snap: RunSnapshot) {
   leaveRoom()
   still.reassemble()
   const known = new Set(PARTS.map((p) => p.id))
+  // an archetype this build knows comes back with its law; anything else resumes as today's game
+  const arch = (ARCH_LIVE as readonly string[]).includes(snap.archetype ?? '') ? (snap.archetype as ArchetypeId) : null
   const loadout = SLOT_NAMES.map((slot, i) => {
     const id = snap.loadout[i]
     const def = id && known.has(id) ? byId(id) : null
-    return def && def.slot === slot ? def : null
+    return def && (arch ? fitsSlot(arch, def.id, slot) : def.slot === slot) ? def : null
   })
   const tally = { ...freshTally(), ...snap.tally }
   tally.carried = (tally.carried ?? []).filter((id) => known.has(id))
@@ -3515,14 +3597,15 @@ function resumeRun(snap: RunSnapshot) {
   const route: RouteId | null = snap.crossroads ? null
     : snap.route === 'III' && flag('line') ? 'III' : snap.route === 'II' || depth >= 4 || snap.route === 'III' ? 'II' : null
   Object.assign(run, {
-    phase: 'crawl', t: 0, swapped: false, ramStunSeen: false, dev: false, committed: false, ending: null, stats: [], taps: [], walkS: 0, swaps: [], core: null, keystone: null, upgrades: [], corePick: null,
+    phase: 'crawl', t: 0, swapped: false, ramStunSeen: false, dev: false, committed: false, ending: null, stats: [], taps: [], walkS: 0, swaps: [], core: null, keystone: null, upgrades: [], corePick: null, archPick: null,
     breakRule: combat.breakRule, hand: combat.closeHand, eye: combat.eye, drops: [], id: snap.id, startedAt: snap.startedAt, strain: Math.min(19, Math.max(0, Math.round(snap.strain) || 0)), tally, route,
   })
   run.kept = Math.min(run.strain, Math.max(0, Math.round(snap.kept ?? 0) || 0))
   // mastery and temper's ranks come back as they were earned
   run.mastery = new Set((snap.mastery ?? []).filter((id): id is MasteryId => id in MASTERY))
   // the build layer (BUILD.md §2.8): a core this build knows comes back, with the keystone and upgrades that belong to it; anything else resumes bare, and stays bare
-  run.core = typeof snap.core === 'string' && (CORE_LIVE as readonly string[]).includes(snap.core) ? (snap.core as CoreId) : null
+  run.core = !arch && typeof snap.core === 'string' && (CORE_LIVE as readonly string[]).includes(snap.core) ? (snap.core as CoreId) : null
+  applyArchetype(arch)
   run.keystone = run.core && typeof snap.keystone === 'string' && Object.prototype.hasOwnProperty.call(KEYSTONES, snap.keystone) && KEYSTONES[snap.keystone as KeystoneId].core === run.core ? (snap.keystone as KeystoneId) : null
   run.upgrades = run.core && Array.isArray(snap.upgrades)
     ? snap.upgrades.filter((id, i, all): id is UpgradeId => typeof id === 'string' && Object.prototype.hasOwnProperty.call(UPGRADES, id) && UPGRADES[id as UpgradeId].core === run.core && all.indexOf(id) === i)
@@ -3534,7 +3617,7 @@ function resumeRun(snap: RunSnapshot) {
     const d = loadout[i]
     if (d && r > 1) run.ranks[slot] = Math.min(TEMPER.maxRank, r)
     // every part comes back as it is worn: re-tempered, and reshaped and flat while a core is on (asWorn); with none, today's tempered(d, r) / d
-    if (d) loadout[i] = asWorn(d, r)
+    if (d) loadout[i] = asWorn(d, r, slot)
   })
   // a resume starts its stats over, so it's its own entry in the playtest file, not an overwrite
   playKey = `${run.id}.${Date.now().toString(36)}`
@@ -3573,7 +3656,7 @@ function resumeRun(snap: RunSnapshot) {
   sfx.restore()
   writeSnapshot()
   // still the run's start (depth 1, nothing fought, no core): he reloaded on the pick, or began the run with "builds" off. At depth 2 and deeper, no core means a bare run for good
-  if (buildsOn && !run.core && depth === 1 && !run.bossFelled && !snap.crossroads) offerCore('resume')
+  if (buildsOn && !run.core && !run.archetype && depth === 1 && !run.bossFelled && !snap.crossroads) (PICK_CORE ? offerCore : offerArchetype)('resume')
 }
 
 /** Each train's rail hum, while it sounds. At most two at once (§5.3). */
@@ -3773,10 +3856,11 @@ function startRun() {
   leaveRoom()
   still.reassemble()
   Object.assign(run, {
-    phase: 'crawl', strain: 0, kept: 0, ranks: {}, swaps: [], mastery: new Set<MasteryId>(), core: CORE_PARAM, keystone: null, upgrades: [], corePick: null, t: 0, swapped: false, ramStunSeen: false,
+    phase: 'crawl', strain: 0, kept: 0, ranks: {}, swaps: [], mastery: new Set<MasteryId>(), core: ARCH_PARAM ? null : CORE_PARAM, keystone: null, upgrades: [], corePick: null, archPick: null, t: 0, swapped: false, ramStunSeen: false,
     id: newRunId(), dev: DEPTH_PARAM !== null, committed: false, ending: null, stats: [], drops: [], taps: [], walkS: 0, tally: freshTally(),
     startedAt: new Date().toISOString(), breakRule: combat.breakRule, hand: combat.closeHand, eye: combat.eye, route: ROUTE_PARAM,
   })
+  applyArchetype(ARCH_PARAM)
   syncCore()
   playKey = `${run.id}.${Date.now().toString(36)}`
   if (!run.dev) {
@@ -3794,8 +3878,12 @@ function startRun() {
   for (const p of start) carry(p.id)
   // the last run's anchor or decoy goes before the new loadout arrives, so nothing carries over onto its buttons
   combat.reset()
-  hud.resetLoadout(start.map((d) => asWorn(d, 1)))
-  for (const slot of SLOT_NAMES) still.wear(slot, start.find((p) => p.slot === slot) ?? null)
+  if (ARCH_PARAM) {
+    wearKit(ARCH_PARAM)
+  } else {
+    hud.resetLoadout(start.map((d) => asWorn(d, 1)))
+    for (const slot of SLOT_NAMES) still.wear(slot, start.find((p) => p.slot === slot) ?? null)
+  }
   enterLevel(START_DEPTH)
   hud.bossBar(null)
   rig.reset()
@@ -3804,7 +3892,7 @@ function startRun() {
   sfx.restore()
   writeSnapshot()
   // the pick (BUILD.md §2.8): depth 1 is entered, nothing is fought yet. A dev run never shows it (`?core=` is its way); builds off: a bare run
-  if (buildsOn && !run.dev) offerCore('start')
+  if (buildsOn && !run.dev) (PICK_CORE ? offerCore : offerArchetype)('start')
 }
 
 /** Not crypto.randomUUID: that needs a secure context, and the phone plays over plain http on the LAN. */
@@ -3849,6 +3937,7 @@ function playtestBody() {
     taps: run.taps,
     swaps: run.swaps,
     corePick: run.corePick,
+    archetype: run.archetype,
     parts: partDrops(),
     drops: run.drops,
   }
@@ -4526,7 +4615,7 @@ function cast(def: AbilityDef, pushed: boolean): CastResult {
   castFx(combat.weight ? weighed(def) : def, r, pushed)
   still.group.scale.setScalar(full ? 1.16 : 1.08)
   // weight: a head bolt draws its light in at the lens first (Through-Line has its own draw, in castFx): six motes, at Still, never at a body
-  if (combat.weight && def.slot === 'head' && r.beat !== 'through') {
+  if (combat.weight && homeSlot(def) === 'head' && r.beat !== 'through') {
     vfx.gather(still.lensPoint(new THREE.Vector3()), WEIGHT_FEEL.gather.count, WEIGHT_FEEL.gather.radius, COLD)
   }
   // weight: nothing on the press. The feel comes from onContact, when something is struck (a whiff has none)
@@ -4709,25 +4798,29 @@ let frayTier: number | null = null
  * Lens has banked, how wide Frayed Cleaver will swing.
  */
 function partFaces(dt: number) {
-  const [head, , arms] = hud.slots.map((s) => s.def)
+  // each face goes with the part, wherever it is worn (an archetype's slot law lets a part sit off its own slot): find it by what it does
+  const wornWith = (pred: (d: AbilityDef) => boolean) => hud.slots.find((s) => s.def && pred(s.def)) as { slot: SlotName; def: AbilityDef } | undefined
   // LIVE: something of his is out in the world, drawn as a lit ring that drains
   for (const slot of SLOT_NAMES) hud.live(slot, combat.liveFrac(slot))
-  const legs = hud.slots[3]!.def
+  const anchorOn = wornWith((d) => d.shape === 'anchor')
   // Plumb Line: the button becomes the snap while the anchor is out, and dims when a snap would be refused
-  if (legs?.shape === 'anchor') {
+  if (anchorOn) {
+    const legs = anchorOn.def
     const a = combat.parts.anchor
-    hud.iconState('legs', a ? 'snap' : null)
+    hud.iconState(anchorOn.slot, a ? 'snap' : null)
     const far = !!a && Math.hypot(a.pos.x - still.pos.x, a.pos.z - still.pos.z) > legs.range
-    hud.setClass('legs', 'far', far)
+    hud.setClass(anchorOn.slot, 'far', far)
     if (far && !anchorFar) sfx.tetherFar()
     anchorFar = far
   } else {
     anchorFar = false
   }
   // Borrowed Time: the pale segment on integrity, and the afterimage where a rewind would take him
-  if (legs?.shape === 'rewind') {
+  const rewindOn = wornWith((d) => d.shape === 'rewind')
+  if (rewindOn) {
+    const legs = rewindOn.def
     hud.recentDamage(combat.history.recentDamage((legs.windowMs ?? 1500) / 1000) / 100)
-    partFx.echo(hud.isReady('legs') && run.phase === 'crawl' ? combat.history.at((legs.windowMs ?? 1500) / 1000) : null)
+    partFx.echo(hud.isReady(rewindOn.slot) && run.phase === 'crawl' ? combat.history.at((legs.windowMs ?? 1500) / 1000) : null)
   } else {
     hud.recentDamage(0)
     partFx.echo(null)
@@ -4741,18 +4834,20 @@ function partFaces(dt: number) {
     beaconT = 0
   }
   // Ricochet, ready, and the nearest target is behind cover: one tick where it would bank
-  if (head?.mod?.kind === 'bounce' && hud.isReady('head') && run.phase === 'crawl') {
+  const bounceOn = wornWith((p) => p.mod?.kind === 'bounce')
+  if (bounceOn && hud.isReady(bounceOn.slot) && run.phase === 'crawl') {
     if ((bankT -= dt) <= 0) {
       bankT = 0.1
-      partFx.bankTick(combat.bankPreview(head, still.pos))
+      partFx.bankTick(combat.bankPreview(bounceOn.def, still.pos))
     }
   } else {
     partFx.bankTick(null)
   }
-  if (head?.mod?.kind === 'charge') {
-    const m = head.mod
+  const chargeOn = wornWith((p) => p.mod?.kind === 'charge')
+  if (chargeOn && chargeOn.def.mod?.kind === 'charge') {
+    const m = chargeOn.def.mod
     const c = Math.min(1, Math.max(0, (combat.parts.patientSince - m.minS) / (m.fullS - m.minS)))
-    hud.charge('head', c)
+    hud.charge(chargeOn.slot, c)
     if (c >= 1 && !patientFull) {
       // full: one glassy tick and a small ring of cold round the lens
       sfx.patientFull()
@@ -4768,15 +4863,16 @@ function partFaces(dt: number) {
     patientFull = false
   }
 
-  if (arms?.mod?.kind === 'fray') {
-    const at = arms.mod.at
+  const fray = wornWith((p) => p.mod?.kind === 'fray')
+  if (fray && fray.def.mod?.kind === 'fray') {
+    const at = fray.def.mod.at
     const tier = run.strain < at[0] ? 0 : run.strain < at[1] ? 1 : 2
-    hud.iconState('arms', tier === 0 ? null : tier === 1 ? 'fray-180' : 'fray-360')
+    hud.iconState(fray.slot, tier === 0 ? null : tier === 1 ? 'fray-180' : 'fray-360')
     if (frayTier !== null && tier !== frayTier) {
       // the meter, the button and the body change together, so the link teaches itself
       const up = tier > frayTier
       sfx.frayCross(up)
-      hud.pulse('arms')
+      hud.pulse(fray.slot)
       if (up) vfx.embers(still.jawL.getWorldPosition(new THREE.Vector3()), 8, 0.1)
     }
     frayTier = tier
@@ -4786,9 +4882,8 @@ function partFaces(dt: number) {
 
   // the body's side of LIVE: the lure went with the decoy, the bob with the anchor.
   // Polled after the decoy was cloned, so the decoy carries the lit lure and he doesn't.
-  still.setLive('torso', !!combat.parts.decoy)
-  still.setLive('legs', !!combat.parts.anchor)
-  if (head?.mod?.kind === 'mark') {
+  for (const slot of SLOT_NAMES) still.setLive(slot, combat.parts.decoy?.def.slot === slot || combat.parts.anchor?.def.slot === slot)
+  if (wornWith((p) => p.mod?.kind === 'mark')) {
     let marked = false
     for (const [, st] of combat.statuses()) if (st.marked.t > 0) marked = true
     still.ctx.marked = marked
@@ -4988,7 +5083,7 @@ function simulate(realDt: number) {
   }
 
   // Wake's Slipstream (cores.ts): walk speed x mul while skims have banked some; STILL_WALK is his own pace, so with no core it is never anything else
-  still.speed = STILL_WALK * (combat.core === 'wake' && combat.slipS > 0 ? UPGRADES['wake-slip'].mul : 1)
+  still.speed = STILL_WALK * (combat.core === 'wake' && combat.slipS > 0 ? UPGRADES['wake-slip'].mul : 1) * (run.archetype === 'marksman' ? TRAIT.marksman.footwork.speed : 1)
   still.update(dt, hud.moveX, hud.moveZ)
 
   // mid-vault he's over the wall, not in it
@@ -5714,8 +5809,8 @@ if (import.meta.env.DEV) {
     /** The same path a tap (false) or push (true) takes after the gesture: HUD cooldown, cast, strain. */
     __fire: (slot: SlotName, pushed = false) => hud.fireSlot(slot, pushed),
     /** Put a part on its button without the ground. */
-    __equip: (id: string) => {
-      const def = asWorn(byId(id), 1)
+    __equip: (id: string, slot?: SlotName) => {
+      const def = asWorn(byId(id), 1, slot)
       swapIn(def)
       still.wear(def.slot, def)
     },
@@ -5991,6 +6086,18 @@ if (import.meta.env.DEV) {
       }
       return buildsOn
     },
+    /** The archetype tables (archetypes.ts), for the checks: families, the law, the kit, the traits, and the slots a part may be worn in. */
+    __archetypes: { FAMILY, LAW, KIT, TRAIT, slotsFor },
+    /** Become an archetype now (or none), as the pick does: its kit worn, its autos and trait in force. Returns run.archetype. Dev only; the pick is the way in a real run. */
+    __arch: (id: ArchetypeId | null) => {
+      run.core = null
+      applyArchetype(id)
+      syncCore()
+      if (id) wearKit(id)
+      return run.archetype
+    },
+    /** The core pick, which the archetype pick replaced at the run's start (kept whole for A4's sub-styles). */
+    __offerCore: () => offerCore('start'),
     /** Wear a core now (or none): forces "builds" on for the page, clears the keystone and the upgrades, and re-wears the loadout. Returns combat.core. */
     __core: (id: CoreId | null) => {
       run.core = id
@@ -6073,8 +6180,8 @@ if (import.meta.env.DEV) {
     /** A part at a rank as temper makes it, as plain JSON (K-M3); `flat` given: the build layer's table or not, else tempered(d, r) with no flag at all. */
     __tempered: (id: string, rank = 1, flat?: boolean) => JSON.parse(JSON.stringify(flat === undefined ? tempered(byId(id), rank) : tempered(byId(id), rank, flat))),
     /** __equip at a temper rank. */
-    __equipRank: (id: string, rank: number) => {
-      const def = asWorn(byId(id), rank)
+    __equipRank: (id: string, rank: number, slot?: SlotName) => {
+      const def = asWorn(byId(id), rank, slot)
       swapIn(def)
       still.wear(def.slot, def)
     },
@@ -6358,9 +6465,9 @@ if (import.meta.env.DEV) {
       loot.ground[loot.ground.length - 1]!.pos.set(x, 0, z)
     },
     /** The pickup card's take. */
-    __take: () => {
+    __take: (slot?: SlotName) => {
       const g = offered
-      if (g) takePart(g)
+      if (g) takePart(g, slot ?? null)
       return !!g
     },
     /** The parts on pedestals now: which set, where, and what the next take from its set costs. */

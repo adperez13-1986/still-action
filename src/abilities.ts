@@ -406,5 +406,11 @@ export const PARTS: AbilityDef[] = [
 
 export const byId = (id: string): AbilityDef => PARTS.find((p) => p.id === id)!
 
+/** The slot a part is made for: what its shape does and how it sounds. A worn def's own `slot` is where it is worn (`onSlot`), which an archetype lets differ. */
+export const homeSlot = (d: AbilityDef): SlotName => byId(d.id).slot
+
+/** The part as worn in `slot` (archetype slot law): its button and key follow the slot, everything else is the part's own. */
+export const onSlot = (d: AbilityDef, slot: SlotName): AbilityDef => (slot === d.slot ? d : { ...d, slot, key: KEYS[slot] })
+
 /** The kit `?depth=` hands out, and the pool the random first part comes from. */
 export const STARTING: AbilityDef[] = ['focusing-lens', 'pressure-vent', 'scrap-cleaver', 'kickstart'].map(byId)

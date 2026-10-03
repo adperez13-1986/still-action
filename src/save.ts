@@ -156,6 +156,8 @@ export interface RunSnapshot {
    * off, or saved before the layer). Read back only when it names a core this build knows: any other value resumes bare. No version bump: an old snapshot loads as it was.
    */
   core?: string
+  /** The archetype picked at the run's start (archetypes.ts). Absent: today's game (an old snapshot). Read back only when this build knows it. No version bump. */
+  archetype?: string
   /** The core's socket (a KeystoneId). Absent: empty. Dropped on resume unless it belongs to the core read back. */
   keystone?: string
   /** Core upgrades learned (UpgradeId list). Absent: none. Filtered on resume the same way as the keystone. */

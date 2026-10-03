@@ -26,7 +26,7 @@ import type { Terrain } from './terrain'
 import type { Breakable, Post } from './dungeon'
 /** A train strip breaks every crate its segment's strip overlaps, grown this much (§5.4). */
 const TRAIN_SMASH_GROW = 0.2
-import type { AbilityDef, BeatKey } from './abilities'
+import { homeSlot, type AbilityDef, type BeatKey } from './abilities'
 import type { SlotName } from './still'
 import { weighed } from './weight'
 import { MASTERY, MASTERY_TUNE, type MasteryId } from './mastery'
@@ -495,6 +495,8 @@ export class Combat {
   parryCatch = false
   /** The hand: always on since 27 Sep; only dev checks turn it off (then the old far shot comes back). */
   closeHand = true
+  /** The Brawler's Hardened: the share of every hit taken off (archetypes.ts TRAIT). Main sets it; 0 is today's game. */
+  hardened = 0
   /** The eye: always on since 27 Sep; only dev checks turn it off. */
   eye = true
   /** Main writes it each tick: the stick is out of its dead zone. A cast never touches it. */
@@ -1141,8 +1143,7 @@ export class Combat {
     this.parts.guard = null
     this.parts.anvil = null
     // a new level: the decoy vanishes without bursting, and a live anchor fades (its cooldown starts)
-    this.clearSlot('torso')
-    this.clearSlot('legs')
+    this.clearSlot(null)
     this.status.clear()
     this.lastSkim = new WeakMap()
     this.lastTrail = new WeakMap()
@@ -1318,7 +1319,7 @@ export class Combat {
       }
       this.struck.delete(payer)
       const first = set.values().next().value as Enemy
-      this.events.onContact?.({ def: 'id' in payer ? (payer as AbilityDef) : null, slot: payer.slot, n: set.size, at: first.pos.clone(), first, bodies: [...set] })
+      this.events.onContact?.({ def: 'id' in payer ? (payer as AbilityDef) : null, slot: 'id' in payer ? homeSlot(payer as AbilityDef) : payer.slot, n: set.size, at: first.pos.clone(), first, bodies: [...set] })
     }
   }
 
@@ -1523,23 +1524,24 @@ export class Combat {
     const g = this.parts.guard
     if (!g) return
     this.parts.guard = null
-    this.events.onPart({ kind: 'windowEnd', slot: 'torso', used: g.used })
+    this.events.onPart({ kind: 'windowEnd', slot: g.by, used: g.used })
   }
 
   /** The Anvil ran out without a blow to catch. A catch closes it without this. */
   private endAnvil() {
-    if (!this.parts.anvil) return
+    const a = this.parts.anvil
+    if (!a) return
     this.parts.anvil = null
-    this.events.onPart({ kind: 'windowEnd', slot: 'arms', used: false })
+    this.events.onPart({ kind: 'windowEnd', slot: a.def.slot, used: false })
   }
 
-  /** How much of a slot's window is left, 1 → 0, for the button's LIVE ring. Null when nothing is out. */
+  /** How much of a slot's window is left, 1 → 0, for the button's LIVE ring. Null when nothing is out. `slot` is the worn slot: each window knows where its part is worn. */
   liveFrac(slot: SlotName): number | null {
     const p = this.parts
-    if (slot === 'torso' && p.guard) return Math.max(0, p.guard.t / p.guard.max)
-    if (slot === 'torso' && p.decoy) return Math.max(0, p.decoy.t / p.decoy.max)
-    if (slot === 'arms' && p.anvil) return Math.max(0, p.anvil.t / p.anvil.max)
-    if (slot === 'legs' && p.anchor) return Math.max(0, p.anchor.t / p.anchor.max)
+    if (p.guard?.by === slot) return Math.max(0, p.guard.t / p.guard.max)
+    if (p.decoy?.def.slot === slot) return Math.max(0, p.decoy.t / p.decoy.max)
+    if (p.anvil?.def.slot === slot) return Math.max(0, p.anvil.t / p.anvil.max)
+    if (p.anchor?.def.slot === slot) return Math.max(0, p.anchor.t / p.anchor.max)
     return null
   }
 
@@ -1547,22 +1549,21 @@ export class Combat {
    * A part is leaving its slot (a swap). Whatever it had running in Still's own
    * body ends here; things already out in the world finish on their own.
    */
-  clearSlot(slot: SlotName) {
+  clearSlot(slot: SlotName | null, incoming?: AbilityDef) {
     // a swapped-in Patient Lens starts ready but uncharged, so a swap can't bank a full shot
-    if (slot === 'head') this.parts.patientSince = PATIENT_START
-    // a window ends quietly, as if it ran out
-    if (slot === 'torso') {
-      this.endGuard()
-      // a swap can't buy a free burst: the decoy just goes
-      const d = this.parts.decoy
-      if (d) {
-        this.parts.decoy = null
-        this.events.onPart({ kind: 'decoy', state: 'gone', at: d.pos.clone() })
-      }
+    if (slot === 'head' || (incoming && homeSlot(incoming) === 'head')) this.parts.patientSince = PATIENT_START
+    // what a window or thing the slot's old part had running ends quietly, as if it ran out; `null`: every slot (a new level)
+    const mine = (by: SlotName) => slot === null || by === slot
+    if (this.parts.guard && mine(this.parts.guard.by)) this.endGuard()
+    // a swap can't buy a free burst: the decoy just goes
+    const d = this.parts.decoy
+    if (d && mine(d.def.slot)) {
+      this.parts.decoy = null
+      this.events.onPart({ kind: 'decoy', state: 'gone', at: d.pos.clone() })
     }
-    if (slot === 'arms') this.endAnvil()
+    if (this.parts.anvil && mine(this.parts.anvil.def.slot)) this.endAnvil()
     // swapping out a live anchor counts as it fading: the cooldown starts
-    if (slot === 'legs') this.fadeAnchor()
+    if (this.parts.anchor && mine(this.parts.anchor.def.slot)) this.fadeAnchor()
   }
 
   /** Lure: whoever is drawn to the decoy aims at it. The Assembler is never fooled; its adds are. The thief hunts no one. */
@@ -1595,7 +1596,7 @@ export class Combat {
     if (!a) return
     this.parts.anchor = null
     this.events.onPart({ kind: 'anchor', state: 'fade', at: a.pos.clone() })
-    this.events.onPart({ kind: 'cooldownStart', slot: 'legs' })
+    this.events.onPart({ kind: 'cooldownStart', slot: a.def.slot })
   }
 
   /**
@@ -1686,6 +1687,8 @@ export class Combat {
     }
     // Thorns' Hardened (THORNS.md): the damage he takes is x(1 - armor), whole points, never below one
     if (this.core === 'thorns') amount = Math.max(1, Math.round(amount * (1 - CORES.thorns.armor)))
+    // the Brawler's Hardened (archetypes.ts TRAIT): shares the path, so with both armors both apply
+    if (this.hardened > 0) amount = Math.max(1, amount * (1 - this.hardened))
     const before = this.hp
     this.hp = Math.max(0, this.hp - amount)
     this.tickDamage += before - this.hp
@@ -2707,7 +2710,7 @@ export class Combat {
         if (mod?.kind === 'brace') {
           // then, for a moment, hits cost strain instead of integrity (a push reopens it at full)
           const s = (def.windowMs ?? 800) / 1000
-          this.parts.guard = { kind: 'brace', t: s, max: s, radius: def.radius, reflectsLeft: 0, reflectDamage: 0, perStrain: mod.perStrain, used: false }
+          this.parts.guard = { kind: 'brace', t: s, max: s, radius: def.radius, reflectsLeft: 0, reflectDamage: 0, perStrain: mod.perStrain, used: false, by: def.slot }
           r.holdS = s
         }
         break
@@ -2719,7 +2722,7 @@ export class Combat {
         const reflect = mod?.kind === 'reflect' ? mod : null
         this.parts.guard = {
           kind: reflect ? 'mirror' : 'ward', t: s, max: s, radius: def.radius,
-          reflectsLeft: reflect?.max ?? 0, reflectDamage: reflect?.damage ?? 0, perStrain: 0, used: false,
+          reflectsLeft: reflect?.max ?? 0, reflectDamage: reflect?.damage ?? 0, perStrain: 0, used: false, by: def.slot,
         }
         r.holdS = s
         break
@@ -3375,7 +3378,7 @@ export class Combat {
 
   /** A head part's body in the stance: the eye's order among what the part itself reaches. Null: walking, or none. */
   private eyeHead(o: THREE.Vector3, def: AbilityDef): Enemy | null {
-    if (!this.inStance || def.slot !== 'head') return null
+    if (!this.inStance || homeSlot(def) !== 'head') return null
     // a lob comes down from above; a bolt, even a piercing one, would strike a sleeper on the way
     return this.eyePick(o, def.range, (e) => this.reaches(def, o, e) && (def.shape === 'lob' || !this.screened(o, e, def.radius)))
   }
@@ -3386,7 +3389,7 @@ export class Combat {
    */
   private eyeCast(o: THREE.Vector3, def: AbilityDef, usual: Enemy | null): Enemy | null {
     const t = this.eyeHead(o, def)
-    if (!t) return this.inStance && def.slot === 'head' && usual && !this.awakeNow(usual) ? null : usual
+    if (!t) return this.inStance && homeSlot(def) === 'head' && usual && !this.awakeNow(usual) ? null : usual
     if (t !== usual) this.events.onEye('cast')
     return t
   }

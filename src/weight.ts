@@ -1,4 +1,4 @@
-import { byId, type AbilityDef, type Mod } from './abilities'
+import { byId, homeSlot, type AbilityDef, type Mod } from './abilities'
 import type { SlotName } from './still'
 
 /**
@@ -136,7 +136,7 @@ export function weighed(def: AbilityDef): AbilityDef {
   const hit = byDef.get(def)
   if (hit) return hit
   const P = WEIGHT_PRESETS[active]
-  const dmg = P.slotDmg[def.slot]
+  const dmg = P.slotDmg[homeSlot(def)]
   const out: AbilityDef = { ...def, damage: n(def.damage, dmg), mod: weighMod(def.mod, P, dmg) }
   if (!def.mod) delete out.mod
   if (def.blastDamage !== undefined) out.blastDamage = n(def.blastDamage, dmg)

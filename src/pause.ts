@@ -147,6 +147,8 @@ export interface PauseScreen {
    * The core's pick (BUILD.md §2.8, B4): the run's start, a big card for each core (one row, or 2x2 on a portrait phone) and no back button (a pick is made, not left). A card with `soon` is not live: dimmed, disabled, and its word where the spend line goes. Each card is its core's name, then what the left
    * thumb does and what that leaves on a body (words from cores.ts WORDS, passed in: this file has no words of its own). `id` is the core's, handed back to `onPick`.
    */
+  /** The archetype pick (archetypes.ts), in the core pick's place: a card per archetype, `soon` one is shown but cannot be chosen. */
+  pickArch: (title: string, intro: string, cards: { id: string; name: string; line: string; trait: string; soon?: string }[], onPick: (id: string) => void) => void
   pickCore: (title: string, intro: string, cards: { id: string; name: string; thumb: string; leaves: string; spends: string; soon?: string }[], onPick: (id: string) => void) => void
   /** What the pause screen lists under the loadout: mastery learned this run ("Cold Strike: ..."). */
   setLearned: (fn: () => { name: string; line: string }[]) => void
@@ -270,6 +272,15 @@ export function createPauseScreen(root: HTMLElement): PauseScreen {
         [],
       )
       el.querySelectorAll<HTMLElement>('.master').forEach((b) => b.addEventListener('click', () => options[Number(b.dataset.i)]?.onPick()))
+    },
+
+    pickArch(title, intro, cards, onPick) {
+      show(
+        `<h2>${title}</h2><p class="intro">${intro}</p><div class="row picks">${cards.map((c, i) =>
+          `<button type="button" class="pcard master core arch${c.soon ? ' soon' : ''}" data-i="${i}" data-arch="${c.id}"${c.soon ? ' disabled' : ''}><b class="pname">${c.name}</b><p class="thumb">${c.line}</p><p class="spends">${c.soon ?? c.trait}</p></button>`).join('')}</div>`,
+        [],
+      )
+      el.querySelectorAll<HTMLElement>('.core:not(.soon)').forEach((b) => b.addEventListener('click', () => onPick(cards[Number(b.dataset.i)]?.id ?? '')))
     },
 
     pickCore(title, intro, cards, onPick) {

@@ -1060,19 +1060,21 @@ const BEHAVIOURS: Record<string, Behaviour> = {
  * (unpowered glass). Every call is a fresh set of objects over shared geometry.
  */
 export function buildModel(slot: SlotName, id: string | null, use: 'body' | 'display'): SlotModel {
-  if (id && byId(id)?.slot !== slot) throw new Error(`${id} is not a ${slot} part`)
+  // a part is built as its own slot's shape; `slot` is where it is worn (an archetype's slot law lets it differ, still.wear mounts it)
+  if (id && !byId(id)) throw new Error(`${id} is not a part`)
+  const home = id ? byId(id).slot : slot
   const mats: Mats = {
     steel: id ? STEEL : BARE,
     eye: use === 'body' ? EYE : DISPLAY_EYE,
   }
   const root = instance(built(id ?? `frame:${slot}`), mats)
   const m: SlotModel = { root }
-  if (slot === 'head') {
+  if (home === 'head') {
     m.lens = find<THREE.Group>(root, 'lens')
     m.glass = find<THREE.Mesh>(root, 'glass')
-  } else if (slot === 'torso') {
+  } else if (home === 'torso') {
     m.core = find<THREE.Mesh>(root, 'core')
-  } else if (slot === 'arms') {
+  } else if (home === 'arms') {
     m.armL = find<THREE.Group>(root, 'armL')
     m.armR = find<THREE.Group>(root, 'armR')
     m.jawL = find<THREE.Mesh>(root, 'jawL')

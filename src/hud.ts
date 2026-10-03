@@ -203,13 +203,14 @@ export interface Hud {
    * `o.swap`: a swap's words ("take · Piston II", "Scrap Cleaver III melts in") in place of "replaces";
    * `o.pair`: the card's spare line, the pair it makes or ends ("pairs with Chill Vent");
    * `o.fit` (B5, with a core worn): how the part fits it ("fits Ram · spends slammed: +8 each"). Absent: no line.
+   * `o.slots` (archetype slot law): the slots it may be worn in, the default first; two of them make two take buttons, and the callback gets the one pressed. Absent: its own slot.
    */
   offer: (
     incoming: AbilityDef | null, fresh?: boolean, past?: { name: string; history: string | null }, melt?: string | null,
-    o?: { swap?: { take: string; melts: string } | null; pair?: string | null; fit?: string | null },
+    o?: { swap?: { take: string; melts: string } | null; pair?: string | null; fit?: string | null; slots?: readonly SlotName[] },
   ) => void
   onMelt: (cb: () => void) => void
-  onTake: (cb: () => void) => void
+  onTake: (cb: (slot: SlotName | null) => void) => void
   onCompare: (cb: () => void) => void
   onPause: (cb: () => void) => void
   /** A slow fill on the HP meter, so a quiet's refill is seen, not just counted. */
@@ -318,6 +319,7 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
       </div>
       <div class="choices">
         <button type="button" class="take">take</button>
+        <button type="button" class="take alt">take</button>
         <button type="button" class="compare">compare</button>
         <button type="button" class="melt">melt</button>
       </div>
@@ -382,19 +384,26 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
     if (t.closest('.act')) for (const cb of chooserActListeners) cb()
   })
   const takeBtn = offerEl.querySelector<HTMLElement>('.take')!
+  const takeAlt = offerEl.querySelector<HTMLElement>('.take.alt')!
   const compareBtn = offerEl.querySelector<HTMLElement>('.compare')!
   const meltBtn = offerEl.querySelector<HTMLElement>('.melt')!
   const meltListeners: (() => void)[] = []
   const pauseBtn = root.querySelector<HTMLElement>('#pauseBtn')!
-  const takeListeners: (() => void)[] = []
+  const takeListeners: ((slot: SlotName | null) => void)[] = []
   const compareListeners: (() => void)[] = []
   const pauseListeners: (() => void)[] = []
 
   let offered: AbilityDef | null = null
+  /** The slots the offered part may take (the slot law); empty: its own, as always. */
+  let offeredSlots: readonly SlotName[] = []
   // pointerdown, not click: a mid-fight tap should land the first time
   takeBtn.addEventListener('pointerdown', (e) => {
     e.preventDefault()
-    if (offered && state.enabled) for (const cb of takeListeners) cb()
+    if (offered && state.enabled) for (const cb of takeListeners) cb(offeredSlots[0] ?? null)
+  })
+  takeAlt.addEventListener('pointerdown', (e) => {
+    e.preventDefault()
+    if (offered && state.enabled && offeredSlots[1]) for (const cb of takeListeners) cb(offeredSlots[1])
   })
   compareBtn.addEventListener('pointerdown', (e) => {
     e.preventDefault()
@@ -969,19 +978,29 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
       meltBtn.textContent = melt ?? 'melt'
       offerNew.style.display = incoming && fresh ? '' : 'none'
       // the button that would change pulses, so "which slot" needs no reading
-      for (const b of buttons) b.el.classList.toggle('target', !!incoming && b.slot === incoming.slot)
+      const slots = o.slots?.length ? o.slots : incoming ? [incoming.slot] : []
+      offeredSlots = o.slots?.length ? o.slots : []
+      for (const b of buttons) b.el.classList.toggle('target', !!incoming && slots.includes(b.slot))
       if (!incoming) {
         offerEl.classList.remove('show')
         return
       }
-      const current = buttons.find((b) => b.slot === incoming.slot)!.def
-      offerSlot.textContent = SLOT_LABEL[incoming.slot]
+      const two = slots.length > 1
+      takeBtn.textContent = two ? SLOT_LABEL[slots[0]!][0]! : 'take'
+      takeAlt.textContent = two ? SLOT_LABEL[slots[1]!][0]! : 'take'
+      takeAlt.style.display = two ? '' : 'none'
+      const current = buttons.find((b) => b.slot === slots[0])!.def
+      offerSlot.textContent = slots.map((sl) => SLOT_LABEL[sl]).join(' / ')
       offerName.textContent = past?.name ?? incoming.name
       offerHist.textContent = past?.history ?? ''
       offerHist.style.display = past?.history ? '' : 'none'
       offerName.style.color = TIER_CSS[incoming.tier]
       offerLine.textContent = incoming.line
-      offerReplaces.textContent = o.swap ? `${o.swap.take}\n${o.swap.melts}` : current ? `replaces ${current.name}` : `fills the empty ${SLOT_LABEL[incoming.slot]} slot`
+      const into = (sl: SlotName) => {
+        const cur = buttons.find((b) => b.slot === sl)!.def
+        return cur ? `replaces ${cur.name}` : `fills the empty ${SLOT_LABEL[sl]} slot`
+      }
+      offerReplaces.textContent = o.swap ? `${o.swap.take}\n${o.swap.melts}` : two ? slots.map((sl) => `${SLOT_LABEL[sl]}: ${into(sl)}`).join('\n') : current ? `replaces ${current.name}` : `fills the empty ${SLOT_LABEL[slots[0]!]} slot`
       offerPair.textContent = o.pair ?? ''
       offerPair.style.display = o.pair ? '' : 'none'
       offerFit.textContent = o.fit ?? ''

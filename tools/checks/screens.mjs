@@ -135,14 +135,13 @@ const SCREENS = {
       action: 'turn to the wall' }))`,
     close: `() => window.__hud.chooser(null)`,
   },
-  // B4: the core's pick at the run's start (four cards, one row or 2x2; Graze was the third card until N3 made it Thorns). No actions row, so the cards themselves are the buttons to reach; the lines are twice the length of the placeholder words
+  // A1: the archetype's pick at the run's start (the core pick's place; three cards, Summoner "soon"). No actions row, so the cards themselves are the buttons to reach; the lines are twice the length of the placeholder words
   pick: {
     sel: '#pause',
-    open: `() => window.__pause.pickCore('Choose a core', 'One way to fight, for the whole run, and the only one you will have until the run is over.', [
-      { id: 'wake', name: 'Wake', thumb: 'Pass beside them, and never stop, and never turn your back on the ones that come.', leaves: 'What you pass beside is frosted, and the frost holds for a while after you have gone.', spends: 'Blue buttons spend them, and the more marks on a body, the more they pay out.', },
-      { id: 'ram', name: 'Ram', thumb: 'Put them against something, a wall, or another one of them, and hold them there.', leaves: 'What hits a wall or a body is slammed, and a slammed body pays what the parts that fit it spend.', spends: 'Blue buttons spend them, and the more marks on a body, the more they pay out.', },
-      { id: 'thorns', name: 'Thorns', thumb: 'Let them hit you, or block, and let the barbs do the rest, again and again.', leaves: 'What hits you is barbed, and the barbs hold for a while after the blow has gone.', spends: 'Blue buttons spend them, and the more marks on a body, the more they pay out.', },
-      { id: 'tether', name: 'Tether', thumb: 'Circle them at a distance, and never let the wire go slack.', leaves: 'What the wire sweeps across is snagged, and the snag holds for a while after it has gone.', spends: 'Blue buttons spend them, and the more marks on a body, the more they pay out.', },
+    open: `() => window.__pause.pickArch('Choose who you are', 'For the whole run, and the only one you will have until the run is over.', [
+      { id: 'brawler', name: 'Brawler', line: 'In the middle of them, where the blows land and the work gets done, and glad of it.', trait: 'Takes hits lighter, every hit, all the way down.' },
+      { id: 'marksman', name: 'Marksman', line: 'Keep your distance, and keep moving, and let the lens do the work from far away.', trait: 'Lighter on your feet, and the legs ready sooner.' },
+      { id: 'summoner', name: 'Summoner', line: 'Others fight for you, while you stay out of reach and watch them do it.', trait: 'x', soon: 'soon' },
     ], () => {})`,
   },
 }

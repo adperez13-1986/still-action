@@ -52,6 +52,8 @@ export interface PartRuntime {
     perStrain: number                 // brace
     /** It met something (a shot destroyed or turned, a hit converted): the end tick says so. */
     used: boolean
+    /** The slot it is worn in (an archetype's slot law lets a guard sit in the head): where its ring and end tick show. */
+    by: SlotName
   } | null
   /** Arms window: Anvil. Closes on the first catch. */
   anvil: { t: number; max: number; def: AbilityDef } | null

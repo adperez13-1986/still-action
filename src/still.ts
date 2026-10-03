@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { STARTING, type AbilityDef, type BeatKey } from './abilities'
+import { STARTING, homeSlot, type AbilityDef, type BeatKey } from './abilities'
 import type { StillMove } from './parts'
 import { WEIGHT_FEEL } from './weight'
 import { buildModel, EYE, EYE_OFF, EYE_ON, HUNCH, JAW_OPEN, JAW_X, LENS_TILT, type PartCtx, type SlotModel } from './partmodels'
@@ -207,35 +207,38 @@ export class Still {
    * recorded, so a part picked up mid-run reassembles where it belongs.
    */
   wear(slot: SlotName, def: AbilityDef | null) {
-    const old = this.models[slot]
+    const old = this.parts[slot]
     if (old) {
-      old.root.traverse((o) => this.rest.delete(o))
-      this.debris = this.debris.filter((d) => d.part !== old.root)
+      old.traverse((o) => this.rest.delete(o))
+      this.debris = this.debris.filter((d) => d.part !== old)
     }
     const m = buildModel(slot, def?.id ?? null, 'body')
+    // worn off its own slot (an archetype's slot law): the slot's frame stays the rig, since the pose handles live on it, and the part is laid over it
+    const f = !def || homeSlot(def) === slot ? m : buildModel(slot, null, 'body')
+    if (f !== m) f.root.add(m.root)
     this.models[slot] = m
-    this.setPart(slot, m.root)
-    if (m.lens) this.lens = m.lens
-    if (m.core) {
-      this.core = m.core
+    this.setPart(slot, f.root)
+    if (f.lens) this.lens = f.lens
+    if (f.core) {
+      this.core = f.core
       this.core.material = this.coreMat
       // drawn at the eye's colour now, whatever wrote it last (a slowdown, the homecoming), less the dim
       this.core.onBeforeRender = () => this.lightCore()
     }
-    if (m.armL && m.armR && m.jawL && m.jawR) {
-      this.armL = m.armL
-      this.armR = m.armR
-      this.jawL = m.jawL
-      this.jawR = m.jawR
+    if (f.armL && f.armR && f.jawL && f.jawR) {
+      this.armL = f.armL
+      this.armR = f.armR
+      this.jawL = f.jawL
+      this.jawR = f.jawR
     }
-    if (m.legL && m.legR) {
-      this.legL = m.legL
-      this.legR = m.legR
+    if (f.legL && f.legR) {
+      this.legL = f.legL
+      this.legR = f.legR
     }
-    m.root.traverse((o) => this.rest.set(o, { p: o.position.clone(), q: o.quaternion.clone(), s: o.scale.clone() }))
+    f.root.traverse((o) => this.rest.set(o, { p: o.position.clone(), q: o.quaternion.clone(), s: o.scale.clone() }))
     // a stopping Still stays stopping: the new head drops as far as the old one had
-    if (slot === 'head') m.root.rotation.x = this.slowdown * 0.42
-    if (slot === 'arms') m.root.rotation.x = this.slowdown * 0.12
+    if (slot === 'head') f.root.rotation.x = this.slowdown * 0.42
+    if (slot === 'arms') f.root.rotation.x = this.slowdown * 0.12
     this.version++
   }
 

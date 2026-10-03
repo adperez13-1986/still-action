@@ -1654,7 +1654,7 @@ const PICK_STATE = `() => {
 const hooksUp = (page) => page.waitForFunction(() => typeof window.__enter === 'function' && window.__level && window.__level(), null, { timeout: 60000 })
 
 // a real run, not a dev one: no ?depth=. A save in memory is past its first run only by the run it has just started: the first boot begins the run (FIRST_RUN_IN_MAZE), the door is `__run.phase = 'leaving'`
-check('K-M20', '?save=memory&roads=0&line=0&engine=0&pick=1', async ({ page }) => {
+check('K-M20', '?save=memory&roads=0&line=0&engine=0&pick=core', async ({ page }) => {
   const read = () => evalJson(page, PICK_STATE)
   // the boot began a run, depth 1 is entered, and the pick is up: a card for every core (Wake, Ram, Thorns, Tether; N1 left Tether's disabled and "soon", N2 took that off, N3 put Thorns where Graze was), and no back button
   const a = await read()
@@ -1713,7 +1713,7 @@ const SNAP = `(o) => {
 }`
 
 // real localStorage (no save=memory, no ?depth=): the boot's first run writes a depth-1 snapshot, and each case replaces it and reloads, so the real resumeRun reads it
-check('K-M21', '?roads=1&line=0&engine=0&resume=1', async ({ page }) => {
+check('K-M21', '?roads=1&line=0&engine=0&resume=1&pick=core', async ({ page }) => {
   const read = () => evalJson(page, PICK_STATE)
   const resumeWith = async (o, builds) => {
     await evalJson(page, SNAP, o)
