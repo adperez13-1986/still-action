@@ -147,7 +147,7 @@ export interface PauseScreen {
    * The core's pick (BUILD.md §2.8, B4): the run's start, two big cards side by side and no back button (a pick is made, not left). Each card is its core's name, then what the left
    * thumb does and what that leaves on a body (words from cores.ts WORDS, passed in: this file has no words of its own). `id` is the core's, handed back to `onPick`.
    */
-  pickCore: (title: string, intro: string, cards: { id: string; name: string; thumb: string; leaves: string }[], onPick: (id: string) => void) => void
+  pickCore: (title: string, intro: string, cards: { id: string; name: string; thumb: string; leaves: string; spends: string }[], onPick: (id: string) => void) => void
   /** What the pause screen lists under the loadout: mastery learned this run ("Cold Strike: ..."). */
   setLearned: (fn: () => { name: string; line: string }[]) => void
   /** The notebook: its pages, one at a time, and close. */
@@ -276,7 +276,7 @@ export function createPauseScreen(root: HTMLElement): PauseScreen {
       // no actions row: a pick is made, not left. The ring glyph is the mark's own look in thirds (cold; Ram's cracked), so the card shows what it will leave on a body
       show(
         `<h2>${title}</h2><p class="intro">${intro}</p><div class="row two">${cards.map((c, i) =>
-          `<button type="button" class="pcard master core" data-i="${i}" data-core="${c.id}"><i class="coreglyph" aria-hidden="true"></i><b class="pname">${c.name}</b><p class="thumb">${c.thumb}</p><p class="leaves">${c.leaves}</p></button>`).join('')}</div>`,
+          `<button type="button" class="pcard master core" data-i="${i}" data-core="${c.id}"><i class="coreglyph" aria-hidden="true"></i><b class="pname">${c.name}</b><p class="thumb">${c.thumb}</p><p class="leaves">${c.leaves}</p><p class="spends">${c.spends}</p></button>`).join('')}</div>`,
         [],
       )
       el.querySelectorAll<HTMLElement>('.core').forEach((b) => b.addEventListener('click', () => onPick(cards[Number(b.dataset.i)]?.id ?? '')))

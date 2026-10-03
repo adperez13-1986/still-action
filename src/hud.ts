@@ -270,7 +270,7 @@ export interface Hud {
   /**
    * The spend count (BUILD.md §2.9, B5): a small number on the button's rim, beside the push cue, never over the icon or the price. `n` is the marks a cast would spend now. Null hides it
    * (not a spender, or no core). 0: dim. 1 or more: cold-lit, the digit (9 at most). 3 or more: the button carries `spend3` (a slow cold pulse) while it is ready, and `spendcue` (a lit rim)
-   * while it cools; the first cooling time, once per save, a caption (`WORDS.spendCaption`). Repaints only on change.
+   * while it cools; the first cooling time, once per save, a caption (`WORDS.spendCaption`). Any non-null `n` also puts the `spender` class on the button (a cold rim, always). Repaints only on change.
    */
   spendCue: (slot: SlotName, n: number | null) => void
   /**
@@ -1140,9 +1140,11 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
       if (next === null) {
         el.textContent = ''
         el.className = 'spend'
-        b.el.classList.remove('spend3', 'spendcue')
+        b.el.classList.remove('spend3', 'spendcue', 'spender')
         return
       }
+      // a spender, the digit or none: the cold rim says it cashes marks (SHOW.md item 5)
+      b.el.classList.add('spender')
       el.textContent = String(Math.min(next, SPEND_HUD.showMax))
       el.className = next === 0 ? 'spend show dim' : 'spend show lit'
       paintSpend(b, isReadyAt(b, state.clock))

@@ -1019,8 +1019,8 @@ check('K-M11', RUN, async ({ page }) => {
   assertEq('Frost Flare lands 2 marks and a x0.5 slow (2 s) on the bodies in 2.2 u, and not on the one past it', [f.near.marks, f.near.slowMul, f.mid.marks, f.mid.slowMul, f.far.marks, f.far.slowT], [2, 0.5, 2, 0.5, 0, 0])
   assert(f.near.slowT > 0.9 && f.near.slowT <= 2, `...the slow is 2 s from the landing (${f.near.slowT.toFixed(2)} left a second on)`)
   assertEq('...it never sets the marked state, hits the two bodies (weighed 17) and not the third, and the marks are the head slot\'s, logged by part', [[f.near.marked, f.mid.marked, f.far.marked], f.hit, f.byPart, [...new Set(f.marksEv)], f.states.filter((s) => s === 'marked')], [[0, 0, 0], [17, 17, 0], 4, ['head'], []])
-  assertEq('the pickup card for signal-flare under Wake reads Frost Flare and its line', [r.cardWake.pickup.name, r.cardWake.pickup.line], ['Frost Flare', 'Rimes what it lands on, and slows it.'])
-  assertEq('the compare card reads it, with the reshaped numbers (cooldown 5.0s, damage 17 weighed)', [r.cardWake.compare.name, r.cardWake.compare.line, r.cardWake.compare.stats.some((s) => s.includes('5.0s')), r.cardWake.compare.stats.some((s) => s.includes('17'))], ['Frost Flare', 'Rimes what it lands on, and slows it.', true, true])
+  assertEq('the pickup card for signal-flare under Wake reads Frost Flare and its line', [r.cardWake.pickup.name, r.cardWake.pickup.line], ['Frost Flare', 'Frosts what it lands on, and slows it.'])
+  assertEq('the compare card reads it, with the reshaped numbers (cooldown 5.0s, damage 17 weighed)', [r.cardWake.compare.name, r.cardWake.compare.line, r.cardWake.compare.stats.some((s) => s.includes('5.0s')), r.cardWake.compare.stats.some((s) => s.includes('17'))], ['Frost Flare', 'Frosts what it lands on, and slows it.', true, true])
   assertEq('with no core, both cards read Signal Flare', [r.cardBare.pickup.name, r.cardBare.compare.name, r.cardBare.compare.line], ['Signal Flare', 'Signal Flare', 'Marks enemies where it lands. Parts that pay marks hit them twice.'])
 })
 
@@ -2284,8 +2284,8 @@ check('K-M26', RUN, async ({ page }) => {
   assertEq('Ram: Kickstart (shaper), Brace (guard), Flare (spender, the core\'s +8), Scrap Cleaver (the bridge, +4)', [r.ram.kickstart.card, r.ram.brace.card, r.ram.flare.card, r.ram.cleaver.card], ['fits Ram · runs them into walls', 'fits Ram · holds your ground', 'fits Ram · spends slammed: +8 each', 'fits Ram · spends slammed: +4 each'])
   assertEq('Ram: Focusing Lens is plain: no fit line on either card', r.ram.lens, { card: null, cmp: null })
   assertEq('Wake: Scrap Cleaver +3, Backhand (the reshaped Frayed Cleaver) +10, Skate +6, Frost Flare and Spring Heels and Ward their lines, the Lens none', [r.wake.cleaver.card, r.wake.backhand.card, r.wake.skate.card, r.wake.flare.card, r.wake.heels.card, r.wake.ward.card, r.wake.lens.card],
-    ['fits Wake · spends rimed: +3 each', 'fits Wake · spends rimed: +10 each', 'fits Wake · spends rimed: +6 each', 'fits Wake · rimes what will not come to you', 'fits Wake · over a wall, they string out after you', 'fits Wake · covers the pass', null])
-  assertEq('...and the compare card carries the same line', [r.wake.backhand.cmp, r.wake.ward.cmp], ['fits Wake · spends rimed: +10 each', 'fits Wake · covers the pass'])
+    ['fits Wake · spends frosted: +3 each', 'fits Wake · spends frosted: +10 each', 'fits Wake · spends frosted: +6 each', 'fits Wake · frosts what will not come to you', 'fits Wake · over a wall, they string out after you', 'fits Wake · covers the pass', null])
+  assertEq('...and the compare card carries the same line', [r.wake.backhand.cmp, r.wake.ward.cmp], ['fits Wake · spends frosted: +10 each', 'fits Wake · covers the pass'])
   assertEq("a part that fits has the glyph ring on the floor, a plain one none; decided at the drop (a Piston dropped with no core worn has none)", r.ring, [['piston', true], ['focusing-lens', false], ['backdraft-vent', true], ['piston', false]])
   assertEq("the drop records carry fit with a core worn ('fits' / 'plain') and none bare", r.recs, [['piston', 'fits'], ['focusing-lens', 'plain'], ['backdraft-vent', 'fits'], ['piston', null]])
   assertEq('builds off with a core on the run: no fit line on either card; bare, none', [r.off, r.bare], [{ piston: { card: null, cmp: null }, backdraft: { card: null, cmp: null } }, { piston: { card: null, cmp: null } }])
@@ -2448,7 +2448,7 @@ check('K-M28', RUN, async ({ page }) => {
     const st = last()
     out.stat = { made: st.marks.made, spent: st.marks.spent }
     out.fight = read()
-    out.expected = W.__words.readout(st.marks.made, st.marks.spent)
+    out.expected = W.__words.readout(st.marks.made, st.marks.spent, st.spends.bonus)
     W.__keystone('wake-burst')
     W.__upgrade('wake-spray')
     W.__upgrade('wake-slip')
@@ -2474,9 +2474,9 @@ check('K-M28', RUN, async ({ page }) => {
     return out
   }`)
   assertEq('no core: no core block under the loadout', r.bare, null)
-  assertEq('a core, nothing made yet: its name, the socket empty, no upgrades, marked 0 spent 0', r.first, { name: 'Wake', parts: ['socket: empty', 'upgrades: none yet'], readout: 'marked 0 · spent 0' })
+  assertEq('a core, nothing made yet: its name, the socket empty, no upgrades, marked 0 spent 0', r.first, { name: 'Wake', parts: ['socket: empty', 'upgrades: none yet'], readout: 'marked 0 · spent 0 · +0 damage' })
   assert(r.stat.made === 5 && r.stat.spent === 3, `the scripted fight made 5 marks and spent 3 (${JSON.stringify(r.stat)})`)
-  assertEq("after the fight the readout is WORDS.readout(made, spent) for the open depth", [r.fight.readout, r.fight.readout], [r.expected, 'marked 5 · spent 3'])
+  assertEq("after the fight the readout is WORDS.readout(made, spent, bonus) for the run (SHOW.md item 8: the Cleaver's 3 marks at +3 each)", [r.fight.readout, r.fight.readout], [r.expected, 'marked 5 · spent 3 · +9 damage'])
   assertEq('...with a keystone socketed and both upgrades learned, it names them', [r.full.parts[0], r.full.parts[1]], [`socket: ${r.keyNames[0]}`, `upgrades: ${r.keyNames[1]}, ${r.keyNames[2]}`])
   assertEq('builds off: no block even with the core on the run', r.off, null)
   assert(r.open.block && !r.open.blockOff && r.open.blockOn, `the switch flipped on the open screen takes the core block away and brings it back (${JSON.stringify([r.open.block, r.open.blockOff, r.open.blockOn])})`)

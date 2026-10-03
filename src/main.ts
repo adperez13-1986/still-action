@@ -49,6 +49,9 @@ import type { Terrain } from './terrain'
 import { Vfx, syncTells, spawned as vfxSpawned, COLD, COLD_DEEP, EMBER, SLAG_DROP } from './vfx'
 import { PartFx } from './partfx'
 import { MarkFx } from './markfx'
+import { WakeFx } from './wakefx'
+import { ShoveFx } from './ramfx'
+import { CoreShow } from './coreshow'
 import type { PartEvent } from './parts'
 import type { NotebookPage } from './pause'
 import {
@@ -105,14 +108,17 @@ setLinePages(flag('line') || RUN_DEPTHS === 9 || ROUTE_PARAM === 'III', save.not
 const world = createWorld(canvas, { arena: false })
 /** The kids' drawings: captured off the canvas at each ending, kept in IndexedDB. */
 const drawings = createDrawings(world.renderer)
-const hud = createHud(hudRoot, {
-  hinted: (id) => save.hints.includes(id),
-  markHinted: (id) => {
+const hintStore = {
+  hinted: (id: string) => save.hints.includes(id),
+  markHinted: (id: string) => {
     if (save.hints.includes(id)) return
     save.hints.push(id)
     store.write()
   },
-})
+}
+const hud = createHud(hudRoot, hintStore)
+/** The core's number over a body and the first fight's hint (coreshow.ts). */
+const coreShow = new CoreShow(hudRoot, world.camera)
 const gradePanel = createGradePanel(hudRoot, world)
 const overlay = createOverlay(hudRoot)
 const rig = createCameraRig(world)
@@ -1297,6 +1303,17 @@ function ramImpact(c: Charger, at: THREE.Vector3, wall: boolean) {
 const partFx = new PartFx(world.scene, vfx, still, combat.parts, combat)
 /** The core's marks, drawn on the floor at the bodies' feet (markfx.ts): a few instanced draw calls, whatever the number of marked bodies. */
 const markFx = new MarkFx(world.scene)
+/** Wake's field round Still and the streak where he walked (wakefx.ts): two draw calls, only with Wake worn. */
+const wakeFx = new WakeFx(world.scene)
+/** Ram's reach ring and what a slam leaves on the floor (ramfx.ts): two draw calls, only with Ram worn. */
+const shoveFx = new ShoveFx(world.scene)
+/** A new level or a run's end: no rings, no field, no streak, no number. */
+function clearCoreFx() {
+  markFx.clear()
+  wakeFx.clear()
+  shoveFx.clear()
+  coreShow.clear()
+}
 /** His walk pace as still.ts has it (Slipstream multiplies it for a moment and only ever through this). */
 const STILL_WALK = still.speed
 
@@ -1374,6 +1391,25 @@ function chillBreak(e: Enemy) {
 }
 
 /** Shatter: the kill's leftover flies on as ice, a cold streak from where it fell to the body it lands in. */
+/** Wake's skim slash (SHOW.md item 4): `SLASH_PTS` trail points over `SLASH_LEN` u. A mark's tick is at least this many game seconds after the last one. */
+const SLASH_PTS = 5
+const SLASH_LEN = 1
+const MARK_TICK_GAP = 0.05
+let lastTickT = -Infinity
+
+/**
+ * A spend, seen (SHOW.md items 1 and 2): `+bonus` over the body, the rings breaking outward (markfx.ts reads the same event), a flash at its feet and a few ice shards, thrown the same way every
+ * time (index-spread, no random). From two marks a hitstop of 0.03, on the same rule as a slam's (with weight on, combat holds its own). The first spend takes the first fight's hint away.
+ */
+function spendFx(ev: Extract<PartEvent, { kind: 'spend' }>) {
+  const e = ev.enemy
+  coreShow.spend(e.pos.x, e.labelY * e.size, e.pos.z, ev.n, ev.bonus)
+  if (coreShow.hinting) coreShow.hint(null)
+  vfx.flash(at3(e.pos, 0.35), COLD, 0.9 + 0.2 * Math.min(ev.n, 3))
+  vfx.shards(at3(e.pos, 0.5), COLD, 4 + 2 * Math.min(ev.n, 4), 5 + Math.min(ev.n, 3), ev.n * 0.7)
+  if (ev.n >= 2 && !combat.weight) hitstop = Math.max(hitstop, 0.03)
+}
+
 /**
  * The build layer's events (BUILD.md §2.9, §2.11): the log (marks made, spent, expired; spends and how soon after the first mark; Wake's skims) and the look
  * and sound. A spend drains the body's rings (markfx.ts reads the same event); marks that run out unspent fizzle, faintly.
@@ -1385,6 +1421,11 @@ function coreEvent(ev: Extract<PartEvent, { kind: 'mark' | 'markExpired' | 'spen
       st.marks.made += ev.added
       if (ev.by === 'core') st.marks.byCore += ev.added
       else st.marks.byPart += ev.added
+    }
+    // a soft cold tick, a step up the chord with the stack; a pack marked at once is one tick, not twenty
+    if (ev.added > 0 && combat.time - lastTickT >= MARK_TICK_GAP) {
+      lastTickT = combat.time
+      sfx.markTick(ev.n, panOf(ev.enemy.pos))
     }
     return
   }
@@ -1404,6 +1445,7 @@ function coreEvent(ev: Extract<PartEvent, { kind: 'mark' | 'markExpired' | 'spen
     }
     fightSpends++
     sfx.spend(ev.n, panOf(ev.enemy.pos))
+    spendFx(ev)
     return
   }
   // a skim: Wake passed beside a body
@@ -1415,11 +1457,20 @@ function coreEvent(ev: Extract<PartEvent, { kind: 'mark' | 'markExpired' | 'spen
     if (st.autoDmg) st.autoDmg.core += CORES.wake.damage
   }
   const e = ev.enemy
-  // one frost mote at the body's near side
+  // a cold slash along the body's near side, across the line from him to it, and one frost mote; the field round him flashes
   const dx = still.pos.x - e.pos.x
   const dz = still.pos.z - e.pos.z
   const d = Math.hypot(dx, dz) || 1
-  vfx.frost(new THREE.Vector3(e.pos.x + (dx / d) * e.radius * 0.8, 0.5, e.pos.z + (dz / d) * e.radius * 0.8), 1, 0.12)
+  const nx = e.pos.x + (dx / d) * e.radius * 0.8
+  const nz = e.pos.z + (dz / d) * e.radius * 0.8
+  for (let i = 0; i < SLASH_PTS; i++) {
+    const k = (i / (SLASH_PTS - 1) - 0.5) * SLASH_LEN
+    // the middle is the thickest and the longest-lit
+    const mid = 1 - Math.abs(2 * i / (SLASH_PTS - 1) - 1)
+    vfx.trail(new THREE.Vector3(nx - (dz / d) * k, 0.5, nz + (dx / d) * k), COLD, 0.14 + 0.1 * mid, 0.22 + 0.1 * mid)
+  }
+  vfx.frost(new THREE.Vector3(nx, 0.5, nz), 1, 0.12)
+  wakeFx.skim()
   if (ev.burst) {
     // Burst: the third ring breaks the body open, a cold pop
     vfx.flash(at3(e.pos, 0.8), COLD, 0.8)
@@ -1459,6 +1510,8 @@ function shoveEvent(ev: Extract<PartEvent, { kind: 'shove' }>) {
   if (own) {
     // the core's own shove: the hand's clack and the swing, a little cold off the near face
     sfx.hand(pan)
+    // the wedge of the reach ring that faces the body lights and travels out
+    shoveFx.pulse(ev.enemy.pos.x - still.pos.x, ev.enemy.pos.z - still.pos.z)
     still.attack({ beat: 'hand', pushed: false })
     const toward = new THREE.Vector3(still.pos.x - ev.enemy.pos.x, 0, still.pos.z - ev.enemy.pos.z)
     const d = Math.max(1e-3, toward.length())
@@ -1470,8 +1523,11 @@ function shoveEvent(ev: Extract<PartEvent, { kind: 'shove' }>) {
     const at = at3(ev.at, 0.7)
     vfx.sparks(at, COLD, 8, 5)
     vfx.flash(at, COLD_DEEP, 0.3)
+    // a slam is the loudest thing Ram does (SHOW.md item 10b): the body's path as a steel streak, a crack where it hit, and a ring of sparks thrown the same way every time. No flash on the body itself.
+    shoveFx.slammed(ev.enemy.pos.x, ev.enemy.pos.z, ev.at.x, ev.at.z)
+    vfx.shards(at3(ev.at, 0.6), COLD, 12, 7, ev.at.x * 1.7 + ev.at.z)
     if (!combat.weight) hitstop = Math.max(hitstop, 0.03)
-    shake = Math.max(shake, 0.07)
+    shake = Math.max(shake, 0.12)
   }
   if (ev.rubble) {
     // Rubble: cold dust thrown at the wall, never ember-coloured
@@ -2868,7 +2924,7 @@ function upgradesLeft(): UpgradeId[] {
   return (Object.keys(UPGRADES) as UpgradeId[]).filter((id) => UPGRADES[id].core === run.core && !run.upgrades.includes(id))
 }
 
-/** How a part fits the core worn, for its card (the pickup card and the compare): a spender's `spends rimed: +10 each`, a shaper's or guard's own line. Null: plain, or no core. */
+/** How a part fits the core worn, for its card (the pickup card and the compare): a spender's `spends frosted: +10 each`, a shaper's or guard's own line. Null: plain, or no core. */
 function fitWords(d: AbilityDef): string | null {
   const c = coreNow()
   const f = c ? fitOf(d, c) : null
@@ -2882,18 +2938,24 @@ function fitWords(d: AbilityDef): string | null {
 const masteryForm = (d: AbilityDef): MasteryForm | null => MASTERY_FORM[d.id] ?? null
 
 pause.setLearned(() => [...run.mastery].map((id) => MASTERY[id]))
-// the core under the loadout (B5): its name, the socket and the upgrades, and the open depth's marks. Nothing with no core worn
+// the core under the loadout (B5): its name, the socket and the upgrades, and the run's marks and what the spends added (SHOW.md item 8). Nothing with no core worn
 pause.setCore(() => {
   const c = coreNow()
   if (!c) return null
-  const st = run.stats[run.stats.length - 1]
+  // the run's, every depth so far: what he made, spent, and what the spends added
+  let made = 0, spent = 0, bonus = 0
+  for (const d of run.stats) {
+    made += d.marks?.made ?? 0
+    spent += d.marks?.spent ?? 0
+    bonus += d.spends?.bonus ?? 0
+  }
   return {
     name: WORDS.core[c],
     parts: [
       `${WORDS.socketLabel}: ${run.keystone ? WORDS.keystone[run.keystone][0] : WORDS.socketEmpty}`,
       `${WORDS.upgradesLabel}: ${run.upgrades.length ? run.upgrades.map((id) => WORDS.upgrade[id][0]).join(', ') : WORDS.none}`,
     ],
-    readout: WORDS.readout(st?.marks.made ?? 0, st?.marks.spent ?? 0),
+    readout: WORDS.readout(made, spent, bonus),
   }
 })
 
@@ -3281,7 +3343,7 @@ function offerCore(at: 'start' | 'resume') {
   const t0 = performance.now()
   const offered: CoreId[] = [...CORE_IDS]
   openPause()
-  pause.pickCore(WORDS.pickTitle, WORDS.pickIntro, offered.map((id) => ({ id, name: WORDS.core[id], thumb: WORDS.thumb[id], leaves: WORDS.leaves[id] })), (picked) => {
+  pause.pickCore(WORDS.pickTitle, WORDS.pickIntro, offered.map((id) => ({ id, name: WORDS.core[id], thumb: WORDS.thumb[id], leaves: WORDS.leaves[id], spends: WORDS.spendsLine })), (picked) => {
     const id = offered.find((c) => c === picked)
     if (!id || run.core) return
     run.core = id
@@ -3500,7 +3562,7 @@ function enterLevel(depth: number, o: { seed?: number; bossFelled?: boolean; res
   clearLoot()
   combat.reset()
   partFx.clear()
-  markFx.clear()
+  clearCoreFx()
   run.seed = o.seed ?? Math.floor(Math.random() * 1e9)
   run.bossFelled = !!o.bossFelled
   run.bossLoot = []
@@ -3828,7 +3890,7 @@ function enterCrossroads(seed = Math.floor(Math.random() * 1e9)) {
   clearLoot()
   combat.reset()
   partFx.clear()
-  markFx.clear()
+  clearCoreFx()
   run.seed = seed
   run.bossFelled = true
   run.bossLoot = []
@@ -4111,7 +4173,7 @@ function enterRoom(arrival: ArrivalKind, hour: HomeHour, worn: (string | null)[]
   clearLoot()
   combat.reset()
   partFx.clear()
-  markFx.clear()
+  clearCoreFx()
   combat.terrain = workshop.terrain
   loot.terrain = workshop.terrain
   // the room wears its own wood and stone, whatever the run was last in
@@ -4657,6 +4719,19 @@ function spendCues() {
   for (const sl of hud.slots) hud.spendCue(sl.slot, sl.def && fitOf(sl.def, run.core)?.role === 'spend' ? spendNow(sl.def) : null)
 }
 
+/**
+ * The first fight with a core worn says what the blue buttons are (SHOW.md item 6): one line at the top, its own hint id per core, once per save, gone after the first spend or ~8 s
+ * (coreshow.ts). It waits for a fight, so it is never read in an empty room.
+ */
+function firstFightHint(fighting: boolean) {
+  const c = coreNow()
+  if (!c || !fighting || coreShow.hinting || run.phase !== 'crawl') return
+  const id = `core-${c}`
+  if (hintStore.hinted(id)) return
+  hintStore.markHinted(id)
+  coreShow.hint(WORDS.firstFight[c])
+}
+
 let accumulator = 0
 let last = performance.now() / 1000
 
@@ -4972,7 +5047,7 @@ function enterWalkHome() {
   clearLoot()
   combat.reset()
   partFx.clear()
-  markFx.clear()
+  clearCoreFx()
   stopAllWindups()
   level = generateWalkHome(Math.floor(Math.random() * 1e9), PLACES[WALK_PLACE])
   setSurfaces(PLACES[WALK_PLACE].surfaces)
@@ -5376,6 +5451,10 @@ function frame(nowMs: number) {
   partFaces(elapsed)
   flushParryReady()
   hud.update(clock)
+  coreShow.update(paused ? 0 : elapsed)
+  wakeFx.update(!home && run.phase === 'crawl' && !!level && coreNow() === 'wake', paused ? 0 : elapsed, x, z)
+  shoveFx.update(!home && run.phase === 'crawl' && !!level && coreNow() === 'ram', paused ? 0 : elapsed, x, z)
+  firstFightHint(fighting)
   if (!paused) {
     vfx.update(elapsed * breakScale(), world.camera, world.renderer.domElement.height)
     ambientFx(elapsed)
@@ -5439,6 +5518,9 @@ if (import.meta.env.DEV) {
   Object.assign(window, {
     __combat: combat, __still: still, __hud: hud, __loot: loot, __level: () => level, __world: world,
     __markFx: markFx,
+    __wakeFx: wakeFx,
+    __shoveFx: shoveFx,
+    __coreShow: coreShow,
     __run: run, __parts: PARTS, __partLog: partLog, __pause: pause,
     /** Advance exactly `s` seconds of game time, and the HUD clock (and the button faces) with it. No rAF, no hitstop. */
     __step: (s: number) => {
@@ -5584,7 +5666,7 @@ if (import.meta.env.DEV) {
       combat.reset()
       clearLoot()
       partFx.clear()
-      markFx.clear()
+      clearCoreFx()
       combat.terrain = terrain
       loot.terrain = terrain
       combat.breakables = []

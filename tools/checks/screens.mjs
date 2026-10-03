@@ -139,8 +139,8 @@ const SCREENS = {
   pick: {
     sel: '#pause',
     open: `() => window.__pause.pickCore('Choose a core', 'One way to fight, for the whole run, and the only one you will have until the run is over.', [
-      { id: 'wake', name: 'Wake', thumb: 'Pass beside them, and never stop, and never turn your back on the ones that come.', leaves: 'What you pass beside is rimed, and the rime holds for a while after you have gone.', },
-      { id: 'ram', name: 'Ram', thumb: 'Put them against something, a wall, or another one of them, and hold them there.', leaves: 'What hits a wall or a body is slammed, and a slammed body pays what the parts that fit it spend.', },
+      { id: 'wake', name: 'Wake', thumb: 'Pass beside them, and never stop, and never turn your back on the ones that come.', leaves: 'What you pass beside is frosted, and the frost holds for a while after you have gone.', spends: 'Blue buttons spend them, and the more marks on a body, the more they pay out.', },
+      { id: 'ram', name: 'Ram', thumb: 'Put them against something, a wall, or another one of them, and hold them there.', leaves: 'What hits a wall or a body is slammed, and a slammed body pays what the parts that fit it spend.', spends: 'Blue buttons spend them, and the more marks on a body, the more they pay out.', },
     ], () => {})`,
   },
 }

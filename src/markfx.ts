@@ -3,6 +3,7 @@ import { DECAL_Y } from './world'
 import { RING, markCap } from './cores'
 import type { Combat } from './combat'
 import type { PartEvent } from './parts'
+import type { Enemy } from './enemy'
 
 /**
  * The core's marks, drawn (design/buildlayer/BUILD.md §2.10): a ring at the feet of every body holding marks, filled in thirds (fifths under Deep Frost).
@@ -38,7 +39,7 @@ const LOOK = {
   /** Each segment's start, so the first third sits at the back-left and they fill clockwise on screen. */
   startDeg: 90,
 }
-/** Drains running at once (a spend's last RING.drainS): more than a handful never overlap. */
+/** Breaks running at once (a spend's last RING.breakS): a nova spending a pack fills them, the oldest is recycled. */
 const DRAINS = 24
 const MAX_SEG = 5
 /** The ring sets, by name (a fixed list: a frame loops over it without allocating). */
@@ -124,13 +125,17 @@ export class MarkFx {
   private readonly gn = new Uint8Array(RING.maxBodies + DRAINS)
   private readonly ga = new Float32Array(RING.maxBodies + DRAINS)
   private readonly gd = new Float32Array(RING.maxBodies + DRAINS)
-  /** Rings draining into a spend: a ring of `dn` segments at (dx, dz), age `dt` of RING.drainS. dn 0: free. */
+  /** Rings breaking outward in a spend: a ring of `dn` segments at (dx, dz), age `dt` of RING.breakS. dn 0: free. */
   private readonly dx = new Float32Array(DRAINS)
   private readonly dz = new Float32Array(DRAINS)
   private readonly dr = new Float32Array(DRAINS)
   private readonly dn = new Uint8Array(DRAINS)
   private readonly dt = new Float32Array(DRAINS)
   private dNext = 0
+  /** Bodies whose ring is swelling from a mark that just landed: seconds since. Cleared as they settle. */
+  private readonly pops = new Map<Enemy, number>()
+  /** Game seconds drawn, for the cap's pulse. */
+  private clock = 0
   /** Marked bodies in the last frame, drawn and not (the log of the cap). */
   drawn = 0
   skipped = 0
@@ -167,9 +172,17 @@ export class MarkFx {
     scene.add(this.group)
   }
 
-  /** A spend: the body's rings drain into the hit. The marks are already gone from the body, so the ring is drawn from here until it has shrunk away. */
+  /**
+   * A spend: the body's rings break outward and fade. The marks are already gone from the body, so the ring is drawn from here until it has gone. A mark that landed (`added` above 0)
+   * swells its body's ring for a beat.
+   */
   event(ev: PartEvent) {
+    if (ev.kind === 'mark') {
+      if (ev.added > 0) this.pops.set(ev.enemy, 0)
+      return
+    }
     if (ev.kind !== 'spend') return
+    this.pops.delete(ev.enemy)
     const k = this.dNext
     this.dNext = (k + 1) % DRAINS
     this.dx[k] = ev.enemy.pos.x
@@ -179,9 +192,28 @@ export class MarkFx {
     this.dt[k] = 0
   }
 
+  /** A ring's size factor now: the swell of a mark that just landed, and at the cap a slow gentle pulse ("full, cash it"). */
+  private look(e: Enemy, n: number, cap: number, dt: number): number {
+    let f = 1
+    const age = this.pops.get(e)
+    if (age !== undefined) {
+      const a = age + dt
+      if (a >= RING.popS) this.pops.delete(e)
+      else {
+        this.pops.set(e, a)
+        // up fast, settling slowly: a sine over the first half, down through the rest
+        const u = a / RING.popS
+        f += RING.popAmt * (u < 0.3 ? u / 0.3 : (1 - u) / 0.7)
+      }
+    }
+    if (n >= cap) f += RING.pulseAmp * Math.sin(this.clock * Math.PI * 2 * RING.pulseHz)
+    return f
+  }
+
   /** A new level, or a run's end: nothing draining. */
   clear() {
     this.dn.fill(0)
+    this.pops.clear()
     for (const name of SET_NAMES) for (const m of this.sets[name]) { m.count = 0; m.visible = false }
   }
 
@@ -198,6 +230,7 @@ export class MarkFx {
       this.drawn = this.skipped = 0
       return
     }
+    this.clock += dt
     const max = RING.maxBodies
     let g = 0
     let over = 0
@@ -214,29 +247,30 @@ export class MarkFx {
       this.gn[g] = Math.min(cap, m.n)
       // the last RING.fadeS of life dims it
       this.ga[g] = m.t >= RING.fadeS ? 1 : Math.max(0, m.t / RING.fadeS)
-      this.gd[g] = 1
+      this.gd[g] = this.look(e, m.n, cap, dt)
       g++
     }
-    if (over > 0) g = this.nearest(combat, fromX, fromZ, cap)
+    if (over > 0) g = this.nearest(combat, fromX, fromZ, cap, dt)
     this.drawn = g
     this.skipped = over
-    // the rings draining into a spend
+    // the rings breaking outward in a spend: bigger and fainter as they go
     for (let k = 0; k < DRAINS; k++) {
       if (this.dn[k] === 0) continue
       const age = this.dt[k]! + dt
       this.dt[k] = age
-      const f = age / RING.drainS
+      const f = age / RING.breakS
       if (f >= 1) {
         this.dn[k] = 0
         continue
       }
       if (g >= this.gx.length) continue
+      const ease = 1 - (1 - f) * (1 - f)
       this.gx[g] = this.dx[k]!
       this.gz[g] = this.dz[k]!
       this.gr[g] = this.dr[k]!
       this.gn[g] = Math.min(cap, this.dn[k]!)
-      this.ga[g] = 1
-      this.gd[g] = 1 - f
+      this.ga[g] = 1 - f * f
+      this.gd[g] = 1 + RING.breakGrow * ease
       g++
     }
     const meshes = this.sets[which]
@@ -267,18 +301,18 @@ export class MarkFx {
   }
 
   /** More marked bodies than `maxBodies`: keep the nearest to Still. Rare (a deep pack with everything marked): it may allocate. Returns how many are kept. */
-  private nearest(combat: Combat, fx: number, fz: number, cap: number): number {
-    const all: { x: number; z: number; r: number; n: number; a: number; d: number }[] = []
+  private nearest(combat: Combat, fx: number, fz: number, cap: number, dt: number): number {
+    const all: { x: number; z: number; r: number; n: number; a: number; d: number; s: number }[] = []
     for (const [e, st] of combat.statuses()) {
       const m = st.marks
       if (m.n <= 0 || e.dead) continue
-      all.push({ x: e.pos.x, z: e.pos.z, r: Math.max(RING.minR, e.radius * RING.perRadius), n: Math.min(cap, m.n), a: m.t >= RING.fadeS ? 1 : Math.max(0, m.t / RING.fadeS), d: (e.pos.x - fx) ** 2 + (e.pos.z - fz) ** 2 })
+      all.push({ x: e.pos.x, z: e.pos.z, r: Math.max(RING.minR, e.radius * RING.perRadius), n: Math.min(cap, m.n), a: m.t >= RING.fadeS ? 1 : Math.max(0, m.t / RING.fadeS), d: (e.pos.x - fx) ** 2 + (e.pos.z - fz) ** 2, s: this.look(e, m.n, cap, dt) })
     }
     all.sort((a, b) => a.d - b.d)
     const keep = Math.min(all.length, RING.maxBodies)
     for (let i = 0; i < keep; i++) {
       const o = all[i]!
-      this.gx[i] = o.x; this.gz[i] = o.z; this.gr[i] = o.r; this.gn[i] = o.n; this.ga[i] = o.a; this.gd[i] = 1
+      this.gx[i] = o.x; this.gz[i] = o.z; this.gr[i] = o.r; this.gn[i] = o.n; this.ga[i] = o.a; this.gd[i] = o.s
     }
     this.skipped = all.length - keep
     return keep

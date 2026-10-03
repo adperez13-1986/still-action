@@ -323,6 +323,24 @@ export class Vfx {
   }
 
   /**
+   * `count` shards flung evenly round `at`, from `phase` (radians): the same burst every time, so a caller's look never leans on the random stream. Three speeds and lives cycle by index, so
+   * the ring of them is uneven the way a break is. Glints that fall.
+   */
+  shards(at: THREE.Vector3, color: THREE.Color, count: number, speed = 6, phase = 0) {
+    for (let i = 0; i < count; i++) {
+      const a = phase + (i / count) * Math.PI * 2
+      const k = i % 3
+      const s = speed * (0.6 + 0.2 * k)
+      this.glow.spawn({
+        x: at.x, y: at.y, z: at.z,
+        vx: Math.sin(a) * s, vy: 2.5 + k, vz: Math.cos(a) * s,
+        max: 0.32 + 0.06 * k, size: 0.12 + 0.02 * k, gravity: 14, drag: 2.2,
+        r: color.r, g: color.g, b: color.b,
+      })
+    }
+  }
+
+  /**
    * Sparks in the threat language (HOT_FRAG): short-lived, flickering, deep red to orange, thrown mostly along `dir` if given. Nothing is
    * lightened toward white; `speed` is the fastest, and the smallest are a third of it. `size` scales the flecks (1: C7's).
    */

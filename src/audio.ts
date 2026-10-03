@@ -1481,6 +1481,21 @@ export function spend(n: number, pan: number) {
   const k = Math.max(1, Math.min(9, n))
   const gap = Math.min(0.03, 0.15 / k)
   for (let i = 0; i < k; i++) tone(c, d, 'triangle', t + i * gap, 1318 * 2 ** (i / 12), 1318 * 2 ** (i / 12) * 0.96, 0.035, 0.13)
+  // the rime breaks (SHOW.md item 2): a glassy crack under the ticks and a falling ring, so the spend is the loudest thing the core does; a bigger spend rings longer
+  hiss(c, d, t, 0.1 + 0.015 * Math.min(k, 4), 0.17, 'bandpass', 4200, 1900, 1.1)
+  tone(c, d, 'triangle', t, 2637, 1480, 0.1 + 0.02 * Math.min(k, 4), 0.12)
+}
+
+/**
+ * The build layer (SHOW.md item 3): a mark landed, `n` of the stack's 1, 2, 3 (or more). One soft cold tick, a step up the chord each time (E6, G6, B6, then D7), so a third mark
+ * sounds like a third. Fainter than the spend by a good way. No Math.random.
+ */
+export function markTick(n: number, pan: number) {
+  heard('markTick:' + n)
+  const c = live()
+  if (!c) return
+  const f = [1318, 1568, 1976, 2349][Math.max(0, Math.min(3, n - 1))]!
+  tone(c, out(c, 'hits', pan), 'sine', c.currentTime, f, f * 0.97, 0.04, 0.07)
 }
 
 /**

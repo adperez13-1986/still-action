@@ -118,29 +118,42 @@ export const RESHAPES = {
 } as const
 
 /** The look (§2.10). `minR` / `perRadius` are 0.6 / 1.75 (BUILD.md: 0.45 / 1.2): at 1.2 x the body's radius the ring sat under its feet and a third of it read, at B2's screenshots. */
-export const RING = { minR: 0.6, perRadius: 1.75, gapDeg: 10, maxBodies: 48, drainS: 0.12, fadeS: 0.5 }
+export const RING = {
+  minR: 0.6, perRadius: 1.75, gapDeg: 10, maxBodies: 48, fadeS: 0.5,
+  /** A spend (SHOW.md item 2): the ring breaks outward, growing by `breakGrow` of its size and fading, over `breakS`. (Was a 0.12 s drain inward: it was not seen.) */
+  breakS: 0.3, breakGrow: 0.8,
+  /** A mark landing (item 3): the body's ring swells by `popAmt` and settles over `popS`. At the cap the ring holds a slow pulse, `pulseAmp` in size at `pulseHz`. */
+  popS: 0.2, popAmt: 0.22, pulseAmp: 0.05, pulseHz: 0.9,
+}
 /** The button (§2.9). The count is refreshed at most every `refreshS` of game time, shown up to `showMax`, pulses at `pulseAt`. */
 export const SPEND_HUD = { refreshS: 0.1, showMax: 9, pulseAt: 3 }
 
-/** PLACEHOLDER, every one: Adrian's words. */
+/** PLACEHOLDER, every one: Adrian's words. Every player-facing use of Wake's mark word ("frosted", his pick of 3 Oct, was "rimed") is in here and nowhere else; the code's own `rime` (the mod kind, the ring comments) is not text he reads. */
 export const WORDS = {
   switch: 'builds',
   core: { wake: 'Wake', ram: 'Ram' },
   /** The pick card: the left thumb, then what it leaves on bodies (the translator's lines). */
   thumb: { wake: 'Pass beside them.', ram: 'Put them against something.' },
-  leaves: { wake: 'What you pass beside is rimed.', ram: 'What hits a wall or a body is slammed.' },
-  mark: { wake: 'rimed', ram: 'slammed' },
+  leaves: { wake: 'What you pass beside is frosted.', ram: 'What hits a wall or a body is slammed.' },
+  mark: { wake: 'frosted', ram: 'slammed' },
+  /** The pick card's third line: what the blue buttons do (SHOW.md item 7). */
+  spendsLine: 'Blue buttons spend them.',
+  /** The first fight's one-line hint, once per save per core (SHOW.md item 6); its hint ids are `core-wake` and `core-ram`. */
+  firstFight: {
+    wake: 'Pass beside them to frost them. Blue buttons break the frost for extra damage.',
+    ram: 'Your shove marks what hits a wall or a body. Blue buttons break the marks for extra damage.',
+  },
   pickTitle: 'Choose a core', pickIntro: 'One way to fight, for the whole run.',
   keystone: { 'ram-domino': ['Domino', 'A slammed body slams what it hits.'], 'ram-catch': ['Catch', 'The shove fires the moment something in reach winds up.'],
     'wake-burst': ['Burst', 'The third ring breaks the body open on its own.'], 'wake-deep': ['Deep Frost', 'Rings hold five and last longer.'] } as Record<KeystoneId, readonly [string, string]>,
   upgrade: { 'ram-wide': ['Wide Shove', 'Shoves the two nearest.'], 'ram-rubble': ['Rubble', 'A wall slam throws stone at whoever is near.'],
-    'wake-spray': ['Spray', 'Rime carries to the one behind.'], 'wake-slip': ['Slipstream', 'Every pass speeds you up a little.'] } as Record<UpgradeId, readonly [string, string]>,
+    'wake-spray': ['Spray', 'Frost carries to the one behind.'], 'wake-slip': ['Slipstream', 'Every pass speeds you up a little.'] } as Record<UpgradeId, readonly [string, string]>,
   /** Shapers' and guards' fit lines; a spender's is built: `spends ${mark}: +${k} each`, with `k = fit.k ?? CORES[core].K` (B5). */
   fitLine: { 'backdraft-vent': 'pulls them together, so a shove slams two', kickstart: 'runs them into walls', brace: 'holds your ground',
-    'signal-flare': 'rimes what will not come to you', 'spring-heels': 'over a wall, they string out after you', ward: 'covers the pass' },
+    'signal-flare': 'frosts what will not come to you', 'spring-heels': 'over a wall, they string out after you', ward: 'covers the pass' },
   /** The reshaped parts' names and lines, as worn under Wake (VARIANTS below); Ram's Piston is a numbers-only variant and keeps its own (B3). */
-  reshape: { backhand: ['Backhand', 'A swing behind you, at what you just passed.'], skate: ['Skate', 'A slow glide through them.'], frostFlare: ['Frost Flare', 'Rimes what it lands on, and slows it.'] },
-  readout: (made: number, spent: number) => `marked ${made} · spent ${spent}`,
+  reshape: { backhand: ['Backhand', 'A swing behind you, at what you just passed.'], skate: ['Skate', 'A slow glide through them.'], frostFlare: ['Frost Flare', 'Frosts what it lands on, and slows it.'] },
+  readout: (made: number, spent: number, bonus: number) => `marked ${made} · spent ${spent} · +${bonus} damage`,
   spendCaption: 'tap · spend them',
   /** B5, the hunt. The socket card: its title, the labels, what the floor keystone is called, the tags, "you lose", take and leave. */
   socketTitle: (core: string) => `${core} · socket`,

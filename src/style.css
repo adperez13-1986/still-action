@@ -168,6 +168,31 @@ html, body {
 .btn.spendcue { border-color: #8fb8e8; box-shadow: 0 0 10px rgba(143, 184, 232, .55), 0 4px 12px rgba(0, 0, 0, .5); }
 .btn.spendcue .spend { color: #fff; border-color: #cfe6ff; box-shadow: 0 0 8px rgba(190, 222, 255, .9); }
 @keyframes spend3 { 0%, 100% { box-shadow: 0 0 5px rgba(111, 155, 208, .3), 0 4px 12px rgba(0, 0, 0, .5); } 50% { box-shadow: 0 0 0 3px rgba(190, 222, 255, .55), 0 0 18px rgba(143, 184, 232, .6), 0 4px 12px rgba(0, 0, 0, .5); } }
+/*
+ * A spender's rim (SHOW.md item 5): with a core worn, every part that cashes marks carries a cold ring just outside its button, always, the digit or none. Blue rim = cashes marks.
+ * A pseudo-element, so the ready, spend3 and spendcue looks on the button itself are left alone.
+ */
+.btn.spender::after {
+  content: ''; position: absolute; inset: -5px; border-radius: 50%; pointer-events: none; z-index: 1;
+  border: 2px solid #8fb8e8; box-shadow: 0 0 7px rgba(143, 184, 232, .65), inset 0 0 4px rgba(143, 184, 232, .35);
+}
+/* the core's own number and hint (coreshow.ts): the number is the only damage number in the world, cold, and rises off the body it was spent on */
+.coreshow { position: absolute; inset: 0; z-index: 3; pointer-events: none; overflow: hidden; }
+.spendnum {
+  position: absolute; left: 0; top: 0; white-space: nowrap; will-change: transform, opacity; font: 800 17px/1 var(--display); color: #b4d8ff;
+  letter-spacing: .02em; font-variant-numeric: tabular-nums; text-shadow: 0 1px 2px #000, 0 0 3px #000, 0 0 9px rgba(111, 155, 208, .9);
+}
+.spendnum { animation: spendpop .18s ease-out; }
+@keyframes spendpop { 0% { scale: 1.45; } 100% { scale: 1; } }
+.spendnum.n1 { font-size: 17px; }
+.spendnum.n2 { font-size: 21px; color: #cde7ff; }
+.spendnum.n3 { font-size: 24px; color: #eaf5ff; text-shadow: 0 1px 2px #000, 0 0 3px #000, 0 0 12px rgba(143, 184, 232, 1); }
+.corehint {
+  position: absolute; left: 50%; top: calc(env(safe-area-inset-top, 0px) + 54px); transform: translate(-50%, -4px); opacity: 0; transition: opacity .4s, transform .4s;
+  max-width: min(640px, 80vw); text-align: center; font: 600 13px/1.35 var(--ui); color: #cfe4ff;
+  text-shadow: 0 1px 3px #000, 0 0 6px #000, 0 0 8px rgba(111, 155, 208, .55);
+}
+.corehint.show { opacity: 1; transform: translate(-50%, 0); }
 /* parts that change when pushed show what the push buys: dim while ready, ember while a hold would push */
 .btn.ready .push { opacity: .35; }
 .btn:not(.ready) .push { stroke: var(--strain); }
@@ -612,6 +637,7 @@ html, body {
 #pause .pcard.master.core { width: 270px; min-width: 0; padding: 12px 14px; align-items: flex-start; }
 #pause .pcard.master.core .thumb { margin: 8px 0 0; font: 600 14px/1.3 var(--ui); color: #d8ecf6; }
 #pause .pcard.master.core .leaves { margin: 6px 0 0; font: italic 500 13px/1.3 var(--ui); color: #8fa9bb; }
+#pause .pcard.master.core .spends { margin: 6px 0 0; font: 600 13px/1.3 var(--ui); color: #8fb8e8; }
 .coreglyph {
   display: block; width: 34px; height: 34px; border-radius: 50%;
   --c: #bfe4f2;
@@ -628,6 +654,7 @@ html, body {
   #pause .pcard.master.core { width: 240px; padding: 8px 12px; }
   #pause .pcard.master.core .thumb { margin-top: 4px; font-size: 13px; }
   #pause .pcard.master.core .leaves { margin-top: 3px; font-size: 12px; }
+  #pause .pcard.master.core .spends { margin-top: 3px; font-size: 12px; }
   .coreglyph { width: 26px; height: 26px; }
 }
 /* B5: the core under the loadout (its name, its socket and upgrades, the open depth's marks), cold and quiet; and the socket card's "you lose" line */
