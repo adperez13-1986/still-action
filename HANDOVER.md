@@ -3,7 +3,7 @@
 For the next session. Read this, then `DESIGN.md` (the settled decisions), then the design
 folder for whatever you're touching. Don't re-derive any of them.
 
-## Start here (3 Oct: B6 verdict "I see no effect"; B6a LIVE; B6b Wake frostbite + trail being built)
+## Start here (3 Oct: B6 verdict "I see no effect"; B6a + B6b LIVE; his runs next)
 
 **His first core runs (3 Oct):** "I honestly have no idea what Wake and Ram are doing.. there are texts, but I see no effect, no
 clue how I am getting benefits from them.. I see some counters but whether they affect anything, I don't know." Code agrees: a
@@ -11,7 +11,7 @@ spend is a sound + 0.12 s ring drain, a skim one frost mote, no mark-landing bea
 **His session rule (3 Oct): no game design agents, lead thinks, one Sonnet 5.5 engineer codes, save tokens.**
 **B6a brief: `design/buildlayer/SHOW.md`** (spend number `+N` over the body, ring burst, mark tick + pop, visible skim slash,
 cold rim on spender buttons, a once-per-save first-fight hint per core, a pick-card line, `+N damage` in the pause readout; no
-combat number changes, no Math.random). **B6a DONE + pushed (f32f6e7).** Engineer notes: Wake field at 1.6 u from his centre (tickWake's real test), Ram ring at HAND_REACH 2.95, pause readout now run-wide, mark tick at most one per 0.05 s, spend hitstop only with weight off (so none by default). B6a grew during the session: Wake aura + trail (item 9, his ask), Ram reach ring + bigger slams (item 10), "rime" -> "frosted" (his call; player text only). **Next step queued: B6b `design/buildlayer/WAKE2.md`** (his call: Wake frostbite 2/s on frosted bodies + the trail frosts), engineer running (same agent). Then: review, push, ask whether he can now see it. Numbers next if he
+combat number changes, no Math.random). **B6a DONE + pushed (f32f6e7).** Engineer notes: Wake field at 1.6 u from his centre (tickWake's real test), Ram ring at HAND_REACH 2.95, pause readout now run-wide, mark tick at most one per 0.05 s, spend hitstop only with weight off (so none by default). B6a grew during the session: Wake aura + trail (item 9, his ask), Ram reach ring + bigger slams (item 10), "rime" -> "frosted" (his call; player text only). **Next step queued: B6b `design/buildlayer/WAKE2.md`** (his call: Wake frostbite 2/s on frosted bodies + the trail frosts), **DONE + pushed** (frostbite 1 per 0.5 s on frosted bodies; the trail is combat state, frosts a body once a second; numbers in `CORES.wake.bite` / `.trail`; Ram and bare fights unchanged). Not measured: the bite's share of Wake damage and the kiting bot (the engineer's report never arrived). Then: review, push, ask whether he can now see it. Numbers next if he
 can see it but it feels small (Scrap Cleaver spends at k 3/4, so a full early spend is only +9/+12). Look round (L0/L1) still waits.
 
 ## Earlier start-here (2 Oct night: BUILD LAYER B0-B5 ALL LIVE; B6 = his runs; look round running)
