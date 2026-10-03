@@ -12,7 +12,7 @@ import * as sfx from './audio'
  */
 const SLOT_LABEL = { head: 'Head', torso: 'Torso', arms: 'Arms', legs: 'Legs' }
 const REACH_LABEL: Record<AbilityShape, string> = {
-  bolt: 'range', lob: 'range', nova: 'radius', ward: 'radius', decoy: 'radius', arc: 'reach',
+  bolt: 'range', lob: 'range', nova: 'radius', ward: 'radius', decoy: 'radius', turret: 'range', arc: 'reach',
   grab: 'reach', catch: 'radius', dash: 'distance', hop: 'distance', anchor: 'snap', rewind: 'rewind',
 }
 

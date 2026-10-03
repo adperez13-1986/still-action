@@ -27,6 +27,7 @@ import type { Breakable, Post } from './dungeon'
 /** A train strip breaks every crate its segment's strip overlaps, grown this much (§5.4). */
 const TRAIN_SMASH_GROW = 0.2
 import { homeSlot, type AbilityDef, type BeatKey } from './abilities'
+import { DRONE, TURRET } from './archetypes'
 import type { SlotName } from './still'
 import { weighed } from './weight'
 import { MASTERY, MASTERY_TUNE, type MasteryId } from './mastery'
@@ -43,6 +44,8 @@ const BEHIND = { deg: 75, cos: Math.cos((75 * Math.PI) / 180) }
 const AUTO_RANGE = 7.6
 const AUTO_INTERVAL = 0.62
 const AUTO_DAMAGE = 5
+/** The Turret's body, for the shots that reach it (about the decoy's). */
+const TURRET_RADIUS = 0.45
 const PLAYER_MAX_HP = 100
 const SHOT_SPEED = 15
 const SHOT_RADIUS = 0.3
@@ -97,9 +100,9 @@ export const BANK = { perPress: 3, cap: 6 }
  * Whose auto it was: the hand's strike, the eye's planted shot, or, with a core worn (design/buildlayer/BUILD.md), the core's own hit. The
  * core never breaks a windup, never triggers and never calls onHand / onEye, so what breaks or triggers is `BreakForm`.
  */
-export type AutoForm = 'hand' | 'eye' | 'core'
+export type AutoForm = 'hand' | 'eye' | 'core' | 'drone'
 /** Who broke a windup, or hit a boss in its opening: the hand's strike or the eye's planted shot. */
-export type BreakForm = Exclude<AutoForm, 'core'>
+export type BreakForm = Exclude<AutoForm, 'core' | 'drone'>
 
 /** What a cast knows about the moment it was pressed. */
 export interface CastContext {
@@ -161,6 +164,10 @@ interface Bolt {
   real?: boolean
   /** The eye's lance: each body it hits slides this far along its flight (never a boss). */
   shove?: number
+  /** The Summoner's drone peck: a plain auto bolt, told apart so its damage is the drone's. */
+  drone?: boolean
+  /** The Turret's bolt: its damage is counted (`turretDealt`). */
+  turret?: boolean
   /** The eye's lance: it breaks a windup it lands in, as the hand does (the eye break). */
   eye?: boolean
   speed: number
@@ -497,6 +504,15 @@ export class Combat {
   closeHand = true
   /** The Brawler's Hardened: the share of every hit taken off (archetypes.ts TRAIT). Main sets it; 0 is today's game. */
   hardened = 0
+  /** The Summoner's drone is the auto (archetypes.ts DRONE): main sets it, with the hand and the eye off. False is today's game. */
+  drone = false
+  /** The Summoner's Crowd radius (TRAIT.summoner.crowd): 0 is off, and Lure's decoy then draws as it always did. */
+  crowd = 0
+  /** What the Turret's bolts have dealt this run (nominal), for the bot's damage share. */
+  turretDealt = 0
+  /** The drone's peck timer, and the way he last moved (it hovers behind that). */
+  private droneT = 0
+  private droneDir = new THREE.Vector2(0, 1)
   /** The eye: always on since 27 Sep; only dev checks turn it off. */
   eye = true
   /** Main writes it each tick: the stick is out of its dead zone. A cast never touches it. */
@@ -578,7 +594,7 @@ export class Combat {
   /** HP actually lost this tick, for the history. A caught or converted hit is 0. */
   private tickDamage = 0
   /** What parts have out in the world. Each window, decoy and anchor joins this as its part is built. */
-  readonly parts: PartRuntime = { guard: null, anvil: null, decoy: null, anchor: null, patientSince: PATIENT_START }
+  readonly parts: PartRuntime = { guard: null, anvil: null, decoy: null, turret: null, drone: null, anchor: null, patientSince: PATIENT_START }
   /** What every enemy's update sees beyond its target. One object, reused every call. */
   private readonly ctx: { -readonly [K in keyof EnemyCtx]: EnemyCtx[K] } = {
     player: new THREE.Vector3(),
@@ -725,6 +741,8 @@ export class Combat {
           if (action.shove) this.playerKnock.add(shoveVelocity(action.shove.dx, action.shove.dz, action.shove.distance))
         }
       }
+      // a strike aimed at the Turret lands on it when the striker is in its reach (a rush or lane tested Still, not it)
+      if (action?.kind === 'melee' && !action.tested && this.parts.turret && target === this.parts.turret.pos) this.hurtTurret(action.damage * (e.dmgMul ?? 1))
       if (action?.kind === 'shot') this.fireShot(e.pos, action.dir, action.damage * (e.dmgMul ?? 1), e, action.bounces ?? 0)
       if (action?.kind === 'shots') {
         for (const d of action.dirs) this.fireShot(action.from, d, action.damage * (e.dmgMul ?? 1), e)
@@ -755,7 +773,7 @@ export class Combat {
     // a core worn is the auto: the hand and the eye are not run at all (BUILD.md §2.4). Nothing new runs, and nothing is emitted, with none
     if (this.core) {
       if (this.autoAttack) this.tickCore(dt, player)
-    } else if (this.autoAttack && this.autoTimer <= 0) {
+    } else if (this.autoAttack && this.autoTimer <= 0 && !this.drone) {
       const reach = this.closeHand ? this.handTarget(player) : null
       // backing off from it: no strike, and the timer stays spent, so stopping strikes at once
       const close = reach && !this.retreating(player, reach) ? reach : null
@@ -810,6 +828,9 @@ export class Combat {
         if (lance) this.events.onEye('shot')
       }
     }
+
+    this.tickDrone(dt, player)
+    this.tickTurret(dt)
 
     // Thorns' patches age and mark on their own clock, whether or not the auto runs; with any other core none stand
     if (this.core === 'thorns') this.tickPatches(dt)
@@ -967,11 +988,14 @@ export class Combat {
     for (const e of this.enemies) {
       if (b.pierced?.has(e) || b.once?.has(e)) continue
       if (Math.hypot(p.x - e.pos.x, p.z - e.pos.z) >= b.radius + e.radius) continue
-      if (b.payer) this.hitPart(e, b.damage, !!b.pushed, b.payer, !!b.real)
+      if (b.payer) {
+        this.hitPart(e, b.damage, !!b.pushed, b.payer, !!b.real)
+        if (b.turret) this.turretDealt += b.damage
+      }
       else if (b.eye) this.eyeHit(e, b.damage)
       else {
         // a plain Still bolt: the eye's split shots (or the far shot, when a check turns the hand off)
-        this.autoHit(e, b.damage, 'eye')
+        this.autoHit(e, b.damage, b.drone ? 'drone' : 'eye')
         this.events.onHit(e.pos, e)
       }
       if (b.shove && !e.dead && !isBoss(e)) e.knock.addScaledVector(shoveVelocity(b.dir.x, b.dir.z, b.shove), e.knockMul)
@@ -1013,6 +1037,12 @@ export class Combat {
         this.events.onPart({ kind: 'shield', at: p.clone(), reflected: true })
         return true
       }
+    }
+    // a shot that reaches the Turret before Still hurts it and is spent
+    const tur = this.parts.turret
+    if (tur && Math.hypot(p.x - tur.pos.x, p.z - tur.pos.z) < SHOT_RADIUS + TURRET_RADIUS) {
+      this.hurtTurret(s.damage)
+      return true
     }
     if (Math.hypot(p.x - player.x, p.z - player.z) < SHOT_RADIUS + PLAYER_RADIUS) {
       this.hurtPlayer(s.damage, 'shot', s.owner, !!s.owner?.pressure)
@@ -1142,6 +1172,7 @@ export class Combat {
     this.parts.patientSince = PATIENT_START
     this.parts.guard = null
     this.parts.anvil = null
+    this.droneT = 0
     // a new level: the decoy vanishes without bursting, and a live anchor fades (its cooldown starts)
     this.clearSlot(null)
     this.status.clear()
@@ -1561,16 +1592,129 @@ export class Combat {
       this.parts.decoy = null
       this.events.onPart({ kind: 'decoy', state: 'gone', at: d.pos.clone() })
     }
+    if (this.parts.turret && mine(this.parts.turret.def.slot)) this.popTurret(false)
     if (this.parts.anvil && mine(this.parts.anvil.def.slot)) this.endAnvil()
     // swapping out a live anchor counts as it fading: the cooldown starts
     if (this.parts.anchor && mine(this.parts.anchor.def.slot)) this.fadeAnchor()
   }
 
-  /** Lure: whoever is drawn to the decoy aims at it. The Assembler is never fooled; its adds are. The thief hunts no one. */
+  /**
+   * Lure: whoever is drawn to the decoy aims at it. The Assembler is never fooled; its adds are. The thief hunts no one.
+   * Crowd (the Summoner's, `crowd` > 0): a body within that radius of a live summon, a Turret or the decoy, goes for the nearer of them; the decoy keeps its own draw radius too.
+   */
   targetFor(e: Enemy, player: THREE.Vector3): THREE.Vector3 {
     const d = this.parts.decoy
-    if (!d || e.kind === 'boss' || e.kind === 'thief') return player
-    return Math.hypot(e.pos.x - d.pos.x, e.pos.z - d.pos.z) <= d.def.range ? d.pos : player
+    const t = this.crowd > 0 ? this.parts.turret : null
+    if ((!d && !t) || e.kind === 'boss' || e.kind === 'thief') return player
+    let best = player
+    let bestD = Infinity
+    if (d) {
+      const dd = Math.hypot(e.pos.x - d.pos.x, e.pos.z - d.pos.z)
+      if (dd <= Math.max(d.def.range, this.crowd)) {
+        best = d.pos
+        bestD = dd
+      }
+    }
+    if (t) {
+      const dt = Math.hypot(e.pos.x - t.pos.x, e.pos.z - t.pos.z)
+      if (dt <= this.crowd && dt < bestD) best = t.pos
+    }
+    return best
+  }
+
+  /** The Summoner's drone: hovers behind and to his side, easing there, and pecks the nearest awake body within its own range. Hidden (null) with the flag off. */
+  private tickDrone(dt: number, player: THREE.Vector3) {
+    if (!this.drone) {
+      this.parts.drone = null
+      return
+    }
+    if (Math.hypot(this.playerVel.x, this.playerVel.z) > 0.3) this.droneDir.set(this.playerVel.x, this.playerVel.z).normalize()
+    // behind him and a little to one side: -0.8 along his way, 0.6 across, DRONE.follow u in all
+    const dx = this.droneDir.x
+    const dz = this.droneDir.y
+    const tx = player.x + (-0.8 * dx + 0.6 * dz) * DRONE.follow
+    const tz = player.z + (-0.8 * dz - 0.6 * dx) * DRONE.follow
+    let d = this.parts.drone
+    if (!d) d = this.parts.drone = { pos: new THREE.Vector3(tx, DRONE.height, tz), aim: 0 }
+    const k = Math.min(1, DRONE.ease * dt)
+    d.pos.x += (tx - d.pos.x) * k
+    d.pos.z += (tz - d.pos.z) * k
+    d.pos.y = DRONE.height
+    this.droneT += dt
+    if (!this.autoAttack || this.droneT < DRONE.everyS) return
+    let best: Enemy | null = null
+    let bestD = DRONE.range
+    for (const e of this.enemies) {
+      if (e.dead || !targetable(e) || this.held.has(e) || !this.awakeNow(e)) continue
+      const dist = Math.hypot(e.pos.x - d.pos.x, e.pos.z - d.pos.z)
+      if (dist < bestD && this.clearShot(d.pos, e.pos)) {
+        bestD = dist
+        best = e
+      }
+    }
+    if (!best) {
+      this.droneT = DRONE.everyS
+      return
+    }
+    // follow-through: a beat that would fire spends a banked one, or passes (the cadence holds) for want of a press
+    if (this.followThrough && !this.spendBeat()) {
+      this.droneT = 0
+      return
+    }
+    this.droneT = 0
+    d.aim = Math.atan2(best.pos.x - d.pos.x, best.pos.z - d.pos.z)
+    const dir = new THREE.Vector3(Math.sin(d.aim), 0, Math.cos(d.aim))
+    const mesh = new THREE.Mesh(this.boltGeo, this.boltMat)
+    mesh.scale.setScalar(0.6)
+    mesh.position.set(d.pos.x, DRONE.height, d.pos.z)
+    mesh.rotation.y = d.aim
+    this.scene.add(mesh)
+    this.bolts.push({ mesh, payer: null, dir, life: (bestD + 0.8) / PART.boltSpeed, damage: EYE.damage * DRONE.dmgOfEye, radius: 0.3, speed: PART.boltSpeed, drone: true, bouncesLeft: 0, bounces: [] })
+  }
+
+  /** The Turret: ages, turns to and shoots the nearest awake body in its range (a part hit from its slot), and pops when its time or its hit points run out. */
+  private tickTurret(dt: number) {
+    const t = this.parts.turret
+    if (!t) return
+    if ((t.t -= dt) <= 0) {
+      this.popTurret(true)
+      return
+    }
+    t.next -= dt
+    let best: Enemy | null = null
+    let bestD = t.def.range
+    for (const e of this.enemies) {
+      if (e.dead || !targetable(e) || this.held.has(e) || !this.awakeNow(e)) continue
+      const dist = Math.hypot(e.pos.x - t.pos.x, e.pos.z - t.pos.z)
+      if (dist < bestD && this.clearShot(t.pos, e.pos)) {
+        bestD = dist
+        best = e
+      }
+    }
+    if (!best) return
+    t.aim = Math.atan2(best.pos.x - t.pos.x, best.pos.z - t.pos.z)
+    if (t.next > 0 || !this.autoAttack) return
+    t.next = TURRET.everyS
+    this.spawnBolt(t.pos, t.aim, t.def.damage, 0.3, bestD + 0.8, { payer: t.def, scale: 0.7 })
+    this.bolts[this.bolts.length - 1]!.turret = true
+    this.events.onPart({ kind: 'turret', state: 'fire', at: t.pos.clone(), aim: t.aim })
+  }
+
+  /** Enemies reached the Turret: it takes it off its hit points, and pops at none. */
+  private hurtTurret(amount: number) {
+    const t = this.parts.turret
+    if (!t) return
+    t.hp -= amount
+    if (t.hp <= 0) this.popTurret(true)
+  }
+
+  /** The Turret ends: a pop of shards when it died or expired (`show`), nothing when a swap or a new level took it. */
+  private popTurret(show: boolean) {
+    const t = this.parts.turret
+    if (!t) return
+    this.parts.turret = null
+    this.events.onPart({ kind: 'turret', state: show ? 'pop' : 'gone', at: t.pos.clone() })
+    if (show) this.ring(t.pos, 0.2, 1.2, 0.3, 0x8fb8e8)
   }
 
   /** The decoy's time is up (or a push recast it): it bursts, shoving and hurting what it drew. */
@@ -2784,6 +2928,18 @@ export class Combat {
         const s = (def.windowMs ?? 3000) / 1000
         this.parts.decoy = { pos: new THREE.Vector3(p.x, 0, p.z), t: s, max: s, def, pushed: ctx.full, real }
         this.events.onPart({ kind: 'decoy', state: 'spawn', at: new THREE.Vector3(p.x, 0, p.z) })
+        break
+      }
+
+      case 'turret': {
+        // a recast moves it: the old one pops, there's only ever one
+        if (this.parts.turret) this.popTurret(true)
+        const m = Math.hypot(ctx.moveX, ctx.moveZ)
+        // at his feet, or `offset` u toward the stick; never inside a wall
+        const p = m < 0.1 ? o : this.terrain.clampMove(o.x, o.z, o.x + (ctx.moveX / m) * (def.offset ?? 1), o.z + (ctx.moveZ / m) * (def.offset ?? 1), PLAYER_RADIUS)
+        const s = (def.windowMs ?? 6000) / 1000
+        this.parts.turret = { pos: new THREE.Vector3(p.x, 0, p.z), t: s, max: s, hp: TURRET.hp, maxHp: TURRET.hp, aim: ctx.facing, next: TURRET.everyS, def }
+        this.events.onPart({ kind: 'turret', state: 'drop', at: new THREE.Vector3(p.x, 0, p.z) })
         break
       }
 

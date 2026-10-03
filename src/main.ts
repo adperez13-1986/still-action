@@ -6,7 +6,7 @@ import { createHud, tapAnswer, type Press } from './hud'
 import { createGradePanel, apply as applyGrade } from './grade'
 import { createPacer, createQuality, createReadout, FRAME_S, BEHIND_CARD_S, IDLE_ROOM_S } from './perf'
 import { Combat, eliteLine, PARRY, HAND, HAND_REACH, EYE, type Archetype, type BreakForm, type CastResult, type EliteMod, type Pack } from './combat'
-import { STARTING, PARTS, byId, homeSlot, onSlot, type AbilityDef, type AbilityShape, type BeatKey } from './abilities'
+import { STARTING, PARTS, ARCH_PARTS, byId, homeSlot, onSlot, type AbilityDef, type AbilityShape, type BeatKey } from './abilities'
 import { SLOT_NAMES, type SlotName } from './still'
 import { TEMPER, ROMAN, tempered } from './temper'
 import { presetId as weightPresetId, setPreset as setWeightPreset, weighed, baseCooldownS, WEIGHT_FEEL, WEIGHT_PRESETS, type PresetId } from './weight'
@@ -568,6 +568,14 @@ const combat = new Combat(world.scene, OPEN, {
       sfx.decoyBurst(panOf(ev.at))
       shake = Math.max(shake, 0.25)
     }
+    if (ev.kind === 'turret') {
+      const at = at3(ev.at, 0.4)
+      // a pop of cold shards when it dies or runs out; a muzzle spark when it fires
+      if (ev.state === 'pop') {
+        vfx.flash(at, COLD, 0.8)
+        vfx.chunks(at, 6, new THREE.Color(0x9fc0ff), 3, 0.08)
+      } else if (ev.state === 'fire') vfx.sparks(at3(ev.at, 0.6), COLD, 2, 3)
+    }
     if (ev.kind === 'anchor') {
       const at = at3(ev.at, 0.5)
       if (ev.state === 'snap') vfx.sparks(at, COLD, 12, 5)
@@ -599,7 +607,7 @@ const combat = new Combat(world.scene, OPEN, {
   },
   onAutoDmg: (form, damage) => {
     const st = run.stats[run.stats.length - 1]
-    if (st?.autoDmgReal) st.autoDmgReal[form] += damage
+    if (st?.autoDmgReal) st.autoDmgReal[form] = (st.autoDmgReal[form] ?? 0) + damage
   },
   onBank: (what) => {
     const st = run.stats[run.stats.length - 1]
@@ -1914,7 +1922,7 @@ interface DepthStats {
   followThrough?: boolean
   /** The switch was flipped during this depth: its numbers are half one rule, half the other. */
   followThroughMixed?: boolean
-  autoDmgReal?: { hand: number; eye: number; core: number }
+  autoDmgReal?: { hand: number; eye: number; core: number; drone?: number }
   kills?: { part: number; auto: number; other: number }
   fightS?: number
   bankBeats?: number; emptyBeats?: number
@@ -3472,6 +3480,8 @@ function applyArchetype(id: ArchetypeId | null) {
   run.archetype = id
   setDropArchetype(id)
   combat.hardened = id === 'brawler' ? TRAIT.brawler.hardened : 0
+  combat.crowd = id === 'summoner' ? TRAIT.summoner.crowd.radius : 0
+  combat.drone = !!id && AUTO[id] === 'drone'
   if (id || autosForced) {
     combat.closeHand = !id || AUTO[id] === 'hand'
     combat.eye = !id || AUTO[id] === 'eye'
@@ -3483,7 +3493,7 @@ function applyArchetype(id: ArchetypeId | null) {
 
 /** The archetype's kit is what he wears, in place of today's one-part start: every button, ready, at rank I. */
 function wearKit(id: ArchetypeId) {
-  const kit = KIT[id as keyof typeof KIT]
+  const kit = KIT[id]
   const worn = SLOT_NAMES.map((slot) => asWorn(byId(kit[slot]), 1, slot))
   for (const d of worn) carry(d.id)
   run.ranks = {}
@@ -3580,13 +3590,13 @@ function writeSnapshot() {
 function resumeRun(snap: RunSnapshot) {
   leaveRoom()
   still.reassemble()
-  const known = new Set(PARTS.map((p) => p.id))
+  const known = new Set([...PARTS, ...ARCH_PARTS].map((p) => p.id))
   // an archetype this build knows comes back with its law; anything else resumes as today's game
   const arch = (ARCH_LIVE as readonly string[]).includes(snap.archetype ?? '') ? (snap.archetype as ArchetypeId) : null
   const loadout = SLOT_NAMES.map((slot, i) => {
     const id = snap.loadout[i]
     const def = id && known.has(id) ? byId(id) : null
-    return def && (arch ? fitsSlot(arch, def.id, slot) : def.slot === slot) ? def : null
+    return def && (arch ? fitsSlot(arch, def.id, slot) : def.slot === slot && !ARCH_PARTS.includes(def)) ? def : null
   })
   const tally = { ...freshTally(), ...snap.tally }
   tally.carried = (tally.carried ?? []).filter((id) => known.has(id))
@@ -6088,6 +6098,7 @@ if (import.meta.env.DEV) {
     },
     /** The archetype tables (archetypes.ts), for the checks: families, the law, the kit, the traits, and the slots a part may be worn in. */
     __archetypes: { FAMILY, LAW, KIT, TRAIT, slotsFor },
+    __archParts: ARCH_PARTS,
     /** Become an archetype now (or none), as the pick does: its kit worn, its autos and trait in force. Returns run.archetype. Dev only; the pick is the way in a real run. */
     __arch: (id: ArchetypeId | null) => {
       run.core = null

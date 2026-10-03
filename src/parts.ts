@@ -60,6 +60,10 @@ export interface PartRuntime {
   /** Torso: the Lure decoy. At most one. */
   /** `pushed`: its cast was a push (or a ready cast under "weight"), so its burst is a pushed hit (the break rule). `real`: a real push, for the log. */
   decoy: { pos: THREE.Vector3; t: number; max: number; def: AbilityDef; pushed: boolean; real: boolean } | null
+  /** Arms: the Summoner's Turret. At most one; `hp` is what enemies still have to deal it, `aim` the way its barrel turns, `next` the game time of its next shot. */
+  turret: { pos: THREE.Vector3; t: number; max: number; hp: number; maxHp: number; aim: number; next: number; def: AbilityDef } | null
+  /** The Summoner's drone: where it hovers (null with no archetype or another). `aim` is the way it last pecked. */
+  drone: { pos: THREE.Vector3; aim: number } | null
   /** Legs: the Plumb Line anchor. While it lives, the legs button is tappable (cooldown 'hold'). */
   anchor: { pos: THREE.Vector3; t: number; max: number; def: AbilityDef } | null
   /** Head: seconds since the last Patient Lens cast. Set to mod.minS on swap-in and on reset. */
@@ -241,6 +245,7 @@ export type PartEvent =
   | { kind: 'breach'; holes: BreachHole[]; open: boolean; seconds?: number }
   | { kind: 'shield'; at: THREE.Vector3; reflected: boolean }          // a shot destroyed or turned by the shell
   | { kind: 'catch'; at: THREE.Vector3 }                               // Anvil
+  | { kind: 'turret'; state: 'drop' | 'pop' | 'gone' | 'fire'; at: THREE.Vector3; aim?: number }
   | { kind: 'decoy'; state: 'spawn' | 'burst' | 'gone'; at: THREE.Vector3 }
   | { kind: 'anchor'; state: 'plant' | 'snap' | 'fade' | 'denied'; at: THREE.Vector3 }
   | { kind: 'windowEnd'; slot: SlotName; used: boolean }               // G8 end tick

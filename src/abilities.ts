@@ -1,6 +1,7 @@
 import type { SlotName } from './still'
 import type { StateId } from './states'
 import type { CoreId, Fit } from './cores'
+import { TURRET, WORDS as ARCH_WORDS } from './archetypes'
 
 /**
  * The deckbuilder's EquipmentDefinition carried one BodyAction and no stat block.
@@ -13,6 +14,7 @@ export type AbilityShape =
   | 'lob'    // lands `travelMs` later at a snapshot point, arcs over walls (Flare family)
   | 'nova'   // a blast around Still (Vent family, Brace)
   | 'ward'   // a shell around Still for `windowMs` that meets enemy shots (Ward, Mirror Ward)
+  | 'turret' // a cold tripod that shoots the nearest body for a few seconds (Turret, the Summoner's)
   | 'decoy'  // a cold copy of Still that draws enemies, then bursts (Lure)
   | 'arc'    // a melee sweep that snaps to the nearest reachable target (Cleaver family, Piston)
   | 'grab'   // take the nearest enemy and throw it (Clamp Toss)
@@ -404,7 +406,20 @@ export const PARTS: AbilityDef[] = [
   }),
 ]
 
-export const byId = (id: string): AbilityDef => PARTS.find((p) => p.id === id)!
+/**
+ * Parts only an archetype can wear (A2): the Turret. Never in PARTS, so no pool, offer, drop, workshop or parts view sees it with or without an archetype; `byId` finds it, and
+ * the Summoner's kit wears it.
+ */
+export const ARCH_PARTS: AbilityDef[] = [
+  part({
+    id: 'turret', slot: 'arms', name: 'Turret', tier: 'white', beat: 'lure',
+    line: ARCH_WORDS.turretLine,
+    shape: 'turret', cooldownMs: TURRET.cooldownMs, damage: TURRET.damage, range: TURRET.range, radius: 0, windowMs: TURRET.lifeS * 1000, offset: TURRET.offset,
+    icon: '<circle cx="12" cy="9" r="2.5"/><path d="M14.5 9H21"/><path d="M12 11.5 6.5 20M12 11.5 17.5 20M12 11.5V20"/>',
+  }),
+]
+
+export const byId = (id: string): AbilityDef => PARTS.find((p) => p.id === id) ?? ARCH_PARTS.find((p) => p.id === id)!
 
 /** The slot a part is made for: what its shape does and how it sounds. A worn def's own `slot` is where it is worn (`onSlot`), which an archetype lets differ. */
 export const homeSlot = (d: AbilityDef): SlotName => byId(d.id).slot

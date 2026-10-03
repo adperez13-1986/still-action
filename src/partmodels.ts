@@ -728,6 +728,25 @@ function clampToss(): Node {
   return arms([...pistonLeft('blue')], [tossJaw(-1), tossJaw(1)], lanternRight())
 }
 
+/** The turret: a small cold tripod folded on the wrist of a solid forearm, its barrel forward; it leaves the arm when dropped. */
+function turret(): Node {
+  const at = HAND_L.clone().add(v3(0, 0.07, 0.03))
+  const legs: G[] = []
+  for (let i = 0; i < 3; i++) {
+    const a = (i / 3) * Math.PI * 2
+    legs.push(rod(at, at.clone().add(v3(Math.cos(a) * 0.09, -0.07, Math.sin(a) * 0.09)), 0.015, SHELL, 5))
+  }
+  return arms(
+    [
+      rod(O, ELBOW_L, 0.065, DARK), ball(0.07, ELBOW_L, SHELL),
+      slab(ELBOW_L, HAND_L, 0.1, 0.1, DARK),
+      ball(0.05, at, PALE), rod(at, at.clone().add(v3(0, 0.01, 0.2)), 0.022, SHELL, 6), ...legs, ...cuff('white', 0.06),
+    ],
+    [smallJaw(SHELL), smallJaw(SHELL)],
+    lanternRight(),
+  )
+}
+
 /** An anvil across the wrist on a solid beam of a forearm: held overhead in the stance, brought down in the slam. */
 function anvil(): Node {
   // the icon's profile in (forward, up): flat top, horn forward, waist, foot
@@ -901,7 +920,7 @@ const BUILDERS: Record<string, () => Node> = {
   'pressure-vent': pressureVent, 'ward': ward, 'backdraft-vent': backdraftVent, 'chill-vent': chillVent,
   'brace': brace, 'mirror-ward': mirrorWard, 'lure': lure,
   'scrap-cleaver': scrapCleaver, 'piston': piston, 'rusted-hook': rustedHook, 'parry-clamp': parryClamp,
-  'frayed-cleaver': frayedCleaver, 'clamp-toss': clampToss, 'anvil': anvil,
+  'frayed-cleaver': frayedCleaver, 'clamp-toss': clampToss, 'anvil': anvil, 'turret': turret,
   'kickstart': kickstart, 'skitter': skitter, 'skid-plates': skidPlates, 'overrun': overrun,
   'frost-trail': frostTrail, 'spring-heels': springHeels, 'plumb-line': plumbLine, 'borrowed-time': borrowedTime,
 }

@@ -7,6 +7,7 @@ import type { Enemy } from './enemy'
 import type { Still } from './still'
 import { WALL_TOP } from './lane'
 import { WEIGHT_FEEL } from './weight'
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 
 /**
  * Something in the air that will land: its mark on the floor closes on its true
@@ -142,6 +143,15 @@ export class PartFx {
   private pulses: Pulse[] = []
   /** N7: the decoy, a cold copy of him in the pose he left it in. */
   private decoy: { obj: THREE.Object3D; mat: THREE.MeshBasicMaterial; pulseT: number; warned: boolean } | null = null
+  /**
+   * The Summoner's: the drone (one mesh, a cold diamond with its faint ring merged in), the Turret (a squat tripod and a barrel that turns) and its draining life ring: four draws, all hidden with none out.
+   */
+  private readonly drone = new THREE.Mesh(droneGeo(), new THREE.MeshBasicMaterial({ color: 0xcfe4ff, blending: THREE.AdditiveBlending, transparent: true, opacity: 0.85, depthWrite: false }))
+  private readonly turretBody = new THREE.Mesh(tripodGeo(), new THREE.MeshBasicMaterial({ color: 0xdfeeff, blending: THREE.AdditiveBlending, transparent: true, opacity: 0.9 }))
+  private readonly turretBarrel = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.07, 0.4).translate(0, 0, 0.2), this.turretBody.material)
+  private readonly turretMat = tellMaterial('radial', 1, COLD, COLD_DEEP, { cold: true })
+  private readonly turretRing = new THREE.Mesh(new THREE.RingGeometry(0.85, 1, 32), this.turretMat)
+  private summonT = 0
   /** Plumb Line: the bob, its draining ring, and the tether back to Still. */
   private readonly bob = new THREE.Mesh(new THREE.ConeGeometry(0.16, 0.34, 8), new THREE.MeshBasicMaterial({ color: 0xdfeeff, blending: THREE.AdditiveBlending, transparent: true }))
   private readonly bobMat = tellMaterial('radial', 1, COLD, COLD_DEEP, { cold: true })
@@ -204,6 +214,10 @@ export class PartFx {
     this.bob.rotation.x = Math.PI
     for (const m of [this.bob, this.bobRing, this.tether, this.tetherTick]) m.visible = false
     scene.add(this.shell, this.anvilRing, this.bankMark, this.bob, this.bobRing, this.tether, this.tetherTick)
+    this.turretRing.rotation.x = -Math.PI / 2
+    this.turretMat.opacity = 0.8
+    for (const m of [this.drone, this.turretBody, this.turretBarrel, this.turretRing]) m.visible = false
+    scene.add(this.drone, this.turretBody, this.turretBarrel, this.turretRing)
   }
 
   /** One instant from Combat's onPart. */
@@ -298,6 +312,7 @@ export class PartFx {
     this.drawStrips()
     this.drawDecoy(dt)
     this.drawAnchor(dt)
+    this.drawSummons(dt)
     for (let i = this.pulses.length - 1; i >= 0; i--) {
       const p = this.pulses[i]!
       p.t += dt
@@ -597,6 +612,25 @@ export class PartFx {
     this.pulses.push({ mesh, mat, t: 0, T, from, to })
   }
 
+  /** The drone bobs and turns; the Turret's barrel turns to its target and its ring drains with its time. All hidden when none is out. */
+  private drawSummons(dt: number) {
+    this.summonT += dt
+    const d = this.parts.drone
+    this.drone.visible = !!d
+    if (d) {
+      this.drone.position.set(d.pos.x, d.pos.y + Math.sin(this.summonT * 3.2) * 0.07, d.pos.z)
+      this.drone.rotation.y = this.summonT * 1.4
+    }
+    const t = this.parts.turret
+    for (const m of [this.turretBody, this.turretBarrel, this.turretRing]) m.visible = !!t
+    if (!t) return
+    this.turretBody.position.set(t.pos.x, 0, t.pos.z)
+    this.turretBarrel.position.set(t.pos.x, 0.56, t.pos.z)
+    this.turretBarrel.rotation.y = t.aim
+    this.turretRing.position.set(t.pos.x, DECAL_Y + 0.012, t.pos.z)
+    this.turretRing.scale.setScalar(0.2 + 0.6 * Math.max(0, t.t / t.max))
+  }
+
   /** N7: the decoy breathes, calls every 0.75 s, and in its last 0.6 s shows where it will burst. */
   private drawDecoy(dt: number) {
     const d = this.parts.decoy
@@ -761,4 +795,23 @@ export class PartFx {
     mesh.rotation.y = Math.atan2(b.x - a.x, b.z - a.z)
     mesh.scale.set(width, 1, len)
   }
+}
+
+/** The drone: a cold diamond with a thin ring round its waist, one geometry. */
+function droneGeo(): THREE.BufferGeometry {
+  const gem = new THREE.OctahedronGeometry(0.11).scale(1, 1.4, 1)
+  const ring = new THREE.TorusGeometry(0.2, 0.012, 4, 20).rotateX(Math.PI / 2)
+  const g = mergeGeometries([gem.toNonIndexed(), ring.toNonIndexed()])!
+  return g
+}
+
+/** The Turret's body: three leaning legs under a small hub, squat. */
+function tripodGeo(): THREE.BufferGeometry {
+  const parts: THREE.BufferGeometry[] = [new THREE.SphereGeometry(0.11, 8, 6).translate(0, 0.52, 0).toNonIndexed()]
+  for (let i = 0; i < 3; i++) {
+    const a = (i / 3) * Math.PI * 2
+    const leg = new THREE.CylinderGeometry(0.025, 0.035, 0.56, 5).translate(0, -0.28, 0).rotateZ(0.5).rotateY(a).translate(0, 0.52, 0)
+    parts.push(leg.toNonIndexed())
+  }
+  return mergeGeometries(parts)!
 }
