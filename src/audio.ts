@@ -1255,6 +1255,18 @@ export function ability(beat: BeatKey, big: boolean, power = 0, real = big) {
   const k = big ? 1.3 : 1
 
   switch (beat) {
+    case 'whirl':
+      // two turns of the swing hiss, one after the other, with a low sweep under them (E1, PLACEHOLDER)
+      hiss(c, d, t, 0.18, 0.8 * k, 'bandpass', 500 * r, 3800 * r, 1.2, 0.01)
+      hiss(c, d, t + 0.12, 0.18, 0.8 * k, 'bandpass', 700 * r, 4200 * r, 1.2, 0.01)
+      tone(c, d, 'triangle', t, 180 * r, 420 * r, 0.3, 0.2 * k)
+      break
+    case 'rail':
+      // a hard high crack and a long thin ring-out (E1, PLACEHOLDER)
+      tone(c, d, 'sawtooth', t, 900 * r, 5200 * r, 0.05, 0.4 * k)
+      tone(c, d, 'sine', t + 0.04, 4800 * r, 900 * r, 0.45, 0.45 * k)
+      hiss(c, d, t, 0.3, 0.3 * k, 'highpass', 4000, 9000, 0.7)
+      break
     case 'through':
       // the bolt voice stretched low: the biggest thing the head does
       tone(c, d, 'sawtooth', t, 300 * r, 3200 * r, 0.1, 0.4 * k)
@@ -1881,6 +1893,18 @@ export function take() {
   tone(c, d, 'square', t, 180, 120, 0.05, 0.18, 0.002)
   hiss(c, d, t + 0.05, 0.03, 0.4, 'bandpass', 3200, 2600, 2)
   tone(c, d, 'triangle', t + 0.09, 660, 990, 0.12, 0.2, 0.004)
+}
+
+/** A part evolves (E1, PLACEHOLDER): a rising chime, three cold notes up a fifth and an octave. */
+export function evolve() {
+  const c = live()
+  if (!c) return
+  const t = c.currentTime
+  const d = out(c, 'abilities', 0)
+  tone(c, d, 'triangle', t, 523, 520, 0.4, 0.2, 0.01)
+  tone(c, d, 'triangle', t + 0.12, 784, 780, 0.45, 0.2, 0.01)
+  tone(c, d, 'triangle', t + 0.24, 1047, 1040, 0.7, 0.22, 0.01)
+  tone(c, d, 'sine', t + 0.24, 2093, 2080, 0.6, 0.06, 0.01)
 }
 
 /** A fight cleared: the one warm sound in the game, and short. */

@@ -39,6 +39,7 @@ import { Sightline } from './sightline'
 import { createCameraRig } from './camera'
 import { updateMusic, musicNow } from './music'
 import { updateAmbience, type AmbienceMood } from './ambience'
+import { EVOLUTIONS, EVO_TUNE, EVO_WORDS, evoFor, evoOf, evolved, partnerWorn } from './evolutions'
 import { ARCH_IDS, ARCH_LIVE, AUTO, FAMILY, KIT, LAW, TRAIT, WORDS as ARCH_WORDS, fitsSlot, slotsFor, type ArchetypeId } from './archetypes'
 import { setDropArchetype } from './drops'
 import { Loot, LOOT, dropChance, rollPart, rollForCore, rollPicks, PEDESTALS, PEDESTALS_ON, type GroundKey, type GroundPart, type PickKind, type PickSet } from './loot'
@@ -437,6 +438,25 @@ const combat = new Combat(world.scene, OPEN, {
         // the charge is the loudest movement in the pool; the step is deliberately modest
         ghostEvery: ev.beat === 'overrun-charge' ? 0.02 : ev.beat === 'overrun-step' ? 0.07 : undefined,
       })
+    }
+    if (ev.kind === 'whirl') {
+      // Whirlwind (E1): a cold ring's worth of sparks round the pass, each flung outward, eight points (no random)
+      for (let i = 0; i < 8; i++) {
+        const a = (i / 8) * Math.PI * 2
+        const dir = new THREE.Vector3(Math.sin(a), 0, Math.cos(a))
+        vfx.sparks(at3(ev.at, 1.0).addScaledVector(dir, ev.radius * 0.8), COLD, 2, 5, dir, 0.3)
+      }
+    }
+    if (ev.kind === 'rail') {
+      // Rail (E1): a soft wide edge and a bright thin core, lingering, from his head to the wall or the range's end. Two beams: the whole look's draw calls
+      const from = ev.from.clone()
+      from.y = 0
+      partFx.beam(from, ev.to, 0.7, EVO_TUNE.rail.lingerS, 1.15, 0.35)
+      partFx.beam(from, ev.to, EVO_TUNE.rail.width, EVO_TUNE.rail.lingerS, 1.16, 1.0)
+    }
+    if (ev.kind === 'railHit') {
+      vfx.flash(at3(ev.at, 1.0), COLD, 1.0)
+      vfx.sparks(at3(ev.at, 1.0), COLD, 6, 6, undefined, 1.2)
     }
     if (ev.kind === 'strain') {
       // Brace: the hit flies into his cage as embers and costs strain; integrity doesn't move
@@ -1970,7 +1990,7 @@ interface DepthStats {
   parryReadies?: number
   ducks?: { started: number; peeked: number; backed: number }
   /** Temper on at this depth, and parts melted into a worn one here; mastery learned here. */
-  temper?: boolean; melts?: number; mastered?: string[]
+  temper?: boolean; melts?: number; mastered?: string[]; evolved?: string[]
   /** Parts' damage through hitPart (nominal, after a state's pay), beside `autoDmg`: the auto/part split. */
   partDmg?: number
   /**
@@ -2071,6 +2091,8 @@ const run = {
   core: null as CoreId | null,
   /** Who he is this run (archetypes.ts), picked at the start in the core pick's place. Null: today's game (an old save, builds off, a dev boot). With one, `core` stays null. */
   archetype: null as ArchetypeId | null,
+  /** The parts evolved this run (evolutions.ts, E1), by part id: permanent while that part is worn. Only ever filled under an archetype; an old snapshot has none. */
+  evolved: [] as string[],
   archPick: null as { at: 'start' | 'resume'; took: ArchetypeId } | null,
   keystone: null as KeystoneId | null,
   upgrades: [] as UpgradeId[],
@@ -2861,7 +2883,8 @@ const asWorn = (base: AbilityDef, rank: number, slot: SlotName = base.slot): Abi
   const d = tempered(variant(base, coreNow()), rank, coreActive())
   // Footwork (archetypes.ts TRAIT): a Move-family part cools down faster, wherever it is worn
   const f = run.archetype === 'marksman' && FAMILY[base.id] === 'move' ? { ...d, cooldownMs: Math.round(d.cooldownMs * TRAIT.marksman.footwork.moveCd) } : d
-  return onSlot(f, slot)
+  // Evolution (E1): rank III and evolved, the part is its evolution; only ever under an archetype
+  return onSlot(run.archetype && f.rank === 3 && run.evolved.includes(base.id) ? evolved(f, evoOf(base.id)!) : f, slot)
 }
 /** The slots a floor part may be taken into: its own with no archetype; with one, the slot law's, its own first. */
 const slotsOf = (d: AbilityDef): SlotName[] => {
@@ -2876,7 +2899,7 @@ function syncCore() {
   combat.core = coreNow()
   combat.keystone = on ? run.keystone : null
   combat.upgrades = on ? new Set(run.upgrades) : NO_UPGRADES
-  combat.mastery = on ? NO_MASTERY : run.mastery // no mastery with a core
+  combat.mastery = on || run.archetype ? NO_MASTERY : run.mastery // no mastery with a core, nor under an archetype (evolutions take its place, E1)
 }
 /**
  * `syncCore`, and when the core went on, off or changed, the worn parts again, as `asWorn` says: the button keeps its cooldown fraction (hud.equip).
@@ -2963,7 +2986,7 @@ function updateOffer() {
     // under a core, the card shows the part as worn (a reshape's name, line and numbers); with none, the part itself
     const shown = card ? variant(card.def, coreNow()) : null
     hud.offer(shown, !!card && !save.found.includes(card.def.id), shown ? describePart(shown) : undefined, card ? meltLabel(card) : null,
-      card ? { swap: swapWords(card.def), pair: pairWords(card.def), fit: fitWords(card.def), slots: run.archetype ? slotsOf(card.def) : undefined } : undefined)
+      card ? { swap: swapWords(card.def), pair: pairWords(card.def), fit: fitWords(card.def) ?? evoWords(card.def), slots: run.archetype ? slotsOf(card.def) : undefined } : undefined)
     loot.offer(next)
     if (next?.set) openPick(next)
   }
@@ -3043,6 +3066,8 @@ function meltLabel(g: GroundPart): string | null {
   const rank = run.ranks[into!] ?? 1
   if (!cur) return null
   if (rank < TEMPER.maxRank) return `melt into ${byId(cur.id).name} ${ROMAN[rank + 1]}`
+  // an archetype has no masteries: a part at III is evolved or has nothing more to learn yet (E1)
+  if (run.archetype) return cur.evo ? EVO_WORDS.already : EVO_WORDS.nothing
   // with a core there is no mastery (no hand, no eye to teach): the core's upgrade takes its place (BUILD.md §2.9), from UPGRADE_FROM on, while one is left to learn
   if (coreActive()) return upgradesLeft().length ? WORDS.meltUpgrade(WORDS.core[run.core!]) : null
   // at III: melting masters the auto its lean feeds (mastery.ts)
@@ -3055,6 +3080,12 @@ function meltLabel(g: GroundPart): string | null {
 function upgradesLeft(): UpgradeId[] {
   if (!coreActive() || run.depth < UPGRADE_FROM || run.upgrades.length >= UPGRADE_MAX) return []
   return (Object.keys(UPGRADES) as UpgradeId[]).filter((id) => UPGRADES[id].core === run.core && !run.upgrades.includes(id))
+}
+
+/** A part that has an evolution says so on its card, from rank I (E1); under an archetype only, and a core's `fit` line never shares a run with it. */
+function evoWords(d: AbilityDef): string | null {
+  const e = run.archetype ? evoOf(d.id) : null
+  return e ? EVO_WORDS.with(EVOLUTIONS[e]) : null
 }
 
 /** How a part fits the core worn, for its card (the pickup card and the compare): a spender's `spends frosted: +10 each`, a shaper's or guard's own line. Null: plain, or no core. */
@@ -3070,7 +3101,17 @@ function fitWords(d: AbilityDef): string | null {
 /** Which auto a part at III feeds: close the hand, marksman the eye, no lean either (null). A table since B1 (mastery.ts MASTERY_FORM): the tags are gone from the defs. */
 const masteryForm = (d: AbilityDef): MasteryForm | null => MASTERY_FORM[d.id] ?? null
 
-pause.setLearned(() => [...run.mastery].map((id) => MASTERY[id]))
+pause.setLearned(() => [
+  ...[...run.mastery].map((id) => MASTERY[id]),
+  // under an archetype, each worn part with an evolution says where it stands (E1)
+  ...(run.archetype ? hud.slots.flatMap((s) => {
+    const evo = s.def ? evoOf(s.def.id) : null
+    if (!s.def || !evo) return []
+    const worn = hud.slots.filter((x) => x.def).map((x) => ({ id: x.def!.id, slot: x.slot as string }))
+    return [{ name: EVOLUTIONS[evo].name + ':', line: s.def.evo ? 'evolved' : `${EVO_WORDS.rank(s.def.rank ?? 1)}, ${EVO_WORDS.partner(partnerWorn(evo, s.def.id, worn))}` }]
+  }) : []),
+])
+pause.setEvoLine((d) => (run.archetype && !d.evo && evoOf(d.id) ? EVO_WORDS.with(EVOLUTIONS[evoOf(d.id)!]) : null))
 // the core under the loadout (B5): its name, the socket and the upgrades, and the run's marks and what the spends added (SHOW.md item 8). Nothing with no core worn
 pause.setCore(() => {
   const c = coreNow()
@@ -3174,6 +3215,8 @@ function meltPart(g: GroundPart) {
   const rank = (run.ranks[into] ?? 1) + 1
   if (!cur || g.set) return
   if (rank > TEMPER.maxRank) {
+    // under an archetype a melt past III does nothing (E1): the part stays on the floor
+    if (run.archetype) return
     // never mastery with a core: the core's upgrade (meltLabel offers it from UPGRADE_FROM, while one is left)
     if (coreActive()) upgradeWith(g, cur)
     else masterWith(g, cur)
@@ -3198,6 +3241,7 @@ function meltPart(g: GroundPart) {
   rig.punch(0.03)
   still.group.scale.setScalar(1.12)
   navigator.vibrate?.([18, 30, 18])
+  checkEvolve()
 }
 
 hud.onCompare(() => {
@@ -3211,7 +3255,7 @@ hud.onCompare(() => {
   pause.compare(current, onSlot(variant(g.def, coreNow()), into), hud.loadout, () => {
     resume()
     takePart(g)
-  }, resume, !save.found.includes(g.def.id), { take: swap?.take, melts: swap?.melts, pair: pairWords(g.def) ?? undefined, fit: fitWords(g.def) ?? undefined })
+  }, resume, !save.found.includes(g.def.id), { take: swap?.take, melts: swap?.melts, pair: pairWords(g.def) ?? undefined, fit: fitWords(g.def) ?? evoWords(g.def) ?? undefined })
 })
 
 /** A swap: what the outgoing part had running ends first, and a live anchor hands on a full cooldown (R8). */
@@ -3258,6 +3302,8 @@ function takePart(g: GroundPart, into: SlotName | null = null) {
   const melts = swapsIn(g.def, slot)
   const worn = asWorn(g.def, melts ? TEMPER.swapRank : 1, slot)
   const old = swapIn(worn)
+  // a swap away from an evolved part loses its evolution (E1)
+  if (old) run.evolved = run.evolved.filter((id) => id !== old.id)
   if (melts) {
     // the part he gave up melts into this one: it lands at II, and nothing falls out
     run.ranks[slot] = TEMPER.swapRank
@@ -3280,6 +3326,45 @@ function takePart(g: GroundPart, into: SlotName | null = null) {
   rig.punch(0.03)
   still.group.scale.setScalar(1.12)
   navigator.vibrate?.(18)
+  checkEvolve()
+}
+
+/**
+ * Evolution (E1, evolutions.ts): after a melt, a take and a resume, a worn part at rank III with its partner worn in another slot and not yet evolved evolves, on a card
+ * the world waits for. Permanent while that part is worn (it stays if the partner leaves). Only under an archetype. A part no longer worn drops out of `run.evolved` here.
+ */
+function checkEvolve() {
+  if (!run.archetype) return
+  const worn = hud.slots.filter((s) => s.def).map((s) => ({ id: s.def!.id, slot: s.slot as string }))
+  run.evolved = run.evolved.filter((id) => worn.some((w) => w.id === id))
+  const due = hud.slots.find((s) => s.def && (s.def.rank ?? 1) >= TEMPER.maxRank && !run.evolved.includes(s.def.id) && evoFor(s.def.id, worn, run.archetype))
+  if (!due?.def || !canPause()) return
+  const evo = evoFor(due.def.id, worn, run.archetype)!
+  const e = EVOLUTIONS[evo]
+  const icon = (m: string) => `<svg viewBox="0 0 24 24" width="44" height="44" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${m}</svg>`
+  const from = byId(due.def.id)
+  offered = null
+  offerHeld = true
+  hud.offer(null)
+  loot.offer(null)
+  openPause()
+  sfx.evolve()
+  vfx.flash(at3(still.pos, 1.0), COLD, 1.4)
+  vfx.shards(at3(still.pos, 1.0), COLD, 24, 6)
+  pause.choose(EVO_WORDS.title(from.name), `${icon(due.def.icon)} &rarr; ${icon(e.over.icon ?? due.def.icon)}`, [{
+    name: e.name,
+    line: e.line,
+    onPick: () => {
+      run.evolved.push(from.id)
+      hud.equip(asWorn(from, 3, due.slot))
+      const st = run.stats[run.stats.length - 1]
+      if (st) (st.evolved ??= []).push(evo)
+      resume()
+      sfx.uiClick()
+      overlay.banner(e.name)
+      navigator.vibrate?.([18, 30, 18, 30, 18])
+    },
+  }])
 }
 
 // --- pause: the world stops, cooldowns included; the music keeps going, quieter ---
@@ -3478,6 +3563,7 @@ let autosForced = false
  */
 function applyArchetype(id: ArchetypeId | null) {
   run.archetype = id
+  run.evolved = []
   setDropArchetype(id)
   combat.hardened = id === 'brawler' ? TRAIT.brawler.hardened : 0
   combat.crowd = id === 'summoner' ? TRAIT.summoner.crowd.radius : 0
@@ -3574,6 +3660,7 @@ function writeSnapshot() {
     ...(run.mastery.size ? { mastery: [...run.mastery] } : {}),
     ...(run.core ? { core: run.core } : {}),
     ...(run.archetype ? { archetype: run.archetype } : {}),
+    ...(run.archetype && run.evolved.length ? { evolved: [...run.evolved] } : {}),
     ...(run.core && run.keystone ? { keystone: run.keystone } : {}),
     ...(run.core && run.upgrades.length ? { upgrades: [...run.upgrades] } : {}),
   }
@@ -3616,6 +3703,8 @@ function resumeRun(snap: RunSnapshot) {
   // the build layer (BUILD.md §2.8): a core this build knows comes back, with the keystone and upgrades that belong to it; anything else resumes bare, and stays bare
   run.core = !arch && typeof snap.core === 'string' && (CORE_LIVE as readonly string[]).includes(snap.core) ? (snap.core as CoreId) : null
   applyArchetype(arch)
+  // evolved parts come back evolved (E1): only ones this build knows an evolution for, and only under an archetype
+  run.evolved = arch && Array.isArray(snap.evolved) ? snap.evolved.filter((id): id is string => typeof id === 'string' && !!evoOf(id)) : []
   run.keystone = run.core && typeof snap.keystone === 'string' && Object.prototype.hasOwnProperty.call(KEYSTONES, snap.keystone) && KEYSTONES[snap.keystone as KeystoneId].core === run.core ? (snap.keystone as KeystoneId) : null
   run.upgrades = run.core && Array.isArray(snap.upgrades)
     ? snap.upgrades.filter((id, i, all): id is UpgradeId => typeof id === 'string' && Object.prototype.hasOwnProperty.call(UPGRADES, id) && UPGRADES[id as UpgradeId].core === run.core && all.indexOf(id) === i)
@@ -3665,6 +3754,7 @@ function resumeRun(snap: RunSnapshot) {
   overlay.hide()
   sfx.restore()
   writeSnapshot()
+  checkEvolve()
   // still the run's start (depth 1, nothing fought, no core): he reloaded on the pick, or began the run with "builds" off. At depth 2 and deeper, no core means a bare run for good
   if (buildsOn && !run.core && !run.archetype && depth === 1 && !run.bossFelled && !snap.crossroads) (PICK_CORE ? offerCore : offerArchetype)('resume')
 }
@@ -4606,6 +4696,8 @@ function cast(def: AbilityDef, pushed: boolean): CastResult {
   // weight: every ready cast has a push's whole effect (the break rule, the threat aim, the pose, pitch and scale), but none of its cost or signature.
   // `pushed` stays the real push (strain, the embers, the grind); off, `full === pushed` and nothing below differs from today
   const full = pushed || combat.weight
+  // Rail's free shot (E1): a Move-family cast hands Combat the Rail worn, if any; nothing with no archetype
+  combat.railFree = run.archetype && FAMILY[def.id] === 'move' ? hud.slots.find((s) => s.def?.evo === 'rail')?.def ?? null : null
   const r = combat.useAbility(def, {
     origin: still.pos, facing: still.facing, moveX: hud.moveX, moveZ: hud.moveZ, pushed, full, strain: run.strain,
   })
@@ -4631,7 +4723,7 @@ function cast(def: AbilityDef, pushed: boolean): CastResult {
   // weight: nothing on the press. The feel comes from onContact, when something is struck (a whiff has none)
   if (!combat.weight) {
     shake = Math.max(shake, pushed ? 0.34 : 0.16)
-    if (!MOVES.has(def.shape)) hitstop = Math.max(hitstop, pushed ? 0.06 : 0.035)
+    if (!MOVES.has(def.shape) && def.evo !== 'whirlwind') hitstop = Math.max(hitstop, pushed ? 0.06 : 0.035)
     rig.punch(pushed ? 0.06 : 0.02)
   }
   return r
@@ -5824,6 +5916,9 @@ if (import.meta.env.DEV) {
       swapIn(def)
       still.wear(def.slot, def)
     },
+    /** Evolution (E1): run the check a melt, a take and a resume run, and read what is evolved. Dev only. */
+    __evolve: () => checkEvolve(),
+    __evolved: () => [...run.evolved],
     __stick: (x: number, z: number) => hud.setStick(x, z),
     /** One enemy as its own pack of 1. awake = true wakes it at once. A boss is the variant's (default the Assembler). */
     __spawn: (kind: Archetype, x: number, z: number, awake = true, elite?: EliteMod, variant?: BossKind | 'lobber' | 'signal', lesson?: true): Enemy => {

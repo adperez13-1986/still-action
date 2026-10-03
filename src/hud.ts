@@ -427,7 +427,7 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
 
   const KEYS: Record<SlotName, string> = { head: 'H', torso: 'T', arms: 'A', legs: 'L' }
   const paint = (b: ButtonState) => {
-    b.el.className = b.def ? `btn tier-${b.def.tier}` : 'btn empty'
+    b.el.className = b.def ? `btn tier-${b.def.tier}${b.def.evo ? ' evolved' : ''}` : 'btn empty'
     b.icon = null
     b.el.querySelector('.lbl')!.innerHTML = (b.def ? svg(b.def.icon) : SLOT_ICON[b.slot]) + (b.def?.rank && b.def.rank > 1 ? `<em class="rank">${'I'.repeat(b.def.rank)}</em>` : '')
     // the price of every cast, printed on the rim before you press it: ● always, ○ when it depends.

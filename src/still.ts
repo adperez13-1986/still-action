@@ -44,7 +44,7 @@ export interface AttackSpec {
 /** The bodies built so far. Every beat plays one of them; a new part adds its own. */
 type Pose =
   | 'shot' | 'jab' | 'bolt' | 'patient' | 'coil' | 'flare' | 'nova'
-  | 'arc' | 'spin' | 'piston' | 'hook'
+  | 'arc' | 'spin' | 'whirl' | 'piston' | 'hook'
   | 'dash' | 'step' | 'ram' | 'hop' | 'spring'
   | 'ward' | 'brace' | 'mirror' | 'anvil' | 'anvil-slam'
   | 'signal' | 'chill' | 'parry' | 'toss'
@@ -78,6 +78,9 @@ const POSES: Partial<Record<AttackSpec['beat'], { pose: Pose; dur: number; yaw?:
   'fray-90': { pose: 'arc', dur: 0.3, yaw: 0.7 },
   'fray-180': { pose: 'arc', dur: 0.34 },
   'fray-360': { pose: 'spin', dur: 0.4 },
+  // Whirlwind (E1): two full turns, one a hit
+  whirl: { pose: 'whirl', dur: 0.5 },
+  rail: { pose: 'through', dur: 0.42 },
   piston: { pose: 'piston', dur: 0.28 },
   hook: { pose: 'hook', dur: 0.36 },
   kick: { pose: 'dash', dur: 0.3 },
@@ -827,6 +830,16 @@ export class Still {
         const out = Math.sin(k * Math.PI) * big
         this.armL.rotation.z = -0.9 * out
         this.armR.rotation.z = 0.9 * out
+        this.legL.rotation.x = this.legR.rotation.x = 0
+        break
+      }
+      case 'whirl': {
+        // Whirlwind: two full turns over the beat (a turn per hit), arms flung out and held, legs planted
+        torso.rotation.y = Math.PI * 4 * (1 - Math.pow(1 - k, 1.6))
+        const out = Math.sin(Math.min(1, k * 1.2) * Math.PI) * big
+        this.armL.rotation.z = -1.1 * out
+        this.armR.rotation.z = 1.1 * out
+        this.armL.rotation.x = 0
         this.legL.rotation.x = this.legR.rotation.x = 0
         break
       }

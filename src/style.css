@@ -81,6 +81,7 @@ html, body {
 .btn.empty { background: #0b1017; border: 2px dashed #253447; color: #3a4a5c; box-shadow: none; }
 .btn.tier-blue .lbl { color: var(--tier-blue); }
 .btn.tier-gold .lbl { color: var(--tier-gold); }
+.btn.evolved { border-color: #bfe4f2; box-shadow: 0 0 14px rgba(160, 215, 240, .55), inset 0 0 8px rgba(190, 230, 245, .35); }
 .btn.swapped { animation: swapped .45s ease-out; }
 @keyframes swapped { 0% { transform: scale(1.25); box-shadow: 0 0 24px rgba(223, 230, 238, .7); } }
 .btn.pushable { border-color: var(--strain); color: #ffd0c4; box-shadow: 0 0 18px rgba(200, 69, 47, .5); }

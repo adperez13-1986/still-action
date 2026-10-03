@@ -81,6 +81,9 @@ let coreBlock: () => CoreBlock | null = () => null
 /** One-press buttons after the switches (the owner's log export), in the order main gave them. */
 const playActions: { label: () => string; run: () => void; show?: () => boolean }[] = []
 
+/** A part's evolution line on every pause card (E1), set by main: null for a part with none, or with no archetype. */
+let evoLine: (d: AbilityDef) => string | null = () => null
+
 function card(d: AbilityDef, tag: string, other?: AbilityDef, conflict?: string | null, fresh = false, cost?: string, note?: string, cold: string[] = [], fit?: string) {
   const past = describe(d)
   // the price on every cast, the same pips the button carries, so the card and the button agree
@@ -93,7 +96,7 @@ function card(d: AbilityDef, tag: string, other?: AbilityDef, conflict?: string 
       ${past.history ? `<p class="pline phist">${past.history}</p>` : ''}
       <div class="stats">${stats(d, other)}</div>
       ${cold.map((l) => `<p class="ppair">${l}</p>`).join('')}
-      ${fit ? `<p class="pfit">${fit}</p>` : ''}
+      ${fit ?? evoLine(d) ? `<p class="pfit">${fit ?? evoLine(d)}</p>` : ''}
       ${conflict ? `<p class="pconflict">${conflict}</p>` : ''}
       ${cost ? `<p class="pcost">${cost}</p>` : ''}
       ${note ? `<p class="pconflict">${note}</p>` : ''}
@@ -136,6 +139,8 @@ export interface PauseScreen {
   ) => void
   /** What the loadout screen shows under the cards with a core worn: the core's name, its socket and upgrades, and the open depth's marks (words from main). Null: nothing (no core). */
   setCore: (fn: () => CoreBlock | null) => void
+  /** The evolution line every pause card shows for a part that has one (E1). */
+  setEvoLine: (fn: (d: AbilityDef) => string | null) => void
   /**
    * The look-back screen: every run's card, large, newest first, with the arrows to
    * page through them and close. `render` draws card i (0 is the newest).
@@ -305,6 +310,10 @@ export function createPauseScreen(root: HTMLElement): PauseScreen {
          </div>`,
         [['leave', words.leave, onLeave], ['take', words.take, onTake]],
       )
+    },
+
+    setEvoLine(fn) {
+      evoLine = fn
     },
 
     setCore(fn) {

@@ -186,6 +186,10 @@ export interface BreachHole {
 /** Something happened this instant. Lasting things are polled, not evented. */
 export type PartEvent =
   | { kind: 'move'; move: StillMove; beat: BeatKey }
+  /** Whirlwind (E1): one pass of the spin, centred at `at`, `n` bodies hit. Rail: its beam; `railHit`: a body the beam passed. */
+  | { kind: 'whirl'; at: THREE.Vector3; radius: number; n: number }
+  | { kind: 'rail'; from: THREE.Vector3; to: THREE.Vector3 }
+  | { kind: 'railHit'; at: THREE.Vector3 }
   | { kind: 'strain'; amount: number; at: THREE.Vector3 }             // a Brace conversion
   /**
    * A windup broken (Parry, a grab, a push, the hand, the eye). `push`: a pushed hit broke it under the

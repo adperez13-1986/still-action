@@ -1,6 +1,7 @@
 import type { SlotName } from './still'
 import type { StateId } from './states'
 import type { CoreId, Fit } from './cores'
+import type { EvoId } from './evolutions'
 import { TURRET, WORDS as ARCH_WORDS } from './archetypes'
 
 /**
@@ -90,6 +91,7 @@ export type BeatKey =
   | 'vent' | 'ward' | 'backdraft' | 'chill' | 'brace' | 'mirror' | 'lure'
   | 'cleaver' | 'piston' | 'hook' | 'parry' | 'fray-90' | 'fray-180' | 'fray-360' | 'toss' | 'anvil'
   | 'kick' | 'skitter' | 'skid' | 'overrun-step' | 'overrun-charge' | 'frost' | 'spring' | 'plant' | 'snap' | 'rewind'
+  | 'whirl' | 'rail'
 
 /** Alternate icon markups the HUD swaps in by state. The base state is `icon`. */
 export type IconState = 'fray-180' | 'fray-360' | 'snap'
@@ -103,6 +105,8 @@ export interface AbilityDef {
   tier: Tier
   /** Temper's rank this run (temper.ts): absent is I. */
   rank?: number
+  /** The evolution this part has become (evolutions.ts, E1): set only by `evolved`, under an archetype. */
+  evo?: EvoId
   /** The pickup card's one line (T §6). */
   line: string
   shape: AbilityShape

@@ -158,6 +158,8 @@ export interface RunSnapshot {
   core?: string
   /** The archetype picked at the run's start (archetypes.ts). Absent: today's game (an old snapshot). Read back only when this build knows it. No version bump. */
   archetype?: string
+  /** The evolved parts' ids (evolutions.ts, E1). Absent: none. Read back only under an archetype, and only ids this build knows. No version bump. */
+  evolved?: string[]
   /** The core's socket (a KeystoneId). Absent: empty. Dropped on resume unless it belongs to the core read back. */
   keystone?: string
   /** Core upgrades learned (UpgradeId list). Absent: none. Filtered on resume the same way as the keystone. */

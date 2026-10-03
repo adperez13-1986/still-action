@@ -35,6 +35,7 @@ import { CORES, KEYSTONES, UPGRADES, fitOf, markCap, markLife, type CoreId, type
 import { STATE, STATE_IDS, masterySets, stateMul, type Payer, type StateBy, type StateId } from './states'
 import { curveAt, type DepthCurve } from './curve'
 import { PART, History, bankShot, type EnemyStatus, type Flip, type Held, type PartEvent, type PartRuntime, type StillMove, type Zone } from './parts'
+import { EVO_TUNE } from './evolutions'
 
 /** A boss that never walks, or a Handcar (it never leaves its rails: B5): spacing leaves it where it stands. */
 const anchored = (e: Enemy) => (isBoss(e) && e.anchored !== null) || e instanceof Handcar
@@ -438,6 +439,11 @@ export class Combat {
   private shots: Shot[] = []
   /** Effects that land a beat after the cast, on game time (so hitstop and the stop freeze them too). */
   private later: { t: number; run: () => void }[] = []
+  /**
+   * Rail's free shot (E1): main sets it, before a Move-family part's cast, to the Rail worn (else null). When that cast moves him, a Rail shot fires from where he lands, at the
+   * nearest awake body in range, once. Null: nothing. Never set with no archetype.
+   */
+  railFree: AbilityDef | null = null
   private fx: Fx[] = []
   private autoTimer = 0
   private hurtCooldown = 0
@@ -844,7 +850,7 @@ export class Combat {
       // bouncing and ghost bolts move in short substeps, so a reflection lands where
       // the bank solver said and a fast ghost can't skip over a body
       const dist = b.speed * dt
-      const n = b.bouncesLeft > 0 || b.ghost ? Math.max(1, Math.ceil(dist / PART.bounceSubstep)) : 1
+      const n = b.bouncesLeft > 0 || b.ghost || (b.payer && 'evo' in b.payer && b.payer.evo === 'rail') ? Math.max(1, Math.ceil(dist / PART.bounceSubstep)) : 1
       if (spent) b.mesh.position.addScaledVector(b.dir, dist)
       for (let k = 0; k < n && !spent; k++) {
         b.mesh.position.addScaledVector(b.dir, dist / n)
@@ -1007,6 +1013,7 @@ export class Combat {
         b.pierced.add(e)
         // n counts up along the line, so each pass can sound a step higher
         this.events.onPart({ kind: 'pierce', at: e.pos.clone(), n: b.pierced.size })
+        if ((b.payer && 'evo' in b.payer && b.payer.evo === 'rail')) this.events.onPart({ kind: 'railHit', at: e.pos.clone() })
         continue
       }
       return true
@@ -2773,8 +2780,9 @@ export class Combat {
         const once = fan ? new Set<Enemy>() : undefined
         if (fan) trail = 0.16
         for (const off of spread) {
-          this.spawnBolt(o, aim + off, damage, def.radius, def.range, { payer: def, pierced: mod?.kind === 'pierce' ? new Set() : undefined, once, scale, trail, pushed: ctx.full, real })
+          this.spawnBolt(o, aim + off, damage, def.radius, def.range, { payer: def, pierced: mod?.kind === 'pierce' ? new Set() : undefined, once, scale, trail, pushed: ctx.full, real, speed: def.evo === 'rail' ? PART.ghostSpeed : undefined })
         }
+        if (def.evo === 'rail') this.railBeam(o, aim, def.range)
         break
       }
 
@@ -2994,6 +3002,10 @@ export class Combat {
       }
 
       case 'arc': {
+        if (def.evo === 'whirlwind') {
+          this.whirlwind(def, ctx, r)
+          break
+        }
         // Frayed Cleaver: the strain at the press picks the width
         const fray = mod?.kind === 'fray' ? mod : null
         const tier = fray ? (ctx.strain < fray.at[0] ? 0 : ctx.strain < fray.at[1] ? 1 : 2) : 0
@@ -3320,6 +3332,61 @@ export class Combat {
   }
 
   /**
+   * Whirlwind (E1, Scrap Cleaver evolved): a full turn per hit, `EVO_TUNE.whirl.hits` hits `gapS` apart on every body round him, while he is carried `carry` u along the stick (or his facing).
+   * Each hit tests from where he is by then. Walls stop the carry (clampMove), never the hits' reach (`inArc`'s own wall test).
+   */
+  private whirlwind(def: AbilityDef, ctx: CastContext, r: CastResult) {
+    const T = EVO_TUNE.whirl
+    const o = ctx.origin
+    const { pushed: real } = ctx
+    const dir = this.steer(ctx)
+    const from = o.clone()
+    const end = this.terrain.clampMove(o.x, o.z, o.x + dir.x * T.carry, o.z + dir.z * T.carry, PLAYER_RADIUS)
+    r.aim = Math.atan2(dir.x, dir.z)
+    const pass = (k: number) => {
+      const at = new THREE.Vector3(from.x + (end.x - from.x) * k, 0, from.z + (end.z - from.z) * k)
+      let n = 0
+      for (const e of this.enemies) {
+        if (!this.inArc(at, e, def.range, 0, 1, -1.01)) continue
+        this.hitPart(e, def.damage, ctx.full, def, real)
+        n++
+      }
+      for (const b of this.breakables) {
+        if (!b.broken && Math.hypot(b.x - at.x, b.z - at.z) <= def.range + b.r) this.events.onSmash(b)
+      }
+      this.ring(at, 0.4, def.range, 0.3, 0xbcd6ff)
+      this.events.onPart({ kind: 'whirl', at, radius: def.range, n })
+    }
+    pass(0)
+    for (let i = 1; i < T.hits; i++) {
+      const k = Math.min(1, (i * T.gapS * 1000) / T.carryMs)
+      this.later.push({ t: i * T.gapS, run: () => { pass(k); this.flushContacts() } })
+    }
+    this.emitMove({ kind: 'dash', path: [new THREE.Vector3(end.x, 0, end.z)], ms: T.carryMs, vault: false, lockMs: 0 }, 'whirl')
+  }
+
+  /** Rail's beam (E1): from the lens to the wall or the range's end, drawn for `lingerS`; the bolt itself pierces every body. */
+  private railBeam(o: THREE.Vector3, aim: number, range: number) {
+    const end = this.terrain.clampMove(o.x, o.z, o.x + Math.sin(aim) * range, o.z + Math.cos(aim) * range, 0.05)
+    this.events.onPart({ kind: 'rail', from: o.clone(), to: new THREE.Vector3(end.x, 0, end.z) })
+  }
+
+  /** Rail's free shot (E1): at the end of a Move-family cast's travel, from where he lands, at the nearest awake body in range. */
+  private railFreeShot(def: AbilityDef, ms: number, to: THREE.Vector3) {
+    const at = to.clone()
+    this.later.push({
+      t: ms / 1000,
+      run: () => {
+        const e = this.pickTarget(at, def.range, true)
+        if (!e) return
+        const aim = Math.atan2(e.pos.x - at.x, e.pos.z - at.z)
+        this.spawnBolt(at, aim, def.damage, def.radius, def.range, { payer: def, pierced: new Set(), speed: PART.ghostSpeed })
+        this.railBeam(at, aim, def.range)
+      },
+    })
+  }
+
+  /**
    * Through-Line: a ghost bolt through enemies, crates and walls, and every solid it
    * crosses opens to sight and shots for a few seconds, both ways. Awake first.
    */
@@ -3578,6 +3645,11 @@ export class Combat {
 
   /** A part moving Still: main hands it to his body. */
   private emitMove(move: StillMove, beat: BeatKey) {
+    const last = move.path[move.path.length - 1]
+    if (this.railFree && last) {
+      this.railFreeShot(this.railFree, move.ms, last)
+      this.railFree = null
+    }
     this.events.onPart({ kind: 'move', move, beat })
   }
 
