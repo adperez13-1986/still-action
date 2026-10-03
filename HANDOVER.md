@@ -3,7 +3,7 @@
 For the next session. Read this, then `DESIGN.md` (the settled decisions), then the design
 folder for whatever you're touching. Don't re-derive any of them.
 
-## Start here (3 Oct, later: his verdict on B6a/B6b; N1 Graze LIVE, N2 Tether running)
+## Start here (3 Oct, later: his verdict on B6a/B6b; ALL FOUR CORES LIVE; his runs + tuning next)
 
 **His verdict on B6a + B6b (3 Oct):** "I like it, the cues are helpful, the numbers are also good. It's more difficult as well.. I am
 not satisfied yet with the 2 cores, we need to tune them further, but the main idea works." Then: design the other cores yourself,
@@ -14,7 +14,12 @@ earns nothing; the lenses are its spenders). Four-card pick while testing. **N1 
 read `Enemy.swing()` (Chaser + the Assembler); lanes via `laneMargin` / `lanePass` on chargers (no band for lanes); not covered: boss
 charge lanes, the hulk's counter-lunge, mite bites, the Arbiter and the Engine. Bot: Assembler felled 2/3 eager (33 of 49 grazes from
 shots, ~0.6 core dmg/s), packs spent/made 0.37; dropsim graze formed d3 62.9% (line 70). Portrait shows "turn the phone sideways".
-**N2 Tether: fresh Sonnet engineer running** (template: N1's diff). Tuning all four after his runs (his ask; Wake and Ram not done).
+**N2 Tether DONE + pushed.** Wire + J glyph + barbed ring (+3 draw calls); K-M34 pins the flip rule. Bot: Assembler 3/3 eager,
+packs ~1.5 core dmg/s, hooks 28 / breaks 19, only 2 crossings in 39 s (packs die fast; the anchor tick carries it), flee bot 0.
+dropsim formed-by-Assembler line (70%): Ram passes, Wake 70.0, Graze 62.9, Tether 67 (fail, untuned).
+**Next: his runs with all four, then the tuning round he asked for (Wake + Ram not satisfied yet; Graze + Tether first guesses).**
+Ask feel first per core: could he see it, did it feel like its own way to fight, too weak/strong. Watch: Graze's swing coverage gaps
+(boss lanes, Arbiter, Engine, mites), Tether's wire breaking often, crossings rare in short pack fights. Tuning all four after his runs (his ask; Wake and Ram not done).
 
 ## Earlier start-here (3 Oct: B6 verdict "I see no effect"; B6a + B6b LIVE)
 
