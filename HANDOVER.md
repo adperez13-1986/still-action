@@ -26,7 +26,15 @@ will always be the same, no variation within the core."** Lead's answer, awaitin
 to do with them, the same under every core: four mark verbs, Cash (today's +K) / Spread (copy marks to neighbours) / Detonate (spend
 every mark in an area) / Feed (add a mark, extend life); fit shrinks to a +50% bonus, so no part is dead and one core plays differently
 run to run. Later: keystones as forks (3-4 per core bending the core's rule, e.g. Wake Drift / Shear). Do this BEFORE tuning.
-**Then: his runs with all four, then the tuning round he asked for (Wake + Ram not satisfied yet; Graze + Tether first guesses).**
+**Then he stepped back further (3 Oct):** "even though the cores are different, they are still all about increasing a number by doing
+something, then cashing in" (non-mark cores offered: Companion, Echo, Mason, Stance), then: "we need to get back to the basic
+archetypes before going crazy on a certain mechanic... my frame of reference is always D2" (close: Barbarian / Paladin / Assassin;
+ranged: Sorceress / Amazon; summoner: Druid / Necro) "...our 4 parts mechanic and roguelite gameplay is not letting us develop those
+archetypes". Lead's diagnosis: slot = body part forces every build into one arm + one lens + one nova + one dash, a hybrid by
+construction. Proposal (no build yet): an ARCHETYPE pick at run start replaces the core pick (Brawler / Marksman / Summoner),
+deciding slot layout, drop weighting and one survival trait; cores become sub-styles inside archetypes. **Two questions open to him:**
+keep body-part slots with an archetype layout, or generic slots? Three archetypes, or a fourth Paladin-like hybrid? Mark verbs and
+tuning wait on this. **Then (old plan): his runs with all four, then the tuning round he asked for (Wake + Ram not satisfied yet; Graze + Tether first guesses).**
 Ask feel first per core: could he see it, did it feel like its own way to fight, too weak/strong. Watch: Graze's swing coverage gaps
 (boss lanes, Arbiter, Engine, mites), Tether's wire breaking often, crossings rare in short pack fights. Tuning all four after his runs (his ask; Wake and Ram not done).
 
