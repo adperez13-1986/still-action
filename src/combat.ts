@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import { DECAL_Y } from './world'
 import { tellMaterial, releaseTell, TELL_CROWD, COLD, EMBER, type Vfx } from './vfx'
-import { Chaser, shoveVelocity, distToSegment, PLAYER_RADIUS, KNOCK_DECAY, type Enemy, type EnemyCtx, type EnemyEvent, type EnemyPhase, type Swing } from './enemy'
+import { Chaser, shoveVelocity, distToSegment, PLAYER_RADIUS, KNOCK_DECAY, type Enemy, type EnemyCtx, type EnemyEvent } from './enemy'
 import { Ranged } from './ranged'
 import { Lobber } from './lobber'
 import { Signal } from './signal'
@@ -185,10 +185,6 @@ interface Shot {
   damage: number
   /** Who fired it: a Mirror Ward sends it back there. */
   owner?: Enemy
-  /** Graze only: the closest it has come to Still's centre so far (u), whether it has been closing, and whether it has grazed (once a shot). Untouched with any other core. */
-  gz?: number
-  gc?: boolean
-  grazed?: boolean
   /** An answer shot reflects like a Ricochet bolt. */
   bouncesLeft: number
   bounced: number
@@ -560,12 +556,8 @@ export class Combat {
   private lastCatch = -Infinity
   /** Wake's Slipstream upgrade (§2.7): seconds of walk speed banked by skims, 0..maxS; drains in game time. Main reads it for Still's walk speed. */
   slipS = 0
-  /**
-   * Graze's band (CORES2.md §1, graze.ts draws it): the bodies in a melee swing's tell within `bandR` of Still this tick, `bandN` of them. Each is where its swing lands (`reach`, the sector's `aim` and `half`
-   * when it has one) and the margin it will be judged by. Preallocated, refilled every tick; empty with any other core.
-   */
-  readonly bands: { e: Enemy | null; reach: number; margin: number; aim: number; half: number }[] = Array.from({ length: CORES.graze.bandMax }, () => ({ e: null, reach: 0, margin: 0, aim: 0, half: 0 }))
-  bandN = 0
+  /** Thorns' patches (N3, Bramble Patch; thornfx.ts draws them): where a hit taken left one, its age and who it has marked. Empty with any other core or none, and until the upgrade is learned. */
+  readonly patches: { x: number; z: number; t: number; hit: Set<Enemy> }[] = []
   /** Tether's wires (N2, tetherfx.ts draws them): the first, and Second Line's. A wire with no anchor is down. Both are empty with any other core. */
   readonly wires: Wire[] = [newWire(), newWire()]
   /** When each body was last crossed by a wire, game time (once per body per `perBodyS`, whichever wire). A new map each level (reset). */
@@ -590,7 +582,6 @@ export class Combat {
     player: new THREE.Vector3(),
     playerVel: this.playerVel,
     now: 0,
-    laneMargin: 0,
     canLock: (ms) => this.book.canLock(ms),
     book: (owner, ms) => this.book.book(owner, ms),
     tokenFree: (e) => {
@@ -679,9 +670,6 @@ export class Combat {
     // a lit lane: where each stood before its own move, for the step-off
     this.beforeMove.clear()
     if (this.line?.lit().length) for (const e of this.enemies) this.beforeMove.set(e, { x: e.pos.x, z: e.pos.z })
-    // Graze: a rush's pass is counted out to its margin; the band starts empty (both are 0 with any other core)
-    this.ctx.laneMargin = this.core === 'graze' ? this.grazeMargin(null) : 0
-    this.bandN = 0
     for (let i = this.enemies.length - 1; i >= 0; i--) {
       const e = this.enemies[i]!
       // killed between ticks (a cast, a bolt): buried before it can act, so a hulk
@@ -720,8 +708,6 @@ export class Combat {
       // a decoy draws awake enemies near it; waking, leashing and sleeping still read Still
       const target = this.targetFor(e, player)
       const before = e.phase
-      // Graze: where a swing in its tell would land, read before the update that resolves it (null with any other core)
-      const swing = this.core === 'graze' ? e.swing?.() ?? null : null
       const action = e.update(dt, target, this.terrain, this.ctx)
       // a mite has no windup of its own: its brood's surge is the one tell and the one sound
       if (e.phase !== before && e.kind !== 'swarm') {
@@ -730,16 +716,13 @@ export class Combat {
       }
       // a strike aimed at the decoy whose ring also covers Still still lands on him; a ram's
       // lane was already tested against the real Still
-      let landed = false
       if (action?.kind === 'melee') {
         const reaches = action.tested || target === player || Math.hypot(e.pos.x - player.x, e.pos.z - player.z) <= (action.reach ?? 0)
         if (reaches) {
-          landed = true
           this.hurtPlayer(action.damage * (e.dmgMul ?? 1), 'melee', action.source ?? e, !!e.pressure)
           if (action.shove) this.playerKnock.add(shoveVelocity(action.shove.dx, action.shove.dz, action.shove.distance))
         }
       }
-      if (swing) this.grazeSwing(e, swing, before, landed, player)
       if (action?.kind === 'shot') this.fireShot(e.pos, action.dir, action.damage * (e.dmgMul ?? 1), e, action.bounces ?? 0)
       if (action?.kind === 'shots') {
         for (const d of action.dirs) this.fireShot(action.from, d, action.damage * (e.dmgMul ?? 1), e)
@@ -825,6 +808,10 @@ export class Combat {
         if (lance) this.events.onEye('shot')
       }
     }
+
+    // Thorns' patches age and mark on their own clock, whether or not the auto runs; with any other core none stand
+    if (this.core === 'thorns') this.tickPatches(dt)
+    else if (this.patches.length) this.patches.length = 0
 
     // --- bolts ---
     for (let i = this.bolts.length - 1; i >= 0; i--) {
@@ -1009,6 +996,7 @@ export class Combat {
     if (g && g.kind !== 'brace' && Math.hypot(p.x - player.x, p.z - player.z) < g.radius) {
       if (g.kind === 'ward') {
         g.used = true
+        this.thorns(s.owner, 'shot', true)
         this.events.onPart({ kind: 'shield', at: p.clone(), reflected: false })
         return true
       }
@@ -1016,7 +1004,7 @@ export class Combat {
         g.reflectsLeft--
         g.used = true
         const o = s.owner && !s.owner.dead ? s.owner.pos : null
-        if (this.core === 'graze' && s.owner && !s.owner.dead) this.grazeShot(s, p)
+        this.thorns(s.owner, 'shot', true)
         const aim = o ? Math.atan2(o.x - p.x, o.z - p.z) : Math.atan2(-s.dir.x, -s.dir.z)
         // his shot now: a cold bolt, and walls stop it like any other
         this.spawnBolt(p, aim, g.reflectDamage, 0.3, 20, { payer: MIRROR })
@@ -1025,16 +1013,8 @@ export class Combat {
       }
     }
     if (Math.hypot(p.x - player.x, p.z - player.z) < SHOT_RADIUS + PLAYER_RADIUS) {
-      this.hurtPlayer(s.damage, 'shot', undefined, !!s.owner?.pressure)
+      this.hurtPlayer(s.damage, 'shot', s.owner, !!s.owner?.pressure)
       return true
-    }
-    if (this.core === 'graze' && s.owner && !s.owner.dead && !s.grazed) {
-      // it came closer, then drew off without hitting him: the closest it came, if it was near enough, is a graze (once a shot)
-      const d = Math.hypot(p.x - player.x, p.z - player.z)
-      if (s.gz === undefined || d < s.gz) {
-        s.gc = s.gz !== undefined
-        s.gz = d
-      } else if (s.gc && s.gz - (SHOT_RADIUS + PLAYER_RADIUS) <= CORES.graze.shotMargin) this.grazeShot(s, p)
     }
     const hit = this.terrain.blocker(p.x, p.z, 0.15, true)
     if (hit === 'wall' && s.bouncesLeft > 0) {
@@ -1169,6 +1149,7 @@ export class Combat {
     this.clearTrail()
     this.lastCross = new WeakMap()
     this.clearWires()
+    this.patches.length = 0
     this.telling = new WeakMap()
     this.lastCatch = -Infinity
     this.slipS = 0
@@ -1679,7 +1660,7 @@ export class Combat {
     const open = !stack && this.hurtCooldown > 0
     // after a catch, the rest of the window's body strikes fold into it
     if (open && source === 'melee' && this.hurtCaught) return
-    const amount = open ? damage - this.hurtMax : damage
+    let amount = open ? damage - this.hurtMax : damage
     if (amount <= 0) return
     // a stacking hit leaves the window alone: it neither opens one nor folds a slam into it
     if (!open && !stack) {
@@ -1692,6 +1673,7 @@ export class Combat {
     if (source === 'melee' && this.parts.anvil) {
       this.catchBlow(from)
       this.hurtCaught = true
+      this.thorns(from, 'melee', true)
       return
     }
     // Brace: the hit becomes strain instead of integrity. Main adds it, so it can end the run.
@@ -1699,12 +1681,16 @@ export class Combat {
     if (g?.kind === 'brace') {
       g.used = true
       this.events.onPart({ kind: 'strain', amount: Math.ceil(amount / g.perStrain), at: this.lastPlayer.clone() })
+      if (source === 'melee' || source === 'shot') this.thorns(from, source, true)
       return
     }
+    // Thorns' Hardened (THORNS.md): the damage he takes is x(1 - armor), whole points, never below one
+    if (this.core === 'thorns') amount = Math.max(1, Math.round(amount * (1 - CORES.thorns.armor)))
     const before = this.hp
     this.hp = Math.max(0, this.hp - amount)
     this.tickDamage += before - this.hp
     this.events.onPlayerHurt(amount, source, braced)
+    if (source === 'melee' || source === 'shot') this.thorns(from, source, false)
   }
 
   /** The dead branch of the enemy loop: out of the scene, out of its pack, paid out. */
@@ -2292,77 +2278,61 @@ export class Combat {
   }
 
   /**
-   * Graze's margin for a body (CORES2.md §1): the core's, Wide Berth's if learned, and Read's on a body that can't be moved (the larger wins). Null: no body in mind (a rush's lane: never immovable).
-   * The band under a swing in its tell is drawn to this, so what he sees is what grazes.
+   * Thorns (N3, THORNS.md), where a hit lands or is stopped: `e` is who struck or fired (none, or dead: nothing happens, as for a wave or a hazard). `how`: a melee hit, or a shot. `blocked`: a guard stopped it (Ward, Brace,
+   * Anvil's catch, Mirror Ward's reflect). The attacker takes the core hit (`damage`, whole on a body that can't be moved, x Spite's on one) and marks: `marks` for a melee hit, `shotMarks` (and no damage) for a shot that
+   * landed, `blockMarks` and the damage for any hit stopped; Spite makes it `marks` at least on a body that can't be moved. Bramble marks every other awake body within `radius` of Still; Backlash shoves the attacker;
+   * Bramble Patch leaves a patch where he stands, on a hit taken. Says so once (the look and sound are main's and thornfx.ts's). Draws no Math.random.
    */
-  grazeMargin(e: Enemy | null): number {
-    let m: number = this.upgrades.has('graze-wide') ? UPGRADES['graze-wide'].margin : CORES.graze.margin
-    if (e && this.keystone === 'graze-read' && this.immovable(e)) m = Math.max(m, KEYSTONES['graze-read'].margin)
-    return m
-  }
-
-  /**
-   * Graze, per body, each tick it has a swing in its tell (`swing`, read before its update): on the tick the swing resolves (its phase turns to 'strike') and did not land on him, he stood within `margin` of its reach
-   * (and, for a sector, within its arc grown by the margin at his distance), that is a graze. Otherwise, if the tell is still up and within `bandR` of him, it joins the band (graze.ts draws it). A swing a part broke never
-   * resolves, so it never grazes. Draws no Math.random; allocates nothing.
-   */
-  private grazeSwing(e: Enemy, swing: Swing, before: EnemyPhase, landed: boolean, p: THREE.Vector3) {
-    const dx = p.x - e.pos.x
-    const dz = p.z - e.pos.z
-    const d = Math.hypot(dx, dz)
-    const margin = this.grazeMargin(e)
-    if (e.phase === 'strike' && before !== 'strike') {
-      if (landed || d > swing.reach + margin) return
-      if (swing.half !== undefined) {
-        let da = Math.atan2(dx, dz) - swing.aim!
-        while (da > Math.PI) da -= Math.PI * 2
-        while (da < -Math.PI) da += Math.PI * 2
-        if (Math.abs(da) > swing.half + margin / Math.max(d, 1)) return
-      }
-      this.graze(e, 'melee', p)
-      return
-    }
-    const live = e.swing?.()
-    if (!live || d > CORES.graze.bandR || this.bandN >= CORES.graze.bandMax) return
-    const b = this.bands[this.bandN++]!
-    b.e = e
-    b.reach = live.reach
-    b.margin = margin
-    b.aim = live.aim ?? 0
-    b.half = live.half ?? Math.PI
-  }
-
-  /**
-   * A graze by a body's strike or rush (CORES2.md §1): the attacker takes `damage` (a core hit, whole on a body that can't be moved, like Wake's bossSkim) and `marks` marks (Read: more on that body); Feint
-   * marks every other awake body near Still. `p` is Still's place. Says so once.
-   */
-  private graze(e: Enemy, how: 'melee' | 'lane', p: THREE.Vector3) {
-    const G = CORES.graze
+  private thorns(e: Enemy | undefined, how: 'melee' | 'shot', blocked: boolean) {
+    if (this.core !== 'thorns' || !e || e.dead) return
+    const T = CORES.thorns
+    const p = this.lastPlayer
     const heavy = this.immovable(e)
-    const marks = heavy && this.keystone === 'graze-read' ? KEYSTONES['graze-read'].marks : G.marks
-    const dealt = this.autoHit(e, G.damage, 'core', heavy)
+    const spite = heavy && this.keystone === 'thorns-spite' ? KEYSTONES['thorns-spite'] : null
+    const hits = blocked || how === 'melee'
+    let marks: number = blocked ? T.blockMarks : how === 'melee' ? T.marks : T.shotMarks
+    if (spite) marks = Math.max(marks, spite.marks)
+    const dealt = hits ? this.autoHit(e, T.damage * (spite ? spite.mul : 1), 'core', heavy) : 0
     this.addMarks(e, marks, 'core')
     let others = 0
-    if (this.keystone === 'graze-feint') {
-      const F = KEYSTONES['graze-feint']
+    if (this.keystone === 'thorns-bramble') {
+      const B = KEYSTONES['thorns-bramble']
       for (const o of this.enemies) {
-        if (o === e || o.dead || !targetable(o) || this.held.has(o) || !this.awakeNow(o) || Math.hypot(o.pos.x - p.x, o.pos.z - p.z) > F.radius) continue
-        this.addMarks(o, F.marks, 'core')
+        if (o === e || o.dead || !targetable(o) || this.held.has(o) || !this.awakeNow(o) || Math.hypot(o.pos.x - p.x, o.pos.z - p.z) > B.radius) continue
+        this.addMarks(o, B.marks, 'core')
         others++
       }
     }
-    const dx = p.x - e.pos.x
-    const dz = p.z - e.pos.z
+    if (this.upgrades.has('thorns-backlash') && !e.dead) this.shoveFrom(e, p.x, p.z, UPGRADES['thorns-backlash'].shove)
+    if (this.upgrades.has('thorns-patch') && !blocked) {
+      const U = UPGRADES['thorns-patch']
+      if (this.patches.length >= U.max) this.patches.shift()
+      this.patches.push({ x: p.x, z: p.z, t: 0, hit: new Set() })
+    }
+    const dx = e.pos.x - p.x
+    const dz = e.pos.z - p.z
     const d = Math.hypot(dx, dz) || 1
-    this.events.onPart({ kind: 'graze', enemy: e, how, dmg: dealt, marks, others, at: p.clone(), dir: new THREE.Vector3(dx / d, 0, dz / d) })
+    this.events.onPart({ kind: 'thorns', enemy: e, how, blocked, dmg: dealt, marks, others, at: p.clone(), dir: new THREE.Vector3(dx / d, 0, dz / d) })
   }
 
-  /** A shot grazed its owner (it passed within `shotMargin` of Still's edge without hitting him, or Mirror Ward sent it home): `shotMarks` marks, no damage, once a shot. */
-  private grazeShot(s: Shot, at: THREE.Vector3) {
-    if (s.grazed || !s.owner || s.owner.dead) return
-    s.grazed = true
-    this.addMarks(s.owner, CORES.graze.shotMarks, 'core')
-    this.events.onPart({ kind: 'graze', enemy: s.owner, how: 'shot', dmg: 0, marks: CORES.graze.shotMarks, others: 0, at: at.clone(), dir: s.dir.clone() })
+  /** Bramble Patch, each tick: a patch ages out after `lifeS`; each awake body whose edge reaches it that it has not marked yet gets `marks` mark. No Math.random; patches are made only on a hit taken. */
+  private tickPatches(dt: number) {
+    if (!this.patches.length) return
+    const U = UPGRADES['thorns-patch']
+    for (let i = this.patches.length - 1; i >= 0; i--) {
+      const q = this.patches[i]!
+      q.t += dt
+      if (q.t >= U.lifeS) {
+        this.patches.splice(i, 1)
+        continue
+      }
+      for (const e of this.enemies) {
+        if (e.dead || !targetable(e) || this.held.has(e) || !this.awakeNow(e) || q.hit.has(e)) continue
+        if (Math.hypot(e.pos.x - q.x, e.pos.z - q.z) - e.radius > U.radius) continue
+        q.hit.add(e)
+        this.addMarks(e, U.marks, 'core')
+      }
+    }
   }
 
   /**
@@ -3466,11 +3436,6 @@ export class Combat {
 
   /** Every enemy instant passes here: Combat does its own part first (a rush into a crate breaks it), then the run's. */
   private emitEnemy(ev: EnemyEvent) {
-    // Graze's lane pass is Combat's own: a rush's front went by him within the margin (it is said only with that core), and it goes no further
-    if (ev.kind === 'lanePass') {
-      if (this.core === 'graze' && !ev.e.dead) this.graze(ev.e, 'lane', ev.at)
-      return
-    }
     if (ev.kind === 'rushEnd' && ev.how === 'wall') this.smashNear(ev.at.x, ev.at.z, 0.4)
     this.events.onEnemy(ev)
   }

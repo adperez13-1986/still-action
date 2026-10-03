@@ -51,7 +51,7 @@ import { PartFx } from './partfx'
 import { MarkFx } from './markfx'
 import { WakeFx } from './wakefx'
 import { ShoveFx } from './ramfx'
-import { GrazeFx } from './grazefx'
+import { ThornFx } from './thornfx'
 import { TetherFx } from './tetherfx'
 import { CoreShow } from './coreshow'
 import type { PartEvent } from './parts'
@@ -89,7 +89,7 @@ const START_DEPTH = Math.min(RUN_DEPTHS, Math.max(1, Number(DEPTH_PARAM) || 1))
 /** DEV only: a URL param as given, or null (production builds never read them). */
 const devParam = (k: string): string | null => (import.meta.env.DEV ? params.get(k) : null)
 /**
- * `?core=wake|ram|graze|tether` (DEV, with `?depth=`): the run starts wearing that core (design/buildlayer/BUILD.md §2.4); it needs no switch. Without it a dev boot is bare,
+ * `?core=wake|ram|thorns|tether` (DEV, with `?depth=`): the run starts wearing that core (design/buildlayer/BUILD.md §2.4); it needs no switch. Without it a dev boot is bare,
  * so every suite stays bare. A `?depth=` boot never shows the pick.
  */
 const CORE_PARAM: CoreId | null = DEPTH_PARAM !== null && (CORE_LIVE as readonly (string | null)[]).includes(devParam('core')) ? (devParam('core') as CoreId) : null
@@ -407,8 +407,8 @@ const combat = new Combat(world.scene, OPEN, {
     }
     partFx.event(ev)
     markFx.event(ev)
-    grazeFx.event(ev)
-    if (ev.kind === 'graze') grazeEvent(ev)
+    thornFx.event(ev)
+    if (ev.kind === 'thorns') thornsEvent(ev)
     tetherFx.event(ev)
     if (ev.kind === 'tether') tetherEvent(ev)
     if (ev.kind === 'mark' || ev.kind === 'markExpired' || ev.kind === 'spend' || ev.kind === 'skim' || ev.kind === 'bite' || ev.kind === 'trailFrost') coreEvent(ev)
@@ -1313,8 +1313,8 @@ const markFx = new MarkFx(world.scene)
 const wakeFx = new WakeFx(world.scene)
 /** Ram's reach ring and what a slam leaves on the floor (ramfx.ts): two draw calls, only with Ram worn. */
 const shoveFx = new ShoveFx(world.scene)
-/** Graze's band under a winding-up swing (grazefx.ts): one draw call, only with Graze worn. */
-const grazeFx = new GrazeFx(world.scene)
+/** Thorns' armed ring at his feet and Bramble Patch's patches (thornfx.ts): one draw call (the ring is markfx's second), only with Thorns worn. */
+const thornFx = new ThornFx(world.scene)
 /** Tether's wire and the hook glyph over its anchor (tetherfx.ts): two draw calls (the ring is markfx's third), only with Tether worn. */
 const tetherFx = new TetherFx(world.scene)
 /** A new level or a run's end: no rings, no field, no streak, no number. */
@@ -1322,7 +1322,7 @@ function clearCoreFx() {
   markFx.clear()
   wakeFx.clear()
   shoveFx.clear()
-  grazeFx.clear()
+  thornFx.clear()
   tetherFx.clear()
   coreShow.clear()
 }
@@ -1564,35 +1564,35 @@ function shoveEvent(ev: Extract<PartEvent, { kind: 'shove' }>) {
 }
 
 /**
- * Graze (CORES2.md §1): the log (`grazes`: by how, and the ones on a boss), the nominal core damage, and the look and sound: a cold whiff streak across Still on the attacker's side (a shot's: along its own path, past him),
- * a small flash and a "tsss". The band's own flash and break is grazefx.ts, from the same event. Riposte takes `cooldownS` off every spender's cooldown. A hand-spread, no random.
+ * Thorns (THORNS.md): the log (`thorns`: hits taken, blocks, shots, and the ones on a boss), the nominal core damage, and the look and sound: cold shards thrown from Still at the attacker along the line between them, a flash
+ * on it and a barbed "tk" (a block's is bigger and deeper, with a ring of shards at his own feet and a little shake). The armed ring's flare is thornfx.ts, from the same event. A hand-spread, no random.
  */
-function grazeEvent(ev: Extract<PartEvent, { kind: 'graze' }>) {
+function thornsEvent(ev: Extract<PartEvent, { kind: 'thorns' }>) {
   const st = run.stats[run.stats.length - 1]
   if (st) {
-    const k = (st.grazes ??= { n: 0, melee: 0, shot: 0, lane: 0, boss: 0 })
+    const k = (st.thorns ??= { n: 0, hit: 0, block: 0, shot: 0, boss: 0 })
     k.n++
-    k[ev.how]++
+    if (ev.blocked) k.block++
+    else if (ev.how === 'shot') k.shot++
+    else k.hit++
     if (isBoss(ev.enemy)) k.boss++
     if (st.autoDmg) st.autoDmg.core += ev.dmg
   }
-  sfx.graze(panOf(ev.at))
-  const d = ev.dir
-  const shot = ev.how === 'shot'
-  // a melee's chord lies across his front on the attacker's side (a lane's rush went by him, the same); a shot's runs along where it went
-  const bx = shot ? ev.at.x : ev.at.x - d.x * 0.8
-  const bz = shot ? ev.at.z : ev.at.z - d.z * 0.8
-  const ax = shot ? d.x : -d.z
-  const az = shot ? d.z : d.x
-  for (let i = -2; i <= 2; i++) {
-    const mid = 1 - Math.abs(i) / 3
-    vfx.trail(new THREE.Vector3(bx + ax * i * 0.4, 0.6, bz + az * i * 0.4), COLD, 0.14 + 0.1 * mid, 0.2 + 0.1 * mid)
+  sfx.thorns(ev.blocked, panOf(ev.at))
+  const to = ev.enemy.pos
+  const n = ev.blocked ? 7 : 5
+  // a streak from his chest toward the attacker's, short of its body (a shot's owner may be far: the streak is the first 4 u of the line)
+  const reach = Math.min(4, Math.max(0.5, Math.hypot(to.x - ev.at.x, to.z - ev.at.z) - ev.enemy.radius))
+  for (let i = 0; i < n; i++) {
+    const k = (i + 1) / n
+    vfx.trail(new THREE.Vector3(ev.at.x + ev.dir.x * reach * k, 0.8 + 0.1 * Math.sin(Math.PI * k), ev.at.z + ev.dir.z * reach * k), COLD, 0.16 + 0.1 * k, 0.2 + 0.1 * k)
   }
-  vfx.flash(new THREE.Vector3(bx, 0.6, bz), COLD, 0.5)
-  vfx.frost(new THREE.Vector3(bx, 0.6, bz), 1, 0.12)
-  if (combat.upgrades.has('graze-riposte')) {
-    const ms = UPGRADES['graze-riposte'].cooldownS * 1000
-    for (const sl of hud.slots) if (sl.def && fitOf(sl.def, 'graze')?.role === 'spend') hud.trim(sl.slot, ms)
+  const mark = at3(ev.how === 'shot' ? { x: ev.at.x + ev.dir.x * reach, z: ev.at.z + ev.dir.z * reach } : to, 0.7 * ev.enemy.size)
+  vfx.shards(mark, COLD, ev.blocked ? 9 : 5, ev.blocked ? 6 : 4.5, ev.at.x * 1.3 + ev.at.z)
+  vfx.flash(mark, COLD, ev.blocked ? 0.9 : 0.5)
+  if (ev.blocked) {
+    vfx.shards(at3(ev.at, 0.5), COLD, 8, 5, ev.at.z * 1.1 + ev.at.x)
+    shake = Math.max(shake, 0.1)
   }
 }
 
@@ -1999,8 +1999,8 @@ interface DepthStats {
   backhand: { casts: number; whiffs: number }
   shoves?: { n: number; wall: number; body: number; still: number; tell: number; plain: number; chained: number; caught: number; beat: { n: number; wall: number; body: number; still: number; tell: number } }
   skims?: { n: number; burst: number; spray: number; bite: number }
-  /** Graze's (N1): grazes by how (a strike, a rush's lane, a shot), and the ones on a boss. */
-  grazes?: { n: number; melee: number; shot: number; lane: number; boss: number }
+  /** Thorns' (N3): thorns hits by how (a melee hit taken, a shot taken, one a guard stopped), and the ones on a boss. */
+  thorns?: { n: number; hit: number; block: number; shot: number; boss: number }
   /** Tether's (N2): wires hooked and broken, crossings, and the anchors' ticks. */
   tether?: { hooks: number; breaks: number; crossings: number; anchorTicks: number }
 }
@@ -3438,7 +3438,7 @@ function saw(id: string) {
 }
 
 /**
- * The core's pick (BUILD.md §2.8): the run's start, a card for every core (Wake, Ram, Graze and Tether, all live since N2), no reroll and nothing random. It shows once depth 1 is entered and before he can move: the world waits
+ * The core's pick (BUILD.md §2.8): the run's start, a card for every core (Wake, Ram, Thorns and Tether, all live since N3), no reroll and nothing random. It shows once depth 1 is entered and before he can move: the world waits
  * (openPause stops the windups; Combat's clock does not run while `paused`). `at` is how it came: 'start' at the run's beginning, 'resume' when a reload found depth 1 with no core.
  * The pick: the core is worn (`applyBuilds` re-wears the one part he has, flat and reshaped), the open depth's stats are corrected to say so (depth 1's entry was pushed before the pick
  * and nothing has been fought), and the snapshot is written with it.
@@ -5559,7 +5559,7 @@ function frame(nowMs: number) {
   coreShow.update(paused ? 0 : elapsed)
   wakeFx.update(!home && run.phase === 'crawl' && !!level && coreNow() === 'wake', paused ? 0 : elapsed, x, z, combat)
   shoveFx.update(!home && run.phase === 'crawl' && !!level && coreNow() === 'ram', paused ? 0 : elapsed, x, z)
-  grazeFx.update(!home && run.phase === 'crawl' && !!level && coreNow() === 'graze', paused ? 0 : elapsed, combat)
+  thornFx.update(!home && run.phase === 'crawl' && !!level && coreNow() === 'thorns', paused ? 0 : elapsed, combat, x, z)
   tetherFx.update(!home && run.phase === 'crawl' && !!level && coreNow() === 'tether', paused ? 0 : elapsed, combat, x, z)
   firstFightHint(fighting)
   if (!paused) {
@@ -5627,7 +5627,7 @@ if (import.meta.env.DEV) {
     __markFx: markFx,
     __wakeFx: wakeFx,
     __shoveFx: shoveFx,
-    __grazeFx: grazeFx,
+    __thornFx: thornFx,
     __tetherFx: tetherFx,
     __coreShow: coreShow,
     __run: run, __parts: PARTS, __partLog: partLog, __pause: pause,

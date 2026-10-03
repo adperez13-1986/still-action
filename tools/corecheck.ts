@@ -34,12 +34,12 @@ const TABLE: Partial<Record<CoreId, Record<string, { role: FitRole; slams?: true
     'frayed-cleaver': { role: 'spend', k: 10 }, 'scrap-cleaver': { role: 'spend', k: 3 }, 'frost-trail': { role: 'spend' },
     'signal-flare': { role: 'shape' }, 'spring-heels': { role: 'shape' }, ward: { role: 'guard' },
   },
-  // N1 (CORES2.md §1): four spenders, two shapers, two guards; no head part (Tether's lenses are the head's)
-  graze: {
-    'parry-clamp': { role: 'spend', k: 10 }, anvil: { role: 'spend', k: 12 }, overrun: { role: 'spend', k: 8 }, 'scrap-cleaver': { role: 'spend', k: 4 },
-    skitter: { role: 'shape' }, lure: { role: 'shape' }, 'mirror-ward': { role: 'guard' }, 'borrowed-time': { role: 'guard' },
+  // N3 (THORNS.md, in Graze's place): four spenders, all of the arms slot (Piston, Parry Clamp, Anvil and the bridge), two shapers (Rusted Hook, Lure), three guards (Ward, Brace, Mirror Ward): torso and arms only
+  thorns: {
+    'parry-clamp': { role: 'spend', k: 10 }, anvil: { role: 'spend', k: 12 }, piston: { role: 'spend', k: 8 }, 'scrap-cleaver': { role: 'spend', k: 4 },
+    'rusted-hook': { role: 'shape' }, lure: { role: 'shape' }, ward: { role: 'guard' }, brace: { role: 'guard' }, 'mirror-ward': { role: 'guard' },
   },
-  // N2 (CORES2.md §2): the five lenses spend (the head slot's only job), three shapers, two guards. Lure and Ward are shared with Graze and Wake
+  // N2 (CORES2.md §2): the five lenses spend (the head slot's only job), three shapers, two guards. Lure is shared with Thorns, Rusted Hook too, and Ward with Wake and Thorns
   tether: {
     'focusing-lens': { role: 'spend', k: 5 }, 'cracked-lens': { role: 'spend', k: 8 }, 'patient-lens': { role: 'spend', k: 10 }, 'through-line': { role: 'spend', k: 8 }, 'ricochet-lens': { role: 'spend', k: 6 },
     'rusted-hook': { role: 'shape' }, lure: { role: 'shape' }, 'chill-vent': { role: 'shape' }, 'plumb-line': { role: 'guard' }, ward: { role: 'guard' },
@@ -50,20 +50,21 @@ for (const p of PARTS) {
   check(!('lean' in p), `${p.id}: still has a lean key`)
 }
 // the pick shows a card for every core, in order; only the live ones can be worn (Tether's is N2's)
-check(JSON.stringify(CORE_IDS) === JSON.stringify(['wake', 'ram', 'graze', 'tether']) && JSON.stringify(CORE_LIVE) === JSON.stringify(['wake', 'ram', 'graze', 'tether']), 'the pick: wake, ram, graze, tether; live: all four (N2)')
+check(JSON.stringify(CORE_IDS) === JSON.stringify(['wake', 'ram', 'thorns', 'tether']) && JSON.stringify(CORE_LIVE) === JSON.stringify(['wake', 'ram', 'thorns', 'tether']), 'the pick: wake, ram, thorns, tether; live: all four (N3)')
 check(CORE_IDS.every((c) => c in CORES) && CORE_LIVE.every((c) => (CORE_IDS as readonly string[]).includes(c)), 'every core has numbers; every live core has a card')
 for (const c of CORE_LIVE) {
   const own = PARTS.filter((p) => fitOf(p, c))
-  // Wake and Ram have six parts, one in every slot; Graze has eight in three slots (no head part: the lenses are Tether's); Tether has ten in all four, its five spenders all in the head slot
-  const want = { wake: 6, ram: 6, graze: 8, tether: 10 }[c]
-  const wantSlots = c === 'graze' ? 3 : 4
+  // Wake and Ram have six parts, one in every slot; Thorns has nine in two slots (the torso's guards and shapers, the arms' spenders: no head or legs part, the lenses are Tether's); Tether has ten in all four, its five spenders all in the head slot
+  const want = { wake: 6, ram: 6, thorns: 9, tether: 10 }[c]
+  const wantSlots = c === 'thorns' ? 2 : 4
   check(own.length === want, `${c}: ${own.length} fitting parts, want ${want}`)
   check(new Set(own.map((p) => p.slot)).size === wantSlots, `${c}: its parts cover ${new Set(own.map((p) => p.slot)).size} slots, want ${wantSlots}`)
   for (const p of own) check(JSON.stringify(fitOf(p, c)) === JSON.stringify(TABLE[c]![p.id]), `${c}: ${p.id} fits as ${JSON.stringify(fitOf(p, c))}, table says ${JSON.stringify(TABLE[c]![p.id])}`)
   for (const id of Object.keys(TABLE[c]!)) check(!!fitOf(byId(id), c), `${c}: ${id} should fit`)
   const spenders = own.filter((p) => fitOf(p, c)!.role === 'spend')
-  // Tether's spenders are the lenses (CORES2.md: "the first core whose spenders are the head slot"), so one slot by design
-  check(new Set(spenders.map((p) => p.slot)).size >= (c === 'tether' ? 1 : 2) && (c !== 'tether' || spenders.every((p) => p.slot === 'head')), `${c}: spenders in ${new Set(spenders.map((p) => p.slot)).size} slot(s), want ${c === 'tether' ? 'the head only' : '2+'}`)
+  // Tether's spenders are the lenses (CORES2.md: "the first core whose spenders are the head slot"), and Thorns' are the arms' (THORNS.md: Parry Clamp, Anvil, Piston, Scrap Cleaver), so one slot by design
+  const oneSlot = c === 'tether' ? 'head' : c === 'thorns' ? 'arms' : null
+  check(new Set(spenders.map((p) => p.slot)).size >= (oneSlot ? 1 : 2) && (!oneSlot || spenders.every((p) => p.slot === oneSlot)), `${c}: spenders in ${new Set(spenders.map((p) => p.slot)).size} slot(s), want ${oneSlot ? `the ${oneSlot} only` : '2+'}`)
   check(own.every((p) => !fitOf(p, c)!.slams || c === 'ram'), `${c}: only Ram's parts slam`)
   check(own.every((p) => fitOf(p, c)!.k === undefined || (fitOf(p, c)!.role === 'spend' && fitOf(p, c)!.k! > 0)), `${c}: a k on a part that is not a spender, or not above 0`)
   // the keystones and the upgrades: two a core, one for packs and one for bosses
@@ -76,15 +77,15 @@ for (const c of CORE_LIVE) {
 for (const [id, k] of Object.entries(KEYSTONES)) check(k.id === id, `keystone ${id}: id ${k.id}`)
 for (const [id, u] of Object.entries(UPGRADES)) check(u.id === id, `upgrade ${id}: id ${u.id}`)
 check(markCap('wake', 'wake-deep') === 5 && markLife('wake', 'wake-deep') === 4, 'wake-deep: cap 5, life 4 s')
-check(markCap('graze', 'graze-read') === 3 && markLife('graze', 'graze-feint') === 3, 'graze: its keystones hold no more and last no longer')
+check(markCap('thorns', 'thorns-spite') === 3 && markLife('thorns', 'thorns-bramble') === 3, 'thorns: its keystones hold no more and last no longer')
 check(markCap('wake', 'wake-burst') === 3 && markCap('ram', 'wake-deep') === 3, 'only Wake with Deep holds more')
-// the bridge: one part fits Wake, Ram and Graze (Scrap Cleaver), at most 3. Tether's own is the white Focusing Lens (k 5, under its K of 6), which no other core fits
+// the bridge: one part fits Wake, Ram and Thorns (Scrap Cleaver), at most 3. Tether's own is the white Focusing Lens (k 5, under its K of 6), which no other core fits
 const bridges = PARTS.filter((p) => CORE_LIVE.filter((c) => c !== 'tether').every((c) => fitOf(p, c)))
 check(bridges.length >= 1 && bridges.length <= 3 && bridges.some((p) => p.id === 'scrap-cleaver'), `bridges: ${bridges.map((p) => p.id).join(', ') || 'none'}, want Scrap Cleaver and at most 3`)
 check(fitOf(byId('focusing-lens'), 'tether')!.k! < CORES.tether.K && byId('focusing-lens').tier === 'white' && CORE_LIVE.filter((c) => fitOf(byId('focusing-lens'), c)).join() === 'tether', "Tether's bridge: the white Focusing Lens spends under it at k 5, below K 6, and fits no other core")
-// plain parts. BUILD.md §5.2 says "15 of the 30 stay plain", but §5.1's own table fits 11 distinct parts (6 + 6, Scrap Cleaver in both): 19 stay plain. The table is the rule. Graze (N1) fits 7 more: 12 stay plain.
+// plain parts. BUILD.md §5.2 says "15 of the 30 stay plain", but §5.1's own table fits 11 distinct parts (6 + 6, Scrap Cleaver in both): 19 stay plain. The table is the rule. Graze (N1) fit 7 more, Tether (N2) 8, and Thorns (N3) took Graze's place with Rusted Hook, Brace, Ward and Piston among them: Skitter, Overrun and Borrowed Time are plain again.
 const plain = PARTS.filter((p) => !CORE_LIVE.some((c) => fitOf(p, c)))
-check(PARTS.length === 30 && plain.length === 4, `${plain.length} plain parts of ${PARTS.length}, the tables make 4 of 30 (Tether fits 8 more)`)
+check(PARTS.length === 30 && plain.length === 7, `${plain.length} plain parts of ${PARTS.length}, the tables make 7 of 30 (Thorns fits no leg: Skitter, Overrun and Borrowed Time are plain)`)
 // Ram's six: five are starter parts, so a young save meets them (Wake's three reshapes are found-pool parts, which is why the filter ignores `found`)
 check(PARTS.filter((p) => fitOf(p, 'ram') && STARTER_POOL.includes(p.id)).length === 5, 'Ram: five of its six in the starter pool')
 check(['frayed-cleaver', 'frost-trail', 'signal-flare'].every((id) => !STARTER_POOL.includes(id)), 'Wake: its three reshapes are found-pool parts')
@@ -96,11 +97,11 @@ check(CORES.wake.bossSkim.mul === 1 && CORES.wake.bossSkim.perBodyS === 0.5, 'bo
 check(CORES.wake.bite.damage === 1 && CORES.wake.bite.everyS === 0.5, `bite: ${CORES.wake.bite.damage} every ${CORES.wake.bite.everyS} s, B6b ship 1 and 0.5`)
 check(CORES.wake.trail.lifeS === 1.0 && CORES.wake.trail.stepU === 0.15 && CORES.wake.trail.halfWidth === 0.25 && CORES.wake.trail.perBodyS === 1.0, 'trail: life 1.0 s, a point every 0.15 u, half-width 0.25 u, once a 1.0 s per body (B6b ship)')
 check(CORES.wake.trail.max >= Math.ceil(CORES.wake.trail.lifeS * 5 / CORES.wake.trail.stepU) + 1, `trail: ${CORES.wake.trail.max} points hold a second of a 5 u/s dash`)
-// Graze (N1, CORES2.md §1): first-guess numbers, pinned so a stray edit shows
-check(CORES.graze.K === 8 && CORES.graze.margin === 1.0 && CORES.graze.damage === 10 && CORES.graze.marks === 2 && CORES.graze.shotMargin === 0.7 && CORES.graze.shotMarks === 1, 'graze: K 8, margin 1.0, damage 10, marks 2, shotMargin 0.7, shotMarks 1')
-check(CORES.graze.cap === 3 && CORES.graze.lifeS === 3 && CORES.graze.bandR === 8 && CORES.graze.bandMax === 6, 'graze: cap 3, life 3 s, band within 8 u, at most 6')
-check(KEYSTONES['graze-feint'].radius === 2.0 && KEYSTONES['graze-feint'].marks === 1 && KEYSTONES['graze-read'].marks === 3 && KEYSTONES['graze-read'].margin === 1.6, 'Feint: 1 mark within 2.0 u; Read: 3 marks, margin 1.6')
-check(UPGRADES['graze-riposte'].cooldownS === 0.4 && UPGRADES['graze-wide'].margin === 1.5, 'Riposte: 0.4 s; Wide Berth: margin 1.5')
+// Thorns (N3, THORNS.md): first-guess numbers, pinned so a stray edit shows
+check(CORES.thorns.K === 8 && CORES.thorns.cap === 3 && CORES.thorns.lifeS === 3 && CORES.thorns.damage === 8 && CORES.thorns.marks === 2 && CORES.thorns.shotMarks === 1 && CORES.thorns.blockMarks === 3 && CORES.thorns.armor === 0.15, 'thorns: K 8, cap 3, life 3 s, damage 8, marks 2, shotMarks 1, blockMarks 3, armor 0.15')
+check(CORES.thorns.blockMarks > CORES.thorns.marks && CORES.thorns.marks > CORES.thorns.shotMarks && CORES.thorns.armor > 0 && CORES.thorns.armor < 0.5, 'thorns: a block marks more than a hit, a hit more than a shot; the armor is a share below a half')
+check(KEYSTONES['thorns-bramble'].radius === 2.0 && KEYSTONES['thorns-bramble'].marks === 1 && KEYSTONES['thorns-spite'].marks === 3 && KEYSTONES['thorns-spite'].mul === 2, 'Bramble: 1 mark within 2.0 u; Spite: 3 marks, the core hit x2')
+check(UPGRADES['thorns-backlash'].shove === 1.5 && UPGRADES['thorns-patch'].radius === 1.5 && UPGRADES['thorns-patch'].lifeS === 2 && UPGRADES['thorns-patch'].marks === 1 && UPGRADES['thorns-patch'].max === 4, 'Backlash: 1.5 u; Bramble Patch: 1.5 u wide, 2 s, 1 mark, at most 4')
 // Tether (N2, CORES2.md §2): first-guess numbers, pinned so a stray edit shows
 check(CORES.tether.K === 6 && CORES.tether.cap === 3 && CORES.tether.lifeS === 3 && CORES.tether.damage === 6 && CORES.tether.minR === 3 && CORES.tether.maxR === 9 && CORES.tether.breakR === 10, 'tether: K 6, cap 3, life 3 s, damage 6, hook 3 to 9 u, breaks past 10 u')
 check(CORES.tether.rehookS === 0.5 && CORES.tether.losGraceS === 0.3 && CORES.tether.reach === 0.4 && CORES.tether.perBodyS === 0.5 && CORES.tether.anchorDamage === 4 && CORES.tether.anchorEveryS === 1.5 && CORES.tether.hookMarks === 1, 'tether: rehook 0.5 s, line-of-sight grace 0.3 s, reach 0.4 u, once per body per 0.5 s, anchor 4 every 1.5 s, hook 1 mark')
@@ -143,7 +144,7 @@ for (const p of PARTS) {
   }
 }
 // B2: Wake's three reshapes (Backhand, Skate, Frost Flare) and nothing else; B3: Ram's one, Piston's numbers-only variant (cooldown 2600, name, line and icon unchanged)
-const RESHAPED: Record<string, string[]> = { wake: ['frayed-cleaver', 'frost-trail', 'signal-flare'], ram: ['piston'], graze: [], tether: [] }
+const RESHAPED: Record<string, string[]> = { wake: ['frayed-cleaver', 'frost-trail', 'signal-flare'], ram: ['piston'], thorns: [], tether: [] }
 for (const c of CORE_IDS) {
   const got = PARTS.filter((p) => variant(p, c) !== p).map((p) => p.id).sort()
   check(JSON.stringify(got) === JSON.stringify(RESHAPED[c]), `reshaped under ${c}: ${got.join(', ') || 'none'}; want ${RESHAPED[c]!.join(', ') || 'none'}`)
@@ -183,15 +184,15 @@ function methodBody(name: string): string {
   return combat.slice(from, i + 1)
 }
 // tickCore dispatches to the cores' own ticks (Wake's skim, Ram's shove and its helpers); every one of them is the core's code
-for (const name of ['tickCore', 'tickWake', 'tickRam', 'beat', 'shove', 'slamBody', 'catchScan', 'throwEnd', 'inTell', 'immovable', 'grazeSwing', 'graze', 'grazeShot', 'tickTether', 'holdWire', 'hookWire', 'breakWire', 'sweepWire']) check(!/Math\.random/.test(methodBody(name)), `${name}'s source draws Math.random`)
+for (const name of ['tickCore', 'tickWake', 'tickRam', 'beat', 'shove', 'slamBody', 'catchScan', 'throwEnd', 'inTell', 'immovable', 'thorns', 'tickPatches', 'tickTether', 'holdWire', 'hookWire', 'breakWire', 'sweepWire']) check(!/Math\.random/.test(methodBody(name)), `${name}'s source draws Math.random`)
 check(!/Math\.random/.test(read('../src/cores.ts')), "cores.ts's source draws Math.random")
-// Graze's look draws none of its own (N1: "no Math.random in new code"): grazefx.ts, and the single method that shows a graze in main.ts
-check(!/Math\.random/.test(read('../src/grazefx.ts')), "grazefx.ts's source draws Math.random")
+// Thorns' look draws none of its own (N3: "no Math.random in new code"): thornfx.ts, and the single method that shows a thorns hit in main.ts
+check(!/Math\.random/.test(read('../src/thornfx.ts')), "thornfx.ts's source draws Math.random")
 check(!/Math\.random/.test(read('../src/tetherfx.ts')), "tetherfx.ts's source draws Math.random (N2)")
 {
   const main = read('../src/main.ts')
-  const at = main.indexOf('function grazeEvent(')
-  check(at > 0 && !/Math\.random/.test(main.slice(at, main.indexOf('\n}\n', at))), "main.ts grazeEvent's source draws Math.random")
+  const at = main.indexOf('function thornsEvent(')
+  check(at > 0 && !/Math\.random/.test(main.slice(at, main.indexOf('\n}\n', at))), "main.ts thornsEvent's source draws Math.random")
   const t = main.indexOf('function tetherEvent(')
   check(t > 0 && !/Math\.random/.test(main.slice(t, main.indexOf('\n}\n', t))), "main.ts tetherEvent's source draws Math.random")
 }

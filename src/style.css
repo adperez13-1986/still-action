@@ -650,11 +650,12 @@ html, body {
   -webkit-mask: radial-gradient(circle closest-side, transparent 0 42%, #000 46% 94%, transparent 98%);
   mask: radial-gradient(circle closest-side, transparent 0 42%, #000 46% 94%, transparent 98%);
 }
-/* Graze's glyph: a thin double ring, in three arcs (CORES2.md §1); Tether's, a ring with one gap, like a hook (live since N2) */
-.core[data-core="graze"] .coreglyph {
+/* Thorns' glyph: a thin ring with a spike every 30 degrees on its outside (THORNS.md); Tether's, a ring with one gap, like a hook */
+.core[data-core="thorns"] .coreglyph {
   --c: #8fd0ff;
-  -webkit-mask: radial-gradient(circle closest-side, transparent 0 44%, #000 47% 58%, transparent 61% 70%, #000 73% 90%, transparent 94%);
-  mask: radial-gradient(circle closest-side, transparent 0 44%, #000 47% 58%, transparent 61% 70%, #000 73% 90%, transparent 94%);
+  background: radial-gradient(circle closest-side, transparent 0 56%, var(--c) 58% 70%, transparent 72%), repeating-conic-gradient(from -4deg, var(--c) 0 8deg, transparent 8deg 30deg);
+  -webkit-mask: radial-gradient(circle closest-side, transparent 0 52%, #000 54% 70%, transparent 72% 74%, #000 76% 98%, transparent 99%);
+  mask: radial-gradient(circle closest-side, transparent 0 52%, #000 54% 70%, transparent 72% 74%, #000 76% 98%, transparent 99%);
 }
 .core[data-core="tether"] .coreglyph {
   --c: #bfe4f2;

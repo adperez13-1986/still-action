@@ -248,7 +248,7 @@ export const PARTS: AbilityDef[] = [
   }),
   part({
     id: 'ward', slot: 'torso', name: 'Ward', tier: 'white', beat: 'ward',
-    fits: { wake: { role: 'guard' }, tether: { role: 'guard' } },
+    fits: { wake: { role: 'guard' }, thorns: { role: 'guard' }, tether: { role: 'guard' } },
     line: 'A brief shield that destroys enemy shots. Not shells.',
     shape: 'ward', cooldownMs: 7000, damage: 0, range: 0, radius: 1.8, windowMs: 1400,
     icon: '<circle cx="12" cy="12" r="8.5" stroke-dasharray="4.2 2.5"/><circle cx="12" cy="12" r="2.5"/>',
@@ -269,7 +269,7 @@ export const PARTS: AbilityDef[] = [
   }),
   part({
     id: 'brace', slot: 'torso', name: 'Brace', tier: 'blue', beat: 'brace',
-    fits: { ram: { role: 'guard' } },
+    fits: { ram: { role: 'guard' }, thorns: { role: 'guard' } },
     line: 'For a moment, hits cost you strain instead of integrity.',
     shape: 'nova', mod: { kind: 'brace', perStrain: 8 }, cooldownMs: 9000, damage: 8, range: 0, radius: 2.6, windowMs: 800,
     pips: { n: 1, hollow: true },
@@ -277,14 +277,14 @@ export const PARTS: AbilityDef[] = [
   }),
   part({
     id: 'mirror-ward', slot: 'torso', name: 'Mirror Ward', tier: 'blue', beat: 'mirror',
-    fits: { graze: { role: 'guard' } },
+    fits: { thorns: { role: 'guard' } },
     line: 'A brief shield that sends enemy shots back at whoever fired them. Not shells.',
     shape: 'ward', mod: { kind: 'reflect', max: 6, damage: 8 }, cooldownMs: 7000, damage: 0, range: 0, radius: 1.8, windowMs: 800,
     icon: '<path d="M16 3.5a9 9 0 0 1 0 17"/><path d="M3 5.5 13.5 12 3 18.5"/><path d="M4.7 15.1 3 18.5h3.8"/>',
   }),
   part({
     id: 'lure', slot: 'torso', name: 'Lure', tier: 'gold', beat: 'lure', drops: 'rare',
-    fits: { graze: { role: 'shape' }, tether: { role: 'shape' } },
+    fits: { thorns: { role: 'shape' }, tether: { role: 'shape' } },
     line: 'Leaves a decoy of you that enemies go after, until it bursts. Push it to burst it early and leave another.',
     shape: 'decoy', cooldownMs: 12000, damage: 18, range: 12, radius: 3.0, windowMs: 3000, shove: 1.6, offset: 1.5,
     icon: '<circle cx="12" cy="6" r="2.5"/><path d="M12 8.5V11"/><path d="M8.5 11h7l-1 8.5h-5z"/><path d="M4.5 9a8 8 0 0 0 0 7M19.5 9a8 8 0 0 1 0 7"/>',
@@ -293,28 +293,28 @@ export const PARTS: AbilityDef[] = [
   // ---------------- ARMS: close ----------------
   part({
     id: 'scrap-cleaver', slot: 'arms', name: 'Scrap Cleaver', tier: 'white', beat: 'cleaver',
-    fits: { ram: { role: 'spend', k: 4 }, wake: { role: 'spend', k: 3 }, graze: { role: 'spend', k: 4 } },
+    fits: { ram: { role: 'spend', k: 4 }, wake: { role: 'spend', k: 3 }, thorns: { role: 'spend', k: 4 } },
     line: 'A wide swing at whatever is closest. On a chilled enemy: lands twice.',
     shape: 'arc', pays: ['chilled'], cooldownMs: 2600, damage: 18, range: 3.1, radius: 0, cone: 120,
     icon: I.cleaver,
   }),
   part({
     id: 'piston', slot: 'arms', name: 'Piston', tier: 'white', beat: 'piston',
-    fits: { ram: { role: 'spend', slams: true, k: 12 } },
+    fits: { ram: { role: 'spend', slams: true, k: 12 }, thorns: { role: 'spend', k: 8 } },
     line: 'A hard, narrow punch that knocks one enemy far back.',
     shape: 'arc', cooldownMs: 3000, damage: 20, range: 3.4, radius: 0, cone: 40, shove: 4.0,
     icon: '<path d="M3 12h9"/><path d="M12 7.5v9"/><path d="M15 12h6"/><path d="M18 9l3 3-3 3"/><path d="M3 8.5h3M3 15.5h3"/>',
   }),
   part({
     id: 'rusted-hook', slot: 'arms', name: 'Rusted Hook', tier: 'blue', beat: 'hook',
-    fits: { tether: { role: 'shape' } },
+    fits: { tether: { role: 'shape' }, thorns: { role: 'shape' } },
     line: 'A long, narrow swing that yanks enemies to you.',
     shape: 'arc', mod: { kind: 'hook', to: 1.6 }, cooldownMs: 3200, damage: 12, range: 5.5, radius: 0, cone: 70,
     icon: '<path d="M4 12h13"/><path d="M17 12a3 3 0 1 0 3-3"/><path d="M7.5 8.5 4 12l3.5 3.5"/>',
   }),
   part({
     id: 'parry-clamp', slot: 'arms', name: 'Parry Clamp', tier: 'blue', beat: 'parry',
-    fits: { graze: { role: 'spend', k: 10 } },
+    fits: { thorns: { role: 'spend', k: 10 } },
     // PLACEHOLDER (LINE-RULES R3): his words; this one no longer says what it does
     line: 'A quick snap. Catch an enemy winding up and it breaks the attack. On a marked enemy: lands twice.',
     shape: 'arc', mod: { kind: 'parry', shove: 2.5 }, pays: ['marked'], cooldownMs: 3600, damage: 10, range: 2.6, radius: 0, cone: 90,
@@ -340,7 +340,7 @@ export const PARTS: AbilityDef[] = [
   }),
   part({
     id: 'anvil', slot: 'arms', name: 'Anvil', tier: 'gold', beat: 'anvil', drops: 'rare',
-    fits: { graze: { role: 'spend', k: 12 } },
+    fits: { thorns: { role: 'spend', k: 12 } },
     line: 'Catches the next blow that would hit you and hammers back. Shots get through.',
     shape: 'catch', cooldownMs: 6000, damage: 30, range: 0, radius: 3.0, windowMs: 900, shove: 2.0,
     icon: '<path d="M3 7h15.5c0 2.5-2 4-5 4h-.5v3.5h2.5l1.5 4.5H7l1.5-4.5H11V11H8C5 11 3 9.5 3 7z"/><path d="M19.5 3.5 21 2M21 5.5h1.5"/>',
@@ -356,7 +356,6 @@ export const PARTS: AbilityDef[] = [
   }),
   part({
     id: 'skitter', slot: 'legs', name: 'Skitter', tier: 'white', beat: 'skitter',
-    fits: { graze: { role: 'shape' } },
     line: "A quick little hop the way you're steering.",
     shape: 'hop', cooldownMs: 3200, damage: 0, range: 3.4, radius: 0, travelMs: 180,
     icon: '<path d="M4 18c2.5-7 9.5-7 12 0"/><path d="M13.3 16.3 16 18l1.4-2.8"/><path d="M3 21h4M14 21h4"/>',
@@ -369,7 +368,6 @@ export const PARTS: AbilityDef[] = [
   }),
   part({
     id: 'overrun', slot: 'legs', name: 'Overrun', tier: 'blue', beat: 'overrun-step',
-    fits: { graze: { role: 'spend', k: 8 } },
     line: 'A short step. Push it for a long charge that hits. On a marked enemy: lands twice.',
     shape: 'dash', mod: { kind: 'overrun', range: 9, damage: 22, radius: 1.4, shove: 2.4, travelMs: 300 }, pays: ['marked'],
     cooldownMs: 7000, damage: 0, range: 4.0, radius: 0, travelMs: 220,
@@ -399,7 +397,6 @@ export const PARTS: AbilityDef[] = [
   }),
   part({
     id: 'borrowed-time', slot: 'legs', name: 'Borrowed Time', tier: 'gold', beat: 'rewind', drops: 'boss',
-    fits: { graze: { role: 'guard' } },
     line: 'Rewinds you a moment and undoes the hits you took. Adds strain.',
     shape: 'rewind', cooldownMs: 10000, damage: 0, range: 0, radius: 0, windowMs: 1500, travelMs: 250,
     strain: 2, pips: { n: 2 },

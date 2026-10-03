@@ -1656,10 +1656,10 @@ const hooksUp = (page) => page.waitForFunction(() => typeof window.__enter === '
 // a real run, not a dev one: no ?depth=. A save in memory is past its first run only by the run it has just started: the first boot begins the run (FIRST_RUN_IN_MAZE), the door is `__run.phase = 'leaving'`
 check('K-M20', '?save=memory&roads=0&line=0&engine=0&pick=1', async ({ page }) => {
   const read = () => evalJson(page, PICK_STATE)
-  // the boot began a run, depth 1 is entered, and the pick is up: a card for every core (Wake, Ram, Graze, Tether; N1 left Tether's disabled and "soon", N2 took that off), and no back button
+  // the boot began a run, depth 1 is entered, and the pick is up: a card for every core (Wake, Ram, Thorns, Tether; N1 left Tether's disabled and "soon", N2 took that off, N3 put Thorns where Graze was), and no back button
   const a = await read()
   assertEq('a real run (not dev) at depth 1, no core yet', [a.dev, a.depth, a.runCore, a.core, a.phase], [false, 1, null, null, 'crawl'])
-  assertEq('the pick is open with four cards: Wake, Ram, Graze, Tether', [a.open, a.cards, a.names], [true, ['wake', 'ram', 'graze', 'tether'], ['Wake', 'Ram', 'Graze', 'Tether']])
+  assertEq('the pick is open with four cards: Wake, Ram, Thorns, Tether', [a.open, a.cards, a.names], [true, ['wake', 'ram', 'thorns', 'tether'], ['Wake', 'Ram', 'Thorns', 'Tether']])
   assertEq("...all four are live (none disabled, none says 'soon'): every card has the spend line", [a.soon, a.spendLines], [[false, false, false, false], ['Blue buttons spend them.', 'Blue buttons spend them.', 'Blue buttons spend them.', 'Blue buttons spend them.']])
   assertEq('...and no button but the cards: no back, no resume, no leave', [a.buttons, await page.locator('#pause button').count()], [0, 4])
   // the world waits: with the stick pushed, one real second of frames moves neither the game clock nor Still
@@ -1672,7 +1672,7 @@ check('K-M20', '?save=memory&roads=0&line=0&engine=0&pick=1', async ({ page }) =
   await page.locator('#pause .core[data-core="ram"]').click()
   const c = await read()
   assertEq('one real click on Ram: combat.core, the snapshot, and corePick.took say ram', [c.core, c.runCore, c.snap.core, c.corePick.took], ['ram', 'ram', 'ram', 'ram'])
-  assertEq('...corePick names what was offered and how it came', [c.corePick.offered, c.corePick.at, typeof c.corePick.s, c.corePick.s >= 0], [['wake', 'ram', 'graze', 'tether'], 'start', 'number', true])
+  assertEq('...corePick names what was offered and how it came', [c.corePick.offered, c.corePick.at, typeof c.corePick.s, c.corePick.s >= 0], [['wake', 'ram', 'thorns', 'tether'], 'start', 'number', true])
   assertEq('...the playtest body carries it', c.body, c.corePick)
   assertEq('...the pick is closed, the open depth logs the core and the flat temper', [c.open, c.stat.depth, c.stat.core, c.stat.temperFlat], [false, 1, 'ram', true])
   assertEq('...the snapshot keeps no keystone and no upgrades (none taken)', [c.snap.keystone, c.snap.upgrades], [null, null])
@@ -1680,7 +1680,7 @@ check('K-M20', '?save=memory&roads=0&line=0&engine=0&pick=1', async ({ page }) =
   await evalJson(page, () => { window.__run.phase = 'leaving'; window.__run.t = 0 })
   await page.waitForFunction(() => document.querySelector('#pause').classList.contains('show') && document.querySelectorAll('#pause .core').length === 4, null, { timeout: 15000 })
   const d = await read()
-  assertEq('through the door into startRun: the pick shows again, no core worn, a fresh corePick', [d.open, d.cards, d.runCore, d.core, d.corePick, d.depth], [true, ['wake', 'ram', 'graze', 'tether'], null, null, null, 1])
+  assertEq('through the door into startRun: the pick shows again, no core worn, a fresh corePick', [d.open, d.cards, d.runCore, d.core, d.corePick, d.depth], [true, ['wake', 'ram', 'thorns', 'tether'], null, null, null, 1])
   await page.locator('#pause .core[data-core="wake"]').click()
   const e = await read()
   assertEq('...and Wake taken the second time', [e.core, e.snap.core, e.corePick.took, e.stat.core, e.open], ['wake', 'wake', 'wake', 'wake', false])
@@ -1736,7 +1736,7 @@ check('K-M21', '?roads=1&line=0&engine=0&resume=1', async ({ page }) => {
     assertEq(`d${depth}: no mastery with a core`, r.mastery, 0)
   }
   // each of these resumes bare, with no pick, the depth logging core null: an unknown core, no core at d2, an old snapshot
-  for (const [what, o] of [["core 'sight' (a core this build does not know)", { depth: 2, core: 'sight', keystone: 'wake-deep', upgrades: ['wake-slip'], ranks: { arms: 3 } }], ['no core at depth 2 (a run begun before the layer)', { depth: 2, ranks: { arms: 3 } }]]) {
+  for (const [what, o] of [["core 'graze' (N3 took it out for Thorns: a save made with it is bare)", { depth: 2, core: 'graze', keystone: 'graze-feint', upgrades: ['graze-riposte'], ranks: { arms: 3 } }], ["core 'sight' (a core this build does not know)", { depth: 2, core: 'sight', keystone: 'wake-deep', upgrades: ['wake-slip'], ranks: { arms: 3 } }], ['no core at depth 2 (a run begun before the layer)', { depth: 2, ranks: { arms: 3 } }]]) {
     const r = await resumeWith(o)
     assertEq(`${what}: no pick, bare, depth 2`, [r.open, r.cards, r.depth, r.runCore, r.core, r.keystone, r.upgrades], [false, [], 2, null, null, null, []])
     assertEq(`${what}: the depth logs core null and the table of today (Cleaver III is 29), and the snapshot has no core key`, [r.stat.core, r.stat.temperFlat, r.arms, r.snap.hasCoreKey], [null, false, 29, false])
@@ -1746,7 +1746,7 @@ check('K-M21', '?roads=1&line=0&engine=0&resume=1', async ({ page }) => {
   assertEq('a keystone of the other core is dropped, the core kept, and the upgrade of the other core with it', [x.open, x.runCore, x.keystone, x.upgrades, x.snap.keystone, x.snap.upgrades], [false, 'wake', null, ['wake-slip'], null, ['wake-slip']])
   // no core at depth 1 with builds on: the pick shows (he reloaded on it, or the run began with the switch off); the world waits; the pick is logged as a resume
   const p = await resumeWith({ depth: 1 })
-  assertEq('depth 1, no core, builds on: the pick shows, four cards, nothing worn', [p.open, p.cards, p.runCore, p.core, p.depth], [true, ['wake', 'ram', 'graze', 'tether'], null, null, 1])
+  assertEq('depth 1, no core, builds on: the pick shows, four cards, nothing worn', [p.open, p.cards, p.runCore, p.core, p.depth], [true, ['wake', 'ram', 'thorns', 'tether'], null, null, 1])
   await page.waitForTimeout(700)
   const p2 = await read()
   assertEq('...and the world waits behind it', [p2.time, p2.pos], [p.time, p.pos])
@@ -1925,7 +1925,7 @@ const CORE_BOT = `(arg) => {
     C.hasPrev = false
     C.wake(pack)
     const st = W.__run.stats[W.__run.stats.length - 1]
-    const base = JSON.parse(JSON.stringify({ marks: st.marks, spends: st.spends, shoves: st.shoves ?? null, skims: st.skims ?? null, grazes: st.grazes ?? null, tether: st.tether ?? null, hand: st.hand ?? 0, core: st.autoDmg ? st.autoDmg.core : 0 }))
+    const base = JSON.parse(JSON.stringify({ marks: st.marks, spends: st.spends, shoves: st.shoves ?? null, skims: st.skims ?? null, thorns: st.thorns ?? null, tether: st.tether ?? null, hand: st.hand ?? 0, core: st.autoDmg ? st.autoDmg.core : 0 }))
     const readySince = {}
     const body = pack.members.map((e) => e.kind)
     const hp0 = pack.members.map((e) => e.hp)
@@ -1958,25 +1958,6 @@ const CORE_BOT = `(arg) => {
           const dx = p.x - cx, dz = p.z - cz, dd = Math.hypot(dx, dz) || 1
           W.__stick(dx / dd, dz / dd)
         } else W.__stick(0, 0)
-      } else if (arg.core === 'graze') {
-        // Graze's bot (N1): stand where the band is. With a swing in its tell (C.bands, the very numbers the graze test uses) it moves along the line from that body to the middle of the band, at the stick's full 5.5 u/s
-        // and stops there; with none it closes on the nearest awake body until it is 3.0 u off, which a hulk then closes to its own strike range and winds up at, and the band appears. It never fights otherwise
-        if (C.bandN > 0) {
-          const b = C.bands[0]
-          const dx = p.x - b.e.pos.x, dz = p.z - b.e.pos.z, d = Math.hypot(dx, dz) || 1
-          const want = b.reach + b.margin * 0.5
-          if (Math.abs(d - want) < 0.15) W.__stick(0, 0)
-          else W.__stick(((d < want ? 1 : -1) * dx) / d, ((d < want ? 1 : -1) * dz) / d)
-        } else {
-          let aw = null, ad = Infinity
-          for (const e of C.enemies) {
-            if (e.dead || !C.awakeNow(e)) continue
-            const d = Math.hypot(e.pos.x - p.x, e.pos.z - p.z)
-            if (d < ad) { ad = d; aw = e }
-          }
-          if (aw && ad > 3.0) W.__stick((aw.pos.x - p.x) / ad, (aw.pos.z - p.z) / ad)
-          else W.__stick(0, 0)
-        }
       } else if (arg.core === 'wake' || arg.core === 'tether') {
         // Wake's bot: round the nearest AWAKE body at radius 3, 0.4 rad on round the circle from where it stands now (the stick is the full 5.5 u/s). Tether's (N2): the same path, round the wire's anchor (the nearest awake body while there is
         // none) at radius 5, so the wire is a spoke that sweeps the pack. It leaves the wire to its own hook
@@ -2013,7 +1994,7 @@ const CORE_BOT = `(arg) => {
     return {
       body, hp: hp0, cleared, lost, s: ticks / 60, boss: !!arg.boss,
       marks: sub(now.marks, base.marks), spends: { hits: now.spends.hits - base.spends.hits, bonus: now.spends.bonus - base.spends.bonus }, shoves: sh, skims: now.skims ? sub(now.skims, base.skims) : null,
-      grazes: now.grazes ? sub(now.grazes, base.grazes) : null, tether: now.tether ? sub(now.tether, base.tether) : null, coreDmg: (now.autoDmg ? now.autoDmg.core : 0) - base.core,
+      thorns: now.thorns ? sub(now.thorns, base.thorns) : null, tether: now.tether ? sub(now.tether, base.tether) : null, coreDmg: (now.autoDmg ? now.autoDmg.core : 0) - base.core,
       hand: (now.hand ?? 0) - base.hand,
     }
   } finally {
@@ -2027,8 +2008,10 @@ check('K-M23', RUN + '&bots=1', async ({ page }) => {
   const sum = (xs) => xs.reduce((a, b) => a + b, 0)
   const f = (x, d = 2) => (Number.isFinite(x) ? x.toFixed(d) : '-')
   const felledBy = {}
-  for (const core of ['ram', 'wake', 'graze', 'tether']) {
-    const Name = core === 'ram' ? 'Ram' : core === 'wake' ? 'Wake' : core === 'graze' ? 'Graze' : 'Tether'
+  /** the bare run's rows, to set Thorns' HP lost beside (the same fights, the same loadout, no core) */
+  let rowsBare = []
+  for (const core of [null, 'ram', 'wake', 'thorns', 'tether']) {
+    const Name = core === 'ram' ? 'Ram' : core === 'wake' ? 'Wake' : core === 'thorns' ? 'Thorns' : core === 'tether' ? 'Tether' : 'Bare'
     const rows = []
     for (const bot of ['eager', 'hesitant']) {
       for (const depth of [1, 2, 3]) {
@@ -2044,6 +2027,17 @@ check('K-M23', RUN + '&bots=1', async ({ page }) => {
           }
         }
       }
+    }
+    if (core === null) {
+      // no core: the same fights and loadout, for Thorns' HP lost to be read against (nothing here is marked)
+      rowsBare = rows
+      for (const bot of ['eager', 'hesitant']) {
+        const rs = rows.filter((r) => r.bot === bot)
+        console.log(`INFO K-M23 Bare ${bot}: ${rs.length} fights, cleared ${rs.filter((r) => r.cleared).length}, ${f(mean(rs.map((r) => r.s)), 1)} s each, HP lost ${f(mean(rs.map((r) => r.lost)), 0)} each`)
+      }
+      const bb = rows.filter((r) => r.bot === 'eager' && r.depth === 3)
+      console.log(`INFO K-M23 Bare eager, the Assembler: felled ${bb.filter((r) => r.cleared).length} of ${bb.length} (${bb.map((r) => `seed ${r.seed}: ${r.cleared ? f(r.s, 1) + ' s' : 'not in 150 s'}, HP lost ${f(r.lost, 0)}`).join('; ')})`)
+      continue
     }
     const z = { n: 0, wall: 0, body: 0, still: 0, tell: 0, plain: 0, chained: 0, caught: 0, beat: { n: 0, wall: 0, body: 0, still: 0, tell: 0 } }
     const tot = (rs) => {
@@ -2064,10 +2058,10 @@ check('K-M23', RUN + '&bots=1', async ({ page }) => {
           const slams = t.wall + t.body + t.still + t.tell
           const bslams = t.beat.wall + t.beat.body + t.beat.still + t.beat.tell
           console.log(`${head}; shoves ${t.n} (beat ${t.beat.n}): wall ${t.wall} body ${t.body} still ${t.still} tell ${t.tell} plain ${t.plain}, slams per shove ${f(t.n ? slams / t.n : NaN)}, per beat shove ${f(t.beat.n ? bslams / t.beat.n : NaN)}, per beat shove without still ${f(t.beat.n ? (bslams - t.beat.still) / t.beat.n : NaN)}`)
-        } else if (core === 'graze') {
-          const gz = (k) => sum(rs.map((r) => r.grazes?.[k] ?? 0))
+        } else if (core === 'thorns') {
+          const tn = (k) => sum(rs.map((r) => r.thorns?.[k] ?? 0))
           const secs = sum(rs.map((r) => r.s))
-          console.log(`${head}; grazes ${gz('n')} (strike ${gz('melee')}, lane ${gz('lane')}, shot ${gz('shot')}, on a boss ${gz('boss')}), ${f(secs ? gz('n') / secs : NaN, 3)} a second, core damage ${sum(rs.map((r) => r.coreDmg ?? 0))} (${f(secs ? sum(rs.map((r) => r.coreDmg ?? 0)) / secs : NaN, 1)} a second), marks made by the core ${sum(rs.map((r) => r.marks.byCore))}, by parts ${sum(rs.map((r) => r.marks.byPart))}, expired ${sum(rs.map((r) => r.marks.expired))}`)
+          console.log(`${head}; thorns ${tn('n')} (a hit taken ${tn('hit')}, a block ${tn('block')}, a shot ${tn('shot')}, on a boss ${tn('boss')}), ${f(secs ? tn('n') / secs : NaN, 3)} a second, blocks ${f(secs ? tn('block') / secs : NaN, 3)} a second, core damage ${sum(rs.map((r) => r.coreDmg ?? 0))} (${f(secs ? sum(rs.map((r) => r.coreDmg ?? 0)) / secs : NaN, 1)} a second), marks made by the core ${sum(rs.map((r) => r.marks.byCore))}, by parts ${sum(rs.map((r) => r.marks.byPart))}, expired ${sum(rs.map((r) => r.marks.expired))}`)
         } else if (core === 'tether') {
           const tt = (k) => sum(rs.map((r) => r.tether?.[k] ?? 0))
           const secs = sum(rs.map((r) => r.s))
@@ -2083,10 +2077,11 @@ check('K-M23', RUN + '&bots=1', async ({ page }) => {
         const t = tot(mine.filter((r) => r.depth < 3))
         const bg = t.beat.wall + t.beat.body + t.beat.tell + t.beat.still
         console.log(`INFO K-M23 Ram ${bot}, pack fights d1-d2: ${f(t.beat.n ? bg / t.beat.n : NaN)} slams per core beat shove over ${t.beat.n} beats (the line is >= 0.3: ${t.beat.n && bg / t.beat.n >= 0.3 ? 'met' : 'NOT met'}); wall ${t.beat.wall} body ${t.beat.body} tell ${t.beat.tell} of them, ${t.n - t.beat.n} shoves were Piston's or Kickstart's`)
-      } else if (core === 'graze') {
+      } else if (core === 'thorns') {
         const packs = mine.filter((r) => r.depth < 3)
         const made = sum(packs.map((r) => r.marks.made)), spent = sum(packs.map((r) => r.marks.spent))
-        console.log(`INFO K-M23 Graze ${bot}, pack fights d1-d2: marks spent / made ${f(made ? spent / made : NaN)} (${spent} of ${made}), ${sum(packs.map((r) => r.grazes?.n ?? 0))} grazes over ${f(sum(packs.map((r) => r.s)), 0)} s, HP lost ${f(mean(packs.map((r) => r.lost)), 0)} a fight, cleared ${packs.filter((r) => r.cleared).length} of ${packs.length}`)
+        const bare = rowsBare.filter((r) => r.bot === bot && r.depth < 3)
+        console.log(`INFO K-M23 Thorns ${bot}, pack fights d1-d2: marks spent / made ${f(made ? spent / made : NaN)} (${spent} of ${made}), ${sum(packs.map((r) => r.thorns?.n ?? 0))} thorns hits over ${f(sum(packs.map((r) => r.s)), 0)} s, HP lost ${f(mean(packs.map((r) => r.lost)), 0)} a fight against ${f(mean(bare.map((r) => r.lost)), 0)} bare (the same fights and loadout; ${f(mean(packs.map((r) => r.s)), 1)} s against ${f(mean(bare.map((r) => r.s)), 1)} s), cleared ${packs.filter((r) => r.cleared).length} of ${packs.length} against ${bare.filter((r) => r.cleared).length} bare`)
       } else if (core === 'tether') {
         const packs = mine.filter((r) => r.depth < 3)
         const made = sum(packs.map((r) => r.marks.made)), spent = sum(packs.map((r) => r.marks.spent))
@@ -2123,7 +2118,7 @@ check('K-M23', RUN + '&bots=1', async ({ page }) => {
     const tc = (k) => sum(ci.map((r) => r.tether?.[k] ?? 0))
     console.log(`INFO K-M23 Tether circling bot, first 10 s of each of the same packs: ${ci.length} runs, crossings ${tc('crossings')} (${f(sum(ci.map((r) => r.s)) ? tc('crossings') / sum(ci.map((r) => r.s)) : NaN, 3)} a second), hooks ${tc('hooks')}, breaks ${tc('breaks')}`)
   }
-  // Graze (N1) and Tether (N2) are reported, not pass lines: their bots are first drafts of a player standing in a band, or circling a wire
+  // Thorns (N3) and Tether (N2) are reported, not pass lines: their bots are first drafts of a player standing in the fight (the Thorns bot is Ram's walk up to the body, and no more), or circling a wire
   for (const core of ['ram', 'wake']) assert(felledBy[core][1] === 3 && felledBy[core][0] >= 2, `the eager ${core === 'ram' ? 'Ram' : 'Wake'} bot fells the Assembler in 2 of 3 seeds (${felledBy[core][0]} of ${felledBy[core][1]})`)
 })
 
@@ -2704,11 +2699,11 @@ check('K-M30', RUN, async ({ page }) => {
     out.plain = run(null)
     out.deep = run('wake-deep')
     out.ram = run(null, 'ram')
-    out.graze = run(null, 'graze')
+    out.thorns = run(null, 'thorns')
     out.tether = run(null, 'tether')
     return out
   }`)
-  for (const [what, x, max] of [['3 segments', r.plain, 3], ['Deep (5 segments)', r.deep, 5], ['Ram (cracked, 3 segments)', r.ram, 3], ['Graze (double ring, one instanced mesh)', r.graze, 1], ['Tether (hooked ring, one instanced mesh)', r.tether, 1]]) {
+  for (const [what, x, max] of [['3 segments', r.plain, 3], ['Deep (5 segments)', r.deep, 5], ['Ram (cracked, 3 segments)', r.ram, 3], ['Thorns (spiked ring, one instanced mesh)', r.thorns, 1], ['Tether (hooked ring, one instanced mesh)', r.tether, 1]]) {
     assertEq(`${what}: 40 marked bodies drawn`, [x.drawn, x.marked], [40, 40])
     assert(x.c40 - x.c0 <= max && x.c40 - x.c0 >= 0, `${what}: draw calls ${x.c0} with no marks, ${x.c40} with 40 marked bodies: +${x.c40 - x.c0} (at most ${max})`)
     assertEq(`${what}: the scene's child count is equal before and after 10 s of churn, and the marks' own meshes, geometries and material are the very ones made at the start`, [x.kids1, x.inf1], [x.kids0, x.inf0])
@@ -2830,7 +2825,9 @@ check('K-M32', RUN, async ({ page }) => {
 
 
 // ---------------------------------------------------------------------------------------------------------------------------------------------------------------
-// N1: Graze (design/buildlayer/CORES2.md §1). K-M33 the rule, one swing, shot and rush at a time: what grazes, what does not, the margin, the band, the keystones and the upgrades.
+// N3: Thorns (design/buildlayer/THORNS.md), in Graze's place. K-M33 the rule, one hit at a time: a melee hit that lands (8 and 2 marks to the attacker), a shot that lands (1 mark, no damage), a hit a guard stops (Ward, Mirror
+// Ward, Brace, Anvil: 8 and 3 marks), Hardened (x0.85 with Thorns worn, and only then), the hits that give nothing (a wave, a hazard, no attacker, a hit folded into the hurt window), Bramble, Spite, Backlash, Bramble Patch,
+// the cores that are not Thorns, and the draw calls.
 // ---------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 check('K-M33', RUN, async ({ page }) => {
@@ -2845,90 +2842,173 @@ check('K-M33', RUN, async ({ page }) => {
       if (o.upgrade) W.__upgrade(o.upgrade)
       W.__arena()
       C.pressure = false
-      C.autoAttack = true
+      C.autoAttack = false
+      C.hurtCooldown = 0
       W.__still.pos.set(0, 0, 0)
       C.hasPrev = false
       W.__partLog.length = 0
+      W.__step(1 / 60)
+      W.__partLog.length = 0
     }
-    const gz = () => ev('graze').map((x) => [x.how, x.marks, x.dmg, x.others])
-    // a heavy hulk at (0, 2.0), its windup of 520 ms; Still is put at distance d from it from the second tick of the windup on. What happened: the graze events, the hulk's marks and HP lost, Still's HP lost
-    const swing = (core, d, o = {}) => {
+    /** a body that stays where it is, whole: speedMul 0, a million HP */
+    const body = (x, z, o = {}) => { const e = W.__spawn(o.kind ?? 'chaser', x, z, true); e.hp = 1e6; e.speedMul = 0; return e }
+    /** what thorns said: [how, blocked, dmg, marks, others] */
+    const th = () => ev('thorns').map((x) => [x.how, x.blocked, x.dmg, x.marks, x.others])
+    /** one hurtPlayer call, the hurt window open to it: HP lost, thorns said, the attacker's marks and the HP it lost */
+    const hurt = (e, dmg, src, withFrom = true) => {
+      C.hurtCooldown = 0
+      C.hp = 100
+      C.hurtPlayer(dmg, src, withFrom ? e : undefined)
+      return { lost: 100 - C.hp, th: th(), marks: e ? marks(e).n : 0, dealt: e ? 1e6 - e.hp : 0 }
+    }
+    // --- a hit that lands: 8 and 2 marks to the attacker, and Hardened (20 -> 17, 8 -> 7), a shot, a wave and a hazard
+    boot('thorns')
+    let e = body(0, 2)
+    out.melee = hurt(e, 20, 'melee')
+    boot('thorns'); e = body(0, 2)
+    out.melee8 = hurt(e, 8, 'melee')
+    boot('thorns'); e = body(0, 2)
+    out.min = hurt(e, 1, 'wave', false)
+    boot('thorns'); e = body(0, 2)
+    out.wave = hurt(e, 20, 'wave', false)
+    boot('thorns'); e = body(0, 2)
+    out.hazard = hurt(e, 20, 'hazard')
+    boot('thorns'); e = body(0, 2)
+    out.noFrom = hurt(e, 20, 'melee', false)
+    // a hit folded into the hurt window (smaller than the one before) does not hurt him, so it gives nothing
+    boot('thorns'); e = body(0, 2)
+    hurt(e, 20, 'melee')
+    C.hp = 100
+    C.hurtPlayer(10, 'melee', e)
+    out.folded = { lost: 100 - C.hp, th: th().length, marks: marks(e).n }
+    // with no Thorns: Wake, Ram, Tether and bare take the whole 20, and nothing is given
+    for (const core of ['wake', 'ram', 'tether', null]) {
+      boot(core); e = body(0, 2)
+      out['no_' + core] = hurt(e, 20, 'melee')
+    }
+    // --- a shot that lands: its owner gets 1 mark and no damage; he takes 17 of 20
+    const shot = (core, lat, o = {}) => {
       boot(core, o)
-      const e = W.__spawn('chaser', 0, 2.0, true)
-      e.hp = 1e6
-      const extra = o.extra ? o.extra.map(([x, z]) => { const q = W.__spawn('chaser', x, z, true); q.hp = 1e6; q.speedMul = 0; return q }) : []
-      let lost = 0, band = null, seen = 0
-      for (let i = 0; i < 80; i++) {
-        C.hp = 100
-        if (e.phase === 'windup' && !seen) seen = i
-        // it starts its windup with Still where he stood; from the next tick he is at d from it (he walked there)
-        if (seen && e.phase !== 'approach') W.__still.pos.set(0, 0, e.pos.z - d)
-        W.__step(1 / 60)
-        lost += 100 - C.hp
-        if (e.phase === 'windup' && C.bandN > 0 && !band) band = { n: C.bandN, reach: C.bands[0].reach, margin: C.bands[0].margin, who: C.bands[0].e === e }
-      }
-      return { gz: gz(), marks: marks(e).n, dealt: 1e6 - e.hp, lost, band, extra: extra.map((q) => marks(q).n), bandAfter: C.bandN }
-    }
-    out.inside = swing('graze', 2.0)
-    out.edge = swing('graze', 2.9)
-    out.just = swing('graze', 3.3)
-    out.far = swing('graze', 4.0)
-    out.farWide = swing('graze', 3.9, { upgrade: 'graze-wide' })
-    out.wake = swing('wake', 2.9)
-    out.bare = swing(null, 2.9)
-    out.feint = swing('graze', 2.9, { keystone: 'graze-feint', extra: [[1.0, -1.5], [6, -1.5]] })
-    // a shot: fired from 9 u away along x, passing Still at lateral lat
-    const shot = (lat, o = {}) => {
-      boot('graze', o)
-      const owner = W.__spawn('ranged', -9, 0, true)
-      owner.hp = 1e6
-      owner.speedMul = 0
-      C.fireShot(new V(-9, 0, lat), new V(1, 0, 0), 9, owner)
+      const owner = body(-9, 0, { kind: 'ranged' })
+      if (o.fire) W.__fire(o.fire)
+      C.fireShot(new V(-9, 0, lat), new V(1, 0, 0), 20, owner)
       let lost = 0
       for (let i = 0; i < 90; i++) { C.hp = 100; W.__still.pos.set(0, 0, 0); W.__step(1 / 60); lost += 100 - C.hp }
-      return { gz: gz(), marks: marks(owner).n, dealt: 1e6 - owner.hp, lost }
+      return { th: th(), marks: marks(owner).n, dealt: 1e6 - owner.hp, lost, strain: ev('strain').length, shield: ev('shield').map((x) => x.reflected) }
     }
-    out.shotHit = shot(0.4)
-    out.shotNear = shot(1.2)
-    out.shotFar = shot(2.0)
-    // a rush: the lane locks onto Still, then he steps sideways by lat
-    const lane = (lat) => {
-      boot('graze')
-      const e = W.__spawn('charger', 0, 8, true)
-      e.hp = 1e6
-      let lost = 0, side = 0
-      for (let i = 0; i < 240; i++) { C.hp = 100; if (e.locked && !side) side = lat; W.__still.pos.set(side, 0, 0); W.__step(1 / 60); lost += 100 - C.hp }
-      return { gz: gz(), marks: marks(e).n, lost }
+    out.shot = shot('thorns', 0.4)
+    out.shotMiss = shot('thorns', 2.0)
+    // --- a hit a guard stops: 8 and 3 marks. Ward (a shot), Mirror Ward (a shot, sent home), Brace (a melee hit), Anvil (a melee hit, caught)
+    out.ward = shot('thorns', 0.4, { parts: ['focusing-lens', 'ward', 'scrap-cleaver', 'kickstart'], fire: 'torso' })
+    out.mirror = shot('thorns', 0.4, { parts: ['focusing-lens', 'mirror-ward', 'scrap-cleaver', 'kickstart'], fire: 'torso' })
+    boot('thorns', { parts: ['focusing-lens', 'brace', 'scrap-cleaver', 'kickstart'] }); W.__fire('torso'); e = body(0, 2)
+    out.brace = hurt(e, 20, 'melee')
+    out.braceStrain = ev('strain').length
+    boot('thorns', { parts: ['focusing-lens', 'pressure-vent', 'anvil', 'kickstart'] }); W.__fire('arms'); e = body(0, 2)
+    out.anvil = hurt(e, 20, 'melee')
+    out.anvilCaught = ev('catch').length
+    // a Ward turning a shot away, with no core: nothing is given (Wake's Ward, bare)
+    out.wardWake = shot('wake', 0.4, { parts: ['focusing-lens', 'ward', 'scrap-cleaver', 'kickstart'], fire: 'torso' })
+    // --- Bramble: a hit taken marks the others within 2.0 of Still, one at 1.8 and one at 6
+    boot('thorns', { keystone: 'thorns-bramble' }); e = body(0, 2)
+    const near = body(1.0, -1.5), far = body(6, -1.5)
+    out.bramble = { ...hurt(e, 20, 'melee'), near: marks(near).n, far: marks(far).n }
+    boot('thorns'); e = body(0, 2)
+    const near2 = body(1.0, -1.5)
+    out.noBramble = { th: hurt(e, 20, 'melee').th, near: marks(near2).n }
+    // --- Spite: a hit from a body that can't be moved gives 3 marks and the core hit is x2 (and whole); without it, 2 marks and 8
+    boot('thorns', { keystone: 'thorns-spite' }); e = body(0, 2); e.knockMul = 0
+    out.spite = hurt(e, 20, 'melee')
+    boot('thorns', { keystone: 'thorns-spite' }); e = body(0, 2)
+    out.spiteMovable = hurt(e, 20, 'melee')
+    boot('thorns'); e = body(0, 2); e.knockMul = 0
+    out.heavy = hurt(e, 20, 'melee')
+    // --- Backlash: any hit taken or blocked shoves the attacker, away from him
+    boot('thorns', { upgrade: 'thorns-backlash' }); e = body(0, 2)
+    hurt(e, 20, 'melee')
+    out.backlash = { z: e.knock.z > 0, x: Math.abs(e.knock.x) < 1e-6 }
+    boot('thorns'); e = body(0, 2)
+    hurt(e, 20, 'melee')
+    out.noBacklash = Math.hypot(e.knock.x, e.knock.z)
+    boot('thorns', { upgrade: 'thorns-backlash', parts: ['focusing-lens', 'brace', 'scrap-cleaver', 'kickstart'] }); W.__fire('torso'); e = body(0, 2)
+    hurt(e, 20, 'melee')
+    out.backlashBlock = e.knock.z > 0
+    // --- Bramble Patch: a hit taken leaves a patch at his feet (1.5 u, 2 s); a body entering gets 1 mark, once; one outside, none; a block leaves none
+    boot('thorns', { upgrade: 'thorns-patch' }); e = body(0, 2)
+    const inside = body(0.8, 0.8), outside = body(-4, 0), late = body(-6, 0)
+    hurt(e, 20, 'melee')
+    out.patchMade = { n: C.patches.length, at: [C.patches[0].x, C.patches[0].z] }
+    // he steps off to the side (out of every strike's reach), the patch stays where it fell
+    const away = (s) => { for (let i = 0; i < Math.round(s * 60); i++) { C.hp = 100; W.__still.pos.set(3.6, 0, 0); W.__step(1 / 60) } }
+    W.__partLog.length = 0
+    away(0.1)
+    out.patchIn = { inside: marks(inside).n, outside: marks(outside).n }
+    away(0.5)
+    late.pos.set(-0.5, 0, 0.5)
+    away(0.1)
+    out.patchLate = marks(late).n
+    away(0.8)
+    out.patchOnce = marks(inside).n
+    out.patchStill = C.patches.length
+    away(0.7)
+    out.patchGone = C.patches.length
+    boot('thorns', { upgrade: 'thorns-patch', parts: ['focusing-lens', 'brace', 'scrap-cleaver', 'kickstart'] }); W.__fire('torso'); e = body(0, 2)
+    hurt(e, 20, 'melee')
+    out.patchBlocked = C.patches.length
+    boot('wake', { upgrade: 'thorns-patch' }); e = body(0, 2)
+    hurt(e, 20, 'melee')
+    out.patchWake = C.patches.length
+    // --- the draw calls: the ring is markfx's one, the armed ring and the patches thornfx's one: at most +2 over the same scene with no core
+    {
+      const calls = () => { W.__thornFx.update(C.core === 'thorns', 1 / 60, C, 0, 0); W.__markFx.draw(C, 0, 0, 0); W.__world.render(); return W.__world.renderer.info.render.calls }
+      boot('thorns', { upgrade: 'thorns-patch' })
+      const ws = []
+      for (let i = 0; i < 6; i++) ws.push(body(8 + i, 8))
+      for (let i = 0; i < 4; i++) { W.__still.pos.set(i * 2, 0, 0); C.lastPlayer.set(i * 2, 0, 0); C.hurtCooldown = 0; C.hurtPlayer(20, 'melee', ws[i]) }
+      W.__still.pos.set(0, 0, 0)
+      for (const w of ws) W.__setMarks(idx(w), 3)
+      calls()
+      const c1 = calls()
+      const drawn = W.__thornFx.drawn, patches = C.patches.length
+      const meshes = W.__world.scene.children.filter((c) => c.name === 'thorns-ring').length
+      W.__core(null)
+      calls()
+      const c0 = calls()
+      out.draw = { c0, c1, drawn, patches, meshes }
+      boot('wake')
+      calls()
+      out.drawWake = W.__thornFx.drawn
     }
-    out.laneHit = lane(0)
-    out.laneNear = lane(2.0)
-    out.laneFar = lane(2.8)
-    // Riposte: the Scrap Cleaver (a spender) cools; a graze takes 0.4 s off it (the HUD's clock is the game's)
-    boot('graze', { upgrade: 'graze-riposte' })
-    W.__fire('arms')
-    out.cdBefore = W.__hud.readyIn('arms')
-    const e2 = W.__spawn('chaser', 0, 2.0, true); e2.hp = 1e6
-    let n = 0
-    for (; n < 90 && ev('graze').length === 0; n++) { C.hp = 100; W.__still.pos.set(0, 0, e2.phase === 'windup' || e2.phase === 'strike' ? e2.pos.z - 2.9 : 0); W.__step(1 / 60) }
-    out.cdAfter = W.__hud.readyIn('arms')
-    out.cdTicks = n
-    out.clock = ev('graze').length
     return out
   }`)
-  // the rule
-  assertEq('a hulk winding up, Still inside its ring (2.0 u): the blow lands, so no graze and no marks', [r.inside.gz, r.inside.marks, r.inside.lost > 0], [[], 0, true])
-  assertEq("...at 2.9 u (inside the margin): one graze, the hulk takes 10 and 2 marks, and Still loses nothing", [r.edge.gz, r.edge.marks, r.edge.dealt, r.edge.lost], [[['melee', 2, 10, 0]], 2, 10, 0])
-  assertEq('...at 3.3 u it still grazes; at 4.0 u (past the 1.0 margin) nothing is given', [r.just.gz.length, r.far.gz, r.far.marks], [1, [], 0])
-  assertEq("Wide Berth: a swing at 3.9 u grazes (margin 1.5), where the base margin gave nothing at 4.0", [r.farWide.gz.length, r.farWide.marks], [1, 2])
-  assertEq('with Wake worn, or no core, the same swing gives nothing: no event, no marks', [r.wake.gz, r.wake.marks, r.bare.gz, r.bare.marks], [[], 0, [], 0])
-  assertEq('the band: the winding-up hulk, reach 2.4 (the close strike) and the margin 1.0, one band; gone after the swing', [r.edge.band, r.edge.bandAfter], [{ n: 1, reach: 2.4, margin: 1.0, who: true }, 0])
-  assertEq('Feint: a graze also gives 1 mark to the hulk within 2.0 u of Still, and none to the one 6 u off', [r.feint.gz[0]?.[3], r.feint.extra], [1, [1, 0]])
-  // shots and rushes
-  assertEq('a shot that hits him grazes nothing', [r.shotHit.gz, r.shotHit.marks, r.shotHit.lost > 0], [[], 0, true])
-  assertEq("a shot passing 0.5 u off his edge grazes its owner once: 1 mark, no damage, and it does not hurt him", [r.shotNear.gz, r.shotNear.marks, r.shotNear.dealt, r.shotNear.lost], [[['shot', 1, 0, 0]], 1, 0, 0])
-  assertEq('a shot passing 1.3 u off his edge gives nothing', [r.shotFar.gz, r.shotFar.marks], [[], 0])
-  assertEq('a rush that hits him gives nothing; one he stepped out of by 2.0 u (0.9 u past the lane) grazes: 2 marks, 10 damage, no HP lost; 2.8 u is too far', [r.laneHit.gz, r.laneHit.lost > 0, r.laneNear.gz, r.laneNear.lost, r.laneFar.gz], [[], true, [['lane', 2, 10, 0]], 0, []])
-  assertEq("Riposte: a graze takes 0.4 s off a spender's cooldown", [r.clock, Math.abs(r.cdBefore - r.cdAfter - (r.cdTicks * 1000) / 60 - 400) < 25], [1, true])
+  if (process.env.DEBUG33) console.log(JSON.stringify(r))
+  // a hit that lands
+  assertEq('a melee hit lands for 20: Hardened takes it to 17; the attacker takes 8 and 2 marks, and thorns says (melee, not blocked, 8, 2, 0 others)', [r.melee.lost, r.melee.dealt, r.melee.marks, r.melee.th], [17, 8, 2, [['melee', false, 8, 2, 0]]])
+  assertEq('...Hardened rounds to whole points: 8 -> 7; and never below 1: a wave of 1 -> 1', [r.melee8.lost, r.min.lost], [7, 1])
+  assertEq('a wave takes the armor (20 -> 17) and gives nothing; a hazard with an owner the same; a hit with no attacker the same', [[r.wave.lost, r.wave.th, r.wave.marks], [r.hazard.lost, r.hazard.th, r.hazard.marks, r.hazard.dealt], [r.noFrom.lost, r.noFrom.th]], [[17, [], 0], [17, [], 0, 0], [17, []]])
+  assertEq('a hit folded into the hurt window (smaller than the last) does not hurt him and gives nothing more: no extra event, the attacker has its 2 marks', [r.folded.lost, r.folded.th, r.folded.marks], [0, 1, 2])
+  assertEq('no Thorns, no armor and no barbs: Wake, Ram, Tether and bare take the whole 20 and give nothing', ['wake', 'ram', 'tether', null].map((c) => { const x = r['no_' + c]; return [x.lost, x.th, x.marks, x.dealt] }), [[20, [], 0, 0], [20, [], 0, 0], [20, [], 0, 0], [20, [], 0, 0]])
+  // a shot
+  assertEq('a shot that lands (20): he takes 17; its owner gets 1 mark and no damage; thorns says (shot, not blocked, 0, 1)', [r.shot.lost, r.shot.marks, r.shot.dealt, r.shot.th], [17, 1, 0, [['shot', false, 0, 1, 0]]])
+  assertEq('a shot that misses him gives nothing', [r.shotMiss.lost, r.shotMiss.marks, r.shotMiss.th], [0, 0, []])
+  // blocked
+  assertEq('Ward stops a shot: no HP lost, the owner takes 8 and 3 marks (the block\'s), and thorns says so', [r.ward.lost, r.ward.marks, r.ward.dealt, r.ward.th, r.ward.shield], [0, 3, 8, [['shot', true, 8, 3, 0]], [false]])
+  assertEq('Mirror Ward sends a shot home: no HP lost, the owner takes the 8 and 3 marks, and the reflected bolt as well (its own damage on top)', [r.mirror.lost, r.mirror.marks, r.mirror.th, r.mirror.shield, r.mirror.dealt > 8], [0, 3, [['shot', true, 8, 3, 0]], [true], true])
+  assertEq('Brace turns a melee hit to strain: no HP lost, the attacker takes 8 and 3 marks', [r.brace.lost, r.braceStrain, r.brace.dealt, r.brace.marks, r.brace.th], [0, 1, 8, 3, [['melee', true, 8, 3, 0]]])
+  assertEq("Anvil's catch is a block: no HP lost, the hammer lands on the attacker (30 and more), then the barbs (8 and 3 marks, after the hammer)", [r.anvil.lost, r.anvilCaught, r.anvil.dealt >= 38, r.anvil.marks, r.anvil.th], [0, 1, true, 3, [['melee', true, 8, 3, 0]]])
+  assertEq('with Wake worn, a Ward turns the shot and gives nothing', [r.wardWake.lost, r.wardWake.marks, r.wardWake.dealt, r.wardWake.th], [0, 0, 0, []])
+  // keystones
+  assertEq('Bramble: a hit taken also gives 1 mark to the body 1.8 u off and none to the one 6 u off (others: 1); without it, none', [r.bramble.th, r.bramble.near, r.bramble.far, r.noBramble.th.map((x) => x[4]), r.noBramble.near], [[['melee', false, 8, 2, 1]], 1, 0, [0], 0])
+  assertEq("Spite: a hit from a body that can't be moved gives 3 marks and the core hit x2 (16); on one that can be moved it does not change; with no Spite that body gives 2 and 8", [[r.spite.marks, r.spite.dealt, r.spite.th], [r.spiteMovable.marks, r.spiteMovable.dealt], [r.heavy.marks, r.heavy.dealt]], [[3, 16, [['melee', false, 16, 3, 0]]], [2, 8], [2, 8]])
+  // upgrades
+  assertEq('Backlash: a hit taken shoves the attacker away from him (along +z, none sideways), and a blocked one does too; without it, no shove', [r.backlash, r.backlashBlock, r.noBacklash], [{ z: true, x: true }, true, 0])
+  assertEq('Bramble Patch: a hit taken leaves one patch where he stood (0, 0)', [r.patchMade.n, r.patchMade.at], [1, [0, 0]])
+  assertEq('...a body inside gets 1 mark at once, one outside none; one that walks in later gets its 1; the first is never marked twice; the patch is still there after 1.5 s and gone after 2', [r.patchIn, r.patchLate, r.patchOnce, r.patchStill, r.patchGone], [{ inside: 1, outside: 0 }, 1, 1, 1, 0])
+  assertEq('...a blocked hit leaves no patch; with Wake worn (the upgrade is not its) none', [r.patchBlocked, r.patchWake], [0, 0])
+  // draw calls
+  assert(r.draw.meshes === 1 && r.draw.drawn === 1 + r.draw.patches && r.draw.patches === 4 && r.drawWake === 0, `the armed ring and four patches are one mesh of ${r.draw.drawn} instances (with Wake worn: ${r.drawWake})`)
+  assert(r.draw.c1 - r.draw.c0 <= 2, `Thorns at peak: draw calls ${r.draw.c0} bare, ${r.draw.c1} with the armed ring, four patches and marked bodies: +${r.draw.c1 - r.draw.c0} (at most 2: the ring, the marks' ring)`)
+  console.log(`INFO K-M33 draw calls: bare ${r.draw.c0}, Thorns with four patches and marks ${r.draw.c1} (+${r.draw.c1 - r.draw.c0})`)
 })
 
 

@@ -1513,17 +1513,21 @@ export function slam(pan: number) {
 }
 
 /**
- * The build layer (CORES2.md §1): a graze, the swing that just missed. A short rising "tsss" (a high band-passed hiss sweeping up, 3 to 6 kHz) with a thin tone riding it, so it is a whiff of air and not the spend's
- * ring or the slam's knock. No Math.random. A phone speaker's band.
+ * The build layer (THORNS.md): a thorns hit, the barbs biting back. A hit is a barbed "tk": a short, dry click (a triangle tone falling 2.4 to 1.5 kHz) over a flick of high hiss. A block is bigger and deeper: the same tk with a low
+ * knock under it (a triangle falling 640 to 280 Hz). No Math.random. A phone speaker's band.
  */
-export function graze(pan: number) {
-  heard('graze')
+export function thorns(blocked: boolean, pan: number) {
+  heard(blocked ? 'thorns:block' : 'thorns')
   const c = live()
   if (!c) return
   const t = c.currentTime
   const d = out(c, 'hits', pan)
-  hiss(c, d, t, 0.13, 0.16, 'bandpass', 3000, 6200, 1.4)
-  tone(c, d, 'sine', t, 1900, 2900, 0.1, 0.05)
+  tone(c, d, 'triangle', t, 2400, 1500, 0.04, 0.07, 0.002)
+  hiss(c, d, t, 0.03, 0.08, 'highpass', 5200, 3800, 0.9)
+  if (blocked) {
+    tone(c, d, 'triangle', t + 0.012, 640, 280, 0.12, 0.16)
+    hiss(c, d, t + 0.01, 0.08, 0.1, 'bandpass', 1400, 700, 1.1)
+  }
 }
 
 /**

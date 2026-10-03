@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import { HIDES, hideMaterials } from './hide'
 import { DECAL_Y } from './world'
 import { tellMaterial, releaseTell, tellOrder, COLD, COLD_DEEP, EMBER, type Vfx } from './vfx'
-import { slide, statusTint, disposeBody, distToSegment, type Enemy, type EnemyAction, type EnemyCtx, type EnemyPhase, type Swing } from './enemy'
+import { slide, statusTint, disposeBody, distToSegment, type Enemy, type EnemyAction, type EnemyCtx, type EnemyPhase } from './enemy'
 import { LaneTell, type LaneEnd } from './lane'
 import type { Terrain } from './terrain'
 import type { BossDef } from './areas'
@@ -362,13 +362,6 @@ export class Assembler implements Boss {
 
   landsIn() {
     return this.phase === 'windup' && !this.stunned ? Math.max(0, this.timer) : null
-  }
-
-  /** Graze: the hammer's sector (its own test's range and half-angle, aimed where it began) and the magnet's disc. Its charge is a lane, not a swing: not here (v1). */
-  swing(): Swing | null {
-    if (this.phase !== 'windup') return null
-    if (this.move === 'sweep') return { reach: BOSS.sweep.range + 0.4, aim: this.aim, half: BOSS.sweep.halfAngle }
-    return this.move === 'magnet' ? { reach: BOSS.magnet.radius + 0.4 } : null
   }
 
   hit(damage: number): boolean {

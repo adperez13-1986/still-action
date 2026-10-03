@@ -209,10 +209,10 @@ export type PartEvent =
   /** Wake's trail frosted a body (B6b): (x, z) is the nearest point of the trail to it, where the ribbon flashes. */
   | { kind: 'trailFrost'; enemy: Enemy; x: number; z: number }
   /**
-   * Graze (N1): an enemy's swing, shot or rush just missed him. `how`: a melee strike ('melee'), a rush's lane ('lane'), a shot ('shot', no damage). `dmg`: the core hit the attacker took (nominal, 0 for a shot);
-   * `marks`: marks it was given; `others`: bodies Feint marked besides. `at`: where he stood (a shot: where it passed him); `dir`: the way the miss went (the attacker's heading toward him; a shot's own).
+   * Thorns (N3, THORNS.md): a hit landed on him or was stopped. `how`: an enemy's melee hit or its shot; `blocked`: a guard stopped it (the barbs are the heavier). `dmg`: the core hit the attacker took (what it really took; 0 for
+   * a shot that landed); `marks`: marks it was given; `others`: bodies Bramble marked besides. `at`: where he stood; `dir`: the unit heading from him to the attacker.
    */
-  | { kind: 'graze'; enemy: Enemy; how: 'melee' | 'lane' | 'shot'; dmg: number; marks: number; others: number; at: THREE.Vector3; dir: THREE.Vector3 }
+  | { kind: 'thorns'; enemy: Enemy; how: 'melee' | 'shot'; blocked: boolean; dmg: number; marks: number; others: number; at: THREE.Vector3; dir: THREE.Vector3 }
   /**
    * Tether's wire (N2, CORES2.md §2): `what` is a 'hook' (the wire is up, `enemy` its anchor), a 'cross' (a body's side of the wire flipped inside it: `at` is the crossing point on the wire, `u` how far along it from
    * Still, 0 to 1, `dmg` the core hit, `snag` the slow Snag set), an 'anchor' tick (`dmg`) or a 'break' (`why`; `whip`: the bodies Whip cracked, `dmg` the sum they took). `wire` is its index (0, or 1 with Second Line);
