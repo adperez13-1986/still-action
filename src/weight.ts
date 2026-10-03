@@ -1,5 +1,8 @@
 import { byId, homeSlot, type AbilityDef, type Mod } from './abilities'
 import type { SlotName } from './still'
+import { PARTNUMS, type PartRow } from './partnums'
+import { EVOLUTIONS, type EvoId } from './evolutions'
+import { ROMAN } from './temper'
 
 /**
  * The "weight" trial (design/lean/WEIGHT.md; the word is a PLACEHOLDER, Adrian writes the words): every number of it.
@@ -135,6 +138,51 @@ export function weighed(def: AbilityDef): AbilityDef {
   if (!byDef) memo.set(active, (byDef = new WeakMap()))
   const hit = byDef.get(def)
   if (hit) return hit
+  // a part as it is in PARTS (rank I, no core reshape): the table's rank I row, preset B only
+  const row = def === byId(def.id) ? fromTable(def, 1, null) : null
+  if (row) {
+    byDef.set(def, row)
+    return row
+  }
+  const out = weighMultipliers(def)
+  byDef.set(def, out)
+  return out
+}
+
+/**
+ * The worn part's numbers straight from src/partnums.ts, already weighed: `base` is the part's def from PARTS, `rank` I-III, `evo` its evolution
+ * (rank III only). Null when the table does not apply (the preset is not B, or no row): the caller keeps the multiplier path. The result is
+ * marked as weighed output, so `weighed` hands it back as it is.
+ */
+export function fromTable(base: AbilityDef, rank: number, evo: EvoId | null): AbilityDef | null {
+  if (active !== 'B') return null
+  const parts = PARTNUMS[base.id]
+  const r = Math.max(1, Math.min(3, Math.floor(rank)))
+  const row: PartRow | undefined = evo ? parts?.evolved : parts?.[r === 1 ? 'I' : r === 2 ? 'II' : 'III']
+  if (!row) return null
+  const { mod, ...flat } = row
+  const out: AbilityDef = { ...base, ...flat }
+  if (r > 1 || evo) {
+    out.name = `${base.name} ${ROMAN[r]}`
+    out.rank = r
+  }
+  if (evo) {
+    const e = EVOLUTIONS[evo]
+    Object.assign(out, e.over, { name: e.name, line: e.line, evo, rank: 3 })
+  }
+  if (mod && out.mod) out.mod = { ...out.mod, ...mod } as Mod
+  outputs.add(out)
+  return out
+}
+
+/** `def` as a weighed output (the table's numbers are already in it): `weighed` returns it as it is. For a copy made after `fromTable` (a slot move, a cooldown trait). */
+export function markWeighed(def: AbilityDef): AbilityDef {
+  outputs.add(def)
+  return def
+}
+
+/** The old multiplier path (def x slot damage, vent / dash / cleaver scaling), still what runs for a def the table does not cover (a core's reshape, a preset other than B) and what the generator and K-NU2 compare against. */
+export function weighMultipliers(def: AbilityDef): AbilityDef {
   const P = WEIGHT_PRESETS[active]
   const dmg = P.slotDmg[homeSlot(def)]
   const out: AbilityDef = { ...def, damage: n(def.damage, dmg), mod: weighMod(def.mod, P, dmg) }
@@ -147,6 +195,18 @@ export function weighed(def: AbilityDef): AbilityDef {
     out.shove = P.cleaverShove
   }
   outputs.add(out)
-  byDef.set(def, out)
   return out
+}
+
+/**
+ * The card's one numbers line (PLACEHOLDER words): `hits 41 \u00b7 every 1.8 s`, and `+ area 2.6 u` for a blast or `reach 13 u` for a bolt.
+ * Read off the def the card shows, which for a part worn with no core is the table's row at its rank.
+ */
+export function numsLine(d: AbilityDef): string {
+  const m = d.mod
+  const dmg = m?.kind === 'charge' ? `${m.minDamage}\u2013${d.damage}` : d.shape === 'ward' || d.shape === 'rewind' || d.shape === 'hop' || d.shape === 'catch' ? '' : String(d.damage)
+  const parts = [`${dmg ? `hits ${dmg} \u00b7 ` : ''}every ${+(d.cooldownMs / 1000).toFixed(1)} s`]
+  if (d.shape === 'nova' || d.shape === 'lob' || d.shape === 'decoy') parts.push(`+ area ${+d.radius.toFixed(1)} u`)
+  else if (d.shape === 'bolt' && d.range) parts.push(`reach ${+d.range.toFixed(0)} u`)
+  return parts.join(' ')
 }

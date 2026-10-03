@@ -9,7 +9,7 @@ import { Combat, eliteLine, PARRY, HAND, HAND_REACH, EYE, type Archetype, type B
 import { STARTING, PARTS, ARCH_PARTS, byId, homeSlot, onSlot, type AbilityDef, type AbilityShape, type BeatKey } from './abilities'
 import { SLOT_NAMES, type SlotName } from './still'
 import { TEMPER, ROMAN, tempered } from './temper'
-import { presetId as weightPresetId, setPreset as setWeightPreset, weighed, baseCooldownS, WEIGHT_FEEL, WEIGHT_PRESETS, type PresetId } from './weight'
+import { presetId as weightPresetId, setPreset as setWeightPreset, weighed, fromTable, markWeighed, numsLine, baseCooldownS, WEIGHT_FEEL, WEIGHT_PRESETS, type PresetId } from './weight'
 import { curveAt } from './curve'
 import { MASTERY, MASTERY_FORM, MASTERY_MAX, FORM_NAME, masteryOffer, type MasteryId, type MasteryForm } from './mastery'
 import { CORES, CORE_IDS, CORE_LIVE, KEYSTONES, SPEND_HUD, UPGRADES, UPGRADE_FROM, UPGRADE_MAX, WORDS, fitOf, markCap, variant, type CoreId, type KeystoneDef, type KeystoneId, type UpgradeId } from './cores'
@@ -2806,6 +2806,8 @@ let weightOn = (() => {
     return true
   }
 })()
+/** What the worn parts were built with (src/partnums.ts or the multiplier path): follows `applyWeight`, so the DEV hook and a level entry agree with the switch. */
+let tableOn = weightOn
 pause.setSwitch('weight', () => weightOn, (on) => {
   weightOn = on
   if (run.phase === 'crawl' && combat.weight !== on) {
@@ -2880,6 +2882,13 @@ const coreActive = () => buildsOn && run.core !== null
 const coreNow = (): CoreId | null => (coreActive() ? run.core : null)
 /** The one way main builds a worn part: its reshape under the core worn, then temper, flat while a core is on. With no core: `tempered(base, rank)`. */
 const asWorn = (base: AbilityDef, rank: number, slot: SlotName = base.slot): AbilityDef => {
+  // weight on, no core: the part's numbers are the table's row (src/partnums.ts), evolved or not, not multipliers; a core, or weight off, keeps the multiplier path below
+  const evoNow = run.archetype && Math.min(3, Math.floor(rank)) === 3 && run.evolved.includes(base.id) ? evoOf(base.id)! : null
+  const row = tableOn && !coreActive() ? fromTable(base, rank, evoNow) : null
+  if (row) {
+    const t = run.archetype === 'marksman' && FAMILY[base.id] === 'move' ? { ...row, cooldownMs: Math.round(row.cooldownMs * TRAIT.marksman.footwork.moveCd) } : row
+    return markWeighed(onSlot(t, slot))
+  }
   const d = tempered(variant(base, coreNow()), rank, coreActive())
   // Footwork (archetypes.ts TRAIT): a Move-family part cools down faster, wherever it is worn
   const f = run.archetype === 'marksman' && FAMILY[base.id] === 'move' ? { ...d, cooldownMs: Math.round(d.cooldownMs * TRAIT.marksman.footwork.moveCd) } : d
@@ -2912,9 +2921,18 @@ function applyBuilds() {
   for (const sl of hud.slots) if (sl.def) hud.equip(asWorn(byId(sl.def.id), sl.def.rank ?? 1, sl.slot))
 }
 
+/** The worn parts again, from the table (or the old path when it does not apply): the button keeps its cooldown fraction (hud.equip). */
+function rewear() {
+  for (const sl of hud.slots) if (sl.def) hud.equip(asWorn(byId(sl.def.id), sl.def.rank ?? 1, sl.slot))
+}
+
 /** The switch's state applied to Combat: at each level, when it's flipped mid-depth, and by the DEV hook. (The freeze merge state resets here.) */
 function applyWeight(on: boolean) {
   combat.weight = on
+  if (tableOn !== on) {
+    tableOn = on
+    rewear()
+  }
   freezeAt = -Infinity
   freezeLen = 0
   headAt = -Infinity
@@ -2986,7 +3004,7 @@ function updateOffer() {
     // under a core, the card shows the part as worn (a reshape's name, line and numbers); with none, the part itself
     const shown = card ? variant(card.def, coreNow()) : null
     hud.offer(shown, !!card && !save.found.includes(card.def.id), shown ? describePart(shown) : undefined, card ? meltLabel(card) : null,
-      card ? { swap: swapWords(card.def), pair: pairWords(card.def), fit: fitWords(card.def) ?? evoWords(card.def), slots: run.archetype ? slotsOf(card.def) : undefined } : undefined)
+      card ? { swap: swapWords(card.def), pair: pairWords(card.def), fit: fitWords(card.def) ?? evoWords(card.def), nums: numsLine(tableOn ? weighed(shown!) : shown!), slots: run.archetype ? slotsOf(card.def) : undefined } : undefined)
     loot.offer(next)
     if (next?.set) openPick(next)
   }
@@ -6176,7 +6194,9 @@ if (import.meta.env.DEV) {
     __weightPreset: (id?: PresetId) => {
       if (id !== undefined) {
         if (!(id in WEIGHT_PRESETS)) throw new Error(`no weight preset ${id}`)
+        const was = weightPresetId()
         setWeightPreset(id)
+        if (was !== id) rewear()
       }
       return weightPresetId()
     },

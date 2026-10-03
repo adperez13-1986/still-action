@@ -207,7 +207,7 @@ export interface Hud {
    */
   offer: (
     incoming: AbilityDef | null, fresh?: boolean, past?: { name: string; history: string | null }, melt?: string | null,
-    o?: { swap?: { take: string; melts: string } | null; pair?: string | null; fit?: string | null; slots?: readonly SlotName[] },
+    o?: { swap?: { take: string; melts: string } | null; pair?: string | null; fit?: string | null; nums?: string; slots?: readonly SlotName[] },
   ) => void
   onMelt: (cb: () => void) => void
   onTake: (cb: (slot: SlotName | null) => void) => void
@@ -312,6 +312,7 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
       <div class="info">
         <div class="head"><span class="slot"></span><b class="name"></b><span class="new">new</span></div>
         <p class="line"></p>
+        <p class="nums"></p>
         <p class="hist"></p>
         <p class="replaces"></p>
         <p class="pair"></p>
@@ -369,6 +370,7 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
   const offerSlot = offerEl.querySelector<HTMLElement>('.slot')!
   const offerName = offerEl.querySelector<HTMLElement>('.name')!
   const offerLine = offerEl.querySelector<HTMLElement>('.line')!
+  const offerNums = offerEl.querySelector<HTMLElement>('.nums')!
   const offerReplaces = offerEl.querySelector<HTMLElement>('.replaces')!
   const offerNew = offerEl.querySelector<HTMLElement>('.new')!
   const offerHist = offerEl.querySelector<HTMLElement>('.hist')!
@@ -998,6 +1000,8 @@ export function createHud(root: HTMLElement, hints: HintStore): Hud {
       offerHist.style.display = past?.history ? '' : 'none'
       offerName.style.color = TIER_CSS[incoming.tier]
       offerLine.textContent = incoming.line
+      offerNums.textContent = o.nums ?? ''
+      offerNums.style.display = o.nums ? '' : 'none'
       const into = (sl: SlotName) => {
         const cur = buttons.find((b) => b.slot === sl)!.def
         return cur ? `replaces ${cur.name}` : `fills the empty ${SLOT_LABEL[sl]} slot`

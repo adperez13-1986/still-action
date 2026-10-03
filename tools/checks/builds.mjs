@@ -181,7 +181,7 @@ check('K-M1', RUN + '&trialDefaults', async ({ page }) => {
   const a = await evalJson(page, `() => (${F1})(true)`)
   const b = await evalJson(page, `() => (${F1})(false)`)
   const c = await evalJson(page, `() => (${F1})(true)`)
-  assert(a.ticks.length === 60 && a.loadout[0][1] === 29, `the scripted fight ran 30 s with the Cleaver at III on today's temper (damage ${a.loadout[0]?.[1]}, want 29)`)
+  assert(a.ticks.length === 60 && a.loadout[0][1] === 35, `the scripted fight ran 30 s with the Cleaver at III on today's temper (damage ${a.loadout[0]?.[1]}, want 35: 29 weighed, the table's III row)`)
   assertEq('the fight with "builds" on and no core equals the fight with it off', sha(a), sha(b))
   assertEq('...and equals itself with it switched back on', sha(a), sha(c))
   const log = await evalJson(page, () => { const s = window.__run.stats.at(-1); return { core: s.core, temperFlat: s.temperFlat } })
@@ -290,7 +290,7 @@ check('K-M3', RUN, async ({ page }) => {
   }`)
   assertEq('Scrap Cleaver at III under Wake: round(18 x 1.3) = 23', sw.onDef.damage, 23)
   assertEq('...and its cooldown 2600 x 0.85', sw.onDef.cooldownMs, Math.round(2600 * 0.85))
-  assertEq('after "builds" goes off it is today\'s: round(18 x 1.6) = 29', sw.offDef.damage, 29)
+  assertEq('after "builds" goes off it is today\'s: round(18 x 1.6) = 29, and 35 weighed (the table\'s III row, NUMS)', sw.offDef.damage, 35)
   assertEq('...cooldown 2600 x 0.72', sw.offDef.cooldownMs, Math.round(2600 * 0.72))
   assertEq('back on: flat again', [sw.backDef.damage, sw.backDef.cooldownMs], [23, Math.round(2600 * 0.85)])
   assertEq('a ready button stays ready across the flip', [sw.readyBefore, sw.readyAfter], [0, 0])
@@ -972,6 +972,8 @@ check('K-M11', RUN, async ({ page }) => {
     const worn = () => Object.fromEntries(W.__hud.loadout.map((d) => [d.id, JSON.parse(JSON.stringify(d))]))
     const ids = ['signal-flare', 'frayed-cleaver', 'frost-trail']
     out.base = Object.fromEntries(ids.map((id) => [id, base(id)]))
+    // with no core the worn part is the table's rank I row (src/partnums.ts), which is weighed(base)
+    out.baseW = Object.fromEntries(ids.map((id) => [id, W.__weighed(id, 1)]))
     ;(${SETUP})({ parts: ['signal-flare', 'pressure-vent', 'frayed-cleaver', 'frost-trail'] })
     W.__core('wake')
     out.wake = worn()
@@ -1014,7 +1016,7 @@ check('K-M11', RUN, async ({ page }) => {
   for (const id of ['signal-flare', 'frayed-cleaver', 'frost-trail']) {
     assertEq(`${id} under Wake keeps its id, slot, tier, drops, key and fits`, flat(r.wake[id]), flat(r.base[id]))
     assertEq(`${id} under Ram is the base part, as worn (deep-equal)`, r.ram[id], r.base[id])
-    assertEq(`${id} with builds off is the base part, as worn (deep-equal)`, r.off[id], r.base[id])
+    assertEq(`${id} with builds off is the base part, as worn (deep-equal; the table's rank I row, NUMS)`, r.off[id], r.baseW[id])
   }
   const pick = (d, ks) => Object.fromEntries(ks.map((k) => [k, d[k] ?? null]))
   assertEq('Backhand under Wake: an arc, 18, 150 degrees, cooldown 2400, range 3.1, mod behind, no fray, no iconStates', pick(r.wake['frayed-cleaver'], ['name', 'shape', 'damage', 'cone', 'cooldownMs', 'range', 'mod', 'iconStates']), { name: 'Backhand', shape: 'arc', damage: 18, cone: 150, cooldownMs: 2400, range: 3.1, mod: { kind: 'behind' }, iconStates: null })
@@ -1739,7 +1741,7 @@ check('K-M21', '?roads=1&line=0&engine=0&resume=1&pick=core', async ({ page }) =
   for (const [what, o] of [["core 'graze' (N3 took it out for Thorns: a save made with it is bare)", { depth: 2, core: 'graze', keystone: 'graze-feint', upgrades: ['graze-riposte'], ranks: { arms: 3 } }], ["core 'sight' (a core this build does not know)", { depth: 2, core: 'sight', keystone: 'wake-deep', upgrades: ['wake-slip'], ranks: { arms: 3 } }], ['no core at depth 2 (a run begun before the layer)', { depth: 2, ranks: { arms: 3 } }]]) {
     const r = await resumeWith(o)
     assertEq(`${what}: no pick, bare, depth 2`, [r.open, r.cards, r.depth, r.runCore, r.core, r.keystone, r.upgrades], [false, [], 2, null, null, null, []])
-    assertEq(`${what}: the depth logs core null and the table of today (Cleaver III is 29), and the snapshot has no core key`, [r.stat.core, r.stat.temperFlat, r.arms, r.snap.hasCoreKey], [null, false, 29, false])
+    assertEq(`${what}: the depth logs core null and the table of today (Cleaver III is 35 as the table has it, 29 before weighing), and the snapshot has no core key`, [r.stat.core, r.stat.temperFlat, r.arms, r.snap.hasCoreKey], [null, false, 35, false])
   }
   // a keystone and an upgrade of the other core: dropped, the core kept
   const x = await resumeWith({ depth: 2, core: 'wake', keystone: 'ram-domino', upgrades: ['ram-wide', 'wake-slip'], ranks: { arms: 3 } })

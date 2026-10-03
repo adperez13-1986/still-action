@@ -372,6 +372,9 @@ html, body {
 #offer .pair, .pcard .ppair { color: #a9cdea; }
 #offer .fit, .pcard .pfit { color: #8fd0ff; }
 .pcard .pfit { margin: 8px 0 0; font: 600 12px/1.35 var(--ui); }
+/* the table's numbers line (src/partnums.ts) */
+#offer .nums, .pcard .nums { color: #f2f6fa; font: 600 12px/1.3 var(--ui); font-variant-numeric: tabular-nums; }
+.pcard .nums { margin-top: 3px; }
 #offer .hist, .pcard .phist { color: #8fa3b8; font-style: italic; }
 /* a prompt's title may take two lines rather than hide behind its button */
 #prompt .name { white-space: normal; }

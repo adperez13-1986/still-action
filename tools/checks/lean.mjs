@@ -1074,7 +1074,8 @@ check('K-L3', RUN, async ({ page }) => {
     for (const [name, on, p] of ${MODES}) {
       ${scene('on', `
         W.__weightPreset(p)
-        const slotDef = (slot) => W.__hud.slots.find((x) => x.slot === slot).def
+        // the part as PARTS has it (unweighed): with weight on the worn def is the table's row, already weighed (NUMS), so the raw one is what reaches() is asked
+        const slotDef = (slot) => { const d = W.__hud.slots.find((x) => x.slot === slot).def; return W.__parts.find((x) => x.id === d.id) }
         const o = W.__still.pos
         // the Vent: a hulk 0.9 u past today's blast (the radius is the def's), inside B's 6.0 and D's 5.4 only if the room is
         const vent = slotDef('torso')
