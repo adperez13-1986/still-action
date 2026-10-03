@@ -82,7 +82,14 @@ Brawler and Marksman need nothing new to start; their families exist.
 
 Bare game and old saves keep working: an old save resumes with no archetype (today's rules).
 
-## Yours to decide
+## His answers (3 Oct)
+
+1. Slot laws by family: **yes**. 2. Hand / eye / drone autos: **right**. 3. Sub-styles: **after the Assembler**. 4. "What will the roar
+do?" Lead: in A1 it's only a blast or guard in the head slot (e.g. Pressure Vent + Chill Vent: shove and slow). Brawler's own head
+parts, warcries (D2's Barbarian), come in A3: **Howl** (bodies within 4 u back off 1.5 s, breaks windups), **Battle Cry** (strikes
+x1.3 for 4 s), maybe **Taunt** (all attention on him a few seconds). Awaiting his ok to start A1.
+
+## Yours to decide (draft 1's questions, answered above)
 
 1. Does "the archetype sets which families each slot accepts" match what you meant by keeping the 4 parts?
 2. The three autos (hand, eye, drone): right, or should an archetype have no auto at all?
