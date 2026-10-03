@@ -43,7 +43,9 @@ archetype can actually wear together (check against the slot laws).
 - **E3:** Turret in the Summoner's drops; Twin Sentry, Spotter.
 - Later: more evolutions (every part should have one eventually), and A3 / A4 as planned.
 
-## Yours to decide
+## His answers (3 Oct): "go with your recommendations": permanent, visible from rank I, masteries gone under archetypes.
+
+## Yours to decide (answered)
 
 1. Permanent once evolved (Vampire Survivors), or lost if the partner leaves?
 2. Show the partner from rank I (a visible puzzle), or keep it hidden until you discover it?
