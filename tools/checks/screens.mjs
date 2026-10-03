@@ -135,14 +135,14 @@ const SCREENS = {
       action: 'turn to the wall' }))`,
     close: `() => window.__hud.chooser(null)`,
   },
-  // B4: the core's pick at the run's start (N1: four cards, Tether's disabled "soon", one row or 2x2). No actions row, so the cards themselves are the buttons to reach; the lines are twice the length of the placeholder words
+  // B4: the core's pick at the run's start (four cards, one row or 2x2; Tether's was disabled "soon" until N2). No actions row, so the cards themselves are the buttons to reach; the lines are twice the length of the placeholder words
   pick: {
     sel: '#pause',
     open: `() => window.__pause.pickCore('Choose a core', 'One way to fight, for the whole run, and the only one you will have until the run is over.', [
       { id: 'wake', name: 'Wake', thumb: 'Pass beside them, and never stop, and never turn your back on the ones that come.', leaves: 'What you pass beside is frosted, and the frost holds for a while after you have gone.', spends: 'Blue buttons spend them, and the more marks on a body, the more they pay out.', },
       { id: 'ram', name: 'Ram', thumb: 'Put them against something, a wall, or another one of them, and hold them there.', leaves: 'What hits a wall or a body is slammed, and a slammed body pays what the parts that fit it spend.', spends: 'Blue buttons spend them, and the more marks on a body, the more they pay out.', },
       { id: 'graze', name: 'Graze', thumb: 'Stand at the edge of their swing, and let it miss you by a hair, again and again.', leaves: 'What just misses you is grazed, and the graze holds for a while after the swing has gone.', spends: 'Blue buttons spend them, and the more marks on a body, the more they pay out.', },
-      { id: 'tether', name: 'Tether', thumb: 'Circle them at a distance, and never let the wire go slack.', leaves: 'What the wire sweeps across is snagged, and the snag holds for a while after it has gone.', spends: 'Blue buttons spend them.', soon: 'soon' },
+      { id: 'tether', name: 'Tether', thumb: 'Circle them at a distance, and never let the wire go slack.', leaves: 'What the wire sweeps across is snagged, and the snag holds for a while after it has gone.', spends: 'Blue buttons spend them, and the more marks on a body, the more they pay out.', },
     ], () => {})`,
   },
 }

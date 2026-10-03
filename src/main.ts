@@ -52,6 +52,7 @@ import { MarkFx } from './markfx'
 import { WakeFx } from './wakefx'
 import { ShoveFx } from './ramfx'
 import { GrazeFx } from './grazefx'
+import { TetherFx } from './tetherfx'
 import { CoreShow } from './coreshow'
 import type { PartEvent } from './parts'
 import type { NotebookPage } from './pause'
@@ -88,7 +89,7 @@ const START_DEPTH = Math.min(RUN_DEPTHS, Math.max(1, Number(DEPTH_PARAM) || 1))
 /** DEV only: a URL param as given, or null (production builds never read them). */
 const devParam = (k: string): string | null => (import.meta.env.DEV ? params.get(k) : null)
 /**
- * `?core=wake|ram|graze` (DEV, with `?depth=`): the run starts wearing that core (design/buildlayer/BUILD.md §2.4); it needs no switch. Without it a dev boot is bare,
+ * `?core=wake|ram|graze|tether` (DEV, with `?depth=`): the run starts wearing that core (design/buildlayer/BUILD.md §2.4); it needs no switch. Without it a dev boot is bare,
  * so every suite stays bare. A `?depth=` boot never shows the pick.
  */
 const CORE_PARAM: CoreId | null = DEPTH_PARAM !== null && (CORE_LIVE as readonly (string | null)[]).includes(devParam('core')) ? (devParam('core') as CoreId) : null
@@ -408,6 +409,8 @@ const combat = new Combat(world.scene, OPEN, {
     markFx.event(ev)
     grazeFx.event(ev)
     if (ev.kind === 'graze') grazeEvent(ev)
+    tetherFx.event(ev)
+    if (ev.kind === 'tether') tetherEvent(ev)
     if (ev.kind === 'mark' || ev.kind === 'markExpired' || ev.kind === 'spend' || ev.kind === 'skim' || ev.kind === 'bite' || ev.kind === 'trailFrost') coreEvent(ev)
     if (ev.kind === 'backhand') {
       const st = run.stats[run.stats.length - 1]
@@ -1312,12 +1315,15 @@ const wakeFx = new WakeFx(world.scene)
 const shoveFx = new ShoveFx(world.scene)
 /** Graze's band under a winding-up swing (grazefx.ts): one draw call, only with Graze worn. */
 const grazeFx = new GrazeFx(world.scene)
+/** Tether's wire and the hook glyph over its anchor (tetherfx.ts): two draw calls (the ring is markfx's third), only with Tether worn. */
+const tetherFx = new TetherFx(world.scene)
 /** A new level or a run's end: no rings, no field, no streak, no number. */
 function clearCoreFx() {
   markFx.clear()
   wakeFx.clear()
   shoveFx.clear()
   grazeFx.clear()
+  tetherFx.clear()
   coreShow.clear()
 }
 /** His walk pace as still.ts has it (Slipstream multiplies it for a moment and only ever through this). */
@@ -1590,6 +1596,48 @@ function grazeEvent(ev: Extract<PartEvent, { kind: 'graze' }>) {
   }
 }
 
+/** The wire's height at a crossing (tetherfx.ts' chest height, near enough for a spark). */
+const LOOK_WIRE_Y = 0.85
+
+/**
+ * Tether (CORES2.md §2): the log (`tether`: hooks, breaks, crossings, the anchors' ticks), the nominal core damage, and the look and sound. The wire itself and its flash and snap are tetherfx.ts, from the same event. A crossing is a
+ * spark at the crossing point on the wire and a thin ping; a hook is a tick of cold at the anchor; a break is a dry twang. A hand-spread, no random.
+ */
+function tetherEvent(ev: Extract<PartEvent, { kind: 'tether' }>) {
+  const st = run.stats[run.stats.length - 1]
+  if (st) {
+    const k = (st.tether ??= { hooks: 0, breaks: 0, crossings: 0, anchorTicks: 0 })
+    if (ev.what === 'hook') k.hooks++
+    else if (ev.what === 'break') k.breaks++
+    else if (ev.what === 'cross') k.crossings++
+    else k.anchorTicks++
+    if (st.autoDmg) st.autoDmg.core += ev.dmg
+  }
+  const pan = panOf(ev.at)
+  if (ev.what === 'hook') {
+    sfx.wire('hook', pan)
+    vfx.flash(at3(ev.enemy.pos, 0.7 * ev.enemy.size), COLD, 0.5)
+  } else if (ev.what === 'cross') {
+    sfx.wire('cross', pan)
+    const at = at3(ev.at, LOOK_WIRE_Y)
+    vfx.flash(at, COLD, 0.6)
+    vfx.sparks(at, COLD, 5, 3.5)
+    vfx.frost(at3(ev.enemy.pos, 0.5 * ev.enemy.size), 1, ev.enemy.radius * 0.5)
+  } else if (ev.what === 'anchor') {
+    vfx.frost(at3(ev.enemy.pos, 0.6 * ev.enemy.size), 1, ev.enemy.radius * 0.5)
+  } else {
+    sfx.wire('snap', pan)
+    if (ev.whip) {
+      // Whip: a crack down the line, cold points from where the wire was, thrown the same way every time (index-spread)
+      const n = 7
+      for (let i = 0; i < n; i++) {
+        const k = (i + 0.5) / n
+        vfx.trail(new THREE.Vector3(ev.from.x + (ev.to.x - ev.from.x) * k, LOOK_WIRE_Y, ev.from.z + (ev.to.z - ev.from.z) * k), COLD, 0.22, 0.3 + 0.1 * Math.sin(Math.PI * k))
+      }
+      vfx.flash(at3(ev.to, LOOK_WIRE_Y), COLD, 0.9)
+    }
+  }
+}
 function shatterFx(ev: Extract<PartEvent, { kind: 'shatter' }>) {
   const from = at3(ev.from, 0.8)
   const to = at3(ev.to, 0.9)
@@ -1953,6 +2001,8 @@ interface DepthStats {
   skims?: { n: number; burst: number; spray: number; bite: number }
   /** Graze's (N1): grazes by how (a strike, a rush's lane, a shot), and the ones on a boss. */
   grazes?: { n: number; melee: number; shot: number; lane: number; boss: number }
+  /** Tether's (N2): wires hooked and broken, crossings, and the anchors' ticks. */
+  tether?: { hooks: number; breaks: number; crossings: number; anchorTicks: number }
 }
 /** One press on a filled button, for the playtest file: how long taps really last on the phone. */
 interface TapLog { depth: number; slot: SlotName; ms: number; ready: boolean; result: Press['result']; leftMs: number; at: number; nbMs?: number; nbSlot?: SlotName; tp?: true }
@@ -2985,7 +3035,7 @@ function fitWords(d: AbilityDef): string | null {
   const f = c ? fitOf(d, c) : null
   if (!c || !f) return null
   if (f.role === 'spend') return WORDS.fits(WORDS.core[c], WORDS.spends(WORDS.mark[c], f.k ?? CORES[c].K))
-  const line = (WORDS.fitLine as Record<string, string>)[d.id]
+  const line = WORDS.fitLineFor[c]?.[d.id] ?? (WORDS.fitLine as Record<string, string>)[d.id]
   return line ? WORDS.fits(WORDS.core[c], line) : WORDS.fitsPlain(WORDS.core[c])
 }
 
@@ -3388,7 +3438,7 @@ function saw(id: string) {
 }
 
 /**
- * The core's pick (BUILD.md §2.8): the run's start, a card for every core (Wake, Ram, Graze, and Tether's, which reads "soon" and cannot be taken until N2), no reroll and nothing random. It shows once depth 1 is entered and before he can move: the world waits
+ * The core's pick (BUILD.md §2.8): the run's start, a card for every core (Wake, Ram, Graze and Tether, all live since N2), no reroll and nothing random. It shows once depth 1 is entered and before he can move: the world waits
  * (openPause stops the windups; Combat's clock does not run while `paused`). `at` is how it came: 'start' at the run's beginning, 'resume' when a reload found depth 1 with no core.
  * The pick: the core is worn (`applyBuilds` re-wears the one part he has, flat and reshaped), the open depth's stats are corrected to say so (depth 1's entry was pushed before the pick
  * and nothing has been fought), and the snapshot is written with it.
@@ -5510,6 +5560,7 @@ function frame(nowMs: number) {
   wakeFx.update(!home && run.phase === 'crawl' && !!level && coreNow() === 'wake', paused ? 0 : elapsed, x, z, combat)
   shoveFx.update(!home && run.phase === 'crawl' && !!level && coreNow() === 'ram', paused ? 0 : elapsed, x, z)
   grazeFx.update(!home && run.phase === 'crawl' && !!level && coreNow() === 'graze', paused ? 0 : elapsed, combat)
+  tetherFx.update(!home && run.phase === 'crawl' && !!level && coreNow() === 'tether', paused ? 0 : elapsed, combat, x, z)
   firstFightHint(fighting)
   if (!paused) {
     vfx.update(elapsed * breakScale(), world.camera, world.renderer.domElement.height)
@@ -5577,6 +5628,7 @@ if (import.meta.env.DEV) {
     __wakeFx: wakeFx,
     __shoveFx: shoveFx,
     __grazeFx: grazeFx,
+    __tetherFx: tetherFx,
     __coreShow: coreShow,
     __run: run, __parts: PARTS, __partLog: partLog, __pause: pause,
     /** Advance exactly `s` seconds of game time, and the HUD clock (and the button faces) with it. No rAF, no hitstop. */

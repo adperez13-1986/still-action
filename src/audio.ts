@@ -1526,6 +1526,27 @@ export function graze(pan: number) {
   tone(c, d, 'sine', t, 1900, 2900, 0.1, 0.05)
 }
 
+/**
+ * The build layer (CORES2.md §2): Tether's wire. 'hook' is the throw, a short rising tick; 'cross' a thin ping as the wire sweeps a body (high and short, so a pack crossed in a row is a run of pings, not a roar);
+ * 'snap' the wire breaking, a dry twang falling away. No Math.random. A phone speaker's band.
+ */
+export function wire(what: 'hook' | 'cross' | 'snap', pan: number) {
+  heard('wire:' + what)
+  const c = live()
+  if (!c) return
+  const t = c.currentTime
+  const d = out(c, 'hits', pan)
+  if (what === 'hook') {
+    tone(c, d, 'sine', t, 900, 1800, 0.07, 0.05)
+  } else if (what === 'cross') {
+    tone(c, d, 'sine', t, 2600, 2300, 0.08, 0.045)
+    hiss(c, d, t, 0.04, 0.05, 'bandpass', 5200, 4200, 1.6)
+  } else {
+    tone(c, d, 'triangle', t, 1400, 420, 0.2, 0.07)
+    hiss(c, d, t, 0.06, 0.1, 'bandpass', 4000, 2200, 1.2)
+  }
+}
+
 /** The build layer: marks ran out unspent. A faint fizzle, about -18 dB against the hit's hiss. Helpful or nagging is his phone call (BUILD.md §9). */
 export function fizzle(pan: number) {
   heard('fizzle')

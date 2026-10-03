@@ -184,6 +184,7 @@ export const PARTS: AbilityDef[] = [
   // ---------------- HEAD: reaches far ----------------
   part({
     id: 'focusing-lens', slot: 'head', name: 'Focusing Lens', tier: 'white', beat: 'lens',
+    fits: { tether: { role: 'spend', k: 5 } },
     line: 'A heavy bolt at your target.',
     shape: 'bolt', cooldownMs: 4200, damage: 26, range: 13, radius: 0.85,
     icon: '<circle cx="7" cy="12" r="3.5"/><path d="M11.5 12H21"/><path d="M17 8.5 21 12l-4 3.5"/>',
@@ -197,18 +198,21 @@ export const PARTS: AbilityDef[] = [
   }),
   part({
     id: 'cracked-lens', slot: 'head', name: 'Cracked Lens', tier: 'blue', beat: 'cracked',
+    fits: { tether: { role: 'spend', k: 8 } },
     line: 'The bolt passes through every enemy it hits. Walls still stop it. On a chilled enemy: lands twice.',
     shape: 'bolt', mod: { kind: 'pierce' }, pays: ['chilled'], cooldownMs: 4600, damage: 20, range: 15, radius: 0.7,
     icon: '<circle cx="6" cy="12" r="3.5"/><path d="M5 8.8 6.5 11 5 13"/><path d="M10.5 12H22"/><path d="M14.5 8.5v7M18.5 8.5v7"/>',
   }),
   part({
     id: 'ricochet-lens', slot: 'head', name: 'Ricochet Lens', tier: 'blue', beat: 'ricochet',
+    fits: { tether: { role: 'spend', k: 6 } },
     line: 'A bolt that bounces off walls to reach enemies behind cover.',
     shape: 'bolt', mod: { kind: 'bounce', bounces: 2, bankSearch: 8 }, cooldownMs: 4600, damage: 18, range: 20, radius: 0.7,
     icon: '<circle cx="5" cy="5.5" r="2.5"/><path d="M7 8l5.5 11L18 8"/><path d="M15.2 8.6 18 8l.6 2.8"/><path d="M8 20.5h9"/>',
   }),
   part({
     id: 'patient-lens', slot: 'head', name: 'Patient Lens', tier: 'blue', beat: 'patient',
+    fits: { tether: { role: 'spend', k: 10 } },
     line: 'Charges between shots. Push it for a full shot. On a marked enemy: lands twice.',
     shape: 'bolt', mod: { kind: 'charge', minDamage: 6, minS: 1.5, fullS: 7.5 }, pays: ['marked'], cooldownMs: 1500, damage: 32, range: 13, radius: 0.85,
     icon: '<circle cx="8.5" cy="12" r="5.5"/><circle cx="8.5" cy="12" r="2.2" fill="currentColor" stroke="none" class="charge"/><path d="M16 12h1M19.5 12h2.5"/>',
@@ -222,6 +226,7 @@ export const PARTS: AbilityDef[] = [
   }),
   part({
     id: 'through-line', slot: 'head', name: 'Through-Line', tier: 'gold', beat: 'through', drops: 'boss',
+    fits: { tether: { role: 'spend', k: 8 } },
     line: 'A bolt through enemies and walls. The holes it leaves let shots through both ways.',
     shape: 'bolt', mod: { kind: 'pierceAll', breachMs: 4000 }, cooldownMs: 6000, damage: 24, range: 16, radius: 0.6,
     icon: '<path d="M2 12h18"/><path d="M17 8.5 20.5 12 17 15.5"/><path d="M10 3.5v5M14 3.5v5M10 15.5v5M14 15.5v5"/>',
@@ -243,7 +248,7 @@ export const PARTS: AbilityDef[] = [
   }),
   part({
     id: 'ward', slot: 'torso', name: 'Ward', tier: 'white', beat: 'ward',
-    fits: { wake: { role: 'guard' } },
+    fits: { wake: { role: 'guard' }, tether: { role: 'guard' } },
     line: 'A brief shield that destroys enemy shots. Not shells.',
     shape: 'ward', cooldownMs: 7000, damage: 0, range: 0, radius: 1.8, windowMs: 1400,
     icon: '<circle cx="12" cy="12" r="8.5" stroke-dasharray="4.2 2.5"/><circle cx="12" cy="12" r="2.5"/>',
@@ -257,6 +262,7 @@ export const PARTS: AbilityDef[] = [
   }),
   part({
     id: 'chill-vent', slot: 'torso', name: 'Chill Vent', tier: 'blue', beat: 'chill',
+    fits: { tether: { role: 'shape' } },
     line: 'A cold blast that chills enemies and makes them walk slowly for a while.',
     shape: 'nova', mod: { kind: 'slow', mul: 0.5, ms: 3000 }, sets: ['chilled'], cooldownMs: 6500, damage: 10, range: 0, radius: 4.3,
     icon: '<path d="M12 2.5v19M3.8 7.25l16.4 9.5M3.8 16.75l16.4-9.5"/><path d="M9.5 4l2.5 2 2.5-2M9.5 20l2.5-2 2.5 2"/>',
@@ -278,7 +284,7 @@ export const PARTS: AbilityDef[] = [
   }),
   part({
     id: 'lure', slot: 'torso', name: 'Lure', tier: 'gold', beat: 'lure', drops: 'rare',
-    fits: { graze: { role: 'shape' } },
+    fits: { graze: { role: 'shape' }, tether: { role: 'shape' } },
     line: 'Leaves a decoy of you that enemies go after, until it bursts. Push it to burst it early and leave another.',
     shape: 'decoy', cooldownMs: 12000, damage: 18, range: 12, radius: 3.0, windowMs: 3000, shove: 1.6, offset: 1.5,
     icon: '<circle cx="12" cy="6" r="2.5"/><path d="M12 8.5V11"/><path d="M8.5 11h7l-1 8.5h-5z"/><path d="M4.5 9a8 8 0 0 0 0 7M19.5 9a8 8 0 0 1 0 7"/>',
@@ -301,6 +307,7 @@ export const PARTS: AbilityDef[] = [
   }),
   part({
     id: 'rusted-hook', slot: 'arms', name: 'Rusted Hook', tier: 'blue', beat: 'hook',
+    fits: { tether: { role: 'shape' } },
     line: 'A long, narrow swing that yanks enemies to you.',
     shape: 'arc', mod: { kind: 'hook', to: 1.6 }, cooldownMs: 3200, damage: 12, range: 5.5, radius: 0, cone: 70,
     icon: '<path d="M4 12h13"/><path d="M17 12a3 3 0 1 0 3-3"/><path d="M7.5 8.5 4 12l3.5 3.5"/>',
@@ -384,6 +391,7 @@ export const PARTS: AbilityDef[] = [
   }),
   part({
     id: 'plumb-line', slot: 'legs', name: 'Plumb Line', tier: 'gold', beat: 'plant', drops: 'rare',
+    fits: { tether: { role: 'guard' } },
     line: 'Drop an anchor, then press again to snap back to it. Push it to drop a new one where you stand.',
     shape: 'anchor', cooldownMs: 9000, damage: 14, range: 10, radius: 1.0, shove: 1.2, windowMs: 5000, travelMs: 240,
     icon: '<path d="M12 2.5v8" stroke-dasharray="2 2.5"/><path d="M7.5 11.5h9L12 21z"/>',

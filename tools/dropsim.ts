@@ -333,10 +333,10 @@ function logged(path: string, last: number) {
   })
 }
 
-// --- the hunt: --core wake|ram|graze (B5; graze N1) ---
+// --- the hunt: --core wake|ram|graze|tether (B5; graze N1, tether N2) ---
 const CORE_ARG = arg('core', '')
 if (CORE_ARG) {
-  if (CORE_ARG !== 'wake' && CORE_ARG !== 'ram' && CORE_ARG !== 'graze') throw new Error(`--core wants wake, ram or graze, not ${CORE_ARG}`)
+  if (CORE_ARG !== 'wake' && CORE_ARG !== 'ram' && CORE_ARG !== 'graze' && CORE_ARG !== 'tether') throw new Error(`--core wants wake, ram, graze or tether, not ${CORE_ARG}`)
   const core: CoreId = CORE_ARG
   const K = CORES[core].K
   /** A part's job for this core, from the real defs: spend (own), bridge (a spender whose own k is under the core's K), shape, guard; null when plain. */

@@ -1656,16 +1656,12 @@ const hooksUp = (page) => page.waitForFunction(() => typeof window.__enter === '
 // a real run, not a dev one: no ?depth=. A save in memory is past its first run only by the run it has just started: the first boot begins the run (FIRST_RUN_IN_MAZE), the door is `__run.phase = 'leaving'`
 check('K-M20', '?save=memory&roads=0&line=0&engine=0&pick=1', async ({ page }) => {
   const read = () => evalJson(page, PICK_STATE)
-  // the boot began a run, depth 1 is entered, and the pick is up: a card for every core (N1: Wake, Ram, Graze, and Tether's, disabled and "soon"), and no back button
+  // the boot began a run, depth 1 is entered, and the pick is up: a card for every core (Wake, Ram, Graze, Tether; N1 left Tether's disabled and "soon", N2 took that off), and no back button
   const a = await read()
   assertEq('a real run (not dev) at depth 1, no core yet', [a.dev, a.depth, a.runCore, a.core, a.phase], [false, 1, null, null, 'crawl'])
   assertEq('the pick is open with four cards: Wake, Ram, Graze, Tether', [a.open, a.cards, a.names], [true, ['wake', 'ram', 'graze', 'tether'], ['Wake', 'Ram', 'Graze', 'Tether']])
-  assertEq("...Tether's is disabled and says so where the spend line goes; the other three are live", [a.soon, a.spendLines[3], a.spendLines[0]], [[false, false, false, true], 'soon', 'Blue buttons spend them.'])
+  assertEq("...all four are live (none disabled, none says 'soon'): every card has the spend line", [a.soon, a.spendLines], [[false, false, false, false], ['Blue buttons spend them.', 'Blue buttons spend them.', 'Blue buttons spend them.', 'Blue buttons spend them.']])
   assertEq('...and no button but the cards: no back, no resume, no leave', [a.buttons, await page.locator('#pause button').count()], [0, 4])
-  // a click on the disabled card does nothing (force: playwright would wait for it to be enabled)
-  await page.locator('#pause .core[data-core="tether"]').click({ force: true })
-  const t = await read()
-  assertEq("a click on Tether's card takes nothing: the pick stays open, no core", [t.open, t.core, t.runCore], [true, null, null])
   // the world waits: with the stick pushed, one real second of frames moves neither the game clock nor Still
   await evalJson(page, () => { window.__stick(1, 0) })
   await page.waitForTimeout(1000)
@@ -1688,6 +1684,12 @@ check('K-M20', '?save=memory&roads=0&line=0&engine=0&pick=1', async ({ page }) =
   await page.locator('#pause .core[data-core="wake"]').click()
   const e = await read()
   assertEq('...and Wake taken the second time', [e.core, e.snap.core, e.corePick.took, e.stat.core, e.open], ['wake', 'wake', 'wake', 'wake', false])
+  // the third run: Tether's card, a real click (N2)
+  await evalJson(page, () => { window.__run.phase = 'leaving'; window.__run.t = 0 })
+  await page.waitForFunction(() => document.querySelector('#pause').classList.contains('show') && document.querySelectorAll('#pause .core').length === 4, null, { timeout: 15000 })
+  await page.locator('#pause .core[data-core="tether"]').click()
+  const tt = await read()
+  assertEq("...and Tether's card taken the third time: the core, the snapshot, the log say tether", [tt.core, tt.snap.core, tt.corePick.took, tt.stat.core, tt.open], ['tether', 'tether', 'tether', 'tether', false])
   // builds off: no pick, and no core key in the snapshot
   await page.evaluate(() => localStorage.setItem('still-action.builds', '0'))
   await page.reload()
@@ -1876,7 +1878,7 @@ check('K-M22', RUN, async ({ page }) => {
 
 // K-M23 the bots (B3 built Ram's half early for the slam line; B4 adds Wake's). Headless d1-d3 in real generated levels, seeds 1-3, each core worn in turn, the starting
 // loadout, weight and tap push as booted. A fight is one pack (d1 and d2: the first 3 packs each, woken with Still in their room) or the Assembler (d3, Still 9 u from it), played to the
-// clear or a cap (40 s a pack, 150 s the Assembler), HP put back each tick. Math.random is seeded. Both bots cast either as soon as a part is ready ('eager') or 3.7 s after ('hesitant',
+// clear or a cap (40 s a pack, 150 s the Assembler), HP put back each tick. Math.random is seeded. Tether's bot (N2) circles the wire's anchor (else the nearest awake body) at 5 u, the way Wake's circles at 3, and the 10 s flee bot (K-M23's last case) runs straight away from the pack. Both bots cast either as soon as a part is ready ('eager') or 3.7 s after ('hesitant',
 // never-melt's hesitation). Ram's bot is the brief's: it steps toward the nearest body until it is `1.45 + radius` from it (2.0 u from a hulk) and stops there. Wake's is the brief's:
 // it circles the nearest awake body at radius 3 at the stick's full 5.5 u/s (the path code of stagec's K-N17 circler, which circles a fixed point: here the point is the nearest body's
 // centre, re-read each tick, and the bot aims 0.4 rad on round the circle, and goes round the other way when a wall pins it for 12 ticks: the first version, which did not, stood on a wall for 140 s of two of the three Assembler fights). PASS: each core's eager bot fells the Assembler in 2 of 3 seeds. REPORTED, not a pass
@@ -1923,14 +1925,14 @@ const CORE_BOT = `(arg) => {
     C.hasPrev = false
     C.wake(pack)
     const st = W.__run.stats[W.__run.stats.length - 1]
-    const base = JSON.parse(JSON.stringify({ marks: st.marks, spends: st.spends, shoves: st.shoves ?? null, skims: st.skims ?? null, grazes: st.grazes ?? null, hand: st.hand ?? 0, core: st.autoDmg ? st.autoDmg.core : 0 }))
+    const base = JSON.parse(JSON.stringify({ marks: st.marks, spends: st.spends, shoves: st.shoves ?? null, skims: st.skims ?? null, grazes: st.grazes ?? null, tether: st.tether ?? null, hand: st.hand ?? 0, core: st.autoDmg ? st.autoDmg.core : 0 }))
     const readySince = {}
     const body = pack.members.map((e) => e.kind)
     const hp0 = pack.members.map((e) => e.hp)
     W.__fx()
     let lost = 0, ticks = 0, cleared = false
     let cdir = 1, pinned = 0, lastP = null
-    const cap = (arg.boss ? 150 : 40) * 60
+    const cap = (arg.flee || arg.tenS ? 10 : arg.boss ? 150 : 40) * 60
     for (let i = 0; i < cap; i++) {
       // B5: a keystone dropped by an elite opens the socket card when walked onto, and the card is modal (the buttons are off behind it): the bot leaves it, as the hesitant player who looks at it and walks on
       if (document.querySelector('#pause .pkey')) { document.querySelector('#pause .leave').click(); W.__sockets = (W.__sockets ?? 0) + 1 }
@@ -1947,7 +1949,16 @@ const CORE_BOT = `(arg) => {
         const d = Math.hypot(e.pos.x - p.x, e.pos.z - p.z)
         if (d < nd) { nd = d; near = e }
       }
-      if (arg.core === 'graze') {
+      if (arg.flee) {
+        // the flee bot (N2, Tether's cheap play): straight away from the middle of the awake bodies at the stick's full 5.5 u/s, and it stands where a wall stops it; nothing about the wire is steered
+        let cx = 0, cz = 0, n = 0
+        for (const e of C.enemies) if (!e.dead && C.awakeNow(e)) { cx += e.pos.x; cz += e.pos.z; n++ }
+        if (n) {
+          cx /= n; cz /= n
+          const dx = p.x - cx, dz = p.z - cz, dd = Math.hypot(dx, dz) || 1
+          W.__stick(dx / dd, dz / dd)
+        } else W.__stick(0, 0)
+      } else if (arg.core === 'graze') {
         // Graze's bot (N1): stand where the band is. With a swing in its tell (C.bands, the very numbers the graze test uses) it moves along the line from that body to the middle of the band, at the stick's full 5.5 u/s
         // and stops there; with none it closes on the nearest awake body until it is 3.0 u off, which a hulk then closes to its own strike range and winds up at, and the band appears. It never fights otherwise
         if (C.bandN > 0) {
@@ -1966,10 +1977,13 @@ const CORE_BOT = `(arg) => {
           if (aw && ad > 3.0) W.__stick((aw.pos.x - p.x) / ad, (aw.pos.z - p.z) / ad)
           else W.__stick(0, 0)
         }
-      } else if (arg.core === 'wake') {
-        // Wake's bot: round the nearest AWAKE body at radius 3, 0.4 rad on round the circle from where it stands now (the stick is the full 5.5 u/s)
-        let aw = null, ad = Infinity
+      } else if (arg.core === 'wake' || arg.core === 'tether') {
+        // Wake's bot: round the nearest AWAKE body at radius 3, 0.4 rad on round the circle from where it stands now (the stick is the full 5.5 u/s). Tether's (N2): the same path, round the wire's anchor (the nearest awake body while there is
+        // none) at radius 5, so the wire is a spoke that sweeps the pack. It leaves the wire to its own hook
+        const R = arg.core === 'tether' ? 5 : 3
+        let aw = arg.core === 'tether' && C.wires[0].e && !C.wires[0].e.dead ? C.wires[0].e : null, ad = Infinity
         for (const e of C.enemies) {
+          if (aw) break
           if (e.dead || !C.awakeNow(e)) continue
           const d = Math.hypot(e.pos.x - p.x, e.pos.z - p.z)
           if (d < ad) { ad = d; aw = e }
@@ -1981,7 +1995,7 @@ const CORE_BOT = `(arg) => {
           if (pinned >= 12) { cdir = -cdir; pinned = 0 }
           lastP = { x: p.x, z: p.z }
           const a = Math.atan2(p.z - aw.pos.z, p.x - aw.pos.x) + 0.4 * cdir
-          const dx = aw.pos.x + Math.cos(a) * 3 - p.x, dz = aw.pos.z + Math.sin(a) * 3 - p.z, dd = Math.hypot(dx, dz) || 1
+          const dx = aw.pos.x + Math.cos(a) * R - p.x, dz = aw.pos.z + Math.sin(a) * R - p.z, dd = Math.hypot(dx, dz) || 1
           W.__stick(dx / dd, dz / dd)
         } else W.__stick(0, 0)
       } else if (near && nd > 1.45 + near.radius) W.__stick((near.pos.x - p.x) / nd, (near.pos.z - p.z) / nd)
@@ -1999,7 +2013,7 @@ const CORE_BOT = `(arg) => {
     return {
       body, hp: hp0, cleared, lost, s: ticks / 60, boss: !!arg.boss,
       marks: sub(now.marks, base.marks), spends: { hits: now.spends.hits - base.spends.hits, bonus: now.spends.bonus - base.spends.bonus }, shoves: sh, skims: now.skims ? sub(now.skims, base.skims) : null,
-      grazes: now.grazes ? sub(now.grazes, base.grazes) : null, coreDmg: (now.autoDmg ? now.autoDmg.core : 0) - base.core,
+      grazes: now.grazes ? sub(now.grazes, base.grazes) : null, tether: now.tether ? sub(now.tether, base.tether) : null, coreDmg: (now.autoDmg ? now.autoDmg.core : 0) - base.core,
       hand: (now.hand ?? 0) - base.hand,
     }
   } finally {
@@ -2013,8 +2027,8 @@ check('K-M23', RUN + '&bots=1', async ({ page }) => {
   const sum = (xs) => xs.reduce((a, b) => a + b, 0)
   const f = (x, d = 2) => (Number.isFinite(x) ? x.toFixed(d) : '-')
   const felledBy = {}
-  for (const core of ['ram', 'wake', 'graze']) {
-    const Name = core === 'ram' ? 'Ram' : core === 'wake' ? 'Wake' : 'Graze'
+  for (const core of ['ram', 'wake', 'graze', 'tether']) {
+    const Name = core === 'ram' ? 'Ram' : core === 'wake' ? 'Wake' : core === 'graze' ? 'Graze' : 'Tether'
     const rows = []
     for (const bot of ['eager', 'hesitant']) {
       for (const depth of [1, 2, 3]) {
@@ -2054,6 +2068,10 @@ check('K-M23', RUN + '&bots=1', async ({ page }) => {
           const gz = (k) => sum(rs.map((r) => r.grazes?.[k] ?? 0))
           const secs = sum(rs.map((r) => r.s))
           console.log(`${head}; grazes ${gz('n')} (strike ${gz('melee')}, lane ${gz('lane')}, shot ${gz('shot')}, on a boss ${gz('boss')}), ${f(secs ? gz('n') / secs : NaN, 3)} a second, core damage ${sum(rs.map((r) => r.coreDmg ?? 0))} (${f(secs ? sum(rs.map((r) => r.coreDmg ?? 0)) / secs : NaN, 1)} a second), marks made by the core ${sum(rs.map((r) => r.marks.byCore))}, by parts ${sum(rs.map((r) => r.marks.byPart))}, expired ${sum(rs.map((r) => r.marks.expired))}`)
+        } else if (core === 'tether') {
+          const tt = (k) => sum(rs.map((r) => r.tether?.[k] ?? 0))
+          const secs = sum(rs.map((r) => r.s))
+          console.log(`${head}; hooks ${tt('hooks')}, breaks ${tt('breaks')}, crossings ${tt('crossings')} (${f(secs ? tt('crossings') / secs : NaN, 3)} a second), anchor ticks ${tt('anchorTicks')}, core damage ${sum(rs.map((r) => r.coreDmg ?? 0))} (${f(secs ? sum(rs.map((r) => r.coreDmg ?? 0)) / secs : NaN, 1)} a second), marks made by the core ${sum(rs.map((r) => r.marks.byCore))}, by parts ${sum(rs.map((r) => r.marks.byPart))}, expired ${sum(rs.map((r) => r.marks.expired))}`)
         } else {
           const sk = (k) => sum(rs.map((r) => r.skims?.[k] ?? 0))
           const secs = sum(rs.map((r) => r.s))
@@ -2069,6 +2087,11 @@ check('K-M23', RUN + '&bots=1', async ({ page }) => {
         const packs = mine.filter((r) => r.depth < 3)
         const made = sum(packs.map((r) => r.marks.made)), spent = sum(packs.map((r) => r.marks.spent))
         console.log(`INFO K-M23 Graze ${bot}, pack fights d1-d2: marks spent / made ${f(made ? spent / made : NaN)} (${spent} of ${made}), ${sum(packs.map((r) => r.grazes?.n ?? 0))} grazes over ${f(sum(packs.map((r) => r.s)), 0)} s, HP lost ${f(mean(packs.map((r) => r.lost)), 0)} a fight, cleared ${packs.filter((r) => r.cleared).length} of ${packs.length}`)
+      } else if (core === 'tether') {
+        const packs = mine.filter((r) => r.depth < 3)
+        const made = sum(packs.map((r) => r.marks.made)), spent = sum(packs.map((r) => r.marks.spent))
+        const tt = (k) => sum(packs.map((r) => r.tether?.[k] ?? 0))
+        console.log(`INFO K-M23 Tether ${bot}, pack fights d1-d2: marks spent / made ${f(made ? spent / made : NaN)} (${spent} of ${made}), hooks ${tt('hooks')}, breaks ${tt('breaks')}, crossings ${tt('crossings')} over ${f(sum(packs.map((r) => r.s)), 0)} s, HP lost ${f(mean(packs.map((r) => r.lost)), 0)} a fight, cleared ${packs.filter((r) => r.cleared).length} of ${packs.length}`)
       } else {
         const packs = mine.filter((r) => r.depth < 3)
         const made = sum(packs.map((r) => r.marks.made)), spent = sum(packs.map((r) => r.marks.spent))
@@ -2082,7 +2105,25 @@ check('K-M23', RUN + '&bots=1', async ({ page }) => {
     const hb = rows.filter((r) => r.bot === 'hesitant' && r.depth === 3)
     console.log(`INFO K-M23 ${Name} hesitant, the Assembler: felled ${hb.filter((r) => r.cleared).length} of ${hb.length} (${hb.map((r) => `seed ${r.seed}: ${r.cleared ? f(r.s, 1) + ' s' : 'not in 150 s'}`).join('; ')})`)
   }
-  // Graze (N1) is reported, not a pass line: its bot is the first draft of a player standing in a band
+  // N2: Tether's cheap play, running straight away: 10 s from each of the first three packs of d1 and d2, seeds 1-3, the same loadout and the same wire. About 0 crossings is the rule's point (K-M34 holds it kinematically)
+  {
+    const fl = []
+    for (const depth of [1, 2]) for (const seed of [1, 2, 3]) for (let pack = 0; pack < 3; pack++) {
+      const r = await evalJson(page, CORE_BOT, { core: 'tether', bot: 'eager', depth, seed, pack, boss: false, flee: true })
+      if (r) fl.push(r)
+    }
+    const tt = (k) => sum(fl.map((r) => r.tether?.[k] ?? 0))
+    console.log(`INFO K-M23 Tether flee bot (straight away from the pack, 10 s each): ${fl.length} runs, ${f(sum(fl.map((r) => r.s)), 0)} s, crossings ${tt('crossings')} (${f(sum(fl.map((r) => r.s)) ? tt('crossings') / sum(fl.map((r) => r.s)) : NaN, 3)} a second), hooks ${tt('hooks')}, breaks ${tt('breaks')}, anchor ticks ${tt('anchorTicks')}`)
+    // the same runs, circling the anchor as the bot does: the figure the flee is held against
+    const ci = []
+    for (const depth of [1, 2]) for (const seed of [1, 2, 3]) for (let pack = 0; pack < 3; pack++) {
+      const r = await evalJson(page, CORE_BOT, { core: 'tether', bot: 'eager', depth, seed, pack, boss: false, flee: false, tenS: true })
+      if (r) ci.push(r)
+    }
+    const tc = (k) => sum(ci.map((r) => r.tether?.[k] ?? 0))
+    console.log(`INFO K-M23 Tether circling bot, first 10 s of each of the same packs: ${ci.length} runs, crossings ${tc('crossings')} (${f(sum(ci.map((r) => r.s)) ? tc('crossings') / sum(ci.map((r) => r.s)) : NaN, 3)} a second), hooks ${tc('hooks')}, breaks ${tc('breaks')}`)
+  }
+  // Graze (N1) and Tether (N2) are reported, not pass lines: their bots are first drafts of a player standing in a band, or circling a wire
   for (const core of ['ram', 'wake']) assert(felledBy[core][1] === 3 && felledBy[core][0] >= 2, `the eager ${core === 'ram' ? 'Ram' : 'Wake'} bot fells the Assembler in 2 of 3 seeds (${felledBy[core][0]} of ${felledBy[core][1]})`)
 })
 
@@ -2664,9 +2705,10 @@ check('K-M30', RUN, async ({ page }) => {
     out.deep = run('wake-deep')
     out.ram = run(null, 'ram')
     out.graze = run(null, 'graze')
+    out.tether = run(null, 'tether')
     return out
   }`)
-  for (const [what, x, max] of [['3 segments', r.plain, 3], ['Deep (5 segments)', r.deep, 5], ['Ram (cracked, 3 segments)', r.ram, 3], ['Graze (double ring, one instanced mesh)', r.graze, 1]]) {
+  for (const [what, x, max] of [['3 segments', r.plain, 3], ['Deep (5 segments)', r.deep, 5], ['Ram (cracked, 3 segments)', r.ram, 3], ['Graze (double ring, one instanced mesh)', r.graze, 1], ['Tether (hooked ring, one instanced mesh)', r.tether, 1]]) {
     assertEq(`${what}: 40 marked bodies drawn`, [x.drawn, x.marked], [40, 40])
     assert(x.c40 - x.c0 <= max && x.c40 - x.c0 >= 0, `${what}: draw calls ${x.c0} with no marks, ${x.c40} with 40 marked bodies: +${x.c40 - x.c0} (at most ${max})`)
     assertEq(`${what}: the scene's child count is equal before and after 10 s of churn, and the marks' own meshes, geometries and material are the very ones made at the start`, [x.kids1, x.inf1], [x.kids0, x.inf0])
@@ -2887,6 +2929,267 @@ check('K-M33', RUN, async ({ page }) => {
   assertEq('a shot passing 1.3 u off his edge gives nothing', [r.shotFar.gz, r.shotFar.marks], [[], 0])
   assertEq('a rush that hits him gives nothing; one he stepped out of by 2.0 u (0.9 u past the lane) grazes: 2 marks, 10 damage, no HP lost; 2.8 u is too far', [r.laneHit.gz, r.laneHit.lost > 0, r.laneNear.gz, r.laneNear.lost, r.laneFar.gz], [[], true, [['lane', 2, 10, 0]], 0, []])
   assertEq("Riposte: a graze takes 0.4 s off a spender's cooldown", [r.clock, Math.abs(r.cdBefore - r.cdAfter - (r.cdTicks * 1000) / 60 - 400) < 25], [1, true])
+})
+
+
+// ---------------------------------------------------------------------------------------------------------------------------------------------------------------
+// N2: Tether (design/buildlayer/CORES2.md §2). K-M34 the rule: the hook (nearest, 3 to 9 u, in line of sight), the breaks, the sweep (a crossing is a FLIP of the body's side inside the segment: a body lying along the wire never flips,
+// so running straight away earns nothing, and circling does), the once-per-body gap, the anchor's tick, Snag, Taut, Second Line, Whip, a lens spending the marks, and the draw calls.
+// ---------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+check('K-M34', RUN, async ({ page }) => {
+  const r = await evalJson(page, `() => {
+    ${HELPERS}
+    const out = {}
+    const boot = (o = {}) => {
+      (${SETUP})({ autos: true, parts: o.parts })
+      W.__core('tether')
+      if (o.keystone) W.__keystone(o.keystone)
+      for (const u of o.upgrades ?? []) W.__upgrade(u)
+      W.__arena({ boxes: o.boxes ?? [], auto: true })
+      delete C.hurtPlayer
+      C.time = 0
+      C.pressure = false
+      C.counters = false
+      C.autoAttack = true
+      C.autoTimer = 0
+      W.__stick(0, 0)
+      W.__fx()
+      W.__still.pos.set(0, 0, 0)
+      C.hasPrev = false
+      W.__partLog.length = 0
+      delete last().tether
+    }
+    const hulk = (x, z, hp = 1e6) => wall(hp, x, z)
+    const hp = (e) => 1e6 - e.hp
+    const tv = (what) => ev('tether').filter((x) => x.what === what)
+    const pinTo = (x, z) => { C.hp = 100; W.__still.pos.set(x, 0, z); W.__step(1 / 60) }
+    const arc = (cx, cz, rad, a0, a1, s) => { const n = Math.max(1, Math.round(s * 60)); for (let i = 1; i <= n; i++) { const a = a0 + ((a1 - a0) * i) / n; pinTo(cx + Math.cos(a) * rad, cz + Math.sin(a) * rad) } }
+    const at = (cx, cz, rad, a) => ({ x: cx + Math.cos(a) * rad, z: cz + Math.sin(a) * rad })
+    const crossings = () => tv('cross').map((x) => ({ wire: x.wire, u: +x.u.toFixed(3), dmg: x.dmg, snag: !!x.snag }))
+
+    // --- the hook
+    boot()
+    let a = hulk(5, 0)
+    tick()
+    out.hook = { up: C.wires[0].e === a, marks: marks(a).n, hooks: tv('hook').length, second: C.wires[1].e === null }
+    boot(); hulk(0, 2.0); hulk(0, -10); secs(0.3)
+    out.none = { up: !!C.wires[0].e, marks: [...C.enemies].map((e) => marks(e).n) }
+    boot(); hulk(0, 7); const near = hulk(4, 0); tick()
+    out.nearest = C.wires[0].e === near
+    boot({ boxes: [{ minX: -12, maxX: 12, minZ: 2, maxZ: 3 }] }); hulk(0, 6); secs(0.3)
+    out.walled = !!C.wires[0].e
+    // --- the breaks
+    boot(); a = hulk(5, 0); tick(); a.hit(1e9); tick()
+    const gone = tv('break').map((x) => x.why)
+    const b2 = hulk(0, -6)
+    let reT = null, tBreak = C.time
+    for (let i = 0; i < 60 && reT === null; i++) { tick(); if (C.wires[0].e === b2) reT = C.time - tBreak }
+    out.dead = { why: gone, down: C.wires[0].e === b2, rehookAfter: reT }
+    boot(); a = hulk(9, 0); tick(); const up9 = C.wires[0].e === a; a.pos.set(10.5, 0, 0); tick()
+    out.range = { up9, why: tv('break').map((x) => x.why), down: !C.wires[0].e }
+    for (const key of [null, 'tether-taut']) {
+      boot({ keystone: key })
+      const boss = W.__spawn('boss', 0, 8, true); boss.speedMul = 0
+      tick()
+      const upB = C.wires[0].e === boss
+      boss.pos.set(0, 0, 12); tick()
+      out[key ? 'bossTaut' : 'bossPlain'] = { up: upB, held: C.wires[0].e === boss, why: tv('break').map((x) => x.why) }
+    }
+    boot({ boxes: [{ minX: 3, maxX: 4, minZ: -1, maxZ: 1 }], upgrades: ['tether-whip'] })
+    a = hulk(5, 4); tick()
+    const upL = C.wires[0].e === a
+    a.pos.set(7, 0, 0)
+    let nLos = null
+    for (let i = 1; i <= 40 && nLos === null; i++) { tick(); if (!C.wires[0].e) nLos = i }
+    out.los = { up: upL, ticks: nLos, why: tv('break').map((x) => x.why), whip: tv('break').map((x) => x.whip) }
+
+    // --- the sweep. Still circles the anchor A at the middle, 5 u off; B is 3 u from it on the 20 degree spoke, so the wire crosses B once at 20 degrees; C stands on the far side of A, where the wire ends
+    const PHI = Math.PI / 9
+    const setup = (o = {}) => {
+      boot(o)
+      const A = hulk(0, 0)
+      const B = hulk(Math.cos(PHI) * 3, Math.sin(PHI) * 3)
+      const D = hulk(Math.cos(PHI + Math.PI) * 3, Math.sin(PHI + Math.PI) * 3)
+      const s0 = at(0, 0, 5, Math.PI)
+      W.__still.pos.set(s0.x, 0, s0.z); C.hasPrev = false
+      pinTo(s0.x, s0.z)
+      return { A, B, D }
+    }
+    {
+      const { A, B, D } = setup()
+      const first = C.wires[0].e === A
+      arc(0, 0, 5, Math.PI, -Math.PI / 3, 4)
+      out.circle = { first, still: C.wires[0].e === A, cross: crossings(), bMarks: marks(B).n, bHp: hp(B), dMarks: marks(D).n, dHp: hp(D), aMarks: marks(A).n, log: last().tether }
+    }
+    {
+      // the same circle with the reach gate shut (a body's edge must be within reach of the wire): nothing
+      const T = W.__cores.tether
+      const reach = T.reach
+      T.reach = -1
+      const { B } = setup()
+      arc(0, 0, 5, Math.PI, -Math.PI / 3, 4)
+      T.reach = reach
+      out.noReach = { cross: crossings().length, bMarks: marks(B).n }
+    }
+    {
+      // once per body per 0.5 s: a cross, two quick re-crosses (blocked), a wait of 0.3 s, a cross again (counts)
+      const { B } = setup()
+      arc(0, 0, 5, Math.PI, 0.2, 3)
+      const c1 = crossings().length
+      const t1 = C.time
+      arc(0, 0, 5, 0.2, 0.5, 0.1)
+      arc(0, 0, 5, 0.5, 0.2, 0.1)
+      const c2 = crossings().length
+      const pause = C.time - t1
+      for (let i = 0; i < 18; i++) pinTo(at(0, 0, 5, 0.2).x, at(0, 0, 5, 0.2).z)
+      arc(0, 0, 5, 0.2, 0.5, 0.1)
+      out.gap = { c1, c2, c3: crossings().length, sinceFirst: +(C.time - t1).toFixed(2), blockedAt: +pause.toFixed(2), bMarks: marks(B).n }
+    }
+    {
+      // a body that follows him along the wire never flips: he walks straight away from the anchor (6 to 9 u) and two bodies keep their places in front of him, one each side of the wire
+      boot(); const A = hulk(6, 0)
+      const f1 = hulk(1.5, 0.5), f2 = hulk(2.4, -0.5)
+      tick()
+      const first = C.wires[0].e === A
+      for (let i = 1; i <= 120; i++) {
+        const x = -3 * (i / 120)
+        f1.pos.set(x + 2.0, 0, 0.5); f2.pos.set(x + 2.8, 0, -0.5)
+        pinTo(x, 0)
+      }
+      out.follow = { first, up: C.wires[0].e === A, cross: crossings().length, marks: [marks(f1).n, marks(f2).n], len: Math.hypot(A.pos.x - W.__still.pos.x, A.pos.z - W.__still.pos.z) }
+    }
+    {
+      // the same two bodies, and he circles the anchor instead: both are crossed
+      boot(); const A = hulk(0, 0)
+      const f1 = hulk(Math.cos(0.5) * 3, Math.sin(0.5) * 3), f2 = hulk(Math.cos(1.2) * 2, Math.sin(1.2) * 2)
+      const s0 = at(0, 0, 5, Math.PI); W.__still.pos.set(s0.x, 0, s0.z); C.hasPrev = false; pinTo(s0.x, s0.z)
+      arc(0, 0, 5, Math.PI, 0, 4)
+      out.circleTwo = { cross: crossings().length, marks: [marks(f1).n, marks(f2).n] }
+    }
+    // --- the anchor's tick
+    boot(); a = hulk(5, 0); secs(3.1)
+    out.anchor = { ticks: tv('anchor').length, dmg: tv('anchor').map((x) => x.dmg), hp: hp(a), marks: marks(a).n, log: last().tether }
+    for (const key of [null, 'tether-taut']) {
+      boot({ keystone: key })
+      const boss = W.__spawn('boss', 0, 6, true); boss.speedMul = 0
+      secs(3.1)
+      out[key ? 'tautTicks' : 'plainTicks'] = tv('anchor').length
+    }
+    // --- Snag
+    {
+      const { B } = setup({ keystone: 'tether-snag' })
+      B.speedMul = 1e-4
+      arc(0, 0, 5, Math.PI, 0, 4)
+      const slowed = B.speedMul / 1e-4
+      const snag = crossings().map((x) => x.snag)
+      for (let i = 0; i < 66; i++) pinTo(at(0, 0, 5, 0).x, at(0, 0, 5, 0).z)
+      out.snag = { slowed: +slowed.toFixed(3), snag, after: +(B.speedMul / 1e-4).toFixed(3) }
+    }
+    {
+      const { B } = setup()
+      B.speedMul = 1e-4
+      arc(0, 0, 5, Math.PI, 0, 4)
+      out.noSnag = +(B.speedMul / 1e-4).toFixed(3)
+    }
+    // --- Whip
+    for (const how of ['dead', 'range', 'none']) {
+      boot({ upgrades: how === 'none' ? [] : ['tether-whip'] })
+      const A = hulk(5, 0), near = hulk(2.5, 1.0), farB = hulk(2.5, 6.0)
+      tick()
+      if (how === 'range') A.pos.set(10.5, 0, 0)
+      else A.hit(1e9)
+      tick()
+      out['whip_' + how] = { why: tv('break').map((x) => x.why), whip: tv('break').map((x) => x.whip), near: [marks(near).n, hp(near)], far: [marks(farB).n, hp(farB)], anchor: [marks(A).n, hp(A)] }
+    }
+    // --- Second Line
+    {
+      boot({ upgrades: ['tether-second'] })
+      const A = hulk(5, 0), B = hulk(0, -6.5), Cc = hulk(-8, 0)
+      tick()
+      const both = [C.wires[0].e === A, C.wires[1].e === B]
+      const marksBoth = [marks(A).n, marks(B).n, marks(Cc).n]
+      A.hit(1e9); tick()
+      const t0 = C.time
+      let re = null
+      for (let i = 0; i < 60 && re === null; i++) { tick(); if (C.wires[0].e === Cc) re = C.time - t0 }
+      out.second = { both, marksBoth, kept: C.wires[1].e === B, reAfter: re, hooks: tv('hook').map((x) => x.wire) }
+    }
+    {
+      boot(); hulk(5, 0); hulk(0, -6.5); secs(0.3)
+      out.single = [!!C.wires[0].e, !!C.wires[1].e]
+    }
+    // --- a lens spends: Focusing Lens (k 5) on an anchor with 0 and with 3 marks
+    for (const n of [0, 3]) {
+      boot({ parts: ['focusing-lens'] })
+      C.autoAttack = false
+      const A = hulk(5, 0)
+      W.__setMarks(idx(A), n)
+      W.__partLog.length = 0
+      W.__fire('head', false)
+      for (let i = 0; i < 90; i++) tick()
+      out['lens' + n] = { drop: hp(A), spends: spendsOf().map((x) => [x.n, x.bonus]), left: marks(A).n }
+    }
+    // --- no hand, no eye: a hulk in the hand's reach and one at the eye's, 3 s
+    boot(); last().hand = 0; last().eye = 0; hulk(0, 1.4); hulk(0, 7); secs(3)
+    out.nohand = { hand: last().hand ?? 0, eye: last().eye ?? 0 }
+    // --- the draw calls: the wire, the glyph, the ring (a second wire is the same mesh)
+    {
+      const calls = () => { W.__tetherFx.update(true, 1 / 60, C, 0, 0); W.__markFx.draw(C, 0, 0, 0); W.__world.render(); return W.__world.renderer.info.render.calls }
+      boot({ upgrades: ['tether-second'] })
+      C.autoAttack = false
+      const A = hulk(5, 0), B = hulk(0, -6.5)
+      calls()
+      const c0 = calls()
+      C.autoAttack = true
+      tick()
+      for (let i = 0; i < 20; i++) { W.__tetherFx.update(true, 1 / 60, C, 0, 0); tick() }
+      const wiresUp = [!!C.wires[0].e, !!C.wires[1].e]
+      const c2 = calls()
+      const drawn2 = W.__tetherFx.drawn, glyphs2 = W.__tetherFx.glyphs
+      const meshes = W.__world.scene.children.filter((c) => c.name === 'tether-wire' || c.name === 'tether-glyph').length
+      // one wire only
+      B.hit(1e9); tick(); tick()
+      for (let i = 0; i < 40; i++) { W.__tetherFx.update(true, 1 / 60, C, 0, 0); tick() }
+      out.draw = { c0, c2, drawn2, drawn1: W.__tetherFx.drawn, glyphs2, glyphs1: W.__tetherFx.glyphs, wiresUp, meshes }
+    }
+    return out
+  }`)
+  if (process.env.DEBUG34) console.log(JSON.stringify(r))
+  // the hook
+  assertEq('the hook: the nearest awake body 3 to 9 u off in line of sight, at once; the anchor takes 1 mark; one wire without Second Line', [r.hook.up, r.hook.marks, r.hook.hooks, r.hook.second], [true, 1, 1, true])
+  assertEq('...a body at 2.0 u and one at 10 u are not hooked: no wire, no marks', [r.none.up, r.none.marks], [false, [0, 0]])
+  assertEq('...of two in range, the nearer', r.nearest, true)
+  assertEq('...a wall in the way: no wire', r.walled, false)
+  // the breaks
+  assertEq('the anchor dies: the wire breaks (why dead), and the hook goes again no sooner than 0.5 s after', [r.dead.why, r.dead.down, r.dead.rehookAfter !== null && r.dead.rehookAfter >= 0.5 - 1e-6 && r.dead.rehookAfter <= 0.55], [['dead'], true, true])
+  assertEq('the anchor goes past 10 u: the wire breaks (why range); it was up at 9.0 u', [r.range.up9, r.range.why, r.range.down], [true, ['range'], true])
+  assertEq('a boss alone past 10 u: the wire breaks, and with Taut it holds', [r.bossPlain, r.bossTaut], [{ up: true, held: false, why: ['range'] }, { up: true, held: true, why: [] }])
+  assertEq('a wall between (line of sight blocked): it breaks after 0.3 s of it (tick 18, not before) and Whip does not crack for that', [r.los.up, r.los.ticks >= 18 && r.los.ticks <= 20, r.los.why, r.los.whip], [true, true, ['los'], [0]])
+  // the sweep
+  assertEq('circling the anchor 5 u off, 240 degrees: the wire crosses the body on its spoke ONCE (6 damage, 1 mark, the anchor held throughout); the body past the anchor, where the wire ends, is never crossed', [r.circle.first, r.circle.still, r.circle.cross.length, r.circle.cross[0]?.dmg, r.circle.bMarks, r.circle.bHp, r.circle.dMarks, r.circle.dHp], [true, true, 1, 6, 1, 6, 0, 0])
+  assert(r.circle.cross[0] && r.circle.cross[0].u > 0.1 && r.circle.cross[0].u < 0.9, `...the crossing is inside the segment (u ${r.circle.cross[0]?.u})`)
+  assertEq('...and the log says: one hook, one crossing, and the anchor ticks it took (4 s, every 1.5 s)', [r.circle.log.hooks, r.circle.log.crossings, r.circle.log.anchorTicks], [1, 1, 2])
+  assertEq('the reach gate: with the body\'s edge required to be -1 u off the wire, the same circle crosses nothing', [r.noReach.cross, r.noReach.bMarks], [0, 0])
+  assertEq('once per body per 0.5 s: a crossing, two quick re-crosses (blocked), then 0.3 s later another that counts (and it is over 0.5 s since the first)', [r.gap.c1, r.gap.c2, r.gap.c3, r.gap.sinceFirst >= 0.5, r.gap.blockedAt < 0.5], [1, 1, 2, true, true])
+  assertEq("a body that follows him along the wire never flips: he walks straight away from the anchor for 2 s with two bodies kept in front of him, one each side: 0 crossings, they gain no marks, and the wire is still up at 9 u", [r.follow.first, r.follow.up, r.follow.cross, r.follow.marks, Math.round(r.follow.len)], [true, true, 0, [0, 0], 9])
+  assertEq('...the same two bodies, circled round the anchor instead: both are crossed', [r.circleTwo.cross, r.circleTwo.marks], [2, [1, 1]])
+  // the anchor
+  assertEq('the anchor takes 4 and 1 mark every 1.5 s: two ticks in 3.1 s, hooked 1 + 2 = 3 marks (the cap), 8 damage', [r.anchor.ticks, r.anchor.dmg, r.anchor.marks, r.anchor.hp], [2, [4, 4], 3, 8])
+  assertEq('a boss alone: two ticks in 3.1 s; with Taut, every 0.75 s: four', [r.plainTicks, r.tautTicks], [2, 4])
+  // Snag, Whip, Second Line
+  assertEq('Snag: a crossing slows that body x0.6, for 1 s; no Snag, no slow', [r.snag.slowed, r.snag.snag, r.snag.after, r.noSnag], [0.6, [true], 1, 1])
+  assertEq('Whip: an anchor that dies cracks the body 1.0 u off the line (6, 1 mark), not the one 4.0 u off', [r.whip_dead.why, r.whip_dead.whip, r.whip_dead.near, r.whip_dead.far], [['dead'], [1], [1, 6], [0, 0]])
+  assertEq('...a break for range cracks the living anchor too (6 damage, and a second mark on top of the hook one); with no Whip nothing is cracked', [r.whip_range.whip, r.whip_range.anchor, r.whip_none.whip, r.whip_none.near], [[2], [2, 6], [0], [0, 0]])
+  assertEq('Second Line: two wires, to the nearest and the next nearest (1 mark each, the third body none); one dies and the other holds, and its hook comes back after 0.5 s; without it one wire', [r.second.both, r.second.marksBoth, r.second.kept, r.second.reAfter >= 0.5 - 1e-6 && r.second.reAfter <= 0.55, r.single], [[true, true], [1, 1, 0], true, true, [true, false]])
+  // a lens spends
+  assertEq('Focusing Lens spends the snagged marks at +5 each: 3 marks on the anchor add 15, and leave none', [r.lens3.drop - r.lens0.drop, r.lens3.spends, r.lens3.left], [15, [[3, 15]], 0])
+  assertEq('no hand and no eye with Tether worn: a hulk in the hand\'s reach and one at the eye\'s, 3 s, and neither was used', [r.nohand], [{ hand: 0, eye: 0 }])
+  // draw calls
+  assert(r.draw.wiresUp[0] && r.draw.wiresUp[1] && r.draw.glyphs2 === 2 && r.draw.glyphs1 === 1, `two wires: ${r.draw.glyphs2} glyphs, one wire: ${r.draw.glyphs1}`)
+  assert(r.draw.drawn2 === 2 * r.draw.drawn1, `Second Line's wire is more vertices of the same mesh: ${r.draw.drawn2} for two wires, ${r.draw.drawn1} for one`)
+  assert(r.draw.meshes === 2 && r.draw.c2 - r.draw.c0 <= 3, `Tether at peak: draw calls ${r.draw.c0} idle, ${r.draw.c2} with two wires and marks: +${r.draw.c2 - r.draw.c0} (at most 3: the wire, the glyph, the ring)`)
+  console.log(`INFO K-M34 draw calls: idle ${r.draw.c0}, two wires and a marked anchor ${r.draw.c2} (+${r.draw.c2 - r.draw.c0}); the wire's vertices ${r.draw.drawn1} for one wire, ${r.draw.drawn2} for two`)
 })
 
 

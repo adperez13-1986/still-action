@@ -650,7 +650,7 @@ html, body {
   -webkit-mask: radial-gradient(circle closest-side, transparent 0 42%, #000 46% 94%, transparent 98%);
   mask: radial-gradient(circle closest-side, transparent 0 42%, #000 46% 94%, transparent 98%);
 }
-/* Graze's glyph: a thin double ring, in three arcs (CORES2.md §1); Tether's, a ring with one gap, like a hook (N2's card, "soon" until then) */
+/* Graze's glyph: a thin double ring, in three arcs (CORES2.md §1); Tether's, a ring with one gap, like a hook (live since N2) */
 .core[data-core="graze"] .coreglyph {
   --c: #8fd0ff;
   -webkit-mask: radial-gradient(circle closest-side, transparent 0 44%, #000 47% 58%, transparent 61% 70%, #000 73% 90%, transparent 94%);

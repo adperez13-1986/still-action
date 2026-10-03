@@ -213,6 +213,12 @@ export type PartEvent =
    * `marks`: marks it was given; `others`: bodies Feint marked besides. `at`: where he stood (a shot: where it passed him); `dir`: the way the miss went (the attacker's heading toward him; a shot's own).
    */
   | { kind: 'graze'; enemy: Enemy; how: 'melee' | 'lane' | 'shot'; dmg: number; marks: number; others: number; at: THREE.Vector3; dir: THREE.Vector3 }
+  /**
+   * Tether's wire (N2, CORES2.md §2): `what` is a 'hook' (the wire is up, `enemy` its anchor), a 'cross' (a body's side of the wire flipped inside it: `at` is the crossing point on the wire, `u` how far along it from
+   * Still, 0 to 1, `dmg` the core hit, `snag` the slow Snag set), an 'anchor' tick (`dmg`) or a 'break' (`why`; `whip`: the bodies Whip cracked, `dmg` the sum they took). `wire` is its index (0, or 1 with Second Line);
+   * `from` and `to` are Still's end and the anchor's, as they stood.
+   */
+  | { kind: 'tether'; what: 'hook' | 'cross' | 'anchor' | 'break'; wire: number; enemy: Enemy; from: THREE.Vector3; to: THREE.Vector3; at: THREE.Vector3; u: number; dmg: number; why?: 'dead' | 'range' | 'los'; whip?: number; snag?: boolean }
   /** Backhand's cast (B5): a swing behind him; `whiff`: there was nothing behind (the balancer's whiff share). Only with Wake worn. */
   | { kind: 'backhand'; whiff: boolean }
   /**

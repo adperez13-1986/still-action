@@ -5,7 +5,7 @@ import type { AbilityDef } from './abilities'
  * tools/corecheck.ts runs it under node. A core replaces the hand and the eye; it marks bodies, and the parts that fit it spend the marks.
  * With no core worn nothing here is read: the game is today's (BUILD.md §1, K-M1).
  *
- * N1 (design/buildlayer/CORES2.md) added Graze, and Tether's numbers and words so the four-card pick can show it (its code is N2's). Every number there is a first guess by analogy with Wake and Ram, PLACEHOLDER until his runs.
+ * N1 (design/buildlayer/CORES2.md) added Graze, and Tether's numbers and words so the four-card pick can show it; N2 built Tether (combat.ts tickTether, tetherfx.ts). Every number there is a first guess by analogy with Wake and Ram, PLACEHOLDER until his runs.
  *
  * B1 landed the data, the switch and the machine. B2 (Wake) built Wake's skim, its three reshapes (VARIANTS), Burst, Deep Frost, Spray and Slipstream, and the
  * rings (markfx.ts); B3 (Ram) built Ram's shove and slams, Domino, Catch, Wide Shove and Rubble, Piston's variant and Ram's ring look. The pick comes in B4, the hunt and the buttons in B5. The numbers are the SHIP column of design/buildlayer/3-balancer.md §1 (the balancer's re-price of
@@ -16,8 +16,8 @@ import type { AbilityDef } from './abilities'
 export type CoreId = 'wake' | 'ram' | 'graze' | 'tether'
 /** The pick's cards, in order (design/buildlayer/CORES2.md §3: all four show while he tests them). */
 export const CORE_IDS: readonly CoreId[] = ['wake', 'ram', 'graze', 'tether']
-/** The cores that can be worn today: a card for any other reads "soon" and cannot be taken (Tether is N2). A saved or dev-booted core outside this is bare. */
-export const CORE_LIVE: readonly CoreId[] = ['wake', 'ram', 'graze']
+/** The cores that can be worn today: a card for any other reads "soon" and cannot be taken (all four are live since N2). A saved or dev-booted core outside this is bare. */
+export const CORE_LIVE: readonly CoreId[] = ['wake', 'ram', 'graze', 'tether']
 
 /** A part's job for one core. spend: cashes marks on every body it hits. shape: moves bodies or holds them. guard: protects. */
 export type FitRole = 'spend' | 'shape' | 'guard'
@@ -86,14 +86,23 @@ export const CORES = {
     /** The band: awake bodies winding up a swing within `bandR` of Still show where its edge is (graze.ts); at most `bandMax` at once. */
     bandR: 8, bandMax: 6,
   },
-  /** N2's numbers (CORES2.md §2), here so the pick's card and the types exist. Nothing reads these but the card yet. */
   tether: {
+    /** Flat damage a spend adds per mark, for a part with no `Fit.k` of its own (every Tether spender has one; Focusing Lens, the bridge, is 5). */
     K: 6, cap: 3, lifeS: 3,
-    minR: 3, maxR: 9, breakR: 10, rehookS: 0.5, losGraceS: 0.3, reach: 0.4, damage: 6, perBodyS: 0.5, anchorDamage: 4, anchorEveryS: 1.5,
+    /**
+     * The wire (CORES2.md §2, combat.ts tickTether). With none up, the core hooks the nearest awake, targetable body `minR` to `maxR` u off (centre to centre) in line of sight (walls block, as for a shot),
+     * at most once every `rehookS`; the anchor gets `hookMarks`. It breaks when the anchor dies, goes past `breakR`, or the line is blocked for `losGraceS`. The anchor takes `anchorDamage` and 1 mark every `anchorEveryS`.
+     */
+    minR: 3, maxR: 9, breakR: 10, rehookS: 0.5, losGraceS: 0.3, anchorDamage: 4, anchorEveryS: 1.5, hookMarks: 1,
+    /**
+     * The sweep: a CROSSING is a body whose side of the wire flips (the sign of the 2D cross product) while its projection is inside the segment and its EDGE is within `reach` of the wire. It takes `damage`
+     * (a core hit; whole on a body that can't be moved, like Wake's skim) and 1 mark, at most once per body per `perBodyS`. A body lying along the wire never flips.
+     */
+    reach: 0.4, damage: 6, perBodyS: 0.5,
   },
 } as const satisfies Record<CoreId, { K: number; cap: number; lifeS: number } & Record<string, unknown>>
 
-export type KeystoneId = 'ram-domino' | 'ram-catch' | 'wake-burst' | 'wake-deep' | 'graze-feint' | 'graze-read'
+export type KeystoneId = 'ram-domino' | 'ram-catch' | 'wake-burst' | 'wake-deep' | 'graze-feint' | 'graze-read' | 'tether-snag' | 'tether-taut'
 export interface KeystoneDef { id: KeystoneId; core: CoreId; for: 'packs' | 'bosses' }
 export const KEYSTONES = {
   /**
@@ -114,9 +123,13 @@ export const KEYSTONES = {
   'graze-feint': { id: 'graze-feint', core: 'graze', for: 'packs', radius: 2.0, marks: 1 },
   /** Bosses. A graze on a body that can't be moved gives `marks` marks, and its margin is `margin`. */
   'graze-read': { id: 'graze-read', core: 'graze', for: 'bosses', marks: 3, margin: 1.6 },
+  /** Packs. A crossing slows that body x`mul` for `s` seconds (a boss is never slowed, as for any slow). */
+  'tether-snag': { id: 'tether-snag', core: 'tether', for: 'packs', mul: 0.6, s: 1.0 },
+  /** Bosses. Tethered to a body that can't be moved, the anchor's tick comes every `anchorEveryS` and the wire does not break for range (line of sight and the anchor's death still break it). */
+  'tether-taut': { id: 'tether-taut', core: 'tether', for: 'bosses', anchorEveryS: 0.75 },
 } as const satisfies Record<KeystoneId, KeystoneDef & Record<string, unknown>>
 
-export type UpgradeId = 'ram-wide' | 'ram-rubble' | 'wake-spray' | 'wake-slip' | 'graze-riposte' | 'graze-wide'
+export type UpgradeId = 'ram-wide' | 'ram-rubble' | 'wake-spray' | 'wake-slip' | 'graze-riposte' | 'graze-wide' | 'tether-second' | 'tether-whip'
 /** From melting past III, at most 2 a run (one of each). Each must change what he sees on the floor, not only a number. */
 export const UPGRADES = {
   /** The shove takes the nearest `bodies` in reach each beat, not one: two bodies move. */
@@ -131,6 +144,10 @@ export const UPGRADES = {
   'graze-riposte': { id: 'graze-riposte', core: 'graze', cooldownS: 0.4 },
   /** The margin is `margin` (1.0 before); the band under a winding-up body widens with it. */
   'graze-wide': { id: 'graze-wide', core: 'graze', margin: 1.5 },
+  /** A second wire to the next nearest valid body (not the first's anchor), hooked and swept the same way; both draw in one mesh. */
+  'tether-second': { id: 'tether-second', core: 'tether', wires: 2 },
+  /** When a wire breaks for range or the anchor's death, every awake body whose edge is within `reach` of where the wire was takes `damage` (a core hit) and `marks` mark, and a crack runs down the line. */
+  'tether-whip': { id: 'tether-whip', core: 'tether', reach: 1.5, damage: 6, marks: 1 },
 } as const satisfies Record<UpgradeId, { id: UpgradeId; core: CoreId } & Record<string, unknown>>
 
 /**
@@ -192,14 +209,19 @@ export const WORDS = {
   pickTitle: 'Choose a core', pickIntro: 'One way to fight, for the whole run.',
   keystone: { 'ram-domino': ['Domino', 'A slammed body slams what it hits.'], 'ram-catch': ['Catch', 'The shove fires the moment something in reach winds up.'],
     'wake-burst': ['Burst', 'The third ring breaks the body open on its own.'], 'wake-deep': ['Deep Frost', 'Rings hold five and last longer.'],
-    'graze-feint': ['Feint', 'A graze marks the others near you.'], 'graze-read': ['Read', 'The big ones graze wider, and give three.'] } as Record<KeystoneId, readonly [string, string]>,
+    'graze-feint': ['Feint', 'A graze marks the others near you.'], 'graze-read': ['Read', 'The big ones graze wider, and give three.'],
+    'tether-snag': ['Snag', 'What the wire crosses is slowed.'], 'tether-taut': ['Taut', 'The wire holds a big one, and bites twice as often.'] } as Record<KeystoneId, readonly [string, string]>,
   upgrade: { 'ram-wide': ['Wide Shove', 'Shoves the two nearest.'], 'ram-rubble': ['Rubble', 'A wall slam throws stone at whoever is near.'],
     'wake-spray': ['Spray', 'Frost carries to the one behind.'], 'wake-slip': ['Slipstream', 'Every pass speeds you up a little.'],
-    'graze-riposte': ['Riposte', 'A graze cools your blue buttons.'], 'graze-wide': ['Wide Berth', 'The edge of a swing reaches further.'] } as Record<UpgradeId, readonly [string, string]>,
+    'graze-riposte': ['Riposte', 'A graze cools your blue buttons.'], 'graze-wide': ['Wide Berth', 'The edge of a swing reaches further.'],
+    'tether-second': ['Second Line', 'A second wire, to the next one.'], 'tether-whip': ['Whip', 'A wire that breaks cracks along its length.'] } as Record<UpgradeId, readonly [string, string]>,
   /** Shapers' and guards' fit lines; a spender's is built: `spends ${mark}: +${k} each`, with `k = fit.k ?? CORES[core].K` (B5). */
   fitLine: { 'backdraft-vent': 'pulls them together, so a shove slams two', kickstart: 'runs them into walls', brace: 'holds your ground',
     'signal-flare': 'frosts what will not come to you', 'spring-heels': 'over a wall, they string out after you', ward: 'covers the pass',
-    skitter: 'hop to the edge of their swing', lure: 'they swing at it, and you', 'mirror-ward': 'a reflected shot grazes its owner', 'borrowed-time': 'undo a graze gone wrong' },
+    skitter: 'hop to the edge of their swing', lure: 'they swing at it, and you', 'mirror-ward': 'a reflected shot grazes its owner', 'borrowed-time': 'undo a graze gone wrong',
+    'rusted-hook': 'yanks them across the wire', 'chill-vent': 'slows them on the wire', 'plumb-line': 'snap back and swing the wire' },
+  /** A part's fit line under one core, where it differs from the part's own in `fitLine` (Lure and Ward fit two cores each). */
+  fitLineFor: { tether: { lure: 'they walk across the wire to it', ward: 'keeps shots off the wire' } } as Partial<Record<CoreId, Record<string, string>>>,
   /** The reshaped parts' names and lines, as worn under Wake (VARIANTS below); Ram's Piston is a numbers-only variant and keeps its own (B3). */
   reshape: { backhand: ['Backhand', 'A swing behind you, at what you just passed.'], skate: ['Skate', 'A slow glide through them.'], frostFlare: ['Frost Flare', 'Frosts what it lands on, and slows it.'] },
   readout: (made: number, spent: number, bonus: number) => `marked ${made} · spent ${spent} · +${bonus} damage`,

@@ -387,6 +387,14 @@ export interface CombatEvents {
 /** An empty thief is no target for the auto or an aimed part; a carrying one is (bolts that pass through hit it either way). */
 const targetable = (e: Enemy) => !(e instanceof Thief) || e.carrying !== null
 
+/**
+ * One of Tether's wires (N2, CORES2.md §2). `e` is its anchor (null: no wire); `sx, sz` and `ax, az` are the two ends as the last tick tested them (Still's, the anchor's), so tetherfx.ts draws what is swept.
+ * `side`: which side of the wire each body was on last tick (1 or -1), the sweep's memory; a new wire starts it empty. `losS`: seconds the line has been blocked. `tickS`: seconds since the anchor's last tick.
+ * `next`: game time before which no hook is made. Preallocated twice (Second Line is the second); nothing here is touched with another core.
+ */
+export interface Wire { e: Enemy | null; sx: number; sz: number; ax: number; az: number; losS: number; tickS: number; next: number; side: WeakMap<Enemy, number> }
+const newWire = (): Wire => ({ e: null, sx: 0, sz: 0, ax: 0, az: 0, losS: 0, tickS: 0, next: 0, side: new WeakMap() })
+
 export class Combat {
   hp = PLAYER_MAX_HP
   readonly enemies: Enemy[] = []
@@ -558,6 +566,10 @@ export class Combat {
    */
   readonly bands: { e: Enemy | null; reach: number; margin: number; aim: number; half: number }[] = Array.from({ length: CORES.graze.bandMax }, () => ({ e: null, reach: 0, margin: 0, aim: 0, half: 0 }))
   bandN = 0
+  /** Tether's wires (N2, tetherfx.ts draws them): the first, and Second Line's. A wire with no anchor is down. Both are empty with any other core. */
+  readonly wires: Wire[] = [newWire(), newWire()]
+  /** When each body was last crossed by a wire, game time (once per body per `perBodyS`, whichever wire). A new map each level (reset). */
+  private lastCross = new WeakMap<Enemy, number>()
   /** The depth curve for packs added now (curve.ts): main sets it per level; keyed on depth alone. */
   // row 1 is shared by both run lengths (INV-C1), so combat need not know the run's (it must not import areas)
   curve: DepthCurve = curveAt(1, 6)
@@ -1155,6 +1167,8 @@ export class Combat {
     this.lastSkim = new WeakMap()
     this.lastTrail = new WeakMap()
     this.clearTrail()
+    this.lastCross = new WeakMap()
+    this.clearWires()
     this.telling = new WeakMap()
     this.lastCatch = -Infinity
     this.slipS = 0
@@ -1980,7 +1994,20 @@ export class Combat {
     if (this.core === 'wake') this.tickWake(dt, player)
     else {
       if (this.trailN > 0) this.clearTrail()
+      if (this.core !== 'tether' && (this.wires[0]!.e || this.wires[1]!.e)) this.clearWires()
       if (this.core === 'ram') this.tickRam(player)
+      else if (this.core === 'tether') this.tickTether(dt, player)
+    }
+  }
+
+  /** No wire: a new level, or Tether not worn. (A wire that breaks says so; this is silent.) */
+  clearWires() {
+    for (const w of this.wires) {
+      w.e = null
+      w.losS = 0
+      w.tickS = 0
+      w.next = 0
+      w.side = new WeakMap()
     }
   }
 
@@ -2336,6 +2363,142 @@ export class Combat {
     s.grazed = true
     this.addMarks(s.owner, CORES.graze.shotMarks, 'core')
     this.events.onPart({ kind: 'graze', enemy: s.owner, how: 'shot', dmg: 0, marks: CORES.graze.shotMarks, others: 0, at: at.clone(), dir: s.dir.clone() })
+  }
+
+  /**
+   * Tether (N2, CORES2.md §2), each tick: for each wire (one, or two with Second Line) hold it if it is up (it breaks when the anchor dies, goes past `breakR` unless Taut holds it, or the line is blocked for
+   * `losGraceS`; the anchor takes its tick), else hook the nearest valid body, then sweep it. No Math.random: ties break by distance, then array order. Allocates only when a wire is hooked or broken.
+   */
+  private tickTether(dt: number, p: THREE.Vector3) {
+    const n = this.upgrades.has('tether-second') ? UPGRADES['tether-second'].wires : 1
+    for (let i = 0; i < this.wires.length; i++) {
+      const w = this.wires[i]!
+      // Second Line not learned (a dev hook took it back): the wire is simply gone
+      if (i >= n) {
+        w.e = null
+        continue
+      }
+      if (w.e) this.holdWire(w, i, dt, p)
+      if (!w.e && this.time >= w.next) this.hookWire(w, i, p)
+      if (w.e) this.sweepWire(w, i, p)
+    }
+  }
+
+  /** The wire is up: its ends as they stand, the breaks, the anchor's tick. */
+  private holdWire(w: Wire, i: number, dt: number, p: THREE.Vector3) {
+    const T = CORES.tether
+    const e = w.e!
+    w.sx = p.x
+    w.sz = p.z
+    w.ax = e.pos.x
+    w.az = e.pos.z
+    if (e.dead) return this.breakWire(w, i, 'dead', p)
+    // asleep, or hidden away (a thief that put its cage down): the wire lets go
+    if (!targetable(e) || !this.awakeNow(e)) return this.breakWire(w, i, 'los', p)
+    const taut = this.keystone === 'tether-taut' && this.immovable(e)
+    if (!taut && Math.hypot(e.pos.x - p.x, e.pos.z - p.z) > T.breakR) return this.breakWire(w, i, 'range', p)
+    if (this.clearShot(p, e.pos)) w.losS = 0
+    else if ((w.losS += dt) >= T.losGraceS) return this.breakWire(w, i, 'los', p)
+    const every = taut ? KEYSTONES['tether-taut'].anchorEveryS : T.anchorEveryS
+    w.tickS += dt
+    while (w.tickS >= every && !e.dead) {
+      w.tickS -= every
+      const dealt = this.autoHit(e, T.anchorDamage, 'core', this.immovable(e))
+      this.addMarks(e, 1, 'core')
+      this.events.onPart({ kind: 'tether', what: 'anchor', wire: i, enemy: e, from: p.clone(), to: e.pos.clone(), at: e.pos.clone(), u: 1, dmg: dealt })
+    }
+    if (e.dead) this.breakWire(w, i, 'dead', p)
+  }
+
+  /** No wire up and the hook is ready: the nearest awake, targetable body `minR` to `maxR` off in line of sight (walls block, as for a shot), not the other wire's anchor. It gets `hookMarks`. */
+  private hookWire(w: Wire, i: number, p: THREE.Vector3) {
+    const T = CORES.tether
+    const other = this.wires[1 - i]!.e
+    let best: Enemy | null = null
+    let bestD = Infinity
+    for (const e of this.enemies) {
+      if (e === other || e.dead || !targetable(e) || this.held.has(e) || !this.awakeNow(e)) continue
+      const d = Math.hypot(e.pos.x - p.x, e.pos.z - p.z)
+      if (d < T.minR || d > T.maxR || d >= bestD || !this.clearShot(p, e.pos)) continue
+      best = e
+      bestD = d
+    }
+    if (!best) return
+    w.e = best
+    w.sx = p.x
+    w.sz = p.z
+    w.ax = best.pos.x
+    w.az = best.pos.z
+    w.losS = 0
+    w.tickS = 0
+    w.side = new WeakMap()
+    this.addMarks(best, T.hookMarks, 'core')
+    this.events.onPart({ kind: 'tether', what: 'hook', wire: i, enemy: best, from: p.clone(), to: best.pos.clone(), at: best.pos.clone(), u: 1, dmg: 0 })
+  }
+
+  /**
+   * The wire is down. For range or the anchor's death, Whip cracks every awake body whose edge is within `reach` of where the wire was (the anchor too, if it lives): a core hit and a mark. The hook may go again after `rehookS`.
+   * `from` is Still's end now, `to` the anchor's place (it stays where it fell).
+   */
+  private breakWire(w: Wire, i: number, why: 'dead' | 'range' | 'los', p: THREE.Vector3) {
+    const e = w.e!
+    let whip = 0
+    let dmg = 0
+    if (why !== 'los' && this.upgrades.has('tether-whip')) {
+      const U = UPGRADES['tether-whip']
+      for (const o of this.enemies) {
+        if (o.dead || !targetable(o) || this.held.has(o) || !this.awakeNow(o)) continue
+        if (distToSegment(o.pos.x, o.pos.z, p.x, p.z, e.pos.x, e.pos.z) - o.radius > U.reach) continue
+        dmg += this.autoHit(o, U.damage, 'core', this.immovable(o))
+        this.addMarks(o, U.marks, 'core')
+        whip++
+      }
+    }
+    w.e = null
+    w.losS = 0
+    w.tickS = 0
+    w.next = this.time + CORES.tether.rehookS
+    w.side = new WeakMap()
+    this.events.onPart({ kind: 'tether', what: 'break', wire: i, enemy: e, from: p.clone(), to: e.pos.clone(), at: e.pos.clone(), u: 0, dmg, why, whip })
+  }
+
+  /**
+   * The sweep: every other awake body's side of the wire (the sign of the 2D cross product of the wire and the way to the body) against what it was last tick. A CROSSING is a flip, with the body's projection inside the
+   * segment and its EDGE within `reach` of the wire, at most once per body per `perBodyS`: it takes `damage` and a mark (Snag slows it). A body lying along the wire never flips, so running straight away earns nothing;
+   * a body exactly on the wire keeps the side it had.
+   */
+  private sweepWire(w: Wire, i: number, p: THREE.Vector3) {
+    const T = CORES.tether
+    const vx = w.ax - w.sx
+    const vz = w.az - w.sz
+    const len2 = vx * vx + vz * vz
+    const len = Math.sqrt(len2)
+    if (len < 1e-3) return
+    for (const e of this.enemies) {
+      if (e === w.e || e.dead || !targetable(e) || this.held.has(e) || !this.awakeNow(e)) continue
+      const rx = e.pos.x - w.sx
+      const rz = e.pos.z - w.sz
+      // signed distance from the wire's line (positive on one side)
+      const off = (vx * rz - vz * rx) / len
+      if (Math.abs(off) < 1e-4) continue
+      const side = off > 0 ? 1 : -1
+      const was = w.side.get(e)
+      w.side.set(e, side)
+      if (was === undefined || was === side) continue
+      const u = (rx * vx + rz * vz) / len2
+      if (u < 0 || u > 1 || Math.abs(off) - e.radius > T.reach) continue
+      if (this.time - (this.lastCross.get(e) ?? -Infinity) < T.perBodyS) continue
+      this.lastCross.set(e, this.time)
+      const dealt = this.autoHit(e, T.damage, 'core', this.immovable(e))
+      this.addMarks(e, 1, 'core')
+      let snag = false
+      if (this.keystone === 'tether-snag' && !e.dead && !isBoss(e)) {
+        const K = KEYSTONES['tether-snag']
+        this.applySlow(e, K.s, K.mul)
+        snag = true
+      }
+      this.events.onPart({ kind: 'tether', what: 'cross', wire: i, enemy: e, from: p.clone(), to: w.e!.pos.clone(), at: new THREE.Vector3(w.sx + vx * u, 0, w.sz + vz * u), u, dmg: dealt, ...(snag ? { snag } : {}) })
+    }
   }
 
   /**
