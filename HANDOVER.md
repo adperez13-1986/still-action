@@ -3,15 +3,18 @@
 For the next session. Read this, then `DESIGN.md` (the settled decisions), then the design
 folder for whatever you're touching. Don't re-derive any of them.
 
-## Start here (3 Oct, later: his verdict on B6a/B6b; two new cores, N1 Graze running)
+## Start here (3 Oct, later: his verdict on B6a/B6b; N1 Graze LIVE, N2 Tether running)
 
 **His verdict on B6a + B6b (3 Oct):** "I like it, the cues are helpful, the numbers are also good. It's more difficult as well.. I am
 not satisfied yet with the 2 cores, we need to tune them further, but the main idea works." Then: design the other cores yourself,
 Sonnet implements. **Design: `design/buildlayer/CORES2.md`** (lead's, no agents): **Graze** (an attack that just misses him marks the
 attacker; a cold band under a winding-up enemy shows where to stand; lenses-free close build: Parry Clamp, Anvil, Overrun) and
 **Tether** (a wire to one body 3-9 u away; bodies the wire sweeps ACROSS get marked, lying along it doesn't count, so running away
-earns nothing; the lenses are its spenders). Four-card pick while testing. **N1 Graze + the pick: Sonnet engineer running.** N2 Tether
-next. Tuning all four after his runs (his ask; Wake and Ram not done).
+earns nothing; the lenses are its spenders). Four-card pick while testing. **N1 Graze + the four-card pick DONE + pushed (4bfb028).** Engineer notes: a missed swing never reached the enemy loop, so grazes
+read `Enemy.swing()` (Chaser + the Assembler); lanes via `laneMargin` / `lanePass` on chargers (no band for lanes); not covered: boss
+charge lanes, the hulk's counter-lunge, mite bites, the Arbiter and the Engine. Bot: Assembler felled 2/3 eager (33 of 49 grazes from
+shots, ~0.6 core dmg/s), packs spent/made 0.37; dropsim graze formed d3 62.9% (line 70). Portrait shows "turn the phone sideways".
+**N2 Tether: fresh Sonnet engineer running** (template: N1's diff). Tuning all four after his runs (his ask; Wake and Ram not done).
 
 ## Earlier start-here (3 Oct: B6 verdict "I see no effect"; B6a + B6b LIVE)
 
