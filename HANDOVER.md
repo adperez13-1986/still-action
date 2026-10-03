@@ -32,7 +32,7 @@ archetypes before going crazy on a certain mechanic... my frame of reference is 
 ranged: Sorceress / Amazon; summoner: Druid / Necro) "...our 4 parts mechanic and roguelite gameplay is not letting us develop those
 archetypes". Lead's diagnosis: slot = body part forces every build into one arm + one lens + one nova + one dash, a hybrid by
 construction. Proposal (no build yet): an ARCHETYPE pick at run start replaces the core pick (Brawler / Marksman / Summoner),
-deciding slot layout, drop weighting and one survival trait; cores become sub-styles inside archetypes. **Two questions open to him:**
+deciding slot layout, drop weighting and one survival trait; cores become sub-styles inside archetypes. **He answered: keep the 4 body slots, three archetypes, low token use (medium effort lead, Sonnet steps, small briefs, full suite once at the end, 2-3 screenshots).** **Draft 1: `design/archetypes/ARCHETYPES.md`** (archetype sets which part families each slot accepts; hand / eye / drone autos; Hardened / Footwork / Crowd; cores become sub-styles offered after the Assembler; build A1-A4); 4 questions for him at its end. Earlier questions (now answered):
 keep body-part slots with an archetype layout, or generic slots? Three archetypes, or a fourth Paladin-like hybrid? Mark verbs and
 tuning wait on this. **Then (old plan): his runs with all four, then the tuning round he asked for (Wake + Ram not satisfied yet; Graze + Tether first guesses).**
 Ask feel first per core: could he see it, did it feel like its own way to fight, too weak/strong. Watch: Graze's swing coverage gaps
